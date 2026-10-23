@@ -82,7 +82,7 @@ where
 
 /// Spawn a worker thread with a name, so a stack dump identifies it.
 ///
-/// Named so the dispatch shards are recognisable in a backtrace, a
+/// Named so the dispatch shards are recognizable in a backtrace, a
 /// `/proc/<pid>/task/<tid>/comm`, or a debugger — an anonymous pool thread
 /// would leave an operator guessing whose handler is stuck.
 ///

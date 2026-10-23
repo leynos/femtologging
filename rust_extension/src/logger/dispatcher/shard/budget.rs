@@ -5,7 +5,7 @@
 //! logger whose handler never returns keeps its records queued forever. So a
 //! shard also hands out a fixed number of permits, one per record it will hold
 //! in flight, and a producer takes one before it queues. A permit travels
-//! inside the job it authorises and returns to the pool from its own `Drop`,
+//! inside the job it authorizes and returns to the pool from its own `Drop`,
 //! which is what makes the accounting survive a panicking handler.
 //!
 //! A shard-wide permit pool is still not enough to make a shard *shared*: one
@@ -33,7 +33,7 @@ pub(super) struct Permits {
 
 /// Permission to hold one record in flight on a shard.
 ///
-/// It travels to the worker inside the job it authorises, and returns to the
+/// It travels to the worker inside the job it authorizes, and returns to the
 /// pool when that job is dropped — after the handlers have run, or while a
 /// panicking handler unwinds. A permit therefore counts its record as in flight
 /// for exactly as long as the record is unhandled, on every path out.
@@ -43,7 +43,7 @@ pub(super) struct Permits {
 /// together, so the two counts cannot drift apart.
 pub(super) struct Permit {
     permits: Arc<Permits>,
-    /// The logger whose record this permit authorises.
+    /// The logger whose record this permit authorizes.
     logger: Arc<LoggerBudget>,
 }
 
