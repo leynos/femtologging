@@ -471,9 +471,11 @@ honours both.  The femtologging logger's own level decides whether the record
 is dispatched at all.  The adapter then compares the record's mapped stdlib
 level with the wrapped handler's `level`, exactly as the standard library's
 `Logger.callHandlers()` does, and discards the record when it falls below that
-threshold.  Because the comparison happens at dispatch time, a
-`logging.Handler.setLevel()` call on the wrapped handler takes effect from the
-next record onwards, with no need to rebuild the adapter.
+threshold.  The adapter reads the wrapped handler's current level when it
+processes each record.  A `logging.Handler.setLevel()` call therefore affects
+records processed after the call, including records already queued but not yet
+handled; records already handled are unaffected.  There is no need to rebuild
+the adapter.
 
 ```python
 import logging
