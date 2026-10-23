@@ -16,7 +16,9 @@ pub(crate) fn collection_conflict(
     match current {
         CollectionMutation::Unchanged => None,
         _ if current == new => None,
-        _ => Some(format!("multiple {kind} mutation modes were requested")),
+        _ => Some(format!(
+            "conflicting mutations to the {kind} collection were requested"
+        )),
     }
 }
 

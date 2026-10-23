@@ -19,7 +19,8 @@ consistent for developers.
   - suffix -ogue in words such as _analogue_ and _catalogue_,
   - and so forth.
 - The words **“outwith”** and **“caveat”** are acceptable.
-- Keep the spelling required by an external API, command, or library.
+- Keep United States (US) spelling when used in an external API, command, or
+  library, for example, `color`.
 - The name of the project licence file is spelled `LICENSE` for community
   consistency.
 

@@ -15,8 +15,13 @@ use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
+mod test_support;
+use self::test_support::FailingRotation;
+
+/// Writer backed by a mutex-protected byte buffer for file-handler tests.
 #[derive(Clone, Default)]
 struct SharedBuf {
+    /// Bytes written by the handler and inspected by the test.
     buffer: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -53,7 +58,9 @@ impl Write for SharedBuf {
 
 impl_unsupported_seek!(SharedBuf);
 
+/// Rotation strategy that counts each rotation attempt.
 struct CountingRotation {
+    /// Shared counter updated when the strategy is invoked.
     calls: Arc<AtomicUsize>,
 }
 
@@ -70,7 +77,9 @@ impl RotationStrategy<SharedBuf> for CountingRotation {
     }
 }
 
+/// Rotation strategy that records whether rotation was invoked.
 struct FlagRotation {
+    /// Shared flag set when the strategy is invoked.
     flag: Arc<AtomicBool>,
 }
 
@@ -164,6 +173,7 @@ fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, Femt
     (buffer, start_barrier, handler)
 }
 
+/// Receives the result of handling a record on a spawned thread.
 type RecordOutcomeRx = mpsc::Receiver<Result<(), HandlerError>>;
 
 fn spawn_record_thread(
@@ -249,14 +259,6 @@ fn build_from_worker_wires_handler_components() {
 #[test]
 #[serial]
 fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::Error>> {
-    struct FailingRotation;
-
-    impl RotationStrategy<SharedBuf> for FailingRotation {
-        fn before_write(&mut self, _writer: &mut SharedBuf, _formatted: &str) -> io::Result<bool> {
-            Err(io::Error::other("failing rotation for test"))
-        }
-    }
-
     let buffer = SharedBuf::default();
     let writer = buffer.clone();
     let handler_cfg = HandlerConfig {

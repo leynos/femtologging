@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]

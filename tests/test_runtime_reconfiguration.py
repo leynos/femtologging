@@ -141,8 +141,13 @@ def test_runtime_apply_unknown_filter_preserves_previous_state(
 def test_runtime_apply_rejects_conflicting_collection_modes(
     core_config: None,
 ) -> None:
-    """One logger mutation may not request multiple handler modes."""
-    with pytest.raises(ValueError, match="multiple handlers mutation modes"):
+    """One logger mutation may not submit conflicting handler mutations."""
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "conflicting mutations to the handler collection were requested"
+        ),
+    ):
         (
             RuntimeConfigBuilder()
             .with_logger(

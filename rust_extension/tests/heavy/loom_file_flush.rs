@@ -20,8 +20,7 @@ use _femtologging_rs::{
 };
 
 use crate::handle_expect::HandleExpect;
-use crate::shared_buffer::loom::SharedBuf as LoomBuf;
-use crate::shared_buffer::loom::read_output;
+use crate::shared_buffer_loom::{SharedBuf as LoomBuf, read_output};
 
 /// The number of threads writing and flushing concurrently.
 const WRITERS: usize = 2;

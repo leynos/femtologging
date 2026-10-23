@@ -20,6 +20,25 @@ fn handler_ptrs(logger: &crate::logger::FemtoLogger) -> Vec<usize> {
         .collect()
 }
 
+#[test]
+fn same_mode_payload_conflict_has_an_accurate_error() {
+    let error = RuntimeConfigBuilder::new()
+        .with_logger(
+            "core",
+            LoggerMutationBuilder::new()
+                .append_handlers(["first"])
+                .append_handlers(["second"]),
+        )
+        .apply()
+        .expect_err("different handler payloads should conflict");
+
+    assert!(matches!(
+        error,
+        ConfigError::InvalidMutation(message)
+            if message == "core: conflicting mutations to the handler collection were requested"
+    ));
+}
+
 #[fixture]
 fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
     let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Debug);

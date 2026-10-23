@@ -11,17 +11,25 @@ use super::{
 };
 use crate::level::FemtoLevel;
 
+/// One tracing event captured by the test subscriber.
 #[derive(Clone, Debug)]
 pub(super) struct CapturedEvent {
+    /// Event field names mapped to their rendered values.
     pub(super) fields: BTreeMap<String, String>,
 }
 
+/// Expected identifying fields and occurrence count for a tracing event.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ExpectedEvent {
+    /// Operation name identifying the producer or worker action.
     pub(super) operation: &'static str,
+    /// Handler category associated with the event.
     pub(super) handler_kind: &'static str,
+    /// Field that records the operation outcome.
     pub(super) outcome_field: &'static str,
+    /// Expected outcome value for the event.
     pub(super) outcome: &'static str,
+    /// Number of matching events expected in the scenario.
     pub(super) count: usize,
 }
 
@@ -77,8 +85,10 @@ pub(super) const EXPECTED_EVENTS: [ExpectedEvent; 7] = [
     },
 ];
 
+/// Tracing visitor that stores each recorded field's rendered value.
 #[derive(Default)]
 struct EventFieldCollector {
+    /// Collected event values, indexed by field name.
     fields: BTreeMap<String, String>,
 }
 
@@ -112,9 +122,12 @@ fn python_dispatch_logger(
     .map_err(|error| error.to_string())
 }
 
+/// Result simulated by the Python-backed test handler.
 #[derive(Clone, Copy)]
 pub(super) enum PythonHandlerOutcome {
+    /// Handler dispatch completes successfully.
     Success,
+    /// Handler dispatch returns an error.
     Failure,
 }
 

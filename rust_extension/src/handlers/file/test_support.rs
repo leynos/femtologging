@@ -7,12 +7,16 @@ use std::sync::{Mutex, Once, OnceLock};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
+/// One log entry recorded by the shared test logger.
 #[derive(Clone, Debug)]
 pub(crate) struct CapturedLog {
+    /// Severity of the captured record.
     pub level: Level,
+    /// Rendered message arguments from the record.
     pub message: String,
 }
 
+/// Process-wide logger installed by file-handler tests to capture log records.
 struct TestLogger;
 
 static LOGGER: TestLogger = TestLogger;

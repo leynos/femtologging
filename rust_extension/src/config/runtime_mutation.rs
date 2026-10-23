@@ -178,7 +178,7 @@ impl LoggerMutationBuilder {
     /// Records differing prior handler mutations, including same-mode payloads; identical normalized mutations are accepted, and the newest is retained.
     fn set_handlers(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
-            self.invalid = collection_conflict("handlers", &self.handlers, &mutation);
+            self.invalid = collection_conflict("handler", &self.handlers, &mutation);
         }
         self.handlers = mutation;
     }
@@ -186,7 +186,7 @@ impl LoggerMutationBuilder {
     /// Records differing prior filter mutations, including same-mode payloads; identical normalized mutations are accepted, and the newest is retained.
     fn set_filters(&mut self, mutation: CollectionMutation) {
         if self.invalid.is_none() {
-            self.invalid = collection_conflict("filters", &self.filters, &mutation);
+            self.invalid = collection_conflict("filter", &self.filters, &mutation);
         }
         self.filters = mutation;
     }

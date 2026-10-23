@@ -12,6 +12,7 @@ use std::sync::Arc;
 /// Handler that stores every record it receives for later inspection.
 #[derive(Clone, Default)]
 pub struct CollectingHandler {
+    /// Records received by this handler, shared by its clones.
     records: Arc<Mutex<Vec<FemtoLogRecord>>>,
 }
 
