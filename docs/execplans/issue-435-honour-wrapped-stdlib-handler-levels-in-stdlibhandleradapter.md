@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: IN REVIEW (draft PR #546)
 
 ## Purpose / big picture
 
@@ -182,8 +182,12 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-23) Rebased the 12 issue commits from `da1d82e` onto
   `5377ceb` without conflicts. `range-diff` matched all 12 commits, and the
   target's changed paths did not overlap this issue's files. The new Rust
-  private-doc policy and expanded `make lint` lanes are recorded below and will
-  be covered by post-rebase validation.
+  private-doc policy and expanded `make lint` lanes are recorded below. The
+  post-rebase `make check-fmt`, `make test`, `make typecheck`, and `make lint`
+  gates passed; `make fmt`, `make markdownlint`, and `make nixie` passed too.
+- [x] (2026-10-23) CodeRabbit reviewed rebased commit `e07d31f` and identified
+  stale status, outcomes, and revision-note sections in this plan. Update those
+  sections and run a fresh review before pushing the rebased branch.
 
 ## Surprises & discoveries
 
@@ -270,9 +274,25 @@ Known uncertainties identified upfront, with mitigations.
 
 ## Outcomes & retrospective
 
-To be completed at each milestone boundary and at completion. Must compare the
-result against `Purpose / big picture` and reconcile every discovery with the
-`Conformance basis`.
+The adapter now translates each femtologging record and compares its mapped
+stdlib level with the wrapped handler's live `level` before calling
+`Handler.handle()`. Below-threshold records stop before filters or emission;
+accepted records enter `handle()` once, preserving the stdlib filter and lock
+path. The regression tests cover the level matrix, `NOTSET`, dynamic
+`setLevel()` changes, filter rejection, and handle/filter call counts. The user
+and migration guides explain how the femtologging logger threshold and wrapped
+handler threshold combine. This meets the intended outcome: low-severity
+records no longer reach a higher-severity-only destination.
+
+The 12 issue commits rebased onto `main` without conflicts or patch changes.
+All post-rebase validation passed: `make check-fmt`, `make test` (770 passed, 5
+skipped, with one `PytestAssertRewriteWarning`), `make typecheck`, `make lint`,
+`make fmt`, `make markdownlint`, and `make nixie`. The test warning is from
+pytest assertion rewriting for `tests.steps.logging_context_steps`; it did not
+fail the suite. CodeRabbit review of the rebased candidate found only plan
+status and completion-note inconsistencies, which this revision addresses.
+Draft PR #546 remains open; the rebased head still needs a fresh review and
+force-with-lease push.
 
 ## Context and orientation
 
@@ -754,4 +774,6 @@ by an exception or a return value, exactly as `logging.Logger` does.
 
 ## Revision note
 
-(Required when editing an ExecPlan.) Initial draft created 2026-10-14.
+Initial draft created 2026-10-14. Revised 2026-10-23 to record the rebase and
+post-rebase validation, complete the outcomes, and mark the active draft PR
+state. Rerun CodeRabbit before force-pushing the rebased branch.
