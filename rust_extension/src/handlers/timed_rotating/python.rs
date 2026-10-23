@@ -378,4 +378,3 @@ pub fn set_timed_rotation_test_times_for_test(epoch_millis: Vec<i64>) {
 pub fn clear_timed_rotation_test_times_for_test() {
     clear_injected_times_for_test();
 }
-// weave: run 'weave explain rust_extension/src/handlers/timed_rotating/python.rs' for per-hunk detail, 'weave check' to verify your resolution

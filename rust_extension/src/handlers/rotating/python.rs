@@ -329,4 +329,3 @@ pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>)
 pub fn clear_rotating_fresh_failure_for_test() {
     fresh_failure::clear_forced_fresh_failure();
 }
-// weave: run 'weave explain rust_extension/src/handlers/rotating/python.rs' for per-hunk detail, 'weave check' to verify your resolution
