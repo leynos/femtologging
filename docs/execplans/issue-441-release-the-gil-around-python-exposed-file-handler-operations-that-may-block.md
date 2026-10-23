@@ -174,11 +174,11 @@ While the gates were running, `origin/main` advanced six commits, including a
 pyo3 upgrade and a new lint. The branch had to be rebased before it could be
 reviewed, let alone merged.
 
-| Upstream change                                       | Effect on this branch                                                                                |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `pyo3` 0.29.3 → 0.30.1 (Dependabot #542)              | None in source. `Python::detach` keeps the same signature and `Ungil` bounds in 0.30.1.               |
-| Deny `missing_docs_in_private_items` (#422, #453)     | Every item on this branch already carries a doc comment, including the three `py_handle` methods.     |
-| Clippy feature lanes 5 → 8 (`extension-module`, `test-util`, `default`) | Widens the matrix each lane is checked under; no source change.        |
+| Upstream change                                                         | Effect on this branch                                                                             |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `pyo3` 0.29.3 → 0.30.1 (Dependabot #542)                                | None in source. `Python::detach` keeps the same signature and `Ungil` bounds in 0.30.1.           |
+| Deny `missing_docs_in_private_items` (#422, #453)                       | Every item on this branch already carries a doc comment, including the three `py_handle` methods. |
+| Clippy feature lanes 5 → 8 (`extension-module`, `test-util`, `default`) | Widens the matrix each lane is checked under; no source change.                                   |
 
 The three conflicted files were `handlers/file/mod.rs`,
 `handlers/rotating/python.rs` and `handlers/timed_rotating/python.rs`; upstream
@@ -188,10 +188,10 @@ description and appending this branch's GIL contract to it, then re-applying
 the three-method change. Nothing was dropped from either side.
 
 Two artefacts came out of the resolution and were removed in their own commit:
-the merge tool appended a `// weave: run 'weave explain ...'` hint to the end of
-each resolved file, and doubled two blank lines in `handlers/file/mod.rs`.
-`rust_extension/src/logger/mod.rs` carries the same hint on `origin/main`; it is
-upstream's, and untouched here.
+the merge tool appended a `// weave: run 'weave explain ...'` hint to the end
+of each resolved file, and doubled two blank lines in `handlers/file/mod.rs`.
+`rust_extension/src/logger/mod.rs` carries the same hint on `origin/main`; it
+is upstream's, and untouched here.
 
 After the rebase, `git rev-list --left-right --count origin/main...HEAD` reports
 `0 9`, so the branch is a strict fast-forward from main, and the diff against
