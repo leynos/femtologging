@@ -179,6 +179,11 @@ Known uncertainties identified upfront, with mitigations.
   requested cooldown and returned zero findings.
 - [x] (2026-10-23) Pushed the reviewed branch and opened draft PR #546:
   <https://github.com/leynos/femtologging/pull/546>
+- [x] (2026-10-23) Rebased the 12 issue commits from `da1d82e` onto
+  `5377ceb` without conflicts. `range-diff` matched all 12 commits, and the
+  target's changed paths did not overlap this issue's files. The new Rust
+  private-doc policy and expanded `make lint` lanes are recorded below and will
+  be covered by post-rebase validation.
 
 ## Surprises & discoveries
 
@@ -256,6 +261,12 @@ Known uncertainties identified upfront, with mitigations.
   module constraint required extraction, and `main` had advanced, so the
   resulting candidate necessarily touched a broader file set. Date/Author:
   2026-10-23, implementing agent.
+- Decision: Keep the Python adapter implementation and test helpers unchanged
+  when rebasing onto `5377ceb`. Rationale: `main` adds a private Rust-item
+  documentation policy and expands `make lint`'s Clippy feature lanes, but its
+  changed paths do not overlap this issue's 13 paths and its new support-doc
+  checker targets Rust test support. Run the expanded `make lint` on the
+  rebased candidate. Date/Author: 2026-10-23, implementing agent.
 
 ## Outcomes & retrospective
 
