@@ -45,36 +45,14 @@ fn parse_failure_reports_the_source_path() {
 }
 
 #[test]
-fn checker_rejects_undocumented_test_struct_and_field() {
+fn checker_rejects_undocumented_test_types_and_named_fields() {
     let syntax: File = syn::parse_str(
         r#"
-            struct Missing {
+            struct MissingStruct {
                 field: usize,
             }
-        "#,
-    )
-    .expect("fixture should parse");
-    let mut checker = DocumentationChecker {
-        file_is_test_support: true,
-        path: "<fixture>".to_owned(),
-        ..DocumentationChecker::default()
-    };
-    checker.visit_file(&syntax);
 
-    assert_eq!(
-        checker.errors,
-        [
-            "<fixture>: undocumented struct `Missing`".to_owned(),
-            "<fixture>: undocumented field `Missing::field`".to_owned(),
-        ]
-    );
-}
-
-#[test]
-fn checker_rejects_undocumented_enum_and_named_variant_field() {
-    let syntax: File = syn::parse_str(
-        r#"
-            enum Missing {
+            enum MissingEnum {
                 Variant {
                     field: usize,
                 },
@@ -92,8 +70,10 @@ fn checker_rejects_undocumented_enum_and_named_variant_field() {
     assert_eq!(
         checker.errors,
         [
-            "<fixture>: undocumented enum `Missing`".to_owned(),
-            "<fixture>: undocumented field `Missing::Variant::field`".to_owned(),
+            "<fixture>: undocumented struct `MissingStruct`".to_owned(),
+            "<fixture>: undocumented field `MissingStruct::field`".to_owned(),
+            "<fixture>: undocumented enum `MissingEnum`".to_owned(),
+            "<fixture>: undocumented field `MissingEnum::Variant::field`".to_owned(),
         ]
     );
 }
@@ -167,32 +147,13 @@ impl DocumentationChecker {
             .push(format!("{}: undocumented {kind} `{name}`", self.path));
     }
 
-    fn check_named_fields(&mut self, item: &syn::ItemStruct) {
-        let syn::Fields::Named(fields) = &item.fields else {
-            return;
-        };
+    fn check_named_fields(&mut self, fields: &syn::FieldsNamed, owner: &str) {
         for field in fields.named.iter().filter(|field| !has_doc(&field.attrs)) {
             if let Some(name) = &field.ident {
                 self.errors.push(format!(
-                    "{}: undocumented field `{}::{name}`",
-                    self.path, item.ident
+                    "{}: undocumented field `{owner}::{name}`",
+                    self.path
                 ));
-            }
-        }
-    }
-
-    fn check_named_variant_fields(&mut self, item: &syn::ItemEnum) {
-        for variant in &item.variants {
-            let syn::Fields::Named(fields) = &variant.fields else {
-                continue;
-            };
-            for field in fields.named.iter().filter(|field| !has_doc(&field.attrs)) {
-                if let Some(name) = &field.ident {
-                    self.errors.push(format!(
-                        "{}: undocumented field `{}::{}::{name}`",
-                        self.path, item.ident, variant.ident
-                    ));
-                }
             }
         }
     }
@@ -210,8 +171,10 @@ impl<'ast> Visit<'ast> for DocumentationChecker {
 
     fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
         self.check_item(&item.attrs, "struct", &item.ident.to_string());
-        if self.is_test_scoped(&item.attrs) {
-            self.check_named_fields(item);
+        if self.is_test_scoped(&item.attrs)
+            && let syn::Fields::Named(fields) = &item.fields
+        {
+            self.check_named_fields(fields, &item.ident.to_string());
         }
         syn::visit::visit_item_struct(self, item);
     }
@@ -219,7 +182,12 @@ impl<'ast> Visit<'ast> for DocumentationChecker {
     fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
         self.check_item(&item.attrs, "enum", &item.ident.to_string());
         if self.is_test_scoped(&item.attrs) {
-            self.check_named_variant_fields(item);
+            for variant in &item.variants {
+                if let syn::Fields::Named(fields) = &variant.fields {
+                    let owner = format!("{}::{}", item.ident, variant.ident);
+                    self.check_named_fields(fields, &owner);
+                }
+            }
         }
         syn::visit::visit_item_enum(self, item);
     }
