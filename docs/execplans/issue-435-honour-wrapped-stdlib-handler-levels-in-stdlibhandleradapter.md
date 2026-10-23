@@ -177,7 +177,8 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-23) Ran all seven gates on the positive-guard review fix and
   committed it as `ba6b0ff`. CodeRabbit reviewed that clean commit after the
   requested cooldown and returned zero findings.
-- [ ] Push the branch and open a draft pull request referencing the issue.
+- [x] (2026-10-23) Pushed the reviewed branch and opened draft PR #546:
+  <https://github.com/leynos/femtologging/pull/546>
 
 ## Surprises & discoveries
 
