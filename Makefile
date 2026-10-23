@@ -1,5 +1,5 @@
 .PHONY: help all clean build release lint lint-python lint-rust lint-rust-clippy \
-        lint-env-policy lint-lanes-test loom-runner-test fmt \
+        lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
 
@@ -223,7 +223,13 @@ lint-rust-test-docs: ## Check Rust test-support type and field documentation
 	@$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) \
 		--test test_support_docs --all-features
 
-lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy lint-rust-test-docs ## Run Rust clippy across feature lanes and the Whitaker Dylint suite
+lint-rust-private-docs-policy-test: ## Exercise private-doc policy through Make's Clippy lanes
+	@$(UV_ENV) uv run --no-project --python 3.13 \
+		--with pytest==9.0.2 --with pytest-timeout==2.4.0 \
+		python -m pytest tests/test_private_docs_lint_contract.py \
+		-c /dev/null --rootdir=. --noconftest -p no:cacheprovider
+
+lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy lint-rust-test-docs lint-rust-private-docs-policy-test ## Run Rust lint lanes, private-doc policy, and the Whitaker Dylint suite
 	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling

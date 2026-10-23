@@ -222,6 +222,7 @@ def test_make_lint_reaches_the_policy_lane() -> None:
         "lint-lanes-test",
         STANDARD_CLIPPY_TARGET,
         "lint-rust-test-docs",
+        "lint-rust-private-docs-policy-test",
     ):
         assert required in prerequisites, (
             f"lint-rust must run {required}, found {prerequisites}"
