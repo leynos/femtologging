@@ -31,7 +31,7 @@ jobs:
       - name: Install makeutil
         id: makeutil
         # A digest-verified prebuilt release rather than a from-source build.
-        uses: leynos/shared-actions/.github/actions/install-makeutil@ebe2f3105334283441f4c915eb979a0f4b9f2c04
+        uses: leynos/shared-actions/.github/actions/install-makeutil@d5fded1107ee6822fdbf9539d81ff18ce6ce073a
 
       - name: Verify makeutil
         # Prove the installed binary runs, matches the release the action
