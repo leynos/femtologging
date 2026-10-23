@@ -59,11 +59,11 @@ number of threads.
 A logger name is validated before it reaches the registry, on every creation
 path, against three rules in cheapest-first order:
 
-| Rule                        | Bound                        | Rejection    |
-| --------------------------- | ---------------------------- | ------------ |
-| UTF-8 byte length           | 255 bytes                    | `ValueError` |
-| Dot-separated segment count | 32 segments                  | `ValueError` |
-| ASCII control characters    | none (`0x00`–`0x1F`, `0x7F`) | `ValueError` |
+| Rule                        | Bound                                                      | Rejection    |
+| --------------------------- | ---------------------------------------------------------- | ------------ |
+| UTF-8 byte length           | 255 bytes                                                  | `ValueError` |
+| Dot-separated segment count | 32 segments                                                | `ValueError` |
+| Control characters          | none (all of `char::is_control()`, plus `U+2028`/`U+2029`) | `ValueError` |
 
 The byte check runs first so a hostile megabyte-long name is refused without
 ever being scanned.
@@ -74,6 +74,11 @@ boundary in line-oriented output — the injection a log consumer is least able
 to detect. The diagnostic for a rejected name quotes a bounded, control-escaped
 prefix for the same reason: a rejection message must not reintroduce the
 injection the rule exists to stop.
+
+The ban is stated in terms of line breaks a consumer recognizes, not in terms
+of ASCII. Python's `str.splitlines()` breaks on `U+0085`, `U+2028` and `U+2029`
+as well as on `\n`, so a rule that refused only the ASCII range would leave the
+forgery available through a character the consumer still treats as a boundary.
 
 The segment bound encodes an intent worth stating. Logger names describe
 *component paths*, which are shallow. A 32-segment name is not a deeper
@@ -171,9 +176,10 @@ the target space bounded.
   without eventually seeing `RuntimeError`. This is a deliberate behaviour
   change and the reason the users' guide documents the field-based alternative.
 - Loggers sharing a shard share a failure domain: a slow handler now delays
-  other loggers on the same shard. Four shards and a per-logger in-flight bound
-  make that a bounded delay rather than a queue that grows without limit, but
-  it is a real trade-off and the reason the shard count is not one.
+  other loggers on the same shard. Four shards make that a bounded delay rather
+  than a queue that grows without limit, and each logger's own in-flight budget
+  keeps one stuck handler from consuming the shard's whole permit pool, but it
+  is a real trade-off and the reason the shard count is not one.
 - Records dropped at the in-flight or queue bound are counted and warned about,
   so pressure is observable through `logger.get_dropped()`.
 - The Loom models keep the pre-change topology. Under `--cfg loom` a logger

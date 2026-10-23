@@ -29,9 +29,16 @@ your process exits.
 
 ## Architectural overview
 
-- Each `FemtoLogger` owns a bounded queue (capacity 1 024) and a worker thread
-  that drains records and invokes handlers. Calls to `logger.log()` simply
-  enqueue a record and return immediately.
+- Loggers share a small, fixed pool of dispatch shards, one worker thread
+  each, sized from the machine's available parallelism (one to four). A logger
+  is assigned a shard rather than owning a thread, so the threads a process
+  spends on logging follow the machine rather than the number of loggers it has
+  created. Calls to `logger.log()` enqueue a record on the logger's shard and
+  return immediately.
+- A shard holds at most 1 024 in-flight records per shard count, and each
+  logger has its own share of that within the shard: one logger whose handler
+  never returns consumes its own share and no more, so it cannot starve the
+  loggers sharing its shard.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
@@ -53,11 +60,14 @@ your process exits.
 - Use `get_logger(name)` to obtain a singleton `FemtoLogger`. Names must not be
   empty, start or end with `.`, or contain consecutive dots.
 - Names are limited to 255 bytes and 32 dot-separated segments, and may not
-  contain ASCII control characters (the range `0x00`–`0x1F` and `0x7F`). A name
-  that breaks any of these is rejected with `ValueError`. The control-character
-  rule matters even though a logger never writes its own name: the name is
-  rendered into every formatted record, so a name carrying a newline could
-  split one record into two lines of output.
+  contain control characters. That covers the ASCII controls (`0x00`–`0x1F` and
+  `0x7F`), the C1 controls (`U+0080`–`U+009F`), and `U+2028`/`U+2029`, the
+  Unicode line and paragraph separators. A name that breaks any of these is
+  rejected with `ValueError`. The rule matters even though a logger never
+  writes its own name: the name is rendered into every formatted record, and
+  Python's `str.splitlines()` splits on all of these characters, not only on
+  `\n`, so a name carrying any of them could split one record into two lines of
+  output.
 - Name loggers after stable components — a module, subsystem, or service — not
   after the data flowing through them. A registry that maps one logger per
   request, tenant, user, or plug-in identifier grows for the life of the
@@ -221,9 +231,12 @@ fields with safe defaults does not require a version bump.
 - The built-in handlers implement the Rust-side `FemtoHandlerTrait`. Python
   handlers can be attached by supplying any object that exposes a callable
   `handle(logger_name: str, level: str, message: str)` method.
-- Python handlers run inside the logger’s worker thread. Ensure they are
-  thread-safe and fast; slow handlers block the logger worker and can cause
-  additional record drops.
+- Python handlers run inside a shared dispatch worker, not the calling thread.
+  Ensure they are thread-safe and fast: a slow handler delays every logger
+  assigned to the same shard, not only the logger it is attached to. (Loggers
+  are spread across the shards, so the blast radius is the shard rather than
+  the process.) Records that arrive while a shard is at its bound are dropped
+  and counted.
 - `logger.add_handler(handler)` accepts either a Rust-backed handler or a Python
   handler as described above. Use `logger.remove_handler(handler)` or
   `logger.clear_handlers()` to detach them. Removals only affect records that
