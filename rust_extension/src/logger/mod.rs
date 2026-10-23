@@ -40,7 +40,7 @@ use crate::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use dispatcher::DispatcherError;
-pub(crate) use dispatcher::Shard;
+pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test))]
@@ -96,6 +96,13 @@ pub struct FemtoLogger {
     shard: &'static Shard,
     #[cfg(loom)]
     shard: Arc<Shard>,
+    /// How much of the shard's in-flight capacity this logger may hold.
+    ///
+    /// Per logger, so one logger's slow handler cannot consume the shard's
+    /// whole permit pool and starve the loggers sharing it. Shared with the
+    /// permits it was charged against, so a record's charge is returned when
+    /// its handlers finish even if this logger has already been dropped.
+    budget: Arc<LoggerBudget>,
 }
 
 #[allow(
@@ -350,25 +357,28 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
-        // Wait for the shard to finish what this logger queued, so a record
-        // logged just before the drop is still delivered. The wait is bounded
-        // by the shard's own barrier timeout: a handler that never returns
-        // must delay the drop, not hang it.
-        //
-        // The wait is taken while detached from the Python interpreter,
-        // because a handler on the shard may be a Python object that needs the
-        // GIL to finish and holding it here would deadlock the two. When there
-        // is no interpreter, no Python handler can be mid-call either, so the
-        // wait is taken directly.
         // A model's shard is the logger's own, so the drop is what ends the
         // model thread and, by joining it, what guarantees the queued records
-        // were handled; a pool shard's worker is shared and stays, so the wait
-        // is what drains this logger's share.
+        // were handled.
         #[cfg(loom)]
         self.shard.shut_down();
+        // A pool shard's worker is shared and stays, so the drop waits for what
+        // *this* logger queued — and only then. Waiting unconditionally would
+        // make every logger's drop wait on the whole shard's backlog, including
+        // other loggers' work: dropping ten thousand loggers at once would pay
+        // the barrier timeout ten thousand times over, each while holding the
+        // registry lock that is dropping them. A logger with nothing in flight
+        // has nothing of its own to drain.
         #[cfg(not(loom))]
-        if Python::try_attach(|py| py.detach(|| self.shard.wait_for_drain())).is_none() {
-            let _ = self.shard.wait_for_drain();
+        if self.budget.in_flight() > 0 {
+            // The wait is taken while detached from the Python interpreter,
+            // because a handler on the shard may be a Python object that needs
+            // the GIL to finish and holding it here would deadlock the two.
+            // When there is no interpreter, no Python handler can be mid-call
+            // either, so the wait is taken directly.
+            if Python::try_attach(|py| py.detach(|| self.shard.wait_for_drain())).is_none() {
+                let _ = self.shard.wait_for_drain();
+            }
         }
     }
 }

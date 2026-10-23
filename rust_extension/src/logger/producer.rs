@@ -207,7 +207,7 @@ impl FemtoLogger {
             #[cfg(feature = "python")]
             context,
         });
-        if self.shard.admit(queued).is_ok() {
+        if self.shard.admit(queued, &self.budget).is_ok() {
             #[cfg(feature = "tracing-compat")]
             tracing::trace!(
                 target: "femtologging::internal",
