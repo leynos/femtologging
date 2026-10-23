@@ -17,24 +17,12 @@ import pytest
 
 import femtologging
 from femtologging import FemtoLogger, StdlibHandlerAdapter
+from tests.stdlib_adapter_support import CapturingHandler
 
 if typ.TYPE_CHECKING:
     from femtologging.adapter import FemtoRecord
 
 OVERRIDDEN_TIMESTAMP = 1700000000.456
-
-
-class CapturingHandler(logging.Handler):
-    """Handler that captures emitted LogRecords for test inspection."""
-
-    def __init__(self) -> None:
-        """Initialise with an empty records list."""
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    @typ.override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
 
 
 def _sole_emitted_record(capturing: CapturingHandler) -> logging.LogRecord:

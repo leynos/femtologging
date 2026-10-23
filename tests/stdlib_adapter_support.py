@@ -169,7 +169,7 @@ class CapturingHandler(logging.Handler):
     """Handler that captures emitted LogRecords for test inspection."""
 
     def __init__(self) -> None:
-        """Initialise with an empty records list."""
+        """Initialize with an empty records list."""
         super().__init__()
         self.records: list[logging.LogRecord] = []
 
@@ -187,7 +187,7 @@ class CountingHandler(logging.Handler):
     """
 
     def __init__(self) -> None:
-        """Initialise with zero handle calls and no captured records."""
+        """Initialize with zero handle calls and no captured records."""
         super().__init__()
         self.handle_calls = 0
         self.records: list[logging.LogRecord] = []
@@ -206,7 +206,7 @@ class CountingFilter(logging.Filter):
     """Filter that counts how often the handler consults it."""
 
     def __init__(self) -> None:
-        """Initialise with a zero filter-call count."""
+        """Initialize with a zero filter-call count."""
         super().__init__()
         self.calls = 0
 
@@ -220,7 +220,7 @@ class RejectingFilter(logging.Filter):
     """Filter that rejects every record and counts the consultations."""
 
     def __init__(self) -> None:
-        """Initialise with a zero filter-call count."""
+        """Initialize with a zero filter-call count."""
         super().__init__()
         self.calls = 0
 
