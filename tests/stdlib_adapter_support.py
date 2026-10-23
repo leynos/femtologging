@@ -22,7 +22,22 @@ from femtologging import FemtoLogger, StdlibHandlerAdapter
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LevelCase:
-    """A single level-mapping test case."""
+    """A single level-mapping test case.
+
+    Attributes
+    ----------
+    level : str
+        Femtologging level to send through the adapter.
+    expected_level : str
+        Level name expected in the captured output.
+    message : str
+        Message text to log.
+    logger_level : str or None
+        Logger threshold to set, or ``None`` to keep its default.
+    handler_level : int or None
+        Wrapped-handler threshold to set, or ``None`` to keep its default.
+
+    """
 
     level: str
     expected_level: str
@@ -33,7 +48,24 @@ class LevelCase:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LogRequest:
-    """One log emission routed through the adapter under test."""
+    """One log emission routed through the adapter under test.
+
+    Attributes
+    ----------
+    logger_name : str
+        Name of the femtologging logger to use.
+    level : str
+        Femtologging severity level to emit.
+    message : str
+        Message text to log.
+    logger_level : str or None
+        Logger threshold to set, or ``None`` to keep its default.
+    stack_info : bool
+        Whether to capture stack information for the record.
+    exc_info : bool
+        Whether to capture the active exception for the record.
+
+    """
 
     logger_name: str
     level: str
@@ -45,7 +77,16 @@ class LogRequest:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class HandlerSetup:
-    """Optional stdlib handler configuration applied before logging."""
+    """Optional stdlib handler configuration applied before logging.
+
+    Attributes
+    ----------
+    formatter : logging.Formatter or None
+        Formatter to install before the request is dispatched.
+    handler_level : int or None
+        Handler threshold to set, or ``None`` to keep the current level.
+
+    """
 
     formatter: logging.Formatter | None = None
     handler_level: int | None = None
@@ -53,7 +94,18 @@ class HandlerSetup:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class HandlerLevelCase:
-    """One record level routed through a wrapped handler at a fixed level."""
+    """One record level routed through a wrapped handler at a fixed level.
+
+    Attributes
+    ----------
+    level : str
+        Femtologging severity level to emit.
+    message : str
+        Message text to log.
+    expected_levelname : str or None
+        Expected stdlib level name, or ``None`` when the handler rejects it.
+
+    """
 
     level: str
     message: str
@@ -62,7 +114,18 @@ class HandlerLevelCase:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AdapterProbe:
-    """A StringIO sink, its stdlib handler, and the adapter wrapping it."""
+    """A StringIO sink, its stdlib handler, and the adapter wrapping it.
+
+    Attributes
+    ----------
+    stream : io.StringIO
+        In-memory stream receiving the handler's formatted output.
+    handler : logging.StreamHandler
+        Stdlib stream handler writing to ``stream``.
+    adapter : StdlibHandlerAdapter
+        Adapter wrapping ``handler`` for use with femtologging.
+
+    """
 
     stream: io.StringIO
     handler: logging.StreamHandler[io.StringIO]
@@ -182,8 +245,8 @@ class CountingHandler(logging.Handler):
     """Handler that counts ``handle()`` calls and captures emitted records.
 
     ``Handler.handle()`` is overridden rather than ``emit()`` so a test can
-    observe how many times the adapter entered the handler's filter-and-lock
-    path, which is the observable the level gate is allowed to change.
+    observe how many times the adapter entered the handler's filter path.
+    ``emit()`` is reached only when that filter path accepts the record.
     """
 
     def __init__(self) -> None:
