@@ -171,6 +171,9 @@ Known uncertainties identified upfront, with mitigations.
   the docs and adapter/test module size required updates and extraction, and
   `main` had advanced. Worktree and rebase review were completed; the full
   gates passed on the resulting candidate.
+- [x] (2026-10-23) CodeRabbit reviewed `1d15edd` and requested a positive level
+  guard instead of an explicit `return` in `handle_record()`. The method now
+  invokes `handle()` only inside the equivalent passing-level condition.
 - [ ] Run the full gates on the current review-fix diff, commit it, then run
   CodeRabbit on that clean commit and resolve any actionable findings.
 - [ ] Push the branch and open a draft pull request referencing the issue.
