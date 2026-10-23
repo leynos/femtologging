@@ -4,6 +4,7 @@
 //! configurable capacity, flush interval, overflow policy, and rotation thresholds.
 
 use std::any::Any;
+use std::time::Instant;
 
 use pyo3::prelude::*;
 
@@ -44,6 +45,10 @@ impl FemtoHandlerTrait for PyRotatingFileHandler {
 
     fn flush(&self) -> bool {
         self.inner.flush()
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        FemtoHandlerTrait::flush_until(&self.inner, deadline)
     }
 
     fn as_any(&self) -> &dyn Any {

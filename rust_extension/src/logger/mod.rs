@@ -15,6 +15,8 @@
 mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
+mod flush;
+mod flush;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
@@ -58,7 +60,7 @@ pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
 
-/// Maximum time a flush spends inserting and waiting for its shard barrier.
+/// Maximum time a logger flush spends across its complete barrier.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
@@ -237,29 +239,28 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// Queues a marker after accepted records on the logger's dispatch shard
-    /// and waits for its acknowledgement, then calls ``flush()`` on attached
-    /// handlers.
+    /// Captures attached handlers and queues a marker on the dispatch shard;
+    /// the worker flushes that snapshot before acknowledging the marker.
+    /// One 2 second deadline covers the snapshot, marker, acknowledgement, and
+    /// every handler flush. Built-in handlers retain shorter configured
+    /// timeouts. Releasing the GIL lets Python worker handlers make progress.
     ///
-    /// One 2 second deadline covers inserting the marker and waiting for its
-    /// acknowledgement. The wait releases the Python GIL so Python handlers
-    /// on the worker can make progress.
+    /// Legacy Rust handlers that implement only synchronous ``flush()`` fail
+    /// closed; arbitrary synchronous handler code cannot be preempted.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the shard acknowledges the marker in time and every
-    ///     handler flush succeeds. ``False`` when the marker cannot be
-    ///     enqueued or acknowledged before the deadline, the shard has exited,
-    ///     or any handler flush returns ``False``.
+    ///     ``True`` when all stages succeed before the deadline. ``False``
+    ///     when completion is unconfirmed or a handler fails.
     ///
     /// Examples
     /// --------
     /// >>> logger.flush_handlers()
     /// True
     #[pyo3(name = "flush_handlers", text_signature = "(self)")]
-    fn py_flush_handlers(&self) -> bool {
-        self.flush_handlers()
+    fn py_flush_handlers(&self, py: Python<'_>) -> bool {
+        self.flush_handlers_detached(py)
     }
 
     /// Return handler identities so tests can detect replacement or reordering.
@@ -275,19 +276,27 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// Shares one deadline across the snapshot, shard marker, and handler
+    /// flushes. Python entry points release the GIL; native callers do not.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use _femtologging_rs::FemtoLogger;
+    ///
+    /// let logger = FemtoLogger::new("example".into()).expect("logger starts");
+    /// let _ = logger.flush_handlers();
+    /// ```
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
 
-    /// Attach a handler to this logger.
+    /// Attach a handler.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] if a Python-backed
-    /// handler does not provide contextual dispatch support.
+    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] when a
+    /// Python-backed handler lacks contextual dispatch support.
     pub fn add_handler(
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,

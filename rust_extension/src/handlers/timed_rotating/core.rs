@@ -9,7 +9,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 use chrono::{DateTime, Utc};
@@ -386,9 +386,16 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
     delegate! {
         to self.inner {
             fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
-            fn flush(&self) -> bool;
         }
     }
+    fn flush(&self) -> bool {
+        self.inner.flush()
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        self.inner.flush_by(deadline)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

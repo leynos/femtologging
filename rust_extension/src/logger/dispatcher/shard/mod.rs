@@ -1,11 +1,10 @@
 //! One shard's queue, its in-flight permits, and the worker that drains it.
 //!
-//! The queue carries two kinds of job and knows nothing about handlers:
+//! The queue carries record, drain-barrier, and handler-flush jobs:
 //! [`Job::Record`] hands a queued record to the handler set the logger captured
-//! with it, and [`Job::Barrier`] asks for an acknowledgement once everything
-//! queued ahead of it has been handled. Sharing the queue is what lets a
-//! logger's flush travel the same path as its records, so an acknowledgement
-//! cannot overtake one.
+//! with it, [`Job::Barrier`] acknowledges a drain, and [`Job::Flush`] flushes a
+//! captured handler snapshot after earlier records. Sharing the queue is what
+//! keeps a flush behind the work it covers.
 //!
 //! Work is bounded three times, and the third bound is the one that keeps a
 //! shard shared rather than merely multiplexed. The queue is bounded, so a
@@ -27,22 +26,20 @@ mod worker;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::handler::FemtoHandlerTrait;
 use crate::logger::QueuedRecord;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
-use crate::sync::{Sender, bounded, recv_timeout};
+use crate::sync::{Receiver, Sender, bounded, recv_timeout};
 
 pub(crate) use budget::LoggerBudget;
 use budget::{Permit, Permits};
 use worker::run_worker;
 
-/// How long a barrier waits for the shard to acknowledge it.
+/// How long a drain-on-drop barrier waits for the shard to acknowledge it.
 ///
-/// Bounded because a barrier is waited on from `Drop` and from
-/// `flush_handlers`: a handler that never returns must delay those calls, not
-/// hang them. A timed-out barrier loses the queued records, which is what the
-/// per-logger worker did when its own flush timed out. The bound is ignored
-/// under Loom, so no model depends on it firing.
+/// Flush calls supply their own deadline through [`Self::flush_handlers_until`].
+/// The bound is ignored under Loom, so no model depends on it firing.
 const BARRIER_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 /// A job for a shard.
@@ -63,6 +60,17 @@ enum Job {
     Barrier {
         /// The channel used to acknowledge the completed barrier.
         ack: Sender<()>,
+    },
+    /// Flush a captured handler snapshot after all jobs queued before it.
+    Flush {
+        /// Handlers captured while the logger registry was read-locked.
+        handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+        /// Deadline shared by queue insertion, acknowledgement, and callbacks.
+        deadline: Instant,
+        /// Gate opened after the logger registry lock has been released.
+        start: Receiver<()>,
+        /// The result is true only when every handler confirms before deadline.
+        ack: Sender<bool>,
     },
     /// Finish the jobs already queued and stop the worker.
     ///
@@ -192,6 +200,7 @@ impl Shard {
             Err(error) => match error.into_inner() {
                 Job::Record { queued, .. } => Err(queued),
                 Job::Barrier { .. } => unreachable!("only a record job is admitted here"),
+                Job::Flush { .. } => unreachable!("only a record job is admitted here"),
                 // `admit` sends nothing but records, so neither of these can
                 // come back. The arm exists only because a `--cfg loom` build
                 // adds `Job::Stop`, and a match over the full enum must name
@@ -224,10 +233,7 @@ impl Shard {
         self.wait_for_drain_until(deadline)
     }
 
-    /// Wait for the shard barrier using a deadline created by the caller.
-    ///
-    /// `flush_handlers` supplies its own deadline so marker insertion and
-    /// acknowledgement share a budget with the handler flushes that follow.
+    /// Wait for a drain barrier using a deadline created by the caller.
     pub(crate) fn wait_for_drain_until(&self, deadline: Instant) -> bool {
         let (ack, acked) = bounded::<()>(1);
         if self
@@ -244,8 +250,53 @@ impl Shard {
         recv_timeout(&acked, remaining).is_ok()
     }
 
-    /// Return the queued job count so tests can prove a marker occupies the
-    /// bounded queue before exercising a second flush.
+    /// Enqueue handler flushing behind prior work and wait only until `deadline`.
+    ///
+    /// The read guard remains held while insertion can fail, so a rejected
+    /// marker's handler snapshot is dropped while the registry still owns its
+    /// handlers. Once accepted, the worker waits at `start` until the guard is
+    /// released; callback code therefore never runs under the registry lock.
+    /// The queue is the existing bounded shard queue, so concurrent and timed
+    /// out flushes cannot create an unbounded number of tasks or threads.
+    pub(crate) fn flush_handlers_until<G>(
+        &self,
+        deadline: Instant,
+        handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+        handler_guard: G,
+    ) -> bool {
+        let (start_tx, start_rx) = bounded(1);
+        let (ack_tx, ack_rx) = bounded(1);
+        let job = Job::Flush {
+            handlers,
+            deadline,
+            start: start_rx,
+            ack: ack_tx,
+        };
+
+        if let Err(error) = self
+            .queue
+            .send_timeout(job, deadline.saturating_duration_since(Instant::now()))
+        {
+            drop(error.into_inner());
+            drop(handler_guard);
+            return false;
+        }
+
+        drop(handler_guard);
+        if start_tx.try_send(()).is_err() {
+            return false;
+        }
+        match recv_timeout(
+            &ack_rx,
+            deadline.saturating_duration_since(Instant::now()),
+        ) {
+            Ok(confirmed) => confirmed && Instant::now() <= deadline,
+            Err(_) => false,
+        }
+    }
+
+    /// Return the queued job count so tests can prove a flush marker occupies
+    /// the bounded queue before exercising a second flush.
     #[cfg(all(test, not(loom)))]
     pub(crate) fn queued_jobs_for_test(&self) -> usize {
         self.queue.len()

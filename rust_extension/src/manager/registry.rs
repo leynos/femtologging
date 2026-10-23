@@ -355,7 +355,7 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
         .map(|logger| logger.clone_ref(py))
         .collect();
     for logger in loggers {
-        let _ = logger.borrow(py).flush_handlers();
+        let _ = logger.borrow(py).flush_handlers_detached(py);
     }
 }
 

@@ -537,6 +537,11 @@ Handlers manage worker threads; the logger simply forwards each record to every
 handler. Callers may invoke a handler's `flush()` method to ensure queued
 messages are written before dropping it.
 
+The logger's `flush_handlers()` barrier also supplies its absolute deadline to
+each Rust handler through `flush_until()`. The default implementation delegates
+to `flush()` for compatibility. Custom handlers whose flush can block should
+override `flush_until(deadline)` and cap their worker wait at that instant.
+
 The `add_handler()` method is exposed through the Python bindings and can be
 called on a shared logger instance. It verifies the provided object defines a
 callable `handle(logger, level, message)` method and raises `TypeError` if the

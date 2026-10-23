@@ -27,3 +27,6 @@ mod producer_tracing_tests;
 #[cfg(not(loom))]
 #[path = "logger_tests_flush.rs"]
 mod logger_tests_flush;
+#[cfg(not(loom))]
+#[path = "logger_tests_flush_deadline.rs"]
+mod logger_tests_flush_deadline;
