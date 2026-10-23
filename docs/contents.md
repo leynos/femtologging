@@ -46,6 +46,9 @@ libraries. Use the links below to explore each topic.
 - [adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
   - Records the ban on ambient process-environment access in the Rust
     extension and the injection shapes that replace it.
+- [adr-007-bounded-logger-cardinality-and-shared-dispatch.md](./adr-007-bounded-logger-cardinality-and-shared-dispatch.md)
+  - Records the bounds on logger names and registry size, and the shared
+    dispatch pool that replaced one worker thread per logger.
 
 ## Logging Architecture
 

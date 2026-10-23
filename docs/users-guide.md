@@ -52,12 +52,45 @@ your process exits.
 
 - Use `get_logger(name)` to obtain a singleton `FemtoLogger`. Names must not be
   empty, start or end with `.`, or contain consecutive dots.
+- Names are limited to 255 bytes and 32 dot-separated segments, and may not
+  contain ASCII control characters (the range `0x00`–`0x1F` and `0x7F`). A name
+  that breaks any of these is rejected with `ValueError`. The control-character
+  rule matters even though a logger never writes its own name: the name is
+  rendered into every formatted record, so a name carrying a newline could
+  split one record into two lines of output.
+- Name loggers after stable components — a module, subsystem, or service — not
+  after the data flowing through them. A registry that maps one logger per
+  request, tenant, user, or plug-in identifier grows for the life of the
+  process, which is a memory leak a caller controls by accident:
+
+  ```python
+  # Do not do this: one logger per request, retained forever.
+  logger = get_logger(f"requests.{request_id}")
+  logger.info("handled")
+
+  # Do this instead: a fixed name, with the identifier as a field.
+  logger = get_logger("requests")
+  logger.info("handled", extra={"request_id": request_id})
+  ```
+
+- The registry holds at most 10 000 named loggers and never evicts one, so a
+  logger keeps its handlers, level, and drop counters for the life of the
+  process. Once the cap is reached, a request for a name that does not yet
+  exist is refused with `RuntimeError`. Names already registered keep working,
+  and the `"root"` logger is always available and does not count against the
+  cap.
 - Logger parents are derived from dotted names. `get_logger("api.v1")` creates
   a parent `api` logger that ultimately propagates to `root`.
 - Call `logger.set_propagate(False)` to stop parent propagation. The default is
   to bubble records to ancestors, just like the stdlib.
 - `reset_manager()` clears all registered loggers. It is intended for tests and
   is not thread-safe.
+
+Loggers share a small fixed pool of dispatch threads rather than each owning
+one, so the number of threads the logging system uses depends on the machine
+rather than on how many loggers exist. A logger whose queue and in-flight work
+are both full drops the record instead of blocking the caller; the drop is
+counted, and `logger.get_dropped()` reports it.
 
 ### Emitting records
 
