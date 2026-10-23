@@ -75,6 +75,7 @@ pub struct HTTPHandlerBuilder {
     format: SerializationFormat,
     /// Optional allow-list of record fields sent in each request.
     record_fields: Option<Vec<String>>,
+    /// Filter names that configuration resolves before the handler is built.
     filters: Vec<String>,
 }
 
@@ -280,6 +281,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
+    /// Add non-secret authentication settings to the Python representation.
     #[cfg(feature = "python")]
     fn extend_auth_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         match &self.auth {
@@ -295,6 +297,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
+    /// Serialize configured headers only when the builder has any.
     #[cfg(feature = "python")]
     fn extend_headers_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if !self.headers.is_empty() {
@@ -307,6 +310,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
+    /// Add queue, timeout, encoding, and field-selection options.
     #[cfg(feature = "python")]
     fn extend_transport_options_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "capacity", self.capacity);
@@ -325,6 +329,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
+    /// Add configured retry timings while omitting unset values.
     #[cfg(feature = "python")]
     fn extend_backoff_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "backoff_base_ms", self.backoff.base_ms());
@@ -334,6 +339,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
+    /// Include filter references only when the builder has configured filters.
     #[cfg(feature = "python")]
     fn extend_filter_ids_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         if !self.filters.is_empty() {
@@ -342,6 +348,7 @@ impl HTTPHandlerBuilder {
         Ok(())
     }
 
+    /// Serialize the complete HTTP builder configuration into a Python dictionary.
     #[cfg(feature = "python")]
     fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         self.extend_endpoint_dict(d)?;
@@ -366,46 +373,5 @@ impl HandlerBuilderTrait for HTTPHandlerBuilder {
 mod python_bindings;
 
 #[cfg(test)]
-mod tests {
-    //! Tests for the HTTP handler builder.
-
-    use super::*;
-
-    #[test]
-    fn rejects_get_with_json_format() {
-        let result = HTTPHandlerBuilder::new()
-            .with_url("http://example.com/log")
-            .with_method(HTTPMethod::GET)
-            .with_json_format()
-            .build_inner();
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, HandlerBuildError::InvalidConfig(_)));
-        if let HandlerBuildError::InvalidConfig(msg) = err {
-            assert!(msg.contains("JSON"));
-            assert!(msg.contains("GET"));
-        }
-    }
-
-    #[test]
-    fn allows_post_with_json_format() {
-        let result = HTTPHandlerBuilder::new()
-            .with_url("http://example.com/log")
-            .with_method(HTTPMethod::POST)
-            .with_json_format()
-            .build_inner();
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn allows_get_with_url_encoded_format() {
-        let result = HTTPHandlerBuilder::new()
-            .with_url("http://example.com/log")
-            .with_method(HTTPMethod::GET)
-            .build_inner();
-
-        assert!(result.is_ok());
-    }
-}
+#[path = "http_builder/tests.rs"]
+mod tests;

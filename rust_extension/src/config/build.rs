@@ -39,10 +39,15 @@ struct ConfiguredLoggerPlan {
     propagate: Option<bool>,
 }
 
+/// Runtime-ready registries prepared before logger state is committed.
 struct BuiltConfigComponents {
+    /// Handler instances keyed by their configuration identifiers.
     built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+    /// Original filter references retained for later runtime replacement.
     handler_filter_ids: BTreeMap<String, Vec<String>>,
+    /// Filter instances keyed by their configuration identifiers.
     built_filters: BTreeMap<String, Arc<dyn FemtoFilter>>,
+    /// Resolved filter chains keyed by handler identifier, in configured order.
     resolved_handler_filters: BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
 }
 impl ConfigBuilder {
@@ -287,6 +292,7 @@ impl ConfigBuilder {
         Ok(())
     }
 
+    /// Build formatter, filter, and handler registries before touching live loggers.
     fn build_runtime_components(&self) -> Result<BuiltConfigComponents, ConfigError> {
         let built_formatters = self
             .formatter_builders()

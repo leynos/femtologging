@@ -63,6 +63,7 @@ pub struct FemtoLogger {
     propagate: AtomicBool,
     /// Lock-protected live handlers; each queued record owns the snapshot it captured.
     handlers: Arc<RwLock<Vec<HandlerAttachment>>>,
+    /// Filters applied only to calls made through this logger before dispatch.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     /// Number of records rejected because the worker queue could not accept them.
     dropped_records: AtomicU64,
@@ -249,6 +250,7 @@ impl FemtoLogger {
         self.add_handler_attachment(HandlerAttachment::with_filters(handler, filters))
     }
 
+    /// Validate contextual dispatch support before publishing a handler attachment.
     fn add_handler_attachment(&self, attachment: HandlerAttachment) -> Result<(), HandlerError> {
         #[cfg(feature = "python")]
         if attachment.handler.is_python_backed() && !attachment.handler.provides_context_dispatch()
@@ -342,6 +344,9 @@ mod logger_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests_helpers.rs"]
 mod logger_tests_helpers;
+#[cfg(all(test, not(loom)))]
+#[path = "producer_rejection_tests.rs"]
+mod producer_rejection_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "producer_tests.rs"]
 mod producer_tests;

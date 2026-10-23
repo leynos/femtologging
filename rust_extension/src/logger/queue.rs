@@ -15,10 +15,12 @@ use crate::{
 
 /// Handler used internally to acknowledge logger flush operations.
 pub(crate) struct FlushAckHandler {
+    /// Signals that the worker has reached the flush barrier.
     ack: Sender<()>,
 }
 
 impl FlushAckHandler {
+    /// Create an internal handler that acknowledges its next queued record.
     pub(crate) fn new(ack: Sender<()>) -> Self {
         Self { ack }
     }
@@ -38,11 +40,14 @@ impl FemtoHandlerTrait for FlushAckHandler {
 /// Deliver one handler's producer-filter snapshot through the existing queue
 /// payload without changing the public [`QueuedRecord`] shape.
 pub(crate) struct HandlerRecordSnapshot {
+    /// Original handler that receives the record after its producer filters run.
     handler: Arc<dyn FemtoHandlerTrait>,
+    /// One-shot copy of the record state accepted by this handler's filters.
     record: Mutex<Option<FemtoLogRecord>>,
 }
 
 impl HandlerRecordSnapshot {
+    /// Wrap a handler so its worker receives the producer-time record snapshot.
     pub(crate) fn snapshot_handler(
         handler: Arc<dyn FemtoHandlerTrait>,
         record: FemtoLogRecord,
@@ -53,6 +58,7 @@ impl HandlerRecordSnapshot {
         })
     }
 
+    /// Consume the saved snapshot once, falling back to the queue's shared record.
     fn take_record(&self, fallback: FemtoLogRecord) -> FemtoLogRecord {
         self.record.lock().take().unwrap_or(fallback)
     }
@@ -102,11 +108,14 @@ pub struct QueuedRecord {
 /// A handler paired with filters evaluated before work reaches its worker.
 #[derive(Clone)]
 pub(crate) struct HandlerAttachment {
+    /// Destination whose worker receives records approved by this attachment.
     pub(crate) handler: Arc<dyn FemtoHandlerTrait>,
+    /// Ordered producer-side filters that can enrich or reject those records.
     pub(crate) filters: Vec<Arc<dyn FemtoFilter>>,
 }
 
 impl HandlerAttachment {
+    /// Pair a handler with an empty filter chain for unfiltered attachments.
     pub(crate) fn new(handler: Arc<dyn FemtoHandlerTrait>) -> Self {
         Self {
             handler,
@@ -114,6 +123,7 @@ impl HandlerAttachment {
         }
     }
 
+    /// Pair a handler with the ordered filters resolved from its configuration.
     #[cfg(feature = "python")]
     pub(crate) fn with_filters(
         handler: Arc<dyn FemtoHandlerTrait>,

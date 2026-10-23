@@ -179,6 +179,7 @@ pub struct SocketHandlerBuilder {
     tls: Option<TlsConfig>,
     /// Per-worker retry timing overrides applied after general validation.
     backoff: BackoffOverrides,
+    /// Filter names that configuration resolves before the handler is built.
     filters: Vec<String>,
 }
 impl SocketHandlerBuilder {

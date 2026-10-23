@@ -203,7 +203,9 @@ struct NativeTestHandler {
     fail: bool,
 }
 
+/// Test filter that supplies a predetermined accept or reject outcome.
 struct FixedDecisionFilter {
+    /// Decision returned unchanged for each record presented to the fixture.
     accepted: bool,
 }
 

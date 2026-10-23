@@ -146,6 +146,7 @@ impl RotatingFileHandlerBuilder {
         apply_builder_update(slf, |builder| builder.with_formatter_from_py(&formatter))
     }
 
+    /// Store filter IDs for resolution by the configuration builder.
     #[pyo3(name = "with_filters")]
     fn py_with_filters<'py>(
         slf: PyRefMut<'py, Self>,

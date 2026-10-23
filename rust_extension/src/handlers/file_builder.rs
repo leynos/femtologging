@@ -163,6 +163,7 @@ builder_methods! {
                 Ok(slf)
             }
 
+            /// Store filter IDs for resolution by the configuration builder.
             #[pyo3(name = "with_filters")]
             fn py_with_filters<'py>(
                 mut slf: PyRefMut<'py, Self>,

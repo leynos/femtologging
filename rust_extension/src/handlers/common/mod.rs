@@ -91,6 +91,7 @@ pub struct CommonBuilder {
     pub(crate) flush_after_ms: Option<NonZeroU64>,
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) formatter: Option<FormatterConfig>,
+    /// Filter names resolved by configuration before the handler reaches runtime dispatch.
     pub(crate) filters: Vec<String>,
 }
 
@@ -186,6 +187,7 @@ impl CommonBuilder {
         }
     }
 
+    /// Reject invalid capacity and filter references that bypass configuration resolution.
     pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
         self.is_capacity_valid()?;
         ensure_filter_ids_resolved(&self.filters)

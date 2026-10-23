@@ -10,6 +10,7 @@ use crate::handlers::builder_macros::dict_set;
 use super::super::{SocketHandlerBuilder, TransportConfig};
 
 impl SocketHandlerBuilder {
+    /// Serialize configured transport, retry, and filter options for Python inspection.
     pub(super) fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "capacity", self.capacity);
         dict_set!(d, "connect_timeout_ms", self.connect_timeout_ms);

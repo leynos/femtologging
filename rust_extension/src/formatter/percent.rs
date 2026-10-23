@@ -6,6 +6,7 @@ use crate::log_record::FemtoLogRecord;
 
 use super::{FemtoFormatter, format_exception_payload, format_stack_payload};
 
+/// Fallback timestamp representation used when no date format is supplied or valid.
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Parse `"(message)s"` into its field, conversion, and remaining suffix.
@@ -24,7 +25,9 @@ fn parse_directive(input: &str) -> Option<(&str, char, &str)> {
 /// A percent-style formatter compatible with the common logging field syntax.
 #[derive(Clone, Debug)]
 pub struct PercentFormatter {
+    /// Percent directives and literal text used to render each record.
     format: String,
+    /// Optional chrono pattern for the standard `asctime` field.
     datefmt: Option<String>,
 }
 
@@ -37,6 +40,7 @@ impl PercentFormatter {
         }
     }
 
+    /// Render a resolved field using the requested string or numeric conversion.
     fn format_directive(&self, record: &FemtoLogRecord, name: &str, kind: char) -> String {
         let value = self.field_value(record, name);
         match kind {
@@ -51,6 +55,7 @@ impl PercentFormatter {
         }
     }
 
+    /// Resolve a standard logging field or a structured metadata value.
     fn field_value(&self, record: &FemtoLogRecord, name: &str) -> Option<String> {
         match name {
             "name" => Some(record.logger().to_owned()),
@@ -62,6 +67,7 @@ impl PercentFormatter {
         }
     }
 
+    /// Format the record timestamp, falling back if the configured pattern is invalid.
     fn asctime(&self, record: &FemtoLogRecord) -> String {
         let timestamp: DateTime<Utc> = record.metadata().timestamp.into();
         let datefmt = self.datefmt.as_deref().unwrap_or(DEFAULT_DATE_FORMAT);
