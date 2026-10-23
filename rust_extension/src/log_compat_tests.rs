@@ -233,6 +233,15 @@ fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) 
 /// bridge already ignores its own targets; this asserts the `log` bridge does
 /// too, and asserts it with a target that would otherwise resolve.
 ///
+/// Two families must be covered, and the second is the one that bites. The
+/// `femtologging` names are what this crate uses when it names a logger for
+/// itself. But the warnings this crate actually emits — the shard worker's
+/// "dropped N records", the handler flush failures — carry the `log` crate's
+/// default target, which is the module path under the compiled crate name. A
+/// guard covering only the first family would let every one of those records
+/// re-enter the adapter, and the lookup-failure warning would then add a record
+/// per refusal to the very stream it is diagnosing.
+///
 /// The `log_max_level` fixture is required: `log` defaults to `Off`, and the
 /// adapter returns before consulting the ignore list below it, so without the
 /// fixture the assertion would hold for the wrong reason.
@@ -253,6 +262,15 @@ fn the_bridge_ignores_records_about_itself(_log_max_level: ()) {
             "femtologging",
             "femtologging.log_compat",
             "femtologging::inner",
+            // The crate's own `log` target family. Every `warn!` in this crate
+            // records its module path, so this is the family that carries the
+            // bridge's own diagnostics — including the one this test would
+            // otherwise provoke.
+            env!("CARGO_CRATE_NAME"),
+            concat!(
+                env!("CARGO_CRATE_NAME"),
+                "::logger::dispatcher::shard::worker"
+            ),
         ] {
             let record = log::Record::builder()
                 .args(format_args!("internal note"))
@@ -278,4 +296,53 @@ fn the_bridge_ignores_records_about_itself(_log_max_level: ()) {
     });
 
     manager::reset_manager();
+}
+
+/// Refusing a target quotes it back bounded and escaped.
+///
+/// A refused target is caller-controlled and has not passed name validation —
+/// that is why it was refused — so the diagnostic must bound what it writes.
+/// Two megabyte-long targets, one of them carrying a newline and a shard worker
+/// module path, would otherwise put several megabytes on stderr in a single
+/// line, and the newline would forge a record boundary in the output the name
+/// rules exist to protect.
+///
+/// The message is asserted directly rather than by capturing stderr: the
+/// warner is a process-wide static shared with every other test in the binary,
+/// so whether a given call warns depends on what ran before it. Splitting the
+/// message out of the warner makes the property under test — the bound and the
+/// escaping — independent of that scheduling.
+#[rstest]
+fn refused_target_diagnostics_are_bounded_and_escaped() {
+    let escaped = format!("stress.forged\nfake [ERROR] {}", "b".repeat(1_000_000));
+    let overlong = format!("stress.{}", "c".repeat(1_000_000));
+
+    let message = lookup_failure_message(
+        "invalid logger target",
+        &escaped,
+        &escaped,
+        "logger name cannot contain the control character '\\n'",
+        1,
+    );
+
+    assert!(
+        !message.contains('\n'),
+        "the diagnostic must not carry a raw newline from the target: {message:?}",
+    );
+    assert!(
+        message.contains('\u{2026}'),
+        "a truncated target must be marked as truncated, got {message}",
+    );
+    assert!(
+        message.len() < 1_000,
+        "a one-megabyte target must not put its size on stderr, got {} bytes",
+        message.len(),
+    );
+    for target in [&escaped, &overlong] {
+        let quoted = manager::describe_name(target);
+        assert!(
+            !quoted.contains('\n') && quoted.len() <= 64 + "\u{2026}".len() + 2,
+            "a refused target must be quoted bounded and escaped, got {quoted:?}",
+        );
+    }
 }

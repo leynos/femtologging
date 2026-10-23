@@ -28,6 +28,11 @@ pub use validation::{MAX_LOGGER_NAME_BYTES, MAX_LOGGER_NAME_SEGMENTS, validate_l
 #[cfg(feature = "log-compat")]
 pub(crate) use registry::REGISTRY_FULL_MARKER;
 
+// Only the `log` bridge quotes a refused target outside this module; without
+// that feature the re-export would be an unused item in a `-D warnings` lane.
+#[cfg(feature = "log-compat")]
+pub(crate) use validation::describe_name;
+
 #[cfg(feature = "python")]
 pub(crate) use registry::{
     LoggerAttachmentState, RuntimeStateSnapshot, commit_staged_loggers, disable_existing_loggers,

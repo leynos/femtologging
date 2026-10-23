@@ -61,6 +61,13 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
     }
 }
 
+/// The `log` target prefix this crate's own records carry.
+///
+/// `log::warn!` with no explicit target records the module path, whose first
+/// segment is the crate name. Naming the crate through `env!` rather than
+/// repeating the manifest's `[lib] name` keeps the two from drifting apart.
+const OWN_TARGET_PREFIX: &str = concat!(env!("CARGO_CRATE_NAME"), ".");
+
 /// Return whether a target belongs to femtologging itself.
 ///
 /// The adapter is the global Rust logger, so a record it logs about its own
@@ -69,9 +76,21 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
 /// which means the diagnostic describes a high-cardinality stream — and an
 /// unguarded warning would add one more record per refusal to it. The tracing
 /// bridge ignores its own targets for the same reason.
+///
+/// Two families are covered. The `femtologging` names are the ones this crate
+/// uses when it names a logger for itself. The crate's own `log` targets are
+/// the wider family and the more important one here: every `warn!` in this
+/// crate records a module path such as
+/// `_femtologging_rs::logger::dispatcher::shard::worker`, and those warnings
+/// fire exactly when the process is short of a resource. Forwarding one back
+/// through the adapter would add a record per warning to the stream being
+/// diagnosed — which is a loop the bridge itself has no way to stop.
 fn should_ignore_target(target: &str) -> bool {
     let normalized = normalize_target(target);
-    normalized == "femtologging" || normalized.starts_with("femtologging.")
+    normalized == "femtologging"
+        || normalized.starts_with("femtologging.")
+        || normalized == env!("CARGO_CRATE_NAME")
+        || normalized.starts_with(OWN_TARGET_PREFIX)
 }
 
 fn is_unknown_logger_error(py: Python<'_>, err: &PyErr) -> bool {
@@ -101,11 +120,40 @@ fn is_registry_full_error(py: Python<'_>, err: &PyErr) -> bool {
 static LOOKUP_WARNER: LazyLock<RateLimitedWarner> =
     LazyLock::new(|| RateLimitedWarner::new(DEFAULT_WARN_INTERVAL));
 
+/// Build the stderr diagnostic for a target the registry refused.
+///
+/// Split out from the warner so the size bound is directly testable. Both names
+/// are caller-controlled and neither has necessarily passed name validation —
+/// this runs precisely when one did not — so both are quoted through
+/// [`manager::describe_name`], which escapes control characters and stops at a
+/// fixed prefix. Quoting them verbatim would let one warning write an unbounded
+/// line, and an unescaped one could forge a record boundary in the same
+/// line-oriented output the name rules exist to protect.
+fn lookup_failure_message(
+    reason: &str,
+    target: &str,
+    normalized: &str,
+    detail: &str,
+    count: u64,
+) -> String {
+    format!(
+        "femtologging: {reason} {} (normalized {}); falling back to root: {detail}; \
+         {count} further record(s) affected",
+        manager::describe_name(target),
+        manager::describe_name(normalized),
+    )
+}
+
 fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &str) {
     LOOKUP_WARNER.record_drop();
-    let reason = classify_logger_error(py, err);
-    let detail = err.to_string();
+    // Both the classification and the message are built inside the closure
+    // because the warner discards most calls to this function, and a refused
+    // target stream makes those discarded calls the common case. Building the
+    // diagnostic first would allocate a `String` per refusal — on the very
+    // path that exists because the process is already under pressure.
     LOOKUP_WARNER.warn_if_due(|count| {
+        let reason = classify_logger_error(py, err);
+        let detail = err.to_string();
         // Stderr, not `log::warn!`. This diagnostic's whole subject is a target
         // the bridge could not resolve, and the adapter is the global Rust
         // logger: routing the warning through it would send a record whose
@@ -115,8 +163,8 @@ fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &s
         // cap with no visible diagnostic at all on the bridge path. Writing to
         // stderr bypasses the logger being diagnosed.
         eprintln!(
-            "femtologging: {reason} {target:?} (normalized {normalized:?}); \
-             falling back to root: {detail}; {count} further record(s) affected"
+            "{}",
+            lookup_failure_message(reason, target, normalized, &detail, count)
         );
     });
 }
