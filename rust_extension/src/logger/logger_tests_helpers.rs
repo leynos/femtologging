@@ -33,7 +33,9 @@ pub(super) fn collected_messages(handler: &CollectingHandler) -> Vec<String> {
 /// A collecting handler that also signals on a channel as it handles.
 #[derive(Clone)]
 pub(super) struct SignallingCollectingHandler {
+    /// Collector that retains each record delivered to this handler.
     inner: Arc<CollectingHandler>,
+    /// Channel used to notify the test after a record is handled.
     record_tx: Sender<()>,
 }
 

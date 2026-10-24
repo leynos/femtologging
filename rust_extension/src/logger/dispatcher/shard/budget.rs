@@ -42,6 +42,7 @@ pub(super) struct Permits {
 /// through the same `Drop`. Both halves are acquired together and released
 /// together, so the two counts cannot drift apart.
 pub(super) struct Permit {
+    /// The shard-wide token pool this permit returns to when dropped.
     permits: Arc<Permits>,
     /// The logger whose record this permit authorizes.
     logger: Arc<LoggerBudget>,

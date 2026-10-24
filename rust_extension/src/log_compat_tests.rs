@@ -48,7 +48,10 @@ fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger
     Python::attach(|py| {
         let logger = manager::get_logger(py, &logger_name).expect("logger created");
         let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-        logger.borrow(py).add_handler(handler.clone());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone())
+            .expect("native collecting handler should register");
 
         let record = log::Record::builder()
             .args(format_args!("hello"))
@@ -92,7 +95,10 @@ fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name
     Python::attach(|py| {
         let logger = manager::get_logger(py, &logger_name).expect("logger created");
         let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-        logger.borrow(py).add_handler(handler.clone());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone())
+            .expect("native collecting handler should register");
 
         let record = log::Record::builder()
             .args(format_args!("normalized"))
@@ -122,7 +128,10 @@ fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String)
     Python::attach(|py| {
         let logger = manager::get_logger(py, &logger_name).expect("logger created");
         let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
-        logger.borrow(py).add_handler(handler.clone());
+        logger
+            .borrow(py)
+            .add_handler(handler.clone())
+            .expect("native collecting handler should register");
         logger.borrow(py).set_level(FemtoLevel::Warn);
 
         let info_record = log::Record::builder()
@@ -189,7 +198,9 @@ fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) 
         let root = manager::get_logger(py, "root").expect("root is always resolvable");
         let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
         root.borrow(py).clear_handlers();
-        root.borrow(py).add_handler(handler.clone());
+        root.borrow(py)
+            .add_handler(handler.clone())
+            .expect("native collecting handler should register");
 
         for target in &refused {
             // `format_args!` builds a temporary `Arguments` borrow; binding it
@@ -256,7 +267,10 @@ fn the_bridge_ignores_records_about_itself(_log_max_level: ()) {
             .expect("the internal logger is registrable");
         let handler = Arc::new(CollectingHandler::default()) as Arc<dyn FemtoHandlerTrait>;
         internal.borrow(py).clear_handlers();
-        internal.borrow(py).add_handler(handler.clone());
+        internal
+            .borrow(py)
+            .add_handler(handler.clone())
+            .expect("native collecting handler should register");
 
         for target in [
             "femtologging",
@@ -317,13 +331,13 @@ fn refused_target_diagnostics_are_bounded_and_escaped() {
     let escaped = format!("stress.forged\nfake [ERROR] {}", "b".repeat(1_000_000));
     let overlong = format!("stress.{}", "c".repeat(1_000_000));
 
-    let message = lookup_failure_message(
-        "invalid logger target",
-        &escaped,
-        &escaped,
-        "logger name cannot contain the control character '\\n'",
-        1,
-    );
+    let message = lookup_failure_message(LookupFailureDiagnostic {
+        reason: "invalid logger target",
+        target: &escaped,
+        normalized: &escaped,
+        detail: "logger name cannot contain the control character '\\n'",
+        count: 1,
+    });
 
     assert!(
         !message.contains('\n'),
@@ -345,4 +359,35 @@ fn refused_target_diagnostics_are_bounded_and_escaped() {
             "a refused target must be quoted bounded and escaped, got {quoted:?}",
         );
     }
+}
+
+/// The family check matches a root exactly or at a separator, nothing looser.
+///
+/// The guard decides whether a record is dropped before it is ever resolved,
+/// so a check that matched too much would silently swallow real log records.
+/// `femtologgingx` and `femtologging-extra` are different targets that merely
+/// share a prefix; only a separator or the end of the target may follow the
+/// family root. Both spellings are pinned because `log` targets arrive in both.
+#[rstest]
+#[case("femtologging", true)]
+#[case("femtologging.log_compat", true)]
+#[case("femtologging::inner", true)]
+#[case("femtologgingx", false)]
+#[case("femtologging-extra", false)]
+#[case("my.femtologging.job", false)]
+#[case("application", false)]
+fn the_family_check_requires_a_separator_after_the_root(
+    #[case] target: &str,
+    #[case] should_ignore: bool,
+) {
+    assert_eq!(
+        should_ignore_target(target),
+        should_ignore,
+        "target {target:?} must be {} by the bridge's own-target guard",
+        if should_ignore {
+            "ignored"
+        } else {
+            "forwarded"
+        },
+    );
 }

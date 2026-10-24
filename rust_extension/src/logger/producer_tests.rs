@@ -12,9 +12,13 @@ use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
 use crate::log_record::RecordMetadata;
 
+/// Filter with test-selected decisions, enrichment, and call counting.
 struct TestFilter {
+    /// Decision returned for each record.
     accepted: bool,
+    /// Fields merged into the record when the filter accepts it.
     enrichment: BTreeMap<String, String>,
+    /// Shared count of calls, used to verify filter short-circuiting.
     calls: Arc<AtomicUsize>,
 }
 

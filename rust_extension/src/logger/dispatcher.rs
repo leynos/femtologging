@@ -94,7 +94,9 @@ pub(crate) const LOOM_RECORDS_PER_LOGGER: usize = 8;
 /// `-D warnings`, does not fail on dead code it structurally cannot reach.
 #[cfg(not(loom))]
 pub(crate) struct Dispatcher {
+    /// Shards that share the process-wide dispatch workload.
     shards: Vec<Shard>,
+    /// Index used to assign new loggers to shards in round-robin order.
     next_shard: AtomicUsize,
 }
 
@@ -118,6 +120,18 @@ pub struct DispatcherError {
     started: usize,
     /// The operating system's refusal to start the next thread.
     source: std::io::Error,
+}
+
+impl DispatcherError {
+    /// Build an error for a pool that started `started` shards before failing.
+    ///
+    /// Pool start and the Loom logger's own shard start both report the same
+    /// refusal this way, so the two paths present one error type to callers.
+    /// `started` counts the shards already running: zero for the Loom arm,
+    /// which has no pool to have started any.
+    pub(super) fn new(started: usize, source: std::io::Error) -> Self {
+        Self { started, source }
+    }
 }
 
 impl std::fmt::Display for DispatcherError {
@@ -175,12 +189,8 @@ impl Dispatcher {
         let count = shard_count();
         let mut shards = Vec::with_capacity(count);
         for index in 0..count {
-            let shard = Shard::start(index, RECORDS_PER_LOGGER * count).map_err(|source| {
-                DispatcherError {
-                    started: index,
-                    source,
-                }
-            })?;
+            let shard = Shard::start(index, RECORDS_PER_LOGGER * count)
+                .map_err(|source| DispatcherError::new(index, source))?;
             shards.push(shard);
         }
         Ok(Self {
@@ -204,6 +214,16 @@ pub(crate) fn shards_for(available_parallelism: Option<usize>) -> usize {
 /// Number of shards this process should run.
 pub(crate) fn shard_count() -> usize {
     shards_for(std::thread::available_parallelism().ok().map(|n| n.get()))
+}
+
+/// Return the number of workers actually started by the process-wide pool.
+#[cfg(all(
+    test,
+    not(loom),
+    any(feature = "log-compat", feature = "tracing-compat")
+))]
+pub(crate) fn worker_count_for_test() -> usize {
+    POOL.get().map_or(0, |dispatcher| dispatcher.shards.len())
 }
 
 /// Start the process-wide pool from a test-controlled shard count.

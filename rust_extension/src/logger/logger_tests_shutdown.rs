@@ -121,8 +121,11 @@ fn one_shard_refuses_records_beyond_its_bound() {
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
 
+    /// Handler held on a channel while the test checks the shard's bound.
     struct BlockingHandler {
+        /// Notifies the test that the worker entered `handle`.
         started: std::sync::mpsc::Sender<()>,
+        /// Keeps `handle` blocked until the test releases the worker.
         release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
     }
 
@@ -176,7 +179,9 @@ fn one_shard_refuses_records_beyond_its_bound() {
 /// `handle`, which is what makes the difference between a shard that is merely
 /// shared and one where one logger can consume every permit.
 struct HeldHandler {
+    /// Notifies the test that this logger's record began handling.
     started: std::sync::mpsc::Sender<()>,
+    /// Keeps the worker occupied until the test releases it.
     release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
@@ -226,6 +231,8 @@ fn one_stuck_logger_does_not_take_another_logger_s_slot() {
         Box::new(QueuedRecord {
             record: FemtoLogRecord::new(name, FemtoLevel::Info, message),
             handlers: vec![Arc::clone(handler)],
+            #[cfg(feature = "python")]
+            context: None,
         })
     };
 
@@ -314,7 +321,9 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
     }) as Arc<dyn FemtoHandlerTrait>;
 
     let stuck = FemtoLogger::assembled_for_test("stuck".to_string(), shard);
-    stuck.add_handler(stuck_handler);
+    stuck
+        .add_handler(stuck_handler)
+        .expect("native stuck test handler should register");
     stuck.log(FemtoLevel::Info, "occupies the worker");
     started_rx
         .recv_timeout(std::time::Duration::from_secs(2))
@@ -337,7 +346,9 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
     // dropped against a shard that had room to take it.
     let collector = Arc::new(CollectingHandler::new());
     let fresh = FemtoLogger::assembled_for_test("fresh".to_string(), shard);
-    fresh.add_handler(Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>);
+    fresh
+        .add_handler(Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native collecting handler should register");
     fresh.log(FemtoLevel::Info, "still fits");
     assert_eq!(
         fresh.get_dropped(),

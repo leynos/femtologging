@@ -17,7 +17,9 @@ use super::{FemtoLogger, QueuedRecord};
 
 /// Classify handlers without retaining their identities in a tracing event.
 #[cfg(feature = "tracing-compat")]
-fn handler_kind(handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>]) -> &'static str {
+fn handler_kind(
+    handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
+) -> &'static str {
     let has_python = handlers.iter().any(|handler| handler.is_python_backed());
     let has_native = handlers.iter().any(|handler| !handler.is_python_backed());
     match (has_python, has_native) {
@@ -164,10 +166,12 @@ impl FemtoLogger {
         true
     }
 
+    /// Return whether this logger forwards records to its configured parent.
     fn should_propagate_to_parent(&self) -> bool {
         self.propagate.load(std::sync::atomic::Ordering::SeqCst) && self.parent.is_some()
     }
 
+    /// Forward a record to the parent logger when it remains registered.
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {
         let Some(parent_name) = &self.parent else {
             return;
@@ -179,6 +183,7 @@ impl FemtoLogger {
         });
     }
 
+    /// Enqueue a record with the logger's current handler snapshot.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
         // Captured here, on the logging thread, so the record is dispatched to
         // the handlers that were installed when it was logged.
@@ -284,6 +289,7 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
+    /// Drain this logger's queued records, then flush its configured handlers.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         self.wait_for_dispatch_to_drain() && self.flush_configured_handlers()
     }
@@ -328,6 +334,7 @@ impl FemtoLogger {
         self.shard.wait_for_drain()
     }
 
+    /// Flush every configured handler and report whether all succeeded.
     fn flush_configured_handlers(&self) -> bool {
         self.handlers.read().iter().all(|handler| handler.flush())
     }

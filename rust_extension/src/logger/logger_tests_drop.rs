@@ -13,7 +13,9 @@ fn drop_delivers_records_queued_before_it() {
     let handler = Arc::new(CollectingHandler::new());
     let logger =
         FemtoLogger::new("drop-drain".to_string()).expect("test logger should be constructible");
-    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native collecting handler should register");
 
     logger.log(FemtoLevel::Info, "before drop");
     drop(logger);
@@ -30,7 +32,9 @@ fn drop_delivers_every_record_queued_before_it_in_order() {
     let handler = Arc::new(CollectingHandler::new());
     let logger =
         FemtoLogger::new("drop-order".to_string()).expect("test logger should be constructible");
-    logger.add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native collecting handler should register");
 
     for index in 0..8 {
         logger.log(FemtoLevel::Info, &format!("msg-{index}"));
@@ -54,7 +58,9 @@ fn drop_delivers_every_record_queued_before_it_in_order() {
 fn drop_does_not_hold_the_handler_list_while_draining() {
     use parking_lot::Mutex as PoisonlessMutex;
 
+    /// Handler that acquires a shared lock while the logger is dropped.
     struct LockTakingHandler {
+        /// Lock observed after drop to prove dispatch reached this handler.
         lock: Arc<PoisonlessMutex<usize>>,
     }
 
@@ -72,9 +78,11 @@ fn drop_does_not_hold_the_handler_list_while_draining() {
     let lock = Arc::new(PoisonlessMutex::new(0));
     let logger =
         FemtoLogger::new("drop-lock".to_string()).expect("test logger should be constructible");
-    logger.add_handler(Arc::new(LockTakingHandler {
-        lock: Arc::clone(&lock),
-    }) as Arc<dyn FemtoHandlerTrait>);
+    logger
+        .add_handler(Arc::new(LockTakingHandler {
+            lock: Arc::clone(&lock),
+        }) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native lock-taking test handler should register");
 
     logger.log(FemtoLevel::Info, "guarded");
     drop(logger);

@@ -10,10 +10,10 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
-mod convenience_methods;
-mod dispatcher;
 #[cfg(feature = "python")]
 mod context_snapshot;
+mod convenience_methods;
+mod dispatcher;
 mod producer;
 mod py_handler;
 mod python_helpers;
@@ -39,6 +39,12 @@ use crate::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use dispatcher::DispatcherError;
+#[cfg(all(
+    test,
+    not(loom),
+    any(feature = "log-compat", feature = "tracing-compat")
+))]
+pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
@@ -77,19 +83,29 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
+    /// Formatter shared by records emitted through this logger.
     formatter: SharedFormatter,
+    /// Current severity threshold, stored atomically for concurrent logging.
     level: AtomicU8,
+    /// Whether accepted records are also sent to the parent logger.
     propagate: AtomicBool,
+    /// Handlers that receive locally dispatched records.
     handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
+    /// Filters that decide whether a record is accepted.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    /// Number of records refused because the dispatch budget was exhausted.
     dropped_records: AtomicU64,
     /// Number of records dropped because Rust context payload validation failed.
     context_dropped_records: AtomicU64,
+    /// Rate limiter for warnings about refused dispatch records.
     drop_warner: RateLimitedWarner,
+    /// Captures Python context for queued handlers when they need it.
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    /// Number of attempts that failed while capturing Python context.
     #[cfg(feature = "python")]
     context_capture_failures: AtomicU64,
+    /// Rate limiter for warnings about failed context captures.
     #[cfg(feature = "python")]
     context_capture_warner: RateLimitedWarner,
     /// The shard this logger's records are dispatched on.
@@ -256,6 +272,7 @@ impl FemtoLogger {
         self.flush_handlers_blocking()
     }
 
+    /// Return handler identities so tests can detect replacement or reordering.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -365,9 +382,9 @@ mod logger_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests_helpers.rs"]
 mod logger_tests_helpers;
-#[cfg(all(test, not(loom)))]
-#[path = "producer_tests.rs"]
-mod producer_tests;
 #[cfg(all(test, not(loom), feature = "python"))]
 #[path = "producer_context_tests.rs"]
 mod producer_context_tests;
+#[cfg(all(test, not(loom)))]
+#[path = "producer_tests.rs"]
+mod producer_tests;

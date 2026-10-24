@@ -266,9 +266,9 @@ Re-gated at `849812d` after those fixes:
       -- -D warnings` exit 0, and `scripts/run_loom_models.py` reported
       `expected: 6; passed: 6`, `6 passed; 0 failed`.
 
-**Discovery: the Whitaker module line limit has no headroom.** My own doc
-comment for `flush_all_handlers` grew `registry.rs` from 390 lines at HEAD to
-406, which failed `make lint-rust` with
+**Discovery: the Whitaker module line limit has no headroom.** The doc comment
+for `flush_all_handlers` grew `registry.rs` from 390 lines at HEAD to 406,
+which failed `make lint-rust` with
 `error: Module registry spans 406 lines, exceeding the allowed 400` at
 `src/manager.rs:20:5`. Two compressions overshot (399, then 401 in the wrong
 direction), and the third landed exactly on 400 — passing, but leaving nothing
@@ -829,6 +829,19 @@ Milestone 1 detail:
      versus `1,024`; all normalized to the comma form in the guide and the ADR.
   6. **Spelling.** `authorises` ×3 in `budget.rs`, `materialising` and
      `recognise` in `manager_tests.rs`, `recognisable` in `sync.rs`.
+
+- 2026-10-24: verified the branch was already based on the fetched PR target,
+  `origin/main` at `5377ceb`; the explicit rebase was therefore a no-op. A
+  final review identified that the existing bridge tests covered invalid
+  targets but not valid targets reaching the registry cap. Added isolated
+  child-process saturation tests for the `log` adapter and tracing target
+  resolver, plus a convenience-function case. They assert the exact
+  named-logger cap, root fallback where the bridge can fall back, stable
+  existing logger identities, and a fixed shard-worker count. The tracing macro
+  requires static targets, so its runtime resolver is the boundary that can
+  exercise request-derived target strings. ADR 007 now records that the `log`
+  adapter emits a rate-limited refusal diagnostic while tracing currently falls
+  back silently.
 
 ## Outcomes & retrospective
 

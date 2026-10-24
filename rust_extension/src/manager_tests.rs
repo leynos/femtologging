@@ -7,7 +7,8 @@ mod lookup {
     use pyo3::Python;
     use serial_test::serial;
 
-    use super::super::{MANAGER, get_logger, lookup_existing_logger, reset_manager};
+    use super::super::registry::MANAGER;
+    use super::super::{get_logger, lookup_existing_logger, reset_manager};
 
     #[test]
     #[serial]
@@ -47,7 +48,8 @@ mod log_compat {
     use pyo3::Python;
     use serial_test::serial;
 
-    use super::super::{MANAGER, flush_all_handlers, get_logger, reset_manager};
+    use super::super::registry::MANAGER;
+    use super::super::{flush_all_handlers, get_logger, reset_manager};
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use crate::log_record::FemtoLogRecord;
 

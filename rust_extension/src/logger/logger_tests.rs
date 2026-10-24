@@ -113,6 +113,7 @@ fn flush_reports_drained_and_clears_the_backlog() {
 
 #[test]
 fn a_panicking_handler_does_not_silence_later_records() {
+    /// Handler whose panic exercises per-handler worker recovery.
     struct PanickingHandler;
 
     impl FemtoHandlerTrait for PanickingHandler {
@@ -148,6 +149,7 @@ fn a_panicking_handler_does_not_silence_later_records() {
 
 #[test]
 fn a_handler_error_does_not_skip_later_handlers() {
+    /// Handler that returns an error so later handlers can still be exercised.
     struct FailingHandler;
 
     impl FemtoHandlerTrait for FailingHandler {
@@ -161,8 +163,8 @@ fn a_handler_error_does_not_skip_later_handlers() {
     }
 
     let collecting_handler = Arc::new(CollectingHandler::new());
-    let logger = FemtoLogger::new("handler-error".into())
-        .expect("test logger should be constructible");
+    let logger =
+        FemtoLogger::new("handler-error".into()).expect("test logger should be constructible");
     logger
         .add_handler(Arc::new(FailingHandler) as Arc<dyn FemtoHandlerTrait>)
         .expect("native failing test handler should register");

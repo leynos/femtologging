@@ -752,8 +752,10 @@ callback_filter = PythonCallbackFilterBuilder(enrich_request)
   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
 - The `dictConfig` schema lacks incremental updates, handler filters,
   handler levels, and formatter attachment. `fileConfig` is likewise cut down.
-- Queue capacity is capped (1,024 per logger/handler). The stdlib blocks the
-  emitting thread; femtologging drops records and emits warnings instead.
+- Queue capacity is capped. A logger may hold at most half of its shard's
+  depth in flight, never more than 1,024, and each handler queue holds 1,024
+  records by default. The stdlib blocks the emitting thread; femtologging drops
+  records and emits warnings instead.
 - Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
   string, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
