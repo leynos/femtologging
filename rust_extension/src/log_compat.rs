@@ -27,6 +27,9 @@ use crate::rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner};
 /// logger's handler queue.
 pub struct FemtoLogAdapter;
 
+/// Convert a `log` severity to the matching femtologging level.
+///
+/// For example, `log::Level::Warn` becomes `FemtoLevel::Warn`.
 fn map_log_level(level: log::Level) -> FemtoLevel {
     match level {
         log::Level::Trace => FemtoLevel::Trace,
@@ -37,6 +40,10 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
     }
 }
 
+/// Convert a femtologging level to the closest `log` severity.
+///
+/// For example, `FemtoLevel::Critical` maps to `log::Level::Error`, the
+/// strongest severity supported by `log`.
 fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
@@ -53,6 +60,10 @@ impl From<log::Level> for FemtoLevel {
     }
 }
 
+/// Replace Rust module separators in a target with logger-name separators.
+///
+/// For example, `my::service` becomes `my.service`; an already dotted target
+/// such as `my.service` is borrowed without allocating.
 fn normalize_target(target: &str) -> Cow<'_, str> {
     if target.contains("::") {
         Cow::Owned(target.replace("::", "."))
@@ -60,13 +71,6 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
         Cow::Borrowed(target)
     }
 }
-
-/// The `log` target prefix this crate's own records carry.
-///
-/// `log::warn!` with no explicit target records the module path, whose first
-/// segment is the crate name. Naming the crate through `env!` rather than
-/// repeating the manifest's `[lib] name` keeps the two from drifting apart.
-const OWN_TARGET_PREFIX: &str = concat!(env!("CARGO_CRATE_NAME"), ".");
 
 /// Return whether a target belongs to femtologging itself.
 ///
@@ -85,18 +89,33 @@ const OWN_TARGET_PREFIX: &str = concat!(env!("CARGO_CRATE_NAME"), ".");
 /// fire exactly when the process is short of a resource. Forwarding one back
 /// through the adapter would add a record per warning to the stream being
 /// diagnosed — which is a loop the bridge itself has no way to stop.
+///
+/// The check runs on every record and does not allocate. `log` targets arrive
+/// either dot-separated (an explicit target) or `::`-separated (the default
+/// module path), and both spellings of a family count, so the raw target is
+/// compared against each family root instead of normalizing it first. A
+/// `::`-containing target would otherwise be copied into a `String` here and
+/// again in [`resolve_logger`], which is one wasted allocation per record for
+/// the module-path targets that are the common case.
 fn should_ignore_target(target: &str) -> bool {
-    let normalized = normalize_target(target);
-    normalized == "femtologging"
-        || normalized.starts_with("femtologging.")
-        || normalized == env!("CARGO_CRATE_NAME")
-        || normalized.starts_with(OWN_TARGET_PREFIX)
+    let is_in_family = |root: &str| {
+        target
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.') || rest.starts_with("::"))
+    };
+    is_in_family("femtologging") || is_in_family(env!("CARGO_CRATE_NAME"))
 }
 
+/// Identify the `KeyError` used when a requested logger name is absent.
+///
+/// For example, a lookup failure represented as `PyKeyError` returns `true`.
 fn is_unknown_logger_error(py: Python<'_>, err: &PyErr) -> bool {
     err.is_instance_of::<pyo3::exceptions::PyKeyError>(py)
 }
 
+/// Identify validation refusals represented as `ValueError`.
+///
+/// For example, an empty logger name returns `true` after validation refuses it.
 fn is_invalid_logger_error(py: Python<'_>, err: &PyErr) -> bool {
     err.is_instance_of::<pyo3::exceptions::PyValueError>(py)
 }
@@ -120,6 +139,20 @@ fn is_registry_full_error(py: Python<'_>, err: &PyErr) -> bool {
 static LOOKUP_WARNER: LazyLock<RateLimitedWarner> =
     LazyLock::new(|| RateLimitedWarner::new(DEFAULT_WARN_INTERVAL));
 
+/// Borrowed inputs for a refused-target diagnostic.
+struct LookupFailureDiagnostic<'a> {
+    /// Classification of the refused lookup.
+    reason: &'a str,
+    /// Caller-provided target that could not be resolved.
+    target: &'a str,
+    /// Candidate name passed to the registry after bridge normalization.
+    normalized: &'a str,
+    /// Registry error text shown with the fallback diagnostic.
+    detail: &'a str,
+    /// Number of affected records suppressed by the rate limiter.
+    count: u64,
+}
+
 /// Build the stderr diagnostic for a target the registry refused.
 ///
 /// Split out from the warner so the size bound is directly testable. Both names
@@ -129,13 +162,14 @@ static LOOKUP_WARNER: LazyLock<RateLimitedWarner> =
 /// fixed prefix. Quoting them verbatim would let one warning write an unbounded
 /// line, and an unescaped one could forge a record boundary in the same
 /// line-oriented output the name rules exist to protect.
-fn lookup_failure_message(
-    reason: &str,
-    target: &str,
-    normalized: &str,
-    detail: &str,
-    count: u64,
-) -> String {
+fn lookup_failure_message(diagnostic: LookupFailureDiagnostic<'_>) -> String {
+    let LookupFailureDiagnostic {
+        reason,
+        target,
+        normalized,
+        detail,
+        count,
+    } = diagnostic;
     format!(
         "femtologging: {reason} {} (normalized {}); falling back to root: {detail}; \
          {count} further record(s) affected",
@@ -144,6 +178,10 @@ fn lookup_failure_message(
     )
 }
 
+/// Rate-limit and report a bridge target that the registry refused.
+///
+/// For example, repeated records to a full-registry target share one stderr
+/// warning per configured interval instead of writing once per record.
 fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &str) {
     LOOKUP_WARNER.record_drop();
     // Both the classification and the message are built inside the closure
@@ -164,7 +202,13 @@ fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &s
         // stderr bypasses the logger being diagnosed.
         eprintln!(
             "{}",
-            lookup_failure_message(reason, target, normalized, &detail, count)
+            lookup_failure_message(LookupFailureDiagnostic {
+                reason,
+                target,
+                normalized,
+                detail: &detail,
+                count,
+            })
         );
     });
 }
@@ -182,6 +226,10 @@ fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
     }
 }
 
+/// Resolve a normalized target, warning and falling back to root on refusal.
+///
+/// For example, a valid `my::service` target resolves to `my.service`; a name
+/// refused by the bounded registry resolves to the root logger.
 fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
     match manager::get_logger(py, normalized.as_ref()) {
@@ -196,6 +244,9 @@ fn resolve_logger<'py>(py: Python<'py>, target: &str) -> Option<(String, Py<crat
     }
 }
 
+/// Check a record level against the global `log` maximum.
+///
+/// For example, a `Trace` record is rejected when the global maximum is `Info`.
 fn is_enabled_by_global_max(level: log::Level) -> bool {
     log::max_level() >= level.to_level_filter()
 }
@@ -230,11 +281,10 @@ impl log::Log for FemtoLogAdapter {
                 ..Default::default()
             };
 
-            let _ = logger.borrow(py).log_with_metadata(
-                level,
-                &record.args().to_string(),
-                metadata,
-            );
+            let _ =
+                logger
+                    .borrow(py)
+                    .log_with_metadata(level, &record.args().to_string(), metadata);
         });
     }
 
@@ -245,7 +295,14 @@ impl log::Log for FemtoLogAdapter {
     }
 }
 
+/// Singleton adapter installed as the process-wide Rust logger.
+///
+/// For example, `install_global_logger` passes this value to `log::set_logger`.
 static FEMTO_LOG_ADAPTER: FemtoLogAdapter = FemtoLogAdapter;
+
+/// Cached outcome of the process-wide logger installation attempt.
+///
+/// For example, later calls reuse the first `true` or `false` result.
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
 
 /// Install femtologging as the global Rust logger.
@@ -335,3 +392,7 @@ mod context_tests;
 #[cfg(test)]
 #[path = "log_compat_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(loom), feature = "python"))]
+#[path = "log_compat/cardinality_tests.rs"]
+mod cardinality_tests;

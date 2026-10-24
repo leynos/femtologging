@@ -25,7 +25,7 @@ mod budget;
 mod worker;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::logger::QueuedRecord;
 #[cfg(loom)]
@@ -54,11 +54,16 @@ enum Job {
     /// inline record would make every slot of every shard carry the record's
     /// several hundred bytes whether or not a record ever occupies it.
     Record {
+        /// The record and handler snapshot awaiting the worker.
         queued: Box<QueuedRecord>,
+        /// The shard and logger capacity held until the record is handled.
         permit: Permit,
     },
     /// Signal `ack` once every job ahead of this one has been handled.
-    Barrier { ack: Sender<()> },
+    Barrier {
+        /// The channel used to acknowledge the completed barrier.
+        ack: Sender<()>,
+    },
     /// Finish the jobs already queued and stop the worker.
     ///
     /// Only a caller that owns the shard sends this: a process-wide pool shard
@@ -69,6 +74,7 @@ enum Job {
 
 /// One shard's backlog, and the permits bounding what it holds.
 pub(crate) struct Shard {
+    /// Queue used by producers to submit records and drain barriers.
     queue: Sender<Job>,
     /// One free token per slot of in-flight work.
     permits: Arc<Permits>,
@@ -207,7 +213,14 @@ impl Shard {
     /// refusing the barrier then would report a drain that did happen as a
     /// flush that failed. Waiting for room makes the answer mean "everything
     /// ahead of this call was handled", which is what a flush promises.
+    ///
+    /// Both waits share one deadline, so a call is bounded by
+    /// [`BARRIER_TIMEOUT`] in total rather than by twice it. Queueing the
+    /// barrier and hearing its answer are two halves of one wait, and a
+    /// caller that was promised a two-second drain would otherwise block for
+    /// four when the queue is full and the worker is slow.
     pub(crate) fn wait_for_drain(&self) -> bool {
+        let deadline = Instant::now() + BARRIER_TIMEOUT;
         let (ack, acked) = bounded::<()>(1);
         if self
             .queue
@@ -216,7 +229,8 @@ impl Shard {
         {
             return false;
         }
-        recv_timeout(&acked, BARRIER_TIMEOUT).is_ok()
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        recv_timeout(&acked, remaining).is_ok()
     }
 
     /// Finish the queued work and join the worker, which only a Loom run has.

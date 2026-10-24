@@ -96,7 +96,7 @@ fn python_backed_default_context_dispatch_fails_closed() {
 #[cfg(feature = "python")]
 #[test]
 fn logger_rejects_python_handler_without_context_dispatch() {
-    let logger = FemtoLogger::new("test".to_owned());
+    let logger = FemtoLogger::new("test".to_owned()).expect("test logger should be constructible");
     let handler: std::sync::Arc<dyn FemtoHandlerTrait> =
         std::sync::Arc::new(DefaultDispatchHandler {
             python_backed: true,

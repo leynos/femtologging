@@ -1,7 +1,9 @@
 //! Regression coverage for producer-side Python context snapshots.
 
-use pyo3::prelude::*;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use super::context_snapshot::ContextSnapshotProvider;
 use super::*;

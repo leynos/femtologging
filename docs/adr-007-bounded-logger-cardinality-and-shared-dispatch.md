@@ -166,10 +166,11 @@ that shard, and cannot kill the worker that serves them.
 `log` and `tracing` resolve a target to a logger, and neither crate offers a
 way to refuse a record. The bridges therefore resolve through the same bounded
 lookup as every other caller, and a target the registry refuses falls back to
-`root` with a rate-limited diagnostic rather than panicking inside a logging
-macro. Falling back rather than dropping matches what a logging bridge must do
-— a caller cannot be handed an error from `log::info!` — while still keeping
-the target space bounded.
+`root` rather than panicking inside a logging macro. The `log` bridge emits a
+rate-limited diagnostic for a refused target; the tracing layer currently falls
+back silently. Falling back rather than dropping matches what a logging bridge
+must do — a caller cannot be handed an error from `log::info!` — while still
+keeping the target space bounded.
 
 ## Consequences
 

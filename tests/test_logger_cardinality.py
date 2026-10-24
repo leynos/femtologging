@@ -163,6 +163,22 @@ def test_convenience_name_argument_is_validated_too() -> None:
         femtologging.debug("hello", name="bad\nname")
 
 
+def test_convenience_targets_stop_at_the_named_logger_cap() -> None:
+    """The module-level name route fills, but cannot exceed, the cap."""
+    first_name = "convenience-target-0"
+    for index in range(MAX_LOGGERS):
+        femtologging.debug("lookup only", name=f"convenience-target-{index}")
+
+    first = get_logger(first_name)
+    assert get_logger(first_name) is first, "an existing logger must keep its identity"
+    with pytest.raises(RuntimeError, match="logger registry limit reached"):
+        femtologging.debug("refused", name="convenience-target-overflow")
+
+    assert get_logger(first_name) is first, (
+        "a refusal must not replace an existing logger"
+    )
+
+
 def _fill_registry(prefix: str, *, room: int = 0) -> None:
     """Fill the registry to the cap with loggers under *prefix*.
 

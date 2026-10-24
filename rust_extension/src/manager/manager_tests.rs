@@ -209,8 +209,10 @@ mod log_compat {
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use crate::log_record::FemtoLogRecord;
 
+    /// Handler that counts how often the manager flushes a logger.
     #[derive(Clone)]
     struct FlushCountingHandler {
+        /// Shared flush counter inspected by the tests.
         flushes: Arc<AtomicUsize>,
     }
 
@@ -244,8 +246,8 @@ mod log_compat {
 
             let logger_a = get_logger(py, "bridge.flush.a")?;
             let logger_b = get_logger(py, "bridge.flush.b")?;
-            logger_a.borrow(py).add_handler(handler.clone());
-            logger_b.borrow(py).add_handler(handler.clone());
+            logger_a.borrow(py).add_handler(handler.clone())?;
+            logger_b.borrow(py).add_handler(handler.clone())?;
 
             flush_all_handlers(py);
 
@@ -282,7 +284,7 @@ mod log_compat {
             };
 
             for logger in &loggers {
-                logger.borrow(py).add_handler(handler.clone());
+                logger.borrow(py).add_handler(handler.clone())?;
             }
 
             flush_all_handlers(py);

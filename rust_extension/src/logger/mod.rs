@@ -10,10 +10,10 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
-mod convenience_methods;
-mod dispatcher;
 #[cfg(feature = "python")]
 mod context_snapshot;
+mod convenience_methods;
+mod dispatcher;
 mod producer;
 mod py_handler;
 mod python_helpers;
@@ -22,7 +22,6 @@ mod queue;
 mod runtime_mutation;
 mod worker;
 
-use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::sync::Arc;
@@ -40,6 +39,12 @@ use crate::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use dispatcher::DispatcherError;
+#[cfg(all(
+    test,
+    not(loom),
+    any(feature = "log-compat", feature = "tracing-compat")
+))]
+pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
@@ -47,18 +52,6 @@ pub use py_handler::{PyHandler, validate_handler};
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
-
-impl From<DispatcherError> for PyErr {
-    /// Report a pool that could not start as a Python exception.
-    ///
-    /// A process that cannot start threads is out of a resource, so this maps
-    /// to `RuntimeError`: the call was well-formed and the environment refused
-    /// it. The message names how many shards were started, so an operator can
-    /// tell a partly started pool from one that never began.
-    fn from(error: DispatcherError) -> Self {
-        PyRuntimeError::new_err(error.to_string())
-    }
-}
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -68,21 +61,29 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
+    /// Formatter shared by records emitted through this logger.
     formatter: SharedFormatter,
+    /// Current severity threshold, stored atomically for concurrent logging.
     level: AtomicU8,
+    /// Whether accepted records are also sent to the parent logger.
     propagate: AtomicBool,
     /// Lock-protected live handlers; each queued record owns the snapshot it captured.
     handlers: Arc<RwLock<Vec<HandlerAttachment>>>,
     /// Filters applied only to calls made through this logger before dispatch.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
+    /// Number of records refused because the dispatch budget was exhausted.
     dropped_records: AtomicU64,
     /// Number of records dropped because Rust context payload validation failed.
     context_dropped_records: AtomicU64,
+    /// Rate limiter for warnings about refused dispatch records.
     drop_warner: RateLimitedWarner,
+    /// Captures Python context for queued handlers when they need it.
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
+    /// Number of attempts that failed while capturing Python context.
     #[cfg(feature = "python")]
     context_capture_failures: AtomicU64,
+    /// Rate limiter for warnings about failed context captures.
     #[cfg(feature = "python")]
     context_capture_warner: RateLimitedWarner,
     /// The shard this logger's records are dispatched on.
@@ -251,6 +252,7 @@ impl FemtoLogger {
         py.detach(|| self.flush_handlers())
     }
 
+    /// Return handler identities so tests can detect replacement or reordering.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -384,20 +386,5 @@ impl Drop for FemtoLogger {
     }
 }
 
-// These tests drive the worker with real threads and `crossbeam_channel`, so
-// they build outside `--cfg loom` only; the heavy lane's models cover Loom.
-#[cfg(all(test, not(loom)))]
-#[path = "logger_tests.rs"]
-mod logger_tests;
-#[cfg(all(test, not(loom)))]
-#[path = "logger_tests_helpers.rs"]
-mod logger_tests_helpers;
-#[cfg(all(test, not(loom)))]
-#[path = "producer_rejection_tests.rs"]
-mod producer_rejection_tests;
-#[cfg(all(test, not(loom)))]
-#[path = "producer_tests.rs"]
-mod producer_tests;
-#[cfg(all(test, not(loom), feature = "python"))]
-#[path = "producer_context_tests.rs"]
-mod producer_context_tests;
+#[cfg(test)]
+mod test_modules;

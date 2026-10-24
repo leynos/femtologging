@@ -13,12 +13,12 @@
 //! `tests/heavy/` assert message routing and handler invocation counts, neither
 //! of which the size of the pool changes.
 
+#[cfg(feature = "python")]
+use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::level::FemtoLevel;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::RwLock;
-#[cfg(feature = "python")]
-use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 
 use super::FemtoLogger;
 use super::HandlerAttachment;
@@ -61,14 +61,19 @@ impl FemtoLogger {
 
     /// Create a logger that owns the only shard in its Loom model.
     ///
-    /// Loom's thread builder cannot fail, so this arm cannot either. It keeps
-    /// the shared `Result` signature only so both arms present one call site;
-    /// there is no `DispatcherError` to build here, because a Loom model has no
-    /// pool whose partial start the error would have to describe.
+    /// Loom's thread builder cannot fail in practice, but the signature is
+    /// `Result` for the same reason the pool's is: a refusal to start a worker
+    /// is a resource answer the caller reports, not a panic. Propagating it
+    /// keeps the two arms' error handling identical, so neither has a reason
+    /// for `.expect()` that the repository forbids outside tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatcherError`] when the shard's worker cannot be started.
     #[cfg(loom)]
     pub fn with_parent(name: String, parent: Option<String>) -> Result<Self, DispatcherError> {
         let shard = Shard::start(0, LOOM_RECORDS_PER_LOGGER)
-            .expect("Loom's thread builder cannot fail to start a shard worker");
+            .map_err(|source| DispatcherError::new(0, source))?;
         Ok(Self::assembled(
             name,
             parent,
@@ -102,7 +107,13 @@ impl FemtoLogger {
     /// Loom only, like the pool it borrows from.
     #[cfg(all(test, not(loom)))]
     pub(crate) fn assembled_for_test(name: String, shard: ShardHandle) -> Self {
-        Self::assembled(name, None, shard)
+        Self::assembled(
+            name,
+            None,
+            shard,
+            #[cfg(feature = "python")]
+            std::sync::Arc::new(ContextVarsSnapshotProvider),
+        )
     }
 
     /// Assemble a logger around an already-chosen shard.

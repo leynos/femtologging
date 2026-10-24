@@ -147,10 +147,12 @@ impl FemtoLogger {
             == handler_filters::FilterChainOutcome::Accepted
     }
 
+    /// Return whether this logger forwards records to its configured parent.
     fn should_propagate_to_parent(&self) -> bool {
         self.propagate.load(std::sync::atomic::Ordering::SeqCst) && self.parent.is_some()
     }
 
+    /// Forward a record to the parent logger when it remains registered.
     fn handle_parent_propagation(&self, record: FemtoLogRecord) {
         let Some(parent_name) = &self.parent else {
             return;
@@ -286,6 +288,7 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
+    /// Drain this logger's queued records, then flush its configured handlers.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         self.wait_for_dispatch_to_drain() && self.flush_configured_handlers()
     }
@@ -339,6 +342,7 @@ impl FemtoLogger {
         self.shard.wait_for_drain()
     }
 
+    /// Flush every configured handler and report whether all succeeded.
     fn flush_configured_handlers(&self) -> bool {
         self.handlers
             .read()

@@ -14,13 +14,13 @@ use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
 use crate::log_record::RecordMetadata;
 
-/// Filter fixture whose decision and enrichment can be inspected by tests.
+/// Filter with test-selected decisions, enrichment, and call counting.
 struct TestFilter {
-    /// Result returned for each record.
+    /// Decision returned for each record.
     accepted: bool,
-    /// Fields merged into the record when accepted.
+    /// Fields merged into the record when the filter accepts it.
     enrichment: BTreeMap<String, String>,
-    /// Shared count of evaluations across test references.
+    /// Shared count of calls, used to verify filter short-circuiting.
     calls: Arc<AtomicUsize>,
 }
 

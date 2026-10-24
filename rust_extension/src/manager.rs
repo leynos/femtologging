@@ -18,9 +18,9 @@
 //! them as the one path callers already use.
 
 mod registry;
+#[cfg(feature = "python")]
+mod runtime_state;
 mod validation;
-
-pub(super) use registry::MANAGER;
 
 pub use registry::{MAX_LOGGERS, get_logger, reset_manager};
 pub use validation::{MAX_LOGGER_NAME_BYTES, MAX_LOGGER_NAME_SEGMENTS, validate_logger_name};
@@ -35,15 +35,16 @@ pub(crate) use validation::describe_name;
 
 #[cfg(feature = "python")]
 pub(crate) use registry::{
-    LoggerAttachmentState, RuntimeStateSnapshot, commit_staged_loggers, disable_existing_loggers,
-    ensure_registry_capacity, replace_runtime_state, snapshot_runtime_state, stage_loggers,
+    commit_staged_loggers, disable_existing_loggers, ensure_registry_capacity,
+    replace_runtime_state, snapshot_runtime_state, stage_loggers,
 };
+#[cfg(feature = "python")]
+pub(crate) use runtime_state::{LoggerAttachmentState, RuntimeStateSnapshot};
 
 #[cfg(all(test, feature = "python"))]
 pub(crate) use registry::lookup_existing_logger;
-// Only the tracing bridge's tests reach the counter through this path; without
-// `tracing-compat` the re-export would be an unused item in a `-D warnings` lane.
-#[cfg(all(test, feature = "tracing-compat"))]
+// Bridge saturation tests use the named count to assert the cap directly.
+#[cfg(all(test, any(feature = "log-compat", feature = "tracing-compat")))]
 pub(crate) use registry::named_logger_count_for_test;
 
 #[cfg(feature = "log-compat")]

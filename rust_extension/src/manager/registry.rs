@@ -25,14 +25,14 @@ mod config;
 #[cfg(feature = "python")]
 pub(crate) use config::{commit_staged_loggers, stage_loggers};
 
+#[cfg(feature = "python")]
+use super::runtime_state::{
+    LoggerAttachmentState, RuntimeStateSnapshot, SharedFilters, SharedHandlers,
+};
 use super::validation::validate_logger_name;
 use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
-use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
-#[cfg(feature = "python")]
 use std::collections::BTreeMap;
-#[cfg(feature = "python")]
-use std::sync::Arc;
 
 /// Maximum number of named loggers the registry retains.
 ///
@@ -48,59 +48,26 @@ pub const MAX_LOGGERS: usize = 10_000;
 /// The logger name that never counts against [`MAX_LOGGERS`].
 const ROOT_LOGGER_NAME: &str = "root";
 
-#[cfg(feature = "python")]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct LoggerAttachmentState {
-    handler_ids: Vec<String>,
-    filter_ids: Vec<String>,
-}
-
-#[cfg(feature = "python")]
-impl LoggerAttachmentState {
-    pub(crate) fn new(handler_ids: Vec<String>, filter_ids: Vec<String>) -> Self {
-        Self {
-            handler_ids,
-            filter_ids,
-        }
-    }
-
-    pub(crate) fn handler_ids(&self) -> &[String] {
-        &self.handler_ids
-    }
-
-    pub(crate) fn filter_ids(&self) -> &[String] {
-        &self.filter_ids
-    }
-}
-
-#[cfg(feature = "python")]
-pub(crate) type SharedHandlers = BTreeMap<String, Arc<dyn FemtoHandlerTrait>>;
-#[cfg(feature = "python")]
-pub(crate) type SharedFilters = BTreeMap<String, Arc<dyn FemtoFilter>>;
-
-#[cfg(feature = "python")]
-#[derive(Clone, Default)]
-pub(crate) struct RuntimeStateSnapshot {
-    pub(crate) handler_registry: SharedHandlers,
-    pub(crate) handler_filter_ids: BTreeMap<String, Vec<String>>,
-    pub(crate) filter_registry: SharedFilters,
-    pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
-}
-
+/// State protected by the process-wide logger registry lock.
 #[derive(Default)]
 pub(super) struct Manager {
+    /// Strong references to loggers, keyed by their stable names.
     pub(super) loggers: HashMap<String, Py<FemtoLogger>>,
     #[cfg(feature = "python")]
+    /// Python handler, filter, and attachment state associated with the loggers.
     pub(super) runtime: RuntimeStateSnapshot,
 }
 
+/// Process-wide registry lock for logger identities and runtime configuration.
 pub(super) static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Clear the Python-specific runtime configuration while preserving loggers.
 #[cfg(feature = "python")]
 pub(super) fn clear_runtime_state(mgr: &mut Manager) {
     mgr.runtime = RuntimeStateSnapshot::default();
 }
 
+/// There is no Python runtime configuration to clear in this feature lane.
 #[cfg(not(feature = "python"))]
 pub(super) fn clear_runtime_state(_mgr: &mut Manager) {}
 
@@ -327,11 +294,19 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
 }
 
 #[cfg(feature = "python")]
+/// Copy the manager's current Python runtime configuration.
+///
+/// The snapshot lets callers inspect or stage changes without holding the
+/// process-wide manager lock while they do so.
 pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
 }
 
 #[cfg(feature = "python")]
+/// Replace the runtime registries and logger attachments as one state update.
+///
+/// Keeping the replacement under one write lock prevents readers from seeing
+/// a mixture of the old and new configuration.
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
     handler_filter_ids: BTreeMap<String, Vec<String>>,
@@ -363,12 +338,10 @@ pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
     }
 }
 
-/// Flush every registered logger's handlers, for the Rust `log` bridge;
-/// failures are ignored. Loggers are snapshotted under the lock and flushed
-/// outside it: a flush waits on a shard barrier with the GIL released, so
-/// holding the lock across it would let a GIL-holding `get_logger` caller
-/// waiting for the write lock starve the queued handler the flush awaits.
-/// `reset_manager` does the same.
+/// Flush every registered logger for the Rust `log` bridge; ignore failures.
+/// Snapshot under lock, then flush outside it: a GIL-holding `get_logger`
+/// writer could otherwise starve the queued handler a flush barrier awaits.
+/// `reset_manager` also drops loggers outside the lock.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
     let loggers: Vec<Py<FemtoLogger>> = MANAGER
@@ -384,12 +357,9 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
 
 /// Drop every logger and all attached runtime state.
 ///
-/// The loggers are removed under the lock and dropped outside it. Clearing the
-/// map in place would run each `FemtoLogger`'s drop — and, for a logger with
-/// records still in flight, its bounded wait for the shard — while holding the
-/// registry write lock, so a process resetting a full registry would serialize
-/// every drop behind one lock. Taking the map out keeps the reset itself O(1)
-/// under the lock and lets the drops overlap.
+/// Take the map under lock, then drop it outside: each logger may wait for its
+/// shard to drain, so clearing in place would hold the registry write lock
+/// across every bounded wait and serialize a full reset.
 #[pyfunction]
 pub fn reset_manager() {
     let loggers = {

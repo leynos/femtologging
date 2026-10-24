@@ -763,15 +763,15 @@ For upgrade steps covering handler filters and formatter builders, see the
   subclasses can be reused via
   [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
-- The `dictConfig` schema lacks incremental updates and handler levels. It
-  supports registered formatter attachment; `fileConfig` is still cut down and
-  does not support formatter declarations.
-- Logger dispatch queue capacity is capped at 1,024 records per shard. The
-  stdlib blocks the emitting thread; femtologging drops records and emits
-  warnings instead.
-  emitting thread; femtologging drops records and emits warnings instead.
-- Only percent-style formatting is implemented. Brace and template styles are
-  not available; supply a callable formatter for more complex output.
+- The `dictConfig` schema supports registered handler filters and formatter
+  attachment, but lacks incremental updates and handler levels. `fileConfig`
+  is cut down and does not support formatter declarations.
+- Dispatch capacity is bounded. Each logger may hold at most half of its
+  shard's depth in flight, capped at 1,024 records, and each handler queue
+  holds 1,024 records by default. The stdlib blocks the emitting thread;
+  femtologging drops records and emits warnings instead.
+- Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
+  string, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
 
