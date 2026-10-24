@@ -105,6 +105,16 @@ Observable outcomes:
 - [ ] Re-run every Rust gate on the rebased base. The gate runs recorded above
       were made against pyo3 0.29.3 and a narrower feature matrix, so they no
       longer prove anything about the committed tree.
+- [ ] `make lint-rust` on the rebased base (first attempt, 04:17–03:23,
+      ~11 h wall-clock). Every lint lane and the Dylint suite reported clean —
+      15 `# Rust lint lane:` markers, 13 `Finished` completions, **zero**
+      `error[E...]` and **zero** `warning:`. It then failed at
+      `make lint-rust-private-docs-policy-test`: the contract test spawns
+      `make lint-rust-clippy RUST_MANIFEST=<fixture>` with a 600 s cap, and the
+      child's only stderr was `Blocking waiting for file lock on package
+      cache`. Host-wide cache contention (upstream #537), **not** a lint
+      violation: no source compiled, so this says nothing about the branch.
+      Being re-run once the lock chain is empty.
 - [ ] Commit in atomic pieces, push, open the draft PR.
 
 ## Negative control (evidence that the tests detect the defect)
@@ -167,6 +177,19 @@ interpreter reproduces the freeze.
   channel and the thread, so there is no interpreter holding a lock to release.
   The regression evidence has to come from Python, which is why Task 3 spawns
   subprocesses.
+- `make lint-rust` can fail for a reason that has nothing to do with the tree
+  under test. `tests/test_private_docs_lint_contract.py` re-enters
+  `make lint-rust-clippy` against a fixture crate with a 600 s timeout. Under
+  this host's multi-agent load the child sat on
+  `Blocking waiting for file lock on package cache` for the whole 10 minutes
+  and raised `subprocess.TimeoutExpired`. Read the child's captured stderr
+  before believing the failure: a single lock line and no diagnostics means
+  contention, and the fix is to re-run once `grep -cF 64763336 /proc/locks` is
+  0 — not to touch the branch.
+- The lane runner writes a **new numbered log** on each invocation
+  (`...-2.out`, `-3.out`, `-4.out`). Several worktrees run the same target
+  concurrently, so the newest file by mtime is the only safe thing to monitor;
+  an older log frozen mid-run is a finished or superseded run, not a stall.
 
 ## Rebase onto a moved `origin/main`
 
