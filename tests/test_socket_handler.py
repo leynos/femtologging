@@ -119,7 +119,11 @@ def test_configured_socket_handler_filters_propagated_records(
 
     def accept_record(record: object) -> bool:
         """Reject the first message before it reaches the socket worker."""
-        return vars(record)["msg"] == "accepted"
+        attributes = vars(record)
+        if attributes["msg"] != "accepted":
+            return False
+        attributes["correlation_id"] = "REQ-99"
+        return True
 
     try:
         (
@@ -155,6 +159,12 @@ def test_configured_socket_handler_filters_propagated_records(
         )
         assert b"rejected" not in payload, (
             "rejected child records must not reach the socket endpoint"
+        )
+        assert b"correlation_id" in payload, (
+            "accepted filter enrichment key should reach the socket endpoint"
+        )
+        assert b"REQ-99" in payload, (
+            "accepted filter enrichment value should reach the socket endpoint"
         )
         assert recording_server.queue.empty(), "the rejected record must not be sent"
     finally:

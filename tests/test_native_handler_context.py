@@ -222,7 +222,11 @@ def test_configured_http_handler_filters_propagated_records() -> None:
 
     def accept_record(record: object) -> bool:
         """Allow only the accepted message through the shared HTTP handler."""
-        return vars(record)["msg"] == "accepted"
+        attributes = vars(record)
+        if attributes["msg"] != "accepted":
+            return False
+        attributes["correlation_id"] = "REQ-99"
+        return True
 
     with _RecordingHTTPServer() as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -253,6 +257,9 @@ def test_configured_http_handler_filters_propagated_records() -> None:
             )
             assert b"rejected" not in payload, (
                 "rejected child records must not reach the HTTP endpoint"
+            )
+            assert b"correlation_id=REQ-99" in payload, (
+                "accepted filter enrichment should reach the HTTP endpoint"
             )
             assert server.payloads.empty(), "the rejected record must not be sent"
         finally:
