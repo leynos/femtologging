@@ -6,8 +6,8 @@ use pyo3::{Py, Python};
 
 use crate::{
     config::{ConfigError, types::HandlerBuilder},
-    filters::FilterBuilder,
-    logger::FemtoLogger,
+    filters::{FemtoFilter, FilterBuilder},
+    logger::{FemtoLogger, HandlerAttachment},
     manager::{self, LoggerAttachmentState, RuntimeStateSnapshot},
 };
 
@@ -19,6 +19,8 @@ pub(crate) struct BuiltRegistries {
     pub(crate) handlers: SharedHandlers,
     /// Newly built filters keyed by their requested IDs.
     pub(crate) filters: SharedFilters,
+    /// Filter IDs configured on each newly built handler.
+    pub(crate) handler_filter_ids: BTreeMap<String, Vec<String>>,
 }
 
 /// Fully prepared state applied as one runtime mutation commit.
@@ -27,6 +29,10 @@ pub(crate) struct RuntimeCommit {
     pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
     /// Handler registry after merging newly built handlers with the snapshot.
     pub(crate) handler_registry: SharedHandlers,
+    /// Filter IDs retained for each registered handler.
+    pub(crate) handler_filter_ids: BTreeMap<String, Vec<String>>,
+    /// Resolved filters applied to each handler before producer dispatch.
+    pub(crate) resolved_handler_filters: BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
     /// Filter registry after merging newly built filters with the snapshot.
     pub(crate) filter_registry: SharedFilters,
     /// Python logger objects whose live attachments and scalar fields must be updated.
@@ -45,8 +51,12 @@ impl RuntimeConfigBuilder {
     ) -> Result<RuntimeCommit, ConfigError> {
         let mut handler_registry = before.handler_registry.clone();
         handler_registry.extend(built.handlers);
+        let mut handler_filter_ids = before.handler_filter_ids.clone();
+        handler_filter_ids.extend(built.handler_filter_ids);
         let mut filter_registry = before.filter_registry.clone();
         filter_registry.extend(built.filters);
+        let resolved_handler_filters =
+            resolve_handler_filters(&handler_filter_ids, &filter_registry)?;
 
         let mut logger_states = before.logger_states.clone();
         let impacted = self.collect_impacted(&before);
@@ -64,6 +74,8 @@ impl RuntimeConfigBuilder {
         Ok(RuntimeCommit {
             logger_states,
             handler_registry,
+            handler_filter_ids,
+            resolved_handler_filters,
             filter_registry,
             impacted_loggers,
             scalar_mutations: self.build_scalar_mutations(),
@@ -122,12 +134,29 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
             .get(name)
             .cloned()
             .unwrap_or_else(LoggerAttachmentState::default);
-        let next_handlers = resolve_registered_items(
+        let resolved_handlers = resolve_registered_items(
             name,
             attachment_state.handler_ids(),
             &commit.handler_registry,
             "handler",
         )?;
+        let next_handlers = attachment_state
+            .handler_ids()
+            .iter()
+            .zip(resolved_handlers)
+            .map(|(handler_id, handler)| {
+                let filters = commit
+                    .resolved_handler_filters
+                    .get(handler_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        ConfigError::InvalidMutation(format!(
+                            "{name}: missing handler filter configuration for {handler_id:?} during commit application",
+                        ))
+                    })?;
+                Ok(HandlerAttachment::with_filters(handler, filters))
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
         let next_filters = resolve_registered_items(
             name,
             attachment_state.filter_ids(),
@@ -142,10 +171,33 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
     }
     manager::replace_runtime_state(
         commit.handler_registry.clone(),
+        commit.handler_filter_ids.clone(),
         commit.filter_registry.clone(),
         commit.logger_states.clone(),
     );
     Ok(())
+}
+
+/// Resolves each handler's configured filter IDs against the merged filter registry.
+fn resolve_handler_filters(
+    handler_filter_ids: &BTreeMap<String, Vec<String>>,
+    filter_registry: &SharedFilters,
+) -> Result<BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>, ConfigError> {
+    handler_filter_ids
+        .iter()
+        .map(|(handler_id, filter_ids)| {
+            let filters = filter_ids
+                .iter()
+                .map(|filter_id| {
+                    filter_registry
+                        .get(filter_id)
+                        .cloned()
+                        .ok_or_else(|| ConfigError::UnknownIds(vec![filter_id.clone()]))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((handler_id.clone(), filters))
+        })
+        .collect()
 }
 
 /// Applies only the scalar fields supplied by a logger mutation.

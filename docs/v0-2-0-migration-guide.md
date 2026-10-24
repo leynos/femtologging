@@ -134,6 +134,34 @@ belongs to the worker thread. Update filters that depend on such state to use
 
 ______________________________________________________________________
 
+## Handler filters and formatter builders
+
+Handler builders now accept filter IDs with `with_filters([...])`. Register
+those IDs with `ConfigBuilder`, or declare them in the top-level `filters`
+section when using `dictConfig`; handler `filters` lists can then refer to
+them. The filter chain runs on the producer thread before enqueueing and also
+runs for records propagated from child loggers to an ancestor handler. This
+makes a shared handler a single attach point for cross-cutting enrichment.
+Logger filters remain local to the logger that received the call. For the
+configured attachment order and per-handler snapshot semantics, see the
+accepted handler-filter addendum in
+[ADR-003](adr-003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters).
+
+Use a `FormatterBuilder` directly when configuring a handler, or register one
+with `ConfigBuilder.with_formatter(id, formatter)` and give the handler that ID.
+`dictConfig` accepts percent-style `format` and `datefmt` entries in its
+`formatters` section, which handlers select by registered ID. The percent
+formatter can render standard record fields and structured keys in
+`metadata.key_values`; callback-filter enrichment is available to it because
+filters run before records are queued.
+
+For migration, move application-wide enrichment from individual logger filters
+to a filter attached to the shared handler. For output formatting, replace
+unsupported `basicConfig(format=..., datefmt=...)` arguments with a handler
+builder and either a direct `FormatterBuilder` or a registered formatter.
+
+______________________________________________________________________
+
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,

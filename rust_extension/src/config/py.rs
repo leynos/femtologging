@@ -7,13 +7,34 @@ use pyo3::{
 };
 
 use crate::handlers::{
-    FileHandlerBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
-    TimedRotatingFileHandlerBuilder,
+    FileHandlerBuilder, HTTPHandlerBuilder, RotatingFileHandlerBuilder, SocketHandlerBuilder,
+    StreamHandlerBuilder, TimedRotatingFileHandlerBuilder,
 };
 use crate::python::fq_py_type;
 
 use super::types::HandlerBuilder;
 use crate::config::ConfigError;
+
+/// Converts a borrowed Python handler builder to its Rust enum variant when types match.
+type HandlerBuilderExtractor = for<'a, 'py> fn(&Borrowed<'a, 'py, PyAny>) -> Option<HandlerBuilder>;
+
+/// Attempt extraction as one concrete builder type, returning `None` on mismatch.
+fn try_extract_builder<T>(obj: &Borrowed<'_, '_, PyAny>) -> Option<HandlerBuilder>
+where
+    T: for<'a, 'py> FromPyObject<'a, 'py> + Into<HandlerBuilder>,
+{
+    obj.extract::<T>().ok().map(Into::into)
+}
+
+/// Concrete builder types accepted by Python configuration extraction.
+const HANDLER_BUILDER_EXTRACTORS: [HandlerBuilderExtractor; 6] = [
+    try_extract_builder::<StreamHandlerBuilder>,
+    try_extract_builder::<FileHandlerBuilder>,
+    try_extract_builder::<RotatingFileHandlerBuilder>,
+    try_extract_builder::<TimedRotatingFileHandlerBuilder>,
+    try_extract_builder::<SocketHandlerBuilder>,
+    try_extract_builder::<HTTPHandlerBuilder>,
+];
 
 impl From<ConfigError> for PyErr {
     fn from(err: ConfigError) -> Self {
@@ -39,21 +60,14 @@ impl<'a, 'py> FromPyObject<'a, 'py> for HandlerBuilder {
     type Error = PyErr;
 
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
-        if let Ok(b) = obj.extract::<StreamHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<FileHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<RotatingFileHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<TimedRotatingFileHandlerBuilder>() {
-            Ok(b.into())
-        } else if let Ok(b) = obj.extract::<SocketHandlerBuilder>() {
-            Ok(b.into())
-        } else {
-            let fq = fq_py_type(&obj.to_owned());
-            Err(pyo3::exceptions::PyTypeError::new_err(format!(
-                "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, or SocketHandlerBuilder (got Python type: {fq})"
-            )))
-        }
+        HANDLER_BUILDER_EXTRACTORS
+            .iter()
+            .find_map(|extract| extract(&obj))
+            .ok_or_else(|| {
+                let fq = fq_py_type(&obj.to_owned());
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "builder must be StreamHandlerBuilder, FileHandlerBuilder, RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, SocketHandlerBuilder, or HTTPHandlerBuilder (got Python type: {fq})"
+                ))
+            })
     }
 }

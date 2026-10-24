@@ -33,6 +33,7 @@ impl FemtoFilter for TestFilter {
         self.calls.fetch_add(1, Ordering::SeqCst);
         FilterDecision {
             accepted: self.accepted,
+            callback_failed: false,
             enrichment: self.enrichment.clone(),
         }
     }
@@ -265,10 +266,17 @@ impl ContextCaptureFixture {
         });
         let logger =
             FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
-        logger.add_handler(Arc::new(ContextAwareTestHandler {
-            handled_records: Arc::clone(&handled_records),
-            records_with_context: Arc::clone(&records_with_context),
-        }))?;
+        logger.add_handler_with_filters(
+            Arc::new(ContextAwareTestHandler {
+                handled_records: Arc::clone(&handled_records),
+                records_with_context: Arc::clone(&records_with_context),
+            }),
+            vec![Arc::new(TestFilter {
+                accepted: true,
+                enrichment: BTreeMap::new(),
+                calls: Arc::new(AtomicUsize::new(0)),
+            })],
+        )?;
 
         Ok(Self {
             logger,
@@ -316,3 +324,6 @@ fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
     );
     assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 0);
 }
+
+#[path = "producer_snapshot_property_tests.rs"]
+mod snapshot_property_tests;

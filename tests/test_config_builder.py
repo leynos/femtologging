@@ -261,6 +261,18 @@ def test_unknown_handler_id_raises_key_error() -> None:
         builder.build_and_init()
 
 
+def test_unsupported_handler_builder_type_preserves_extraction_error() -> None:
+    """Reject an unsupported Python handler builder with its type name."""
+    with pytest.raises(TypeError) as excinfo:
+        ConfigBuilder().with_handler("unsupported", object())
+
+    assert str(excinfo.value) == (
+        "builder must be StreamHandlerBuilder, FileHandlerBuilder, "
+        "RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, "
+        "SocketHandlerBuilder, or HTTPHandlerBuilder (got Python type: object)"
+    ), "unsupported handler builders should preserve the extraction error"
+
+
 def test_disable_existing_loggers_clears_unmentioned(
     new_info_stderr_builder: BuilderFactory,
 ) -> None:

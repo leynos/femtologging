@@ -3,57 +3,22 @@
 //! These helpers keep the hot logging path focused and separate it from the
 //! worker-thread lifecycle code.
 
-use std::any::Any;
 use std::time::Duration;
 
 use log::warn;
 
-use crate::filters::FilterContext;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
-use crate::sync::{Sender, bounded};
+use crate::sync::bounded;
 
-use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
+mod handler_filters;
 
-/// Classifies a handler snapshot for tracing metadata without retaining it.
-#[cfg(feature = "tracing-compat")]
-fn handler_kind(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>]) -> &'static str {
-    let has_python = handlers.iter().any(|handler| handler.is_python_backed());
-    let has_native = handlers.iter().any(|handler| !handler.is_python_backed());
-    match (has_python, has_native) {
-        (true, true) => "python_and_native",
-        (true, false) => "python",
-        (false, true) => "native",
-        (false, false) => "none",
-    }
-}
-
-/// Handler used internally to acknowledge logger flush operations.
-struct FlushAckHandler {
-    /// One-shot channel notified when the worker reaches the flush marker.
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    /// Build the marker handler that acknowledges delivery of its queued record.
-    fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
+#[cfg(test)]
+use super::HandlerAttachment;
+use super::{FemtoLogger, FlushAckHandler, LOGGER_FLUSH_TIMEOUT_MS, QueuedRecord};
 
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
@@ -180,15 +145,8 @@ impl FemtoLogger {
     /// If no filters are configured, the record passes.
     fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
         let filters = self.filters.read().clone();
-        let mut context = FilterContext::default();
-        for filter in filters {
-            let decision = filter.decision(record, &mut context);
-            if !decision.accepted {
-                return false;
-            }
-            record.metadata_mut().key_values.extend(decision.enrichment);
-        }
-        true
+        handler_filters::apply_filter_chain(record, &filters)
+            == handler_filters::FilterChainOutcome::Accepted
     }
 
     /// Return whether this logger currently propagates to an existing parent.
@@ -213,13 +171,34 @@ impl FemtoLogger {
     /// Context capture is attempted only when this exact handler snapshot
     /// contains a Python-backed handler; capture failures use a separate
     /// counter from queue-full drops.
-    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
+    fn send_to_local_handlers(&self, mut record: FemtoLogRecord) {
         let Some(tx) = &self.tx else {
             return;
         };
-        let handlers = self.handlers.read().clone();
+        let attachments = self.handlers.read().clone();
+        if attachments.is_empty() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_handler_dispatch",
+                handler_kind = "none",
+                dispatch_outcome = "no_local_handlers",
+            );
+            return;
+        }
+        let handlers = handler_filters::filter_handlers(&mut record, attachments);
+        if handlers.is_empty() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_handler_dispatch",
+                handler_kind = "none",
+                dispatch_outcome = "no_handlers_accepted",
+            );
+            return;
+        }
         #[cfg(feature = "tracing-compat")]
-        let handler_kind = handler_kind(&handlers);
+        let handler_kind = handler_filters::handler_kind(&handlers);
         #[cfg(feature = "python")]
         let context = match self.capture_context_for_dispatch(
             &handlers,
@@ -325,6 +304,15 @@ impl FemtoLogger {
         self.wait_for_worker_idle() && self.flush_configured_handlers()
     }
 
+    /// Exercise the production handler-filter chain without starting a worker.
+    #[cfg(test)]
+    pub(super) fn filter_handlers_for_test(
+        record: &mut FemtoLogRecord,
+        handlers: Vec<HandlerAttachment>,
+    ) -> Vec<std::sync::Arc<dyn FemtoHandlerTrait>> {
+        handler_filters::filter_handlers(record, handlers)
+    }
+
     /// Wait for the worker to process a marker after all earlier queued records.
     fn wait_for_worker_idle(&self) -> bool {
         let Some(tx) = &self.tx else {
@@ -352,7 +340,10 @@ impl FemtoLogger {
 
     /// Flush handlers visible under the read lock after queue delivery is idle.
     fn flush_configured_handlers(&self) -> bool {
-        self.handlers.read().iter().all(|handler| handler.flush())
+        self.handlers
+            .read()
+            .iter()
+            .all(|attachment| attachment.handler.flush())
     }
 
     /// Dispatch a record to the logger's handlers via the background queue.

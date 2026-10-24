@@ -119,6 +119,7 @@ def test_python_callback_filter_builder_rejects_invalid_targets() -> None:
 
 def test_python_callback_filter_exceptions_drop_records(
     filtered_logger: FilteredLoggerFactory,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Callback exceptions should drop the record without crashing."""
 
@@ -136,6 +137,10 @@ def test_python_callback_filter_exceptions_drop_records(
     assert not collector.records, (
         "a raising callback filter must not deliver anything to handlers, "
         f"got {collector.records!r}"
+    )
+    diagnostics = capsys.readouterr().err
+    assert "Python filter function failed: RuntimeError: boom: hello" in diagnostics, (
+        "callback failure diagnostics must identify the filter and original exception"
     )
 
 

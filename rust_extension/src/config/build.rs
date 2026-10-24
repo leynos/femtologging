@@ -9,7 +9,10 @@ use pyo3::prelude::*;
 
 use crate::config::ConfigError;
 use crate::{
-    filters::FemtoFilter, handler::FemtoHandlerTrait, level::FemtoLevel, logger::FemtoLogger,
+    filters::FemtoFilter,
+    handler::FemtoHandlerTrait,
+    level::FemtoLevel,
+    logger::{FemtoLogger, HandlerAttachment},
     manager,
 };
 
@@ -27,7 +30,7 @@ struct ConfiguredLoggerPlan {
     /// Filter identities retained in the runtime snapshot for later updates.
     filter_ids: Vec<String>,
     /// Shared handlers already validated against this configuration.
-    handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    handlers: Vec<HandlerAttachment>,
     /// Shared filters already validated against this configuration.
     filters: Vec<Arc<dyn FemtoFilter>>,
     /// Optional threshold that deliberately leaves the existing level intact.
@@ -36,6 +39,17 @@ struct ConfiguredLoggerPlan {
     propagate: Option<bool>,
 }
 
+/// Runtime-ready registries prepared before logger state is committed.
+struct BuiltConfigComponents {
+    /// Handler instances keyed by their configuration identifiers.
+    built_handlers: BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
+    /// Original filter references retained for later runtime replacement.
+    handler_filter_ids: BTreeMap<String, Vec<String>>,
+    /// Filter instances keyed by their configuration identifiers.
+    built_filters: BTreeMap<String, Arc<dyn FemtoFilter>>,
+    /// Resolved filter chains keyed by handler identifier, in configured order.
+    resolved_handler_filters: BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
+}
 impl ConfigBuilder {
     /// Finalize the configuration and initialize loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
@@ -45,27 +59,22 @@ impl ConfigBuilder {
         if self.root_logger().is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
-        let built_handlers = Self::build_map(
-            self.handler_builders(),
-            |b| b.build(),
-            |id, source| ConfigError::HandlerBuild { id, source },
-        )?;
-        let built_filters = Self::build_map(
-            self.filter_builders(),
-            |b| b.build(),
-            |id, source| ConfigError::FilterBuild { id, source },
-        )?;
+        let components = self.build_runtime_components()?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
+            let BuiltConfigComponents {
+                built_handlers,
+                handler_filter_ids,
+                built_filters,
+                resolved_handler_filters: _,
+            } = &components;
             let targets = self
                 .root_logger()
                 .map(|c| ("root", c))
                 .into_iter()
                 .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
             let plans = targets
-                .map(|(name, cfg)| {
-                    self.prepare_logger_plan(name, cfg, &built_handlers, &built_filters)
-                })
+                .map(|(name, cfg)| self.prepare_logger_plan(name, cfg, &components))
                 .collect::<Result<Vec<_>, _>>()?;
             let staged_loggers =
                 manager::stage_loggers(py, plans.iter().map(|plan| plan.name.as_str()))
@@ -85,12 +94,12 @@ impl ConfigBuilder {
             if let Some(keep_names) = &keep_names {
                 manager::disable_existing_loggers(py, keep_names);
             }
-
             let runtime_loggers =
                 self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
             manager::replace_runtime_state(
-                built_handlers.clone(),
-                built_filters.clone(),
+                (*built_handlers).clone(),
+                (*handler_filter_ids).clone(),
+                (*built_filters).clone(),
                 runtime_loggers,
             );
             Ok(())
@@ -209,13 +218,15 @@ impl ConfigBuilder {
         &self,
         name: &str,
         cfg: &LoggerConfigBuilder,
-        handlers: &BTreeMap<String, Arc<dyn FemtoHandlerTrait>>,
-        filters: &BTreeMap<String, Arc<dyn FemtoFilter>>,
+        components: &BuiltConfigComponents,
     ) -> Result<ConfiguredLoggerPlan, ConfigError> {
-        let planned_handlers =
-            Self::collect_items(cfg.handler_ids(), handlers, Self::duplicate_handler_ids)?;
+        let resolved_handlers = Self::collect_items(
+            cfg.handler_ids(),
+            &components.built_handlers,
+            Self::duplicate_handler_ids,
+        )?;
         #[cfg(feature = "python")]
-        if planned_handlers
+        if resolved_handlers
             .iter()
             .any(|handler| handler.is_python_backed() && !handler.provides_context_dispatch())
         {
@@ -223,8 +234,23 @@ impl ConfigBuilder {
                 "Python-backed handlers must provide contextual dispatch".to_owned(),
             ));
         }
-        let planned_filters =
-            Self::collect_items(cfg.filter_ids(), filters, Self::duplicate_filter_ids)?;
+        let planned_handlers = cfg
+            .handler_ids()
+            .iter()
+            .zip(resolved_handlers)
+            .map(|(id, handler)| {
+                let filters = components
+                    .resolved_handler_filters
+                    .get(id)
+                    .ok_or_else(|| ConfigError::UnknownIds(vec![id.clone()]))?;
+                Ok(HandlerAttachment::with_filters(handler, filters.clone()))
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
+        let planned_filters = Self::collect_items(
+            cfg.filter_ids(),
+            &components.built_filters,
+            Self::duplicate_filter_ids,
+        )?;
         Ok(ConfiguredLoggerPlan {
             name: name.to_string(),
             handler_ids: cfg.handler_ids().to_vec(),
@@ -250,7 +276,7 @@ impl ConfigBuilder {
         logger_ref.clear_handlers();
         for handler in &plan.handlers {
             logger_ref
-                .add_handler(handler.clone())
+                .add_handler_with_filters(handler.handler.clone(), handler.filters.clone())
                 .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
         }
         logger_ref.clear_filters();
@@ -264,5 +290,49 @@ impl ConfigBuilder {
             logger_ref.set_propagate(propagate);
         }
         Ok(())
+    }
+
+    /// Build formatter, filter, and handler registries before touching live loggers.
+    fn build_runtime_components(&self) -> Result<BuiltConfigComponents, ConfigError> {
+        let built_formatters = self
+            .formatter_builders()
+            .iter()
+            .map(|(id, builder)| (id.clone(), builder.build()))
+            .collect::<BTreeMap<_, _>>();
+        let built_filters = Self::build_map(
+            self.filter_builders(),
+            |b| b.build(),
+            |id, source| ConfigError::FilterBuild { id, source },
+        )?;
+        // Resolve filters before handlers open files or start workers.
+        let handler_filters = self
+            .handler_builders()
+            .iter()
+            .map(|(id, builder)| {
+                Self::collect_items(
+                    builder.filter_ids(),
+                    &built_filters,
+                    Self::duplicate_filter_ids,
+                )
+                .map(|filters| (id.clone(), filters))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let built_handlers = Self::build_map(
+            self.handler_builders(),
+            |b| b.build_with_formatters(&built_formatters),
+            |id, source| ConfigError::HandlerBuild { id, source },
+        )?;
+        let handler_filter_ids = self
+            .handler_builders()
+            .iter()
+            .map(|(id, builder)| (id.clone(), builder.filter_ids().to_vec()))
+            .collect();
+
+        Ok(BuiltConfigComponents {
+            built_handlers,
+            handler_filter_ids,
+            built_filters,
+            resolved_handler_filters: handler_filters,
+        })
     }
 }

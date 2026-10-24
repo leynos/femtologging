@@ -108,3 +108,87 @@ def test_socket_builder_tls_requires_tcp(tmp_path: Path) -> None:
 
     with pytest.raises(femtologging.HandlerConfigError):
         builder.build()
+
+
+def test_configured_socket_handler_filters_propagated_records(
+    recording_server: _RecordingTCPServer,
+) -> None:
+    """A shared socket handler sends only accepted descendant records."""
+    femtologging.reset_manager()
+    host, port = recording_server.server_address[:2]
+
+    def accept_record(record: object) -> bool:
+        """Reject the first message before it reaches the socket worker."""
+        attributes = vars(record)
+        if attributes["msg"] != "accepted":
+            return False
+        attributes["correlation_id"] = "REQ-99"
+        return True
+
+    try:
+        (
+            femtologging
+            .ConfigBuilder()
+            .with_filter(
+                "accept", femtologging.PythonCallbackFilterBuilder(accept_record)
+            )
+            .with_handler(
+                "network",
+                femtologging
+                .SocketHandlerBuilder()
+                .with_tcp(str(host), int(port))
+                .with_filters(["accept"]),
+            )
+            .with_root_logger(
+                femtologging
+                .LoggerConfigBuilder()
+                .with_level("INFO")
+                .with_handlers(["network"])
+            )
+            .build_and_init()
+        )
+        child = femtologging.get_logger("network.socket.child")
+        child.info("rejected")
+        child.info("accepted")
+        assert femtologging.get_logger("root").flush_handlers(), (
+            "socket delivery should flush"
+        )
+        payload = recording_server.queue.get(timeout=2)
+        assert b"accepted" in payload, (
+            "accepted child record should reach the socket endpoint"
+        )
+        assert b"rejected" not in payload, (
+            "rejected child records must not reach the socket endpoint"
+        )
+        assert b"correlation_id" in payload, (
+            "accepted filter enrichment key should reach the socket endpoint"
+        )
+        assert b"REQ-99" in payload, (
+            "accepted filter enrichment value should reach the socket endpoint"
+        )
+        assert recording_server.queue.empty(), "the rejected record must not be sent"
+    finally:
+        femtologging.reset_manager()
+
+
+def test_socket_handler_rejects_unknown_filter_ids() -> None:
+    """Configuration rejects an unresolved socket handler filter ID."""
+    femtologging.reset_manager()
+    handler = (
+        femtologging
+        .SocketHandlerBuilder()
+        .with_tcp("127.0.0.1", 1)
+        .with_filters(["missing"])
+    )
+    config = (
+        femtologging
+        .ConfigBuilder()
+        .with_handler("network", handler)
+        .with_root_logger(femtologging.LoggerConfigBuilder().with_handlers(["network"]))
+    )
+
+    try:
+        with pytest.raises(KeyError, match="missing"):
+            config.build_and_init()
+    finally:
+        femtologging.reset_manager()

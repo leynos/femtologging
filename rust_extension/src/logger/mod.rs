@@ -13,6 +13,7 @@ mod convenience_methods;
 mod producer;
 mod py_handler;
 mod python_helpers;
+mod queue;
 #[cfg(feature = "python")]
 mod runtime_mutation;
 mod worker;
@@ -22,7 +23,7 @@ use pyo3::{Py, PyAny};
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 #[cfg(all(test, not(loom)))]
 use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
@@ -38,7 +39,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
-pub use worker::QueuedRecord;
+pub use queue::QueuedRecord;
+pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot};
 
 /// Maximum number of records held before producers report a dropped record.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -60,8 +62,8 @@ pub struct FemtoLogger {
     /// Whether records are copied to the dotted-name parent after local dispatch.
     propagate: AtomicBool,
     /// Lock-protected live handlers; each queued record owns the snapshot it captured.
-    handlers: Arc<RwLock<Vec<Arc<dyn FemtoHandlerTrait>>>>,
-    /// Lock-protected filters consulted by producers before queueing a record.
+    handlers: Arc<RwLock<Vec<HandlerAttachment>>>,
+    /// Filters applied only to calls made through this logger before dispatch.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
     /// Number of records rejected because the worker queue could not accept them.
     dropped_records: AtomicU64,
@@ -147,8 +149,10 @@ impl FemtoLogger {
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::attach(|py| {
             let mut handlers = self.handlers.write();
-            let matches_handler = |h: &Arc<dyn FemtoHandlerTrait>| {
-                h.as_any()
+            let matches_handler = |attachment: &HandlerAttachment| {
+                attachment
+                    .handler
+                    .as_any()
                     .downcast_ref::<PyHandler>()
                     .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
             };
@@ -188,7 +192,7 @@ impl FemtoLogger {
         self.context_capture_failures.load(Ordering::Relaxed)
     }
 
-    /// Flush all handlers attached to this logger.
+    /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
     /// First waits up to 2 seconds for the internal worker thread to drain
     /// its queue, then calls ``flush()`` on every attached handler (each
@@ -207,9 +211,9 @@ impl FemtoLogger {
     /// --------
     /// >>> logger.flush_handlers()
     /// True
-    #[pyo3(text_signature = "(self)")]
-    pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
+    #[pyo3(name = "flush_handlers", text_signature = "(self)")]
+    fn py_flush_handlers(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush_handlers())
     }
 
     /// Capture handler addresses for tests that verify attachment replacement.
@@ -217,12 +221,21 @@ impl FemtoLogger {
         self.handlers
             .read()
             .iter()
-            .map(|h| Arc::as_ptr(h) as *const () as usize)
+            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
             .collect()
     }
 }
 
 impl FemtoLogger {
+    /// Flush all handlers attached to this logger.
+    ///
+    /// First waits up to 2 seconds for the internal worker thread to drain
+    /// its queue, then calls ``flush()`` on every attached handler (each
+    /// handler applies its own timeout).
+    pub fn flush_handlers(&self) -> bool {
+        self.flush_handlers_blocking()
+    }
+
     /// Attach a handler to this logger.
     ///
     /// # Errors
@@ -233,11 +246,27 @@ impl FemtoLogger {
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,
     ) -> Result<(), crate::handler::HandlerError> {
+        self.add_handler_attachment(HandlerAttachment::new(handler))
+    }
+
+    /// Attach a handler with filters evaluated on the producer thread.
+    #[cfg(feature = "python")]
+    pub(crate) fn add_handler_with_filters(
+        &self,
+        handler: Arc<dyn FemtoHandlerTrait>,
+        filters: Vec<Arc<dyn FemtoFilter>>,
+    ) -> Result<(), HandlerError> {
+        self.add_handler_attachment(HandlerAttachment::with_filters(handler, filters))
+    }
+
+    /// Validate contextual dispatch support before publishing a handler attachment.
+    fn add_handler_attachment(&self, attachment: HandlerAttachment) -> Result<(), HandlerError> {
         #[cfg(feature = "python")]
-        if handler.is_python_backed() && !handler.provides_context_dispatch() {
-            return Err(crate::handler::HandlerError::MissingContextDispatch);
+        if attachment.handler.is_python_backed() && !attachment.handler.provides_context_dispatch()
+        {
+            return Err(HandlerError::MissingContextDispatch);
         }
-        self.handlers.write().push(handler);
+        self.handlers.write().push(attachment);
         Ok(())
     }
 
@@ -249,7 +278,10 @@ impl FemtoLogger {
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
-        if let Some(pos) = handlers.iter().position(|h| Arc::ptr_eq(h, handler)) {
+        if let Some(pos) = handlers
+            .iter()
+            .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
+        {
             handlers.remove(pos);
             true
         } else {
@@ -282,7 +314,11 @@ impl FemtoLogger {
 
     #[cfg(test)]
     pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
-        self.handlers.read().clone()
+        self.handlers
+            .read()
+            .iter()
+            .map(|attachment| attachment.handler.clone())
+            .collect()
     }
 
     /// Clone the internal sender for use in tests.
@@ -317,6 +353,9 @@ mod logger_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "logger_tests_helpers.rs"]
 mod logger_tests_helpers;
+#[cfg(all(test, not(loom)))]
+#[path = "producer_rejection_tests.rs"]
+mod producer_rejection_tests;
 #[cfg(all(test, not(loom)))]
 #[path = "producer_tests.rs"]
 mod producer_tests;

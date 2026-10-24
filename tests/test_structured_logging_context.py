@@ -120,9 +120,9 @@ def test_module_logging_captures_task_local_context(
 
 def test_get_logger_info_preserves_context_at_root_handler() -> None:
     """``get_logger`` records retain context through root-handler propagation."""
-    records: list[dict[str, object]] = []
+    records: list[cabc.Mapping[str, object]] = []
 
-    def capture(record: dict[str, object]) -> str:
+    def capture(record: cabc.Mapping[str, object]) -> str:
         records.append(record)
         return "captured"
 

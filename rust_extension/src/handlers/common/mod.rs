@@ -7,6 +7,9 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
 };
 
+#[cfg(feature = "python")]
+use std::collections::BTreeMap;
+
 use super::{
     FormatterId, HandlerBuildError,
     file::{HandlerConfig, OverflowPolicy},
@@ -88,6 +91,8 @@ pub struct CommonBuilder {
     pub(crate) flush_after_ms: Option<NonZeroU64>,
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     pub(crate) formatter: Option<FormatterConfig>,
+    /// Filter names resolved by configuration before the handler reaches runtime dispatch.
+    pub(crate) filters: Vec<String>,
 }
 
 impl CommonBuilder {
@@ -112,6 +117,43 @@ impl CommonBuilder {
         F: IntoFormatterConfig,
     {
         self.formatter = Some(formatter.into_formatter_config());
+    }
+
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &BTreeMap<String, SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        let Some(FormatterConfig::Id(id)) = &self.formatter else {
+            return Ok(());
+        };
+        if let Some(formatter) = formatters.get(id.as_str()).cloned() {
+            self.formatter = Some(FormatterConfig::Instance(formatter));
+            return Ok(());
+        }
+        if let FormatterId::Custom(id) = id {
+            return Err(HandlerBuildError::InvalidConfig(format!(
+                "unknown formatter id: {id}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Replace the handler filter identifiers.
+    pub(crate) fn set_filter_ids<I, S>(&mut self, filter_ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.filters =
+            crate::config::normalize_vec(filter_ids.into_iter().map(Into::into).collect());
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        &self.filters
     }
 
     /// Validate that an optional numeric field (if provided) is greater than zero.
@@ -143,6 +185,25 @@ impl CommonBuilder {
         } else {
             Ok(())
         }
+    }
+
+    /// Reject invalid capacity and filter references that bypass configuration resolution.
+    pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
+        self.is_capacity_valid()?;
+        ensure_filter_ids_resolved(&self.filters)
+    }
+}
+
+/// Reject filter identifiers when a builder is built outside a configuration
+/// flow that can resolve them into runtime filters.
+pub(crate) fn ensure_filter_ids_resolved(filter_ids: &[String]) -> Result<(), HandlerBuildError> {
+    if filter_ids.is_empty() {
+        Ok(())
+    } else {
+        Err(HandlerBuildError::InvalidConfig(
+            "handler filter IDs must be resolved through ConfigBuilder or RuntimeConfigBuilder"
+                .into(),
+        ))
     }
 }
 
@@ -238,6 +299,30 @@ impl FileLikeBuilderState {
         self.common.set_formatter(formatter);
     }
 
+    /// Replace a custom formatter identifier with its configured instance.
+    #[cfg(feature = "python")]
+    pub(crate) fn resolve_formatter(
+        &mut self,
+        formatters: &BTreeMap<String, SharedFormatter>,
+    ) -> Result<(), HandlerBuildError> {
+        self.common.resolve_formatter(formatters)
+    }
+
+    /// Replace the handler filter identifiers.
+    pub(crate) fn set_filter_ids<I, S>(&mut self, filter_ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.common.set_filter_ids(filter_ids);
+    }
+
+    /// Return the configured handler filter identifiers.
+    #[cfg(feature = "python")]
+    pub(crate) fn filter_ids(&self) -> &[String] {
+        self.common.filter_ids()
+    }
+
     /// Update the overflow policy in place.
     pub(crate) fn set_overflow_policy(&mut self, policy: OverflowPolicy) {
         self.overflow_policy = policy;
@@ -248,7 +333,7 @@ impl FileLikeBuilderState {
     /// The `flush_after_records` field uses `NonZeroU64`, so zero values are
     /// rejected at the type level and no explicit check is needed here.
     pub(crate) fn validate(&self) -> Result<(), HandlerBuildError> {
-        self.common.is_capacity_valid()?;
+        self.common.validate()?;
         if let OverflowPolicy::Timeout(duration) = self.overflow_policy
             && duration.is_zero()
         {
