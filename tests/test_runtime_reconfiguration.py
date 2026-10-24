@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import re
 import typing as typ
 
@@ -24,7 +25,6 @@ from femtologging import (
 from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
     from syrupy.assertion import SnapshotAssertion
@@ -143,6 +143,31 @@ def test_runtime_apply_unknown_filter_preserves_previous_state(
     )
 
 
+def test_runtime_invalid_handler_filter_does_not_create_file(
+    core_config: None, tmp_path: Path
+) -> None:
+    """Invalid new handler references fail before resources or state change."""
+    logger = get_logger("core")
+    previous_handlers = logger.handler_ptrs_for_test()
+    path = tmp_path / "invalid-runtime-handler.log"
+    with pytest.raises(KeyError, match="missing"):
+        (
+            RuntimeConfigBuilder()
+            .with_handler(
+                "output", FileHandlerBuilder(str(path)).with_filters(["missing"])
+            )
+            .with_logger("core", LoggerMutationBuilder().replace_handlers(["output"]))
+            .apply()
+        )
+    assert not path.exists(), "invalid runtime filters must not create output files"
+    assert logger.handler_ptrs_for_test() == previous_handlers, (
+        "failed runtime configuration must retain existing handlers"
+    )
+    assert logger.log("ERROR", "still blocked") is None, (
+        "failed runtime configuration must retain existing rejection filters"
+    )
+
+
 def test_runtime_mutation_preserves_handler_filter_enrichment_and_rejection(
     tmp_path: Path,
 ) -> None:
@@ -157,13 +182,20 @@ def test_runtime_mutation_preserves_handler_filter_enrichment_and_rejection(
         attributes["runtime_context"] = "attached"
         return message != "rejected"
 
+    def format_record(record: cabc.Mapping[str, object]) -> str:
+        metadata = record["metadata"]
+        message = record["message"]
+        assert isinstance(metadata, cabc.Mapping), (
+            "formatter metadata must be a mapping"
+        )
+        assert isinstance(message, str), "formatter message must be text"
+        return f"{metadata['key_values']!r} {message}"
+
     handler = (
         FileHandlerBuilder(str(path))
         .with_flush_after_records(1)
         .with_filters(["context"])
-        .with_formatter(
-            lambda record: f"{record['metadata']['key_values']!r} {record['message']}"
-        )
+        .with_formatter(format_record)
     )
     (
         ConfigBuilder()

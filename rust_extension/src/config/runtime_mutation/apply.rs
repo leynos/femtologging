@@ -47,6 +47,16 @@ impl RuntimeConfigBuilder {
     /// Apply the runtime mutation transactionally.
     pub fn apply(&self) -> Result<(), ConfigError> {
         self.validate()?;
+        let before = crate::manager::snapshot_runtime_state();
+        // New filters supplement or replace existing IDs in the commit registry.
+        // Check references before handler construction acquires any resources.
+        for builder in self.handlers.values() {
+            for id in builder.filter_ids() {
+                if !before.filter_registry.contains_key(id) && !self.filters.contains_key(id) {
+                    return Err(ConfigError::UnknownIds(vec![id.clone()]));
+                }
+            }
+        }
         let built = BuiltRegistries {
             handlers: build_handlers(&self.handlers)?,
             filters: build_filters(&self.filters)?,

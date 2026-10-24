@@ -26,6 +26,14 @@ use record_view::{
     restore_record_attrs, snapshot_record_attrs,
 };
 
+/// Bound and sanitize caller-controlled exception text before writing it to stderr.
+fn bounded_exception_text(text: &str) -> String {
+    text.chars()
+        .take(256)
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect()
+}
+
 /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 type SerializedEnrichment = BTreeMap<String, String>;
 /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
@@ -116,9 +124,27 @@ impl FemtoFilter for PythonCallbackFilter {
     fn decision(&self, record: &mut FemtoLogRecord, context: &mut FilterContext) -> FilterDecision {
         match self.decision_with_context(record, context) {
             Ok(decision) => decision,
-            Err(_) => {
+            Err(error) => {
                 self.failure_warner.report(|failure_count| {
                     warn!("Python filter callback failed; records dropped: {failure_count}");
+                    Python::attach(|py| {
+                        // Bound caller-controlled text and omit traceback/local values.
+                        let exception_type = error
+                            .get_type(py)
+                            .name()
+                            .map(|name| bounded_exception_text(&name.to_string_lossy()))
+                            .unwrap_or_else(|_| "Python exception".to_owned());
+                        let detail = error
+                            .value(py)
+                            .str()
+                            .map(|value| bounded_exception_text(&value.to_string_lossy()))
+                            .unwrap_or_else(|_| "<unprintable exception>".to_owned());
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "Python filter {} failed: {exception_type}: {detail}",
+                            bounded_exception_text(&self.description),
+                        ))
+                        .print(py);
+                    });
                 });
                 FilterDecision::callback_failure()
             }

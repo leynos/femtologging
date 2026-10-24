@@ -30,7 +30,7 @@ ExcInfo = Union[
 ]
 StructuredValue = str | int | float | bool | None
 StructuredFields = Mapping[str, StructuredValue]
-_FormatterCallback = Callable[[_Any], str]
+_FormatterCallback = Callable[[cabc.Mapping[str, object]], str]
 
 class FemtoLogger:
     """A high-performance logger implemented in Rust."""

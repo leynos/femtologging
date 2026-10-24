@@ -11,14 +11,19 @@ import typing as typ
 import pytest
 
 from femtologging import (
+    ConfigBuilder,
     FemtoHandler,
     FemtoLogger,
     FileHandlerBuilder,
     HTTPHandlerBuilder,
+    LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
+    get_logger,
     log_context,
+    reset_manager,
 )
 
 if typ.TYPE_CHECKING:
@@ -209,3 +214,70 @@ def test_python_registered_http_handler_preserves_context() -> None:
             server.shutdown()
             thread.join(timeout=1)
             assert not thread.is_alive(), "the HTTP server thread did not stop"
+
+
+def test_configured_http_handler_filters_propagated_records() -> None:
+    """A configured HTTP filter suppresses rejected child-logger records."""
+    reset_manager()
+
+    def accept_record(record: object) -> bool:
+        """Allow only the accepted message through the shared HTTP handler."""
+        return vars(record)["msg"] == "accepted"
+
+    with _RecordingHTTPServer() as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address[:2]
+        try:
+            (
+                ConfigBuilder()
+                .with_filter("accept", PythonCallbackFilterBuilder(accept_record))
+                .with_handler(
+                    "network",
+                    HTTPHandlerBuilder()
+                    .with_endpoint(f"http://{host}:{port}/records", "POST")
+                    .with_filters(["accept"]),
+                )
+                .with_root_logger(
+                    LoggerConfigBuilder().with_level("INFO").with_handlers(["network"])
+                )
+                .build_and_init()
+            )
+            child = get_logger("network.http.child")
+            child.info("rejected")
+            child.info("accepted")
+            assert get_logger("root").flush_handlers(), "HTTP delivery should flush"
+            payload = server.payloads.get(timeout=2)
+            assert b"accepted" in payload, (
+                "accepted child record should reach the HTTP endpoint"
+            )
+            assert b"rejected" not in payload, (
+                "rejected child records must not reach the HTTP endpoint"
+            )
+            assert server.payloads.empty(), "the rejected record must not be sent"
+        finally:
+            reset_manager()
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive(), "the HTTP server thread did not stop"
+
+
+def test_http_handler_rejects_unknown_filter_ids() -> None:
+    """Configuration rejects an unresolved HTTP handler filter ID."""
+    reset_manager()
+    handler = (
+        HTTPHandlerBuilder()
+        .with_endpoint("http://127.0.0.1:1/records", "POST")
+        .with_filters(["missing"])
+    )
+    config = (
+        ConfigBuilder()
+        .with_handler("network", handler)
+        .with_root_logger(LoggerConfigBuilder().with_handlers(["network"]))
+    )
+
+    try:
+        with pytest.raises(KeyError, match="missing"):
+            config.build_and_init()
+    finally:
+        reset_manager()

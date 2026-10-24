@@ -192,7 +192,7 @@ impl FemtoLogger {
         self.context_capture_failures.load(Ordering::Relaxed)
     }
 
-    /// Flush all handlers attached to this logger.
+    /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
     /// First waits up to 2 seconds for the internal worker thread to drain
     /// its queue, then calls ``flush()`` on every attached handler (each
@@ -211,9 +211,9 @@ impl FemtoLogger {
     /// --------
     /// >>> logger.flush_handlers()
     /// True
-    #[pyo3(text_signature = "(self)")]
-    pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
+    #[pyo3(name = "flush_handlers", text_signature = "(self)")]
+    fn py_flush_handlers(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush_handlers())
     }
 
     /// Capture handler addresses for tests that verify attachment replacement.
@@ -227,6 +227,15 @@ impl FemtoLogger {
 }
 
 impl FemtoLogger {
+    /// Flush all handlers attached to this logger.
+    ///
+    /// First waits up to 2 seconds for the internal worker thread to drain
+    /// its queue, then calls ``flush()`` on every attached handler (each
+    /// handler applies its own timeout).
+    pub fn flush_handlers(&self) -> bool {
+        self.flush_handlers_blocking()
+    }
+
     /// Attach a handler to this logger.
     ///
     /// # Errors

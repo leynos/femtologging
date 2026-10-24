@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import contextvars
 import threading
 import typing as typ
@@ -24,6 +25,28 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 
+def _format_key_values(record: cabc.Mapping[str, object]) -> str:
+    """Render the structured fields attached to a formatter record."""
+    metadata = record["metadata"]
+    assert isinstance(metadata, cabc.Mapping), "formatter metadata must be a mapping"
+    return repr(metadata["key_values"])
+
+
+def test_invalid_handler_filter_ids_do_not_create_file(
+    tmp_path: Path,
+) -> None:
+    """Unknown filter IDs fail before the file handler is opened."""
+    path = tmp_path / "invalid-handler.log"
+    config = (
+        ConfigBuilder()
+        .with_handler("output", FileHandlerBuilder(str(path)).with_filters(["missing"]))
+        .with_root_logger(LoggerConfigBuilder().with_handlers(["output"]))
+    )
+    with pytest.raises(KeyError, match="missing"):
+        config.build_and_init()
+    assert not path.exists(), "invalid handler filters must not create output files"
+
+
 def test_handler_filter_enriches_records_from_propagated_loggers(
     tmp_path: Path,
 ) -> None:
@@ -42,7 +65,7 @@ def test_handler_filter_enriches_records_from_propagated_loggers(
         FileHandlerBuilder(str(path))
         .with_flush_after_records(1)
         .with_filters(["context"])
-        .with_formatter(lambda record: repr(record["metadata"]["key_values"]))
+        .with_formatter(_format_key_values)
     )
     config = (
         ConfigBuilder()
@@ -147,13 +170,13 @@ def test_handler_filters_keep_their_own_record_snapshot(tmp_path: Path) -> None:
         FileHandlerBuilder(str(first_path))
         .with_flush_after_records(1)
         .with_filters(["first"])
-        .with_formatter(lambda record: repr(record["metadata"]["key_values"]))
+        .with_formatter(_format_key_values)
     )
     second_handler = (
         FileHandlerBuilder(str(second_path))
         .with_flush_after_records(1)
         .with_filters(["second"])
-        .with_formatter(lambda record: repr(record["metadata"]["key_values"]))
+        .with_formatter(_format_key_values)
     )
     config = (
         ConfigBuilder()

@@ -79,15 +79,11 @@ struct Manager {
 /// Process-wide logger registry; callers hold its lock during registry access.
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
-/// Clear runtime attachment snapshots while preserving logger objects.
+/// Take runtime attachment snapshots while leaving an empty registry behind.
 #[cfg(feature = "python")]
-fn clear_runtime_state(mgr: &mut Manager) {
-    mgr.runtime = RuntimeStateSnapshot::default();
+fn take_runtime_state(mgr: &mut Manager) -> RuntimeStateSnapshot {
+    std::mem::take(&mut mgr.runtime)
 }
-
-/// No-op runtime reset when Python configuration support is unavailable.
-#[cfg(not(feature = "python"))]
-fn clear_runtime_state(_mgr: &mut Manager) {}
 
 /// Return `true` when the provided name is not a valid logger identifier.
 ///
@@ -260,15 +256,31 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
     }
 }
 
-/// Clears cached loggers and their runtime attachments while holding the manager write lock.
+/// Clears cached loggers and runtime attachments.
 ///
-/// The exported reset point is primarily test support; it ensures queued handler state cannot
-/// survive into the next Python logging configuration.
+/// The exported reset point is primarily test support. It detaches state while holding the
+/// manager lock, then drops it after unlocking because worker shutdown can emit Rust log records
+/// that re-enter the manager through the log compatibility bridge.
 #[pyfunction]
 pub fn reset_manager() {
-    let mut mgr = MANAGER.write();
-    mgr.loggers.clear();
-    clear_runtime_state(&mut mgr);
+    #[cfg(feature = "python")]
+    let (loggers, runtime) = {
+        let mut mgr = MANAGER.write();
+        (
+            std::mem::take(&mut mgr.loggers),
+            take_runtime_state(&mut mgr),
+        )
+    };
+
+    #[cfg(not(feature = "python"))]
+    let loggers = {
+        let mut mgr = MANAGER.write();
+        std::mem::take(&mut mgr.loggers)
+    };
+
+    drop(loggers);
+    #[cfg(feature = "python")]
+    drop(runtime);
 }
 
 #[cfg(test)]

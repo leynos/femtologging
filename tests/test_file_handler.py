@@ -7,7 +7,6 @@ import errno
 import re
 import threading
 import time
-import typing as typ
 from contextlib import AbstractContextManager, closing, contextmanager
 from pathlib import Path
 
@@ -21,14 +20,6 @@ type FileHandlerFactory = cabc.Callable[
 
 type LevelledRecord = tuple[str, str]
 """A ``(level, message)`` pair handled by the ``core`` logger in these tests."""
-
-
-class FormatterRecord(typ.TypedDict):
-    """Structured payload for the blocking formatter."""
-
-    logger: str
-    level: str
-    message: str
 
 
 def _rendered(records: cabc.Sequence[LevelledRecord]) -> list[str]:
@@ -222,13 +213,19 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
         finally:
             event.set()
 
-    def blocking_formatter(record: FormatterRecord) -> str:
+    def blocking_formatter(record: cabc.Mapping[str, object]) -> str:
+        logger = record["logger"]
+        level = record["level"]
+        message = record["message"]
+        assert isinstance(logger, str), "formatter logger must be text"
+        assert isinstance(level, str), "formatter level must be text"
+        assert isinstance(message, str), "formatter message must be text"
         if not worker_started.is_set():
             worker_started.set()
             if not release_worker.wait(timeout=10.0):
                 msg = "timeout waiting for release_worker in formatter"
                 raise AssertionError(msg)
-        return f"{record['logger']} [{record['level']}] {record['message']}"
+        return f"{logger} [{level}] {message}"
 
     builder = (
         FileHandlerBuilder(str(path))

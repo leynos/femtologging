@@ -591,81 +591,66 @@ summarized below:
 ```mermaid
 classDiagram
     class ConfigBuilder {
-        +with_version(version: int)
-        +with_disable_existing_loggers(flag: bool)
-        +with_formatter(id: str, builder: FormatterBuilder)
-        +with_filter(id: str, builder: FilterBuilder)
-        +with_handler(id: str, builder: FileHandlerBuilder|
-            RotatingFileHandlerBuilder|
-            TimedRotatingFileHandlerBuilder|
-            StreamHandlerBuilder|
-            SocketHandlerBuilder|
-            HTTPHandlerBuilder)
-        +with_logger(name: str, builder: LoggerConfigBuilder)
-        +with_root_logger(builder: LoggerConfigBuilder)
+        +with_version(version)
+        +with_disable_existing_loggers(flag)
+        +with_formatter(id, builder)
+        +with_filter(id, builder)
+        +with_handler(id, builder)
+        +with_logger(name, builder)
+        +with_root_logger(builder)
         +build_and_init()
     }
     class FormatterBuilder {
-        +with_format(fmt: str)
-        +with_datefmt(datefmt: str)
+        +with_format(fmt)
+        +with_datefmt(datefmt)
     }
     class FileHandlerBuilder {
-        +__init__(path: str)
-        +with_formatter(
-            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
-        )
+        +__init__(path)
+        +with_formatter(formatter)
     }
     class RotatingFileHandlerBuilder {
-        +__init__(path: str)
-        +with_formatter(
-            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
-        )
-        +with_max_bytes(max_bytes: int)
-        +with_backup_count(count: int)
+        +__init__(path)
+        +with_formatter(formatter)
+        +with_max_bytes(max_bytes)
+        +with_backup_count(count)
     }
     class TimedRotatingFileHandlerBuilder {
-        +__init__(path: str)
-        +with_formatter(
-            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
-        )
-        +with_when(when: str)
-        +with_interval(interval: int)
-        +with_backup_count(count: int)
-        +with_utc(utc: bool)
-        +with_at_time(at_time: datetime.time)
+        +__init__(path)
+        +with_formatter(formatter)
+        +with_when(when)
+        +with_interval(interval)
+        +with_backup_count(count)
+        +with_utc(utc)
+        +with_at_time(at_time)
     }
     class StreamHandlerBuilder {
         +stdout()
         +stderr()
-        +with_formatter(
-            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
-        )
+        +with_formatter(formatter)
     }
     class SocketHandlerBuilder {
         +__init__()
-        +with_tcp(host: str, port: int)
-        +with_unix_path(path: str)
-        +with_connect_timeout_ms(timeout: int)
-        +with_write_timeout_ms(timeout: int)
-        +with_max_frame_size(size: int)
-        +with_tls(domain: str, insecure: bool)
-        +with_backoff(config: BackoffConfig)
-        +with_formatter(
-            fmt: str | Callable[[collections.abc.Mapping[str, object]], str]
-        )
+        +with_tcp(host, port)
+        +with_unix_path(path)
+        +with_connect_timeout_ms(timeout)
+        +with_write_timeout_ms(timeout)
+        +with_max_frame_size(size)
+        +with_tls(domain, insecure)
+        +with_backoff(config)
+        +with_formatter(formatter)
     }
     class HTTPHandlerBuilder {
-        +with_endpoint(url: str, method: str)
-        +with_filters(filter_ids: list[str])
+        +with_endpoint(url, method)
+        +with_filters(filter_ids)
     }
     class FilterBuilder {
         +build()
     }
     class LoggerConfigBuilder {
-        +with_level(level: str|int)
-        +with_filters(filters: list)
-        +with_handlers(handlers: list)
-        +with_propagate(flag: bool)
+        +with_level(level)
+        +with_filters(filters)
+        +with_handlers(handlers)
+        +with_propagate(flag)
     }
     class FileLikeBuilderState {
         +capacity
@@ -674,7 +659,7 @@ classDiagram
         +formatter
     }
     class dictConfig {
-        +dictConfig(config: Mapping[str, object])
+        +dictConfig(config)
     }
     dictConfig --> ConfigBuilder
     ConfigBuilder --> FormatterBuilder

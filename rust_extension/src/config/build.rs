@@ -304,11 +304,7 @@ impl ConfigBuilder {
             |b| b.build(),
             |id, source| ConfigError::FilterBuild { id, source },
         )?;
-        let built_handlers = Self::build_map(
-            self.handler_builders(),
-            |b| b.build_with_formatters(&built_formatters),
-            |id, source| ConfigError::HandlerBuild { id, source },
-        )?;
+        // Resolve filters before handlers open files or start workers.
         let handler_filters = self
             .handler_builders()
             .iter()
@@ -321,6 +317,11 @@ impl ConfigBuilder {
                 .map(|filters| (id.clone(), filters))
             })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let built_handlers = Self::build_map(
+            self.handler_builders(),
+            |b| b.build_with_formatters(&built_formatters),
+            |id, source| ConfigError::HandlerBuild { id, source },
+        )?;
         let handler_filter_ids = self
             .handler_builders()
             .iter()

@@ -662,6 +662,9 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
   Missing fields render as empty strings. `asctime` uses `datefmt` when set. A
   direct builder passed to `with_formatter` is compiled immediately; a string
   ID is resolved from `ConfigBuilder` or `dictConfig`'s `formatters` registry.
+  `levelno` in percent formatting and Python record dictionaries is
+  FemtoLevel's raw numeric value (INFO is 2), not the stdlib logging value
+  (20). Only `StdlibHandlerAdapter` converts it to stdlib `LogRecord.levelno`.
 - Filters are available through both `ConfigBuilder` and `dictConfig`.
   `fileConfig` does not yet support filter declarations. Handler filters use
   the same filter ID registry as logger filters; handler `level` remains
