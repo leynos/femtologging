@@ -187,7 +187,9 @@ impl FemtoFileHandler {
     /// The GIL is released while waiting so a Python callable formatter can
     /// finish on the worker thread. Closing does not cancel a `handle` call
     /// that is already waiting for queue capacity; that call returns only when
-    /// the worker makes room or the channel closes. See the user guide for the
+    /// the worker makes room or the channel closes. The Python borrow is
+    /// released before the wait, so a concurrent call reaches the closed
+    /// handler instead of being rejected by PyO3. See the user guide for the
     /// shutdown contract.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {

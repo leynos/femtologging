@@ -1,4 +1,3 @@
-# ruff: file-ignore[assert] Test support helpers assert on their callers' behalf.
 """Parent-side runner for the file-handler interpreter-lock scenarios.
 
 Interpreter-lock behaviour cannot be observed from inside a single interpreter,
@@ -54,38 +53,54 @@ SCENARIO_TIMEOUT_SECONDS = 20.0
 def _run_scenario(script: str, *, context: str) -> None:
     """Run ``script`` in a fresh interpreter, failing the test on any error.
 
-    The script is piped on standard input rather than passed with ``-c`` so a
-    traceback from the child names ``<stdin>`` instead of echoing the whole
-    program back into the assertion message.
+    Passing the script with ``-c`` keeps the scenario self-contained and avoids
+    creating a temporary script file.
     """
     try:
+        # ruff: ignore[subprocess-without-shell-equals-true] fixed interpreter
+        # and repository-rendered test scenario
         completed = subprocess.run(
-            [sys.executable, "-"],
-            input=script,
+            [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             timeout=SCENARIO_TIMEOUT_SECONDS,
             check=False,
         )
-    except subprocess.TimeoutExpired as exc:
+    except subprocess.TimeoutExpired:
         pytest.fail(
             f"{context}: scenario did not finish within "
             f"{SCENARIO_TIMEOUT_SECONDS:g}s, so a blocking handler call is "
-            f"probably holding the GIL.\n{exc}"
+            "probably holding the GIL."
         )
-    assert completed.returncode == 0, (
-        f"{context}: scenario failed in the child interpreter (exit "
-        f"{completed.returncode}):\n{completed.stdout}\n{completed.stderr}"
-    )
+    if completed.returncode != 0:
+        pytest.fail(
+            f"{context}: scenario failed in the child interpreter (exit "
+            f"{completed.returncode}):\n{completed.stdout}\n{completed.stderr}"
+        )
 
 
 def run_scenario(builder_name: str, body_name: str, path: Path) -> None:
-    """Run one named scenario against one builder in a child interpreter.
+    """Run a named scenario against one builder in a child interpreter.
 
-    Fails the calling test if the child overruns
-    :data:`SCENARIO_TIMEOUT_SECONDS` -- how a binding that holds the GIL
-    through its wait shows up -- or exits non-zero, in which case the child's
-    own traceback is attached to the failure.
+    Parameters
+    ----------
+    builder_name : str
+        Registered builder label, such as ``"file"`` or ``"rotating"``.
+    body_name : str
+        Registered scenario label, such as ``"handle-block"`` or ``"flush"``.
+    path : pathlib.Path
+        Output path passed to the child scenario.
+
+    The helper returns no value after the child exits successfully. A timeout
+    or non-zero exit fails the calling test and includes the child's
+    diagnostic output.
+
+    Examples
+    --------
+    Run the bounded enqueue scenario in a fresh interpreter:
+
+    >>> from pathlib import Path
+    >>> run_scenario("file", "handle-timeout", Path("timeout.log"))
     """
     _run_scenario(
         render_scenario(builder_name, body_name, path),

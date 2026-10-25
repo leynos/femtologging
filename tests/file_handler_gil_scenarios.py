@@ -14,6 +14,12 @@ from __future__ import annotations
 import textwrap
 import typing as typ
 
+from .file_handler_gil_close_scenarios import (
+    CLOSE_BORROW_BODY,
+    CLOSE_BORROW_CALLS,
+    CONCURRENT_CLOSE_BODY,
+)
+
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
@@ -285,43 +291,6 @@ guard(body)
 """
 
 
-#: A blocked ``handle()`` keeps its shared borrow of the handler for the whole
-#: detached wait, so a concurrent ``close()`` cannot take the exclusive borrow
-#: it needs. Only the exception type is matched, to stay independent of PyO3's
-#: message wording. This scenario waits for the blocked call to finish before
-#: closing, so it never depends on the outcome of the race.
-_CONCURRENT_CLOSE_BODY = """
-def body():
-    handler = build_handler({path!r}, OverflowPolicy.block())
-    saturate(handler)
-    watchdog = start_watchdog()
-    blocked = start_blocked(lambda: handler.handle("core", "INFO", "third"))
-    try:
-        # ``handle`` is stuck on queue capacity, so it cannot have returned and
-        # the borrow is still held when ``close`` asks for it.
-        time.sleep({handoff})
-
-        try:
-            handler.close()
-        except RuntimeError:
-            pass
-        else:
-            raise AssertionError(
-                "close() took the handler while handle() was blocked in it"
-            )
-    finally:
-        RELEASE_WORKER.set()
-
-    join_blocked(blocked)
-    assert_progress_during("handle", watchdog)
-    # With the blocked call finished the borrow is free, so shutdown succeeds.
-    handler.close()
-
-
-guard(body)
-"""
-
-
 #: Every builder produces a handler whose ``handle()`` funnels into the same
 #: core enqueue, so all of them must share one GIL contract. The rotating
 #: thresholds are pushed far out of reach: rotation must not be what unblocks
@@ -357,7 +326,9 @@ _BODIES = {
     "handle-timeout": _TIMEOUT_BODY,
     "flush": _FLUSH_BODY,
     "close": _CLOSE_BODY,
-    "concurrent-close": _CONCURRENT_CLOSE_BODY,
+    "concurrent-close": CONCURRENT_CLOSE_BODY,
+    "close-handle": CLOSE_BORROW_BODY,
+    "close-flush": CLOSE_BORROW_BODY,
 }
 
 #: Builder labels the test module parametrizes over.
@@ -365,7 +336,31 @@ BUILDER_NAMES: tuple[str, ...] = tuple(sorted(_BUILDERS))
 
 
 def render_scenario(builder_name: str, body_name: str, path: Path) -> str:
-    """Render one scenario into a standalone program for a child interpreter."""
+    """Render a scenario as a standalone child-interpreter program.
+
+    Parameters
+    ----------
+    builder_name : str
+        Registered builder label, such as ``"file"`` or ``"timed-rotating"``.
+    body_name : str
+        Registered scenario label, such as ``"handle-timeout"``.
+    path : pathlib.Path
+        Output path the child scenario passes to its handler builder.
+
+    Returns
+    -------
+    str
+        Complete Python source for the selected scenario and shared harness.
+
+    Examples
+    --------
+    Render the flush scenario and inspect its generated imports:
+
+    >>> from pathlib import Path
+    >>> script = render_scenario("file", "flush", Path("flush.log"))
+    >>> script.lstrip().startswith("import threading")
+    True
+    """
     script = _HARNESS.format(
         iterations=PROGRESS_ITERATIONS,
         records=MIN_PROGRESS_RECORDS,
@@ -380,5 +375,6 @@ def render_scenario(builder_name: str, body_name: str, path: Path) -> str:
             hold=BLOCK_HOLD_SECONDS,
             handoff=BLOCK_HOLD_SECONDS,
             error_type=_ERROR_TYPES[builder_name],
+            operation_call=CLOSE_BORROW_CALLS.get(body_name, ""),
         )
     )

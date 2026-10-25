@@ -49,10 +49,11 @@ your process exits.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
-  operations never block the calling code. The default `"drop"` policy keeps
-  that promise unconditionally; the opt-in `"block"` and `"timeout:N"` policies
-  trade it for back pressure, and a direct `handler.handle()` call then waits
-  in the calling thread. See
+  operations run on worker threads. A `handle()` call enqueues work when space
+  is available; behaviour on a full queue depends on the handler. For file
+  handlers, direct `handle()` calls using `"block"` or `"timeout:N"` wait in
+  the calling thread. `flush()` and `close()` may also wait for worker
+  completion. See
   [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
 - When any queue is full under the default policy, the record is dropped. Each
   component emits rate-limited warnings and maintains drop counters
@@ -332,12 +333,16 @@ Two consequences follow from that release, and both concern `"block"`:
   acknowledge shutdown and then abandons it, but the blocked `handle()` is
   waiting on queue capacity and stays blocked. A concurrent `close()` on the
   same handler raises `RuntimeError`, because `close()` needs exclusive access.
-  Close the handler from the thread that is not blocked, or release the worker
-  first.
+  While that wait is in progress, concurrent `handle()` and `flush()` calls on
+  the same Python object also raise `RuntimeError`; the exclusive PyO3 borrow
+  remains active while the GIL is detached. Restore worker progress and let the
+  blocked call finish before calling `close()`.
 
 Callers who need a wait that ends on its own must use `"timeout:N"`. They must
-also handle the `RuntimeError` it raises when the deadline expires and the
-record is dropped.
+also handle the exception raised when the deadline expires and the record is
+dropped. `FemtoFileHandler` and `FemtoRotatingFileHandler` raise `RuntimeError`;
+`FemtoTimedRotatingFileHandler` currently maps the same enqueue failure to
+`ValueError`.
 
 Under the logger path there is no such choice to make: dispatch through
 `logger.log()` waits in the logger's worker thread, not in the thread that
@@ -966,8 +971,9 @@ For upgrade steps covering handler filters and formatter builders, see the
   warnings emitted by each handler to detect back pressure or Rust context
   validation failures. When `get_context_dropped()` increases, correct or
   reduce Rust context fields and explicit metadata that contributes to
-  validation. For queue-full/back-pressure drops, increase handler capacities
-  or switch to blocking/timeout policies when drops are unacceptable.
+  validation. For file-handler queue-full drops, increase handler capacity or
+  use a blocking/timeout policy when those drops are unacceptable. A handler
+  policy does not change the logger queue's own overflow policy.
 - File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies slow whichever thread ends up waiting, and which
@@ -975,8 +981,10 @@ For upgrade steps covering handler filters and formatter builders, see the
   `handler.handle()` call waits in the calling thread. Dispatch through
   `logger.log()` does not: the producer only offers the record to the logger's
   queue, and the logger's worker thread performs the handler call, so the wait
-  falls on that worker. Use a blocking policy only when you are comfortable
-  with the resulting back pressure, and see
+  falls on that worker. A blocked file handler prevents that worker from
+  draining the logger's bounded queue; if that queue fills, `logger.log()` can
+  still drop records under the logger's default policy. Use a blocking policy
+  only when the application can tolerate the resulting back pressure, and see
   [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers)
   for what the file handler does with the interpreter lock while it waits.
 - Socket handlers serialize to MessagePack with a one-megabyte default frame

@@ -8,7 +8,7 @@ Status: IN PROGRESS
 
 Related: [Issue #441](https://github.com/leynos/femtologging/issues/441)
 
-## Purpose / Big Picture
+## Purpose / big picture
 
 Python can construct `FemtoFileHandler` with `policy="block"` or
 `policy="timeout:N"`, then call its public `handle()` method directly. Those
@@ -25,6 +25,9 @@ Observable outcomes:
 - `handler.handle(...)` under `policy="block"` no longer starves a second
   Python thread.
 - `handler.flush()` and `handler.close()` release the lock across their waits.
+- While detached `close()` waits with its exclusive PyO3 borrow, concurrent
+  `handle()`, `flush()`, and `close()` calls on the same object raise
+  `RuntimeError`.
 - The rotating and timed-rotating wrappers inherit the same contract.
 - Python tests, isolated in subprocesses, demonstrate a second thread making
   progress while a direct `handle()` call is blocked.
@@ -36,18 +39,17 @@ Observable outcomes:
   side of the boundary.
 - The Rust `flush()`/`close()` implementations, their one-second deadlines, and
   `Drop` are unchanged.
-- `--no-default-features` and `--cfg loom` builds must keep compiling; the
-  `loom` lane compiles `handlers/file` and `handlers/rotating/core` without the
-  Python bindings.
-- Loom has no clock, so timed waits are unbounded there. Anything detaching
-  must not be compiled into a Loom model.
+- `--no-default-features` and `--cfg loom` builds must keep compiling. Loom
+  compiles the bindings but does not invoke Python methods or model the GIL; no
+  cfg guard is needed around `Python::detach` in these bindings.
 - `policy="block"` stays available to Python; its shutdown semantics are
   documented rather than changed.
 
-## Tolerances (Exception Triggers)
+## Tolerances (exception triggers)
 
-- If detaching changes observable Python behaviour beyond GIL release, stop and
-  re-plan.
+- If detaching changes observable Python behaviour beyond the PyO3 borrow
+  errors during an active exclusive `close()` call, stop and re-plan. The
+  borrow errors must be documented and tested.
 - If the Loom lane cannot be kept green without weakening a model, stop and
   raise it rather than weakening the model.
 
@@ -65,57 +67,117 @@ Observable outcomes:
   progress records land inside the blocked call's own window. Subprocess
   isolation, generous in-child waits and a low threshold keep it stable.
 
+## Conformance basis
+
+Issue [#441](https://github.com/leynos/femtologging/issues/441) and source
+finding `3e0c8fe12a0081918a117d28e165c10e` define the implementation scope:
+Python-exposed file-handler waits must release the GIL, and the block and
+timeout policies must be covered by observable concurrency tests. The issue's
+acceptance items map to Tasks 1–4 below and the verification obligations in
+this plan. There is no separate Terms of Reference, technical design, or ADR
+for this issue; no new public signature or dependency is introduced.
+
+## Verification plan
+
+- **Boundary invariant:** parsing and Python exception creation remain attached
+  to the interpreter; only Rust-owned values and operations cross `py.detach`.
+  PyO3 0.30.1 documents that the closure and return value must implement
+  `Ungil`; the Rust compiler checks this bound. The methods are covered by
+  `make typecheck`, every Clippy feature lane, and the Loom build included in
+  `make test`.
+- **Interpreter-progress invariant:** a full capacity-one queue parks the
+  producer in `send` or `send_timeout` while another Python thread records
+  progress inside that call's window. The subprocess tests exercise all three
+  file-handler builders; the flush and close scenarios exercise their
+  acknowledgement and shutdown waits. `make test` builds the extension and runs
+  these tests. The negative control reintroduced the original GIL-holding call
+  and failed exactly the three direct file-handler tests, so the oracle rejects
+  the intended defect.
+- **Backpressure and shutdown contract:** the existing Rust implementations,
+  one-second flush and close deadlines, and `Drop` remain unchanged. The
+  scenarios check timeout failure, accepted-record output, `flush() == False`
+  after its deadline, and the `RuntimeError` from a concurrent Python `close()`
+  while a blocked call retains its shared PyO3 borrow. They also check that
+  `handle()` and `flush()` fail with `RuntimeError` while detached `close()`
+  holds the exclusive PyO3 borrow.
+- **External interface assumptions:** the version-matched PyO3 0.30.1 API
+  documents `Python::detach` and its `Ungil` bound at
+  <https://docs.rs/pyo3/0.30.1/pyo3/marker/struct.Python.html#method.detach>.
+  Crossbeam Channel 0.5.15 documents that `Sender::send` blocks until send or
+  disconnection, while `send_timeout` additionally returns when its duration
+  expires at
+  <https://docs.rs/crossbeam-channel/0.5.15/crossbeam_channel/struct.Sender.html>.
+  These third-party semantics are treated as assumptions; the tests exercise
+  the repository's real bindings and worker queue. No formal proof or model
+  changes are introduced; Loom continues to cover the Rust channel lifecycle,
+  while the Python subprocess tests cover the GIL boundary.
+- **Documentation invariant:** the user and developer contract stays aligned
+  with the implementation and builder outputs. `make markdownlint` checks
+  prose, spelling, and links; `make nixie` checks diagrams.
+
 ## Progress
 
-- [x] Reconnaissance: read `handlers/file/mod.rs`, `handler_impl.rs`,
-      `rotating/python.rs`, `timed_rotating/python.rs`, the `http_handler`
-      precedent, the Loom lane and its model list.
-- [x] Branch renamed, Lody session title set.
-- [x] Task 1: detach the shared `FemtoFileHandler` bindings (`handle`,
-      `flush`, `close`).
-- [x] Task 2: detach the rotating and timed-rotating wrappers; audit builders
-      (audit found no changes needed).
-- [x] Task 3: Python concurrency regression tests
-      (`tests/test_file_handler_gil_release.py`).
-- [x] Task 4: documentation (user guide, developers guide, `overflow_policy`).
-- [x] Build the extension and run the new suite against it: 9/9 pass.
-- [x] Confirm the tests fail against the pre-fix bindings: see the negative
-      control below. Three tests fail, and only those three.
-- [x] Python gates: `make lint-python`, `make check-fmt`, `make fmt`,
-      `make markdownlint`, `make nixie` all pass.
-- [x] Python lint lanes inside `make lint` (Ruff, interrogate, Pylint on PyPy
-      3.12 and CPython 3.14, df12-python-lints, ambrleaks, Skylos) all pass, and
-      `lint-lanes-test` passes 11/11.
-- [x] `make typecheck` passes on the fixed source (28 s, exit 0).
-- [x] `make lint-rust` **passes** (exit 0): `lint-lanes-test` 11/11,
-      `lint-env-policy` clean across every feature lane, and the Whitaker
-      Dylint suite clean. The whole gate log holds **zero** `error[E...]`,
-      **zero** `warning:` and **zero** admission refusals, with
-      `RUSTFLAGS="-D warnings"` in force and 13 `Finished` lane completions.
-      `femtologging_rs` itself is reported `Checking ...` clean in each lane.
-- [ ] Run `make test`. Attempted twice and died in the compile-admission
-      outage described below, not on a diagnostic; a partial run passed 1112
-      tests with zero failures before admission failed. The second attempt
-      never reached the test stage at all.
-- [x] Rebase onto `origin/main`, which had moved six commits and brought
-      **pyo3 0.29.3 → 0.30.1**, a deny-level `missing_docs_in_private_items`
-      lint, and a Clippy feature matrix widened from 5 lanes to 8. All nine
-      commits replayed; the three handler files conflicted and were resolved by
-      hand (see below).
-- [ ] Re-run every Rust gate on the rebased base. The gate runs recorded above
-      were made against pyo3 0.29.3 and a narrower feature matrix, so they no
-      longer prove anything about the committed tree.
-- [ ] `make lint-rust` on the rebased base (first attempt, 04:17–03:23,
-      ~11 h wall-clock). Every lint lane and the Dylint suite reported clean —
-      15 `# Rust lint lane:` markers, 13 `Finished` completions, **zero**
-      `error[E...]` and **zero** `warning:`. It then failed at
-      `make lint-rust-private-docs-policy-test`: the contract test spawns
-      `make lint-rust-clippy RUST_MANIFEST=<fixture>` with a 600 s cap, and the
-      child's only stderr was `Blocking waiting for file lock on package
-      cache`. Host-wide cache contention (upstream #537), **not** a lint
-      violation: no source compiled, so this says nothing about the branch.
-      Being re-run once the lock chain is empty.
-- [ ] Commit in atomic pieces, push, open the draft PR.
+- [x] Reconnaissance, builder audit, and source-boundary review completed.
+- [x] Tasks 1–4 implemented: shared, rotating, and timed-rotating Python
+      bindings detach around waits; builders need no changes; Python
+      subprocess regressions and user/developer documentation added.
+- [x] The negative control reintroduced the original file-handler `handle()`
+      defect and failed exactly the three file-handler tests that exercise it.
+- [x] Previously rebased onto `origin/main` at `5377ceb`, including PyO3 0.30.1
+      and the expanded Clippy feature matrix; resolved the three handler-file
+      conflicts.
+- [x] The first complete gate sequence on HEAD
+      `a994236507ae11a3280018143f8b3b70323b4892` passed
+      `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+      `make markdownlint`, and `make nixie`. The test target reported 763
+      passed, 5 skipped, 1 warning, and 66 snapshots passed; all nine GIL
+      regressions passed.
+- [x] The first `coderabbit review --agent` completed with 12
+      findings. Triage identified follow-ups: document and test PyO3 borrow
+      errors during detached `close()`, derive outer timeouts from both nested
+      subprocess budgets, and clean stale plan and prose details.
+- [x] Addressed the review follow-ups: expanded flush/close and borrow-error
+      scenarios across all three wrappers, derived nested-test deadlines from
+      their subprocess budgets, and reconciled the plan and user-guide prose.
+- [x] Completed the first-review follow-ups and reran all six deterministic
+      gates. `make test` reported 775 passed, 5 skipped, 1 warning, and all 21
+      GIL regression cases passed.
+- [x] The second CodeRabbit review completed with three findings. The two
+      support-helper docstrings now have structured parameters and documented
+      result semantics, and overflow-policy docs limit the no-wait claim to
+      `handle()` enqueues.
+- [x] Resolved Ruff's docstring follow-ups by documenting the runner's
+      no-value result in prose, as Ruff rejects a `Returns` section for an
+      implicit `None`; removed the renderer's implicit `KeyError` section.
+- [x] The third CodeRabbit review identified sentence-case headings and an
+      ineffective close instruction. The headings are normalized, and the
+      shutdown guidance now says to restore worker progress and let the
+      blocked call finish before closing.
+- [x] Reran all six deterministic gates after the third-review fixes.
+      `make test` reported 777 passed, 5 skipped, 1 warning, and all 21 GIL
+      regression cases passed; Markdownlint reported 0 errors and Nixie
+      validated every diagram.
+- [x] Rebased the 13-commit issue series from `5377ceb` onto the fetched
+      `origin/main` at `d234990`. The `range-diff` retained all 13 commits; the
+      only conflict was in `docs/users-guide.md`. The resolution preserves the
+      newer formatter guidance while carrying forward the GIL contract and
+      blocking-policy qualification.
+- [x] Reran all six deterministic gates on the rebased candidate rooted at
+      `723fb02`, including the reapplied review follow-ups. `make test` reported
+      804 passed, 5 skipped, 1 warning, and 66 snapshots passed; Markdownlint
+      checked 61 files with 0 errors, and Nixie validated every diagram. The
+      source and test files have not changed since this complete run.
+- [x] Completed the post-cooldown CodeRabbit review against the rebased
+      candidate. It reviewed 12 files and raised one valid minor documentation
+      concern: a blocked file-handler worker can leave the logger's separate
+      bounded queue unable to drain, so `logger.log()` may still drop records.
+      The user guide now distinguishes file-handler and logger queue drops.
+- [x] Reran the docs-only gates after the documentation repair: `make fmt`,
+      `make check-fmt`, `make markdownlint`, and `make nixie` passed. The
+      CodeRabbit follow-up reviewed all 12 changed files and reported 0
+      findings.
+- [ ] Commit the gated changes, push the branch, and open the requested draft
+      PR with `Closes #441` and the Lody session link.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -150,7 +212,7 @@ rejected the first and accepted the second. A pure-bytecode busy-wait would
 drops the GIL every few milliseconds; only a call that blocks below the
 interpreter reproduces the freeze.
 
-## Surprises & Discoveries
+## Surprises & discoveries
 
 - `handlers/rotating/core.rs` and `handlers/timed_rotating/core.rs` both
   `delegate!` `flush`/`close`/`handle` to an inner `FemtoFileHandler`, so the
@@ -177,19 +239,11 @@ interpreter reproduces the freeze.
   channel and the thread, so there is no interpreter holding a lock to release.
   The regression evidence has to come from Python, which is why Task 3 spawns
   subprocesses.
-- `make lint-rust` can fail for a reason that has nothing to do with the tree
-  under test. `tests/test_private_docs_lint_contract.py` re-enters
-  `make lint-rust-clippy` against a fixture crate with a 600 s timeout. Under
-  this host's multi-agent load the child sat on
-  `Blocking waiting for file lock on package cache` for the whole 10 minutes
-  and raised `subprocess.TimeoutExpired`. Read the child's captured stderr
-  before believing the failure: a single lock line and no diagnostics means
-  contention, and the fix is to re-run once `grep -cF 64763336 /proc/locks` is
-  0 — not to touch the branch.
-- The lane runner writes a **new numbered log** on each invocation
-  (`...-2.out`, `-3.out`, `-4.out`). Several worktrees run the same target
-  concurrently, so the newest file by mtime is the only safe thing to monitor;
-  an older log frozen mid-run is a finished or superseded run, not a stall.
+- The timed-rotating Python wrapper maps enqueue failures to `ValueError`,
+  whereas the file and size-rotating wrappers use `RuntimeError`. The GIL
+  change keeps these existing exception mappings on the attached side of
+  `detach`; the timeout documentation and parametrized tests record the current
+  distinction instead of changing Python-visible behaviour.
 
 ## Rebase onto a moved `origin/main`
 
@@ -216,19 +270,39 @@ of each resolved file, and doubled two blank lines in `handlers/file/mod.rs`.
 `rust_extension/src/logger/mod.rs` carries the same hint on `origin/main`; it
 is upstream's, and untouched here.
 
-After the rebase, `git rev-list --left-right --count origin/main...HEAD` reports
-`0 9`, so the branch is a strict fast-forward from main, and the diff against
-main is the intended ten files.
+At that point, `git rev-list --left-right --count origin/main...HEAD` reported
+`0 9`, so the branch was a strict fast-forward from main, and the diff against
+main was the intended ten files.
 
-**Consequence for the evidence above.** The Python and Rust gate results were
-all produced against pyo3 0.29.3 with a five-lane Clippy matrix. They do not
-carry over to the rebased tree: pyo3 0.30 removed the blanket
-`FromPyObject for T: PyClass + Clone` impl and stopped emitting `FromPyObject`
-by default, and the new deny-level private-docs lint applies to every feature
-lane. Every Rust gate is therefore re-run against the new base before the
-branch is pushed.
+## Rebase onto `origin/main` at `d234990`
 
-## Decision Log
+Before publication, the fetched target advanced to `d234990`
+(`Add contextual handler filters and formatters`). The previous exclusive base
+remained `5377ceb`: the earlier rebase receipt and reflog show that commit was
+`origin/main` when the issue series began, and the branch contains no merge
+commits. All 13 later commits are issue-specific.
+
+The candidate's tracked, unstaged changes and untracked test scenario were
+preserved in a verified recovery snapshot and stash before replay. The replay
+used Git's built-in `zdiff3` merge driver because the repository's tracked
+attributes select Weave for Rust files and this unattended rebase did not
+request Weave dogfooding. All 13 commits replayed. `git range-diff` shows an
+expected change to the documentation commit: it now retains the newer
+formatter-builder and percent-style guidance from the target. The only new
+conflict was in `docs/users-guide.md`; its resolution keeps those upstream
+changes and adds the file-policy qualification plus the GIL contract. The
+working changes then reapplied without conflicts. The rebased branch reports
+`0 13` against `origin/main` at `d234990`.
+
+The earlier six-gate run and CodeRabbit review apply to `a994236`, before this
+rebase. All deterministic gates have now passed on the rebased candidate. The
+CodeRabbit retry remains pending after its required cooldown.
+
+The earlier pre-rebase gate results did not apply to this dependency and lint
+matrix. The complete gate run on the rebased candidate is recorded in
+`Progress`.
+
+## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
   `FemtoFileHandler::flush`/`close` are also called from Rust and from `Drop`;
@@ -241,6 +315,14 @@ branch is pushed.
   and the fact that `close()` does not cancel it are now documented in the user
   guide, and callers who need a wait that ends on its own are pointed at
   `"timeout:N"`.
+- **Preserve handler-specific exception mappings.** The detached closure returns
+  the Rust error, and each binding constructs its existing Python exception
+  after the GIL is reacquired. In particular, the timed-rotating wrapper's
+  `ValueError` mapping is not normalized as part of this GIL-only change.
+- **Keep PyO3 borrow errors during detached close explicit.** `close()` holds
+  its exclusive object borrow while waiting without the GIL. Concurrent
+  `handle()`, `flush()`, or `close()` calls on that object raise
+  `RuntimeError`; the user guide and subprocess tests pin this behaviour.
 - **Assert the *shape* of the wait, not a wall-clock threshold.** The first
   draft asserted only that a progress event fired before the blocked thread was
   joined. That passes for a GIL-holding binding whenever the wait ends on its
@@ -266,171 +348,22 @@ handlers and the builder audit confirmed no builder work is needed; widening
 the change would make the diff harder to review and the regression evidence
 harder to scope. Tracking these as a separate issue is the right size.
 
-## Resolved blocker: compile admission (kept for the record)
+## Superseded gate interruptions and outcomes
 
-The negative-control rebuild succeeded and the control gave the expected
-result, but the first attempt to rebuild the fixed source was refused:
+Earlier gate attempts were delayed or timed out while Cargo waited on shared
+host cache and compile-admission resources. Those attempts produced no source
+compiler diagnostics. The nested lint-contract timeouts were later extended;
+the complete six-gate run on HEAD `a994236507ae11a3280018143f8b3b70323b4892`
+passed. That run reported 763 Python tests passed, 5 skipped, 1 warning, and 66
+snapshots passed, including all nine then-current GIL regression cases.
+Markdownlint checked 61 files with no errors, and Nixie validated every diagram.
 
-```text
-build-limits: the supervisor refused: unhealthy
-error: could not compile `femtologging_rs` (lib)
-```
+The first requested CodeRabbit review then identified twelve follow-ups. The
+current candidate remains in progress while those findings are addressed and
+revalidated. This section records the superseded gate interruptions without
+attributing host contention to the implementation.
 
-`build-limits-status` reported `UNHEALTHY` with `visible compiler roots=0` and
-asked for operator accounting of retained detached sccache work, including
-stopping a service shared with every other agent on the machine. That is an
-operator decision, so it was reported and left alone rather than worked around.
-The supervisor recovered on its own; the rebuild then succeeded and reinstalled
-the fixed extension, and the suite passes 9/9 again.
-
-The lesson is worth keeping because it is easy to misread:
-`the supervisor refused: unhealthy` and
-`the managed sccache server is unreachable; compiling without the cache` are
-different conditions. The second is benign and the build still runs; the first
-is an admission refusal that stops the build before any of our code is
-compiled, and it must not be retried in a loop or bypassed.
-
-### Second refusal: `launch-failed` after a 21-minute queue
-
-A later `make lint` run reached the Rust lane and failed the same way, one
-state later in the supervisor's life cycle:
-
-```text
-[build-limits] clippy-driver: waiting for a compile slot (1 ahead, 1306s)
-build-limits: the supervisor refused: launch-failed
-
-# Rust lint lane failed: none (exit 101)
-make: *** [Makefile:178: lint-env-policy] Error 101
-```
-
-Two things make this an infrastructure result rather than a code result:
-
-- The refusal landed on a **version probe** --
-  `build-limits-rustc ... clippy-driver ... rustc -vV`, the `rustc --version`
-  handshake that runs before any of this repository's source is read. No crate
-  of ours was compiled, so no lint verdict exists either way.
-- The queue drained from 60 ahead to 1 ahead over 1306 s and then failed at
-  the last step, which is the supervisor losing the launch, not rejecting the
-  work.
-
-The whole Python half of the same `make lint` invocation passed beforehand:
-Ruff, `interrogate` at 100%, Pylint on PyPy 3.12 and Pylint+df12 on CPython
-3.14 (both 10.00/10), `ambrleaks`, and the strict Skylos dead-code gate, plus
-`lint-lanes-test` at 11/11. Only the compile-dependent lane is unproven.
-
-Machine state at the time: load average 7.85--11.90 against 6 cores, 58--62
-concurrent compiler processes from other agents, and the supervisor socket
-answering `EAGAIN`/`timed out`. `build-limits-status` could not be queried at
-all. Per the compile-admission rules this was left alone rather than retried in
-a loop or bypassed; the Rust gates are re-run once the machine drains.
-
-### Root cause: the systemd user manager stopped answering
-
-The refusals are not contention and not code. The supervisor's own journal
-names the cause one level below:
-
-```text
-build-limits-supervisor: group g5948: cannot create
-  buildlimits-2867217-g5948.scope: Call failed: Connection timed out
-```
-
-Those lines repeat every 25 seconds for as long as the outage lasts. The
-supervisor cannot create the transient systemd scope each compiler group runs
-in, so no slot can ever be filled no matter how many are free.
-`Connection timed out` against the scope call is the **systemd user manager**
-failing to answer; the system manager still reports `running`.
-
-The tell in a gate log is `0 ahead`. A saturated pool shows `N ahead` with
-`N > 0` and drains monotonically. An outage shows requests sitting at the head
-of the queue forever:
-
-```text
-[build-limits] base64: waiting for a compile slot (0 ahead, 270s)
-build-limits: the supervisor refused: unhealthy
-```
-
-The failed `make test` attempt contains **621** `0 ahead` lines and 15
-`the supervisor refused: unhealthy` lines. It also contains **zero**
-`error[E...]`, zero `aborting due to`, and zero clippy diagnostics: every one
-of the 16 "could not compile" messages is an admission refusal, not a compiler
-complaint about this repository.
-
-Admission recovered by itself (the operator side of this is not ours to touch),
-at which point `make typecheck` passed in 28 seconds on the fixed source and a
-minimal `rustc -vV` through the wrapper was admitted.
-
-What the partial run does establish: **1112 tests passed and none failed**
-across 32 test binaries before admission failed, and Python lint was green in
-full. The refusals cost the `lib test` target and 15 integration targets.
-
-### A third attempt, which died one level earlier
-
-A later `make test` never reached the test stage at all. It failed in
-`make build`: maturin could not build the release extension because one crate's
-admission request lapsed while the pool was 63--65 deep.
-
-That attempt has to be read differently from the outage above, and the
-distinction is the `0 ahead` check. Here `0 ahead` appears only for single
-crates, while the same log shows 63--65 other crates still queued ahead -- so
-this is a request that outlived its own deadline in a working queue, not a
-head-of-line stall. It is still an admission failure and still not a
-diagnostic: the log has **zero** `error[E...]` lines and zero clippy output.
-
-The lesson is that `make test` re-runs `make build` first, so an admission
-refusal anywhere in the release build costs the whole test gate before a single
-test executes. `make typecheck` had already passed on the same source 28
-seconds earlier, which is independent evidence that the crate compiles.
-
-## Outcomes & Retrospective
-
-The implementation is complete and the core claim is now backed by execution
-rather than inspection: the fixed build passes 9/9, and a deliberately
-reintroduced defect fails exactly the three tests that cover it, with a
-discriminating margin (2 progress records against a 5-record bar).
-
-All gates are green except `make test`, and the reason it is not green is
-infrastructure rather than code:
-
-| Gate                 | Result                                                |
-| -------------------- | ----------------------------------------------------- |
-| `make lint-python`   | pass (all six lanes)                                  |
-| `make check-fmt`     | pass                                                  |
-| `make fmt`           | pass                                                  |
-| `make markdownlint`  | pass (61 files, 0 issues, including `typos`)          |
-| `make nixie`         | pass                                                  |
-| `lint-lanes-test`    | pass (11/11)                                          |
-| `make typecheck`     | pass (28 s)                                           |
-| `make lint-rust`     | pass (0 errors, 0 warnings, Whitaker clean)           |
-| GIL regression suite | pass (9/9 on the fixed build; 3/9 fail on the defect) |
-| `make test`          | unproven -- admission died mid-run                    |
-
-`make test` was attempted twice. The first attempt ran 32 test binaries and
-recorded **1112 passes with zero failures**, then admission failed and refused
-the `lib test` target and 15 integration targets. The second attempt never
-reached the test stage: `make build` was refused while the pool was 63--65
-deep. Neither log contains a single `error[E...]` or clippy diagnostic, so
-neither is a verdict on this code. Per the compile-admission rules this was
-reported rather than worked around, and the gate is re-run when the host is
-healthy.
-
-Two lessons worth carrying forward:
-
-- The GIL verdict has to key on *records inside the call's own window*. An
-  ordering assertion ("did another thread run before the call returned?")
-  passes for a GIL-holding binding whenever the wait ends on its own deadline,
-  so it would have certified the two bounded scenarios as fixed while `"block"`
-  remained broken.
-- Only a call that blocks below the interpreter models this defect. A
-  bytecode-level busy-wait looks equivalent but is not: the eval breaker
-  releases the GIL periodically, so the watchdog keeps running and the defect
-  vanishes. `ctypes` with a `PyDLL` reproduces it faithfully and costs no
-  rebuild.
-
-The first draft of the tests also asserted against module-level constants that
-nothing used; the strict Skylos dead-code gate would have rejected those, which
-is a useful reminder that the Python gates here catch more than style.
-
-## Context and Orientation
+## Context and orientation
 
 `rust_extension/src/handlers/file/` holds the shared file handler:
 
@@ -446,11 +379,10 @@ is a useful reminder that the Python gates here catch more than style.
 `PyRotatingFileHandler` / `PyTimedRotatingFileHandler`, which delegate to core
 types built on top of `FemtoFileHandler`.
 
-The precedent to copy is `rust_extension/src/handlers/mod.rs`… actually
-`rust_extension/src/http_handler/handler.rs:199`, where `py_flush` takes
-`py: Python<'_>` and returns `py.detach(|| self.flush())`.
+The precedent is `rust_extension/src/http_handler/handler.rs`, where `py_flush`
+accepts `py: Python<'_>` and returns `py.detach(|| self.flush())`.
 
-## Plan of Work
+## Plan of work
 
 ### Task 1 — shared `FemtoFileHandler` bindings
 
@@ -461,7 +393,9 @@ In `rust_extension/src/handlers/file/mod.rs`:
   `py.detach(...)`; map the error to `PyRuntimeError` afterwards.
 - `py_flush`: add `py: Python<'_>` and return `py.detach(|| self.flush())`.
 - `py_close`: add `py: Python<'_>` and run `self.close()` inside `py.detach`.
-- Guard the detach with `cfg(not(loom))`, following `logger/worker.rs`.
+- Do not add a Loom cfg guard: these methods consume the `Python<'_>` token
+  supplied by PyO3 and do not attach to Python from a Loom thread. Keep the
+  existing Loom feature lane compiling.
 
 ### Task 2 — rotating and timed-rotating wrappers
 
@@ -471,8 +405,10 @@ and exception construction stay on the GIL side. Audit builders only.
 
 ### Task 3 — concurrency regression tests
 
-A new Python test module running scenarios in a subprocess so a GIL deadlock
-fails the test rather than hanging the suite.
+A new Python test module running scenarios with
+`subprocess.run([sys.executable, "-c", script], timeout=...)` so a GIL deadlock
+fails the test rather than hanging the suite. Timeout assertions name the
+probable deadlock, and child failures include stderr.
 
 ### Task 4 — documentation
 
