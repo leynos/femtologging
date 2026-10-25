@@ -5,7 +5,7 @@
 //! displaced resources until the manager lock has been released.
 
 use std::{
-    collections::{BTreeMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap, hash_map::Entry},
     sync::Arc,
 };
 
@@ -103,48 +103,12 @@ pub(crate) fn commit_configuration(
     let mut logger_states = BTreeMap::new();
 
     for plan in loggers {
-        let name = plan.name.clone();
-        let logger = match manager.loggers.entry(name.clone()) {
-            Entry::Occupied(entry) => {
-                // Keep a concurrently registered logger and defer the staged
-                // worker's teardown until after the manager lock is released.
-                displaced.unused_loggers.push(plan.logger);
-                entry.get().clone_ref(py)
-            }
-            Entry::Vacant(entry) => entry.insert(plan.logger).clone_ref(py),
-        };
-        let logger = logger.borrow(py);
-
-        let mut old_handlers = logger.replace_handlers(plan.handlers);
-        displaced.handlers.append(&mut old_handlers);
-        let mut old_filters = logger.replace_filters(plan.filters);
-        displaced.filters.append(&mut old_filters);
-        if let Some(level) = plan.level {
-            logger.set_level(level);
-        }
-        if let Some(propagate) = plan.propagate {
-            logger.set_propagate(propagate);
-        }
-        // Re-enable only loggers named explicitly in this full configuration.
-        logger.set_disabled(false);
-        logger_states.insert(
-            name,
-            LoggerAttachmentState::new(plan.handler_ids, plan.filter_ids),
-        );
+        let (name, state) = apply_prepared_logger(py, &mut manager.loggers, plan, &mut displaced);
+        logger_states.insert(name, state);
     }
 
     if disable_existing {
-        for (name, logger) in &manager.loggers {
-            if name == "root" || keep_names.contains(name) {
-                continue;
-            }
-            let logger = logger.borrow(py);
-            logger.set_disabled(true);
-            let mut old_handlers = logger.replace_handlers(Vec::new());
-            displaced.handlers.append(&mut old_handlers);
-            let mut old_filters = logger.replace_filters(Vec::new());
-            displaced.filters.append(&mut old_filters);
-        }
+        disable_omitted_loggers(py, &manager.loggers, &keep_names, &mut displaced);
     }
 
     displaced.runtime_state = Some(std::mem::replace(
@@ -159,3 +123,90 @@ pub(crate) fn commit_configuration(
     drop(manager);
     displaced
 }
+
+/// Apply one resolved plan to its adopted or newly registered logger.
+fn apply_prepared_logger(
+    py: Python<'_>,
+    loggers: &mut HashMap<String, Py<FemtoLogger>>,
+    plan: PreparedLogger,
+    displaced: &mut DisplacedAttachments,
+) -> (String, LoggerAttachmentState) {
+    let PreparedLogger {
+        name,
+        logger: staged,
+        handlers,
+        filters,
+        handler_ids,
+        filter_ids,
+        level,
+        propagate,
+    } = plan;
+    let logger = adopt_logger(py, loggers, &name, staged, displaced);
+    apply_logger_plan(py, &logger, handlers, filters, level, propagate, displaced);
+
+    (name, LoggerAttachmentState::new(handler_ids, filter_ids))
+}
+
+/// Insert a staged logger or retain a concurrently registered logger instead.
+fn adopt_logger(
+    py: Python<'_>,
+    loggers: &mut HashMap<String, Py<FemtoLogger>>,
+    name: &str,
+    staged: Py<FemtoLogger>,
+    displaced: &mut DisplacedAttachments,
+) -> Py<FemtoLogger> {
+    match loggers.entry(name.to_owned()) {
+        Entry::Occupied(entry) => {
+            // Defer the unused staged worker's teardown until after unlock.
+            displaced.unused_loggers.push(staged);
+            entry.get().clone_ref(py)
+        }
+        Entry::Vacant(entry) => entry.insert(staged).clone_ref(py),
+    }
+}
+
+/// Replace the logger's prepared state and retain displaced attachments.
+fn apply_logger_plan(
+    py: Python<'_>,
+    logger: &Py<FemtoLogger>,
+    handlers: Vec<HandlerAttachment>,
+    filters: Vec<Arc<dyn FemtoFilter>>,
+    level: Option<FemtoLevel>,
+    propagate: Option<bool>,
+    displaced: &mut DisplacedAttachments,
+) {
+    let logger = logger.borrow(py);
+    let mut old_handlers = logger.replace_handlers(handlers);
+    displaced.handlers.append(&mut old_handlers);
+    let mut old_filters = logger.replace_filters(filters);
+    displaced.filters.append(&mut old_filters);
+    if let Some(level) = level {
+        logger.set_level(level);
+    }
+    if let Some(propagate) = propagate {
+        logger.set_propagate(propagate);
+    }
+    // Re-enable only loggers named explicitly in this full configuration.
+    logger.set_disabled(false);
+}
+
+/// Disable omitted loggers outside the root and keep set, clearing attachments.
+fn disable_omitted_loggers(
+    py: Python<'_>,
+    loggers: &HashMap<String, Py<FemtoLogger>>,
+    keep_names: &std::collections::HashSet<String>,
+    displaced: &mut DisplacedAttachments,
+) {
+    for (name, logger) in loggers {
+        if name == "root" || keep_names.contains(name) {
+            continue;
+        }
+        let logger = logger.borrow(py);
+        logger.set_disabled(true);
+        let mut old_handlers = logger.replace_handlers(Vec::new());
+        displaced.handlers.append(&mut old_handlers);
+        let mut old_filters = logger.replace_filters(Vec::new());
+        displaced.filters.append(&mut old_filters);
+    }
+}
+// weave: run 'weave explain rust_extension/src/manager/configuration.rs' for per-hunk detail, 'weave check' to verify your resolution

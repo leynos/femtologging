@@ -54,6 +54,9 @@ impl FemtoLogger {
     /// This method is a simplified version of the PyO3-exposed `log` method
     /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
     pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
+        if self.is_disabled() {
+            return None;
+        }
         let record = FemtoLogRecord::new(&self.name, level, message);
         self.log_record(record)
     }

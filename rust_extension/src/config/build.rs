@@ -13,10 +13,7 @@ use pyo3::prelude::*;
 
 use crate::config::ConfigError;
 use crate::{
-    filters::FemtoFilter,
-    handler::FemtoHandlerTrait,
-    level::FemtoLevel,
-    logger::HandlerAttachment,
+    filters::FemtoFilter, handler::FemtoHandlerTrait, level::FemtoLevel, logger::HandlerAttachment,
     manager,
 };
 
@@ -338,3 +335,4 @@ impl ConfigBuilder {
         })
     }
 }
+// weave: run 'weave explain rust_extension/src/config/build.rs' for per-hunk detail, 'weave check' to verify your resolution

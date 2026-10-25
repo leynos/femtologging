@@ -98,3 +98,4 @@ pub(crate) fn registered_logger_names_for_test() -> Vec<String> {
     names.sort();
     names
 }
+// weave: run 'weave explain rust_extension/src/manager.rs' for per-hunk detail, 'weave check' to verify your resolution

@@ -307,7 +307,7 @@ def test_dict_config_omitted_logger_cannot_reach_root(tmp_path: Path) -> None:
     initial = {
         "version": 1,
         "handlers": {
-            "h": {"class": "logging.FileHandler", "filename": str(path)},
+            "h": {"class": "logging.FileHandler", "args": [str(path)]},
         },
         "root": {"level": "INFO", "handlers": ["h"]},
         "loggers": {"omitted": {"level": "INFO"}},
@@ -320,7 +320,7 @@ def test_dict_config_omitted_logger_cannot_reach_root(tmp_path: Path) -> None:
         "version": 1,
         "disable_existing_loggers": True,
         "handlers": {
-            "h": {"class": "logging.FileHandler", "filename": str(path)},
+            "h": {"class": "logging.FileHandler", "args": [str(path)]},
         },
         "root": {"level": "INFO", "handlers": ["h"]},
         "loggers": {},
@@ -345,17 +345,15 @@ def test_dict_config_renaming_logger_reenables_it(tmp_path: Path) -> None:
     path = tmp_path / "root.log"
     base = {
         "version": 1,
-        "handlers": {"h": {"class": "logging.FileHandler", "filename": str(path)}},
+        "handlers": {"h": {"class": "logging.FileHandler", "args": [str(path)]}},
         "root": {"level": "INFO", "handlers": ["h"]},
     }
     dictConfig({**base, "loggers": {"core": {"level": "INFO"}}})
-    dictConfig(
-        {
-            **base,
-            "disable_existing_loggers": True,
-            "loggers": {},
-        }
-    )
+    dictConfig({
+        **base,
+        "disable_existing_loggers": True,
+        "loggers": {},
+    })
     assert get_logger("core").disabled, "core should be disabled while omitted"
 
     dictConfig({**base, "loggers": {"core": {"level": "DEBUG"}}})

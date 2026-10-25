@@ -6,11 +6,6 @@
 //! thread, so the threads a process spends on logging follow the machine rather
 //! than the number of loggers it has created. If a logger crosses a `fork`, it
 //! rebinds to the child process's pool before its next dispatch.
-#![allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
-
 #[cfg(feature = "python")]
 mod context_snapshot;
 mod convenience_methods;
@@ -18,8 +13,8 @@ mod dispatcher;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
-mod python_api;
 mod py_handler;
+mod python_api;
 mod python_helpers;
 mod queue;
 #[cfg(feature = "python")]
@@ -137,16 +132,6 @@ impl FemtoLogger {
         self.add_handler_attachment(HandlerAttachment::new(handler))
     }
 
-    /// Attach a handler with filters evaluated on the producer thread.
-    #[cfg(all(test, feature = "python"))]
-    pub(crate) fn add_handler_with_filters(
-        &self,
-        handler: Arc<dyn FemtoHandlerTrait>,
-        filters: Vec<Arc<dyn FemtoFilter>>,
-    ) -> Result<(), HandlerError> {
-        self.add_handler_attachment(HandlerAttachment::with_filters(handler, filters))
-    }
-
     /// Validate contextual dispatch support before publishing a handler attachment.
     fn add_handler_attachment(&self, attachment: HandlerAttachment) -> Result<(), HandlerError> {
         #[cfg(feature = "python")]
@@ -156,6 +141,16 @@ impl FemtoLogger {
         }
         self.handlers.write().push(attachment);
         Ok(())
+    }
+
+    /// Attach a handler with filters evaluated on the producer thread.
+    #[cfg(all(test, feature = "python"))]
+    pub(crate) fn add_handler_with_filters(
+        &self,
+        handler: Arc<dyn FemtoHandlerTrait>,
+        filters: Vec<Arc<dyn FemtoFilter>>,
+    ) -> Result<(), HandlerError> {
+        self.add_handler_attachment(HandlerAttachment::with_filters(handler, filters))
     }
 
     /// Attach a filter to this logger.
@@ -214,6 +209,7 @@ impl FemtoLogger {
     /// Sequentially consistent, matching the propagation flag. Records already
     /// snapshotted by [`Self::send_to_local_handlers`] are not retracted, as
     /// with [`Self::clear_handlers`].
+    #[cfg(feature = "python")]
     pub(crate) fn set_disabled(&self, flag: bool) {
         self.disabled.store(flag, Ordering::SeqCst);
     }
@@ -224,6 +220,24 @@ impl FemtoLogger {
             .read()
             .iter()
             .map(|attachment| attachment.handler.clone())
+            .collect()
+    }
+
+    /// Capture handler addresses for Rust transaction tests and Python test hooks.
+    pub(crate) fn handler_ptrs_for_test_native(&self) -> Vec<usize> {
+        self.handlers
+            .read()
+            .iter()
+            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
+            .collect()
+    }
+
+    /// Capture filter addresses for Rust transaction tests and Python test hooks.
+    pub(crate) fn filter_ptrs_for_test_native(&self) -> Vec<usize> {
+        self.filters
+            .read()
+            .iter()
+            .map(|filter| Arc::as_ptr(filter) as *const () as usize)
             .collect()
     }
 }
@@ -249,3 +263,4 @@ impl Drop for FemtoLogger {
 
 #[cfg(test)]
 mod test_modules;
+// weave: run 'weave explain rust_extension/src/logger/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
