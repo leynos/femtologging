@@ -57,7 +57,10 @@ def fixture_core_config(reset_logger_state: None) -> None:
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
         .with_logger(
             "core",
-            LoggerConfigBuilder().with_handlers(["stderr"]).with_filters(["lvl"]),
+            LoggerConfigBuilder()
+            .with_level("DEBUG")
+            .with_handlers(["stderr"])
+            .with_filters(["lvl"]),
         )
         .build_and_init()
     )

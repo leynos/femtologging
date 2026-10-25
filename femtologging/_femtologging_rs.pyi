@@ -455,6 +455,7 @@ RuntimeHandlerBuilder = (
     | RotatingFileHandlerBuilder
     | TimedRotatingFileHandlerBuilder
     | SocketHandlerBuilder
+    | HTTPHandlerBuilder
 )
 
 class LoggerMutationBuilder:
@@ -477,7 +478,24 @@ class RuntimeConfigBuilder:
     def with_handler(self, hid: str, builder: RuntimeHandlerBuilder) -> Self: ...
     def with_logger(self, lname: str, builder: LoggerMutationBuilder) -> Self: ...
     def with_root_logger(self, builder: LoggerMutationBuilder) -> Self: ...
-    def apply(self) -> None: ...
+    def apply(self) -> None:
+        """Apply this transaction to the live runtime configuration.
+
+        The unreferenced-definition check runs before any handler is built, so
+        a rejected transaction does not open files, connect sockets, or spawn
+        worker threads.
+
+        Raises
+        ------
+        ValueError
+            If the transaction declares a handler or filter that no logger in
+            the resulting attachment graph references. Attach every definition
+            in the same transaction, or leave it out.
+        KeyError
+            If an attachment references an id that neither the manager nor this
+            transaction supplies.
+        """
+
     def as_dict(self) -> dict[str, object]: ...
 
 class FormatterBuilder:

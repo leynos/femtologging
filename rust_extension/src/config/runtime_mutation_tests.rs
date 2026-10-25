@@ -1,7 +1,7 @@
 //! Unit tests for runtime mutation builders and apply semantics.
 #![cfg(all(test, feature = "python"))]
 
-use super::test_utils::gil_and_clean_manager;
+use super::test_utils::{gil_and_clean_manager, prune_test_support::configured_core_logger};
 use super::*;
 use crate::{
     FemtoLevel, StreamHandlerBuilder,
@@ -9,8 +9,9 @@ use crate::{
     manager,
 };
 use pyo3::Python;
-use rstest::{fixture, rstest};
+use rstest::rstest;
 use serial_test::serial;
+use std::sync::{Arc, Barrier};
 
 fn handler_ptrs(logger: &crate::logger::FemtoLogger) -> Vec<usize> {
     logger
@@ -39,23 +40,6 @@ fn same_mode_payload_conflict_has_an_accurate_error() {
     ));
 }
 
-#[fixture]
-fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
-    let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Debug);
-    let filter = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
-    ConfigBuilder::new()
-        .with_handler("stderr", StreamHandlerBuilder::stderr())
-        .with_filter("lvl", FilterBuilder::Level(filter))
-        .with_root_logger(root)
-        .with_logger(
-            "core",
-            LoggerConfigBuilder::new()
-                .with_handlers(["stderr"])
-                .with_filters(["lvl"]),
-        )
-        .build_and_init()
-}
-
 #[rstest]
 #[serial]
 fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<(), ConfigError>) {
@@ -78,6 +62,60 @@ fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<
         assert_eq!(
             before[0], after[0],
             "the existing handler arc should be preserved for unchanged ids",
+        );
+    });
+}
+
+#[rstest]
+#[serial]
+fn concurrent_applies_preserve_both_handler_updates(
+    configured_core_logger: Result<(), ConfigError>,
+) {
+    configured_core_logger.expect("initial build should succeed");
+
+    let start = Arc::new(Barrier::new(3));
+    let first = RuntimeConfigBuilder::new()
+        .with_handler("first", StreamHandlerBuilder::stdout())
+        .with_logger(
+            "core",
+            LoggerMutationBuilder::new().append_handlers(["first"]),
+        );
+    let second = RuntimeConfigBuilder::new()
+        .with_handler("second", StreamHandlerBuilder::stdout())
+        .with_logger(
+            "core",
+            LoggerMutationBuilder::new().append_handlers(["second"]),
+        );
+
+    std::thread::scope(|scope| {
+        let first_start = Arc::clone(&start);
+        let first_apply = scope.spawn(move || {
+            first_start.wait();
+            first.apply()
+        });
+        let second_start = Arc::clone(&start);
+        let second_apply = scope.spawn(move || {
+            second_start.wait();
+            second.apply()
+        });
+
+        start.wait();
+        first_apply
+            .join()
+            .expect("first apply thread should not panic")
+            .expect("first runtime mutation should succeed");
+        second_apply
+            .join()
+            .expect("second apply thread should not panic")
+            .expect("second runtime mutation should succeed");
+    });
+
+    Python::attach(|py| {
+        let logger = manager::get_logger(py, "core").expect("logger should exist");
+        assert_eq!(
+            handler_ptrs(&logger.borrow(py)).len(),
+            3,
+            "both serialized mutations should retain their new handlers",
         );
     });
 }

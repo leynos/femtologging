@@ -7,7 +7,10 @@ use std::{
 
 use pyo3::prelude::*;
 
-use crate::config::ConfigError;
+use crate::config::{
+    ConfigError,
+    reachability::{ReachableIds, prune_filters, prune_handlers},
+};
 use crate::{
     filters::FemtoFilter,
     handler::FemtoHandlerTrait,
@@ -62,6 +65,7 @@ impl ConfigBuilder {
         let components = self.build_runtime_components()?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
+            let _transaction = super::lock_runtime_transaction();
             let BuiltConfigComponents {
                 built_handlers,
                 handler_filter_ids,
@@ -97,10 +101,21 @@ impl ConfigBuilder {
             }
             let runtime_loggers =
                 self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
+            let mut handler_registry = (*built_handlers).clone();
+            let mut retained_handler_filter_ids = (*handler_filter_ids).clone();
+            let mut filter_registry = (*built_filters).clone();
+            let reachable = ReachableIds::from_logger_states_and_handler_filters(
+                runtime_loggers.values(),
+                &retained_handler_filter_ids,
+            );
+            prune_handlers(&mut handler_registry, &reachable);
+            prune_filters(&mut filter_registry, &reachable);
+            retained_handler_filter_ids
+                .retain(|handler_id, _| reachable.handlers.contains(handler_id));
             manager::replace_runtime_state(
-                (*built_handlers).clone(),
-                (*handler_filter_ids).clone(),
-                (*built_filters).clone(),
+                handler_registry,
+                retained_handler_filter_ids,
+                filter_registry,
                 runtime_loggers,
             );
             Ok(())

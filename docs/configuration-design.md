@@ -967,8 +967,9 @@ per-logger attachment metadata produced by the applied plans.
 - **Structured runtime mutation control plane:** Handler and filter mutation is
   now exposed through a dedicated `RuntimeConfigBuilder` paired with
   `LoggerMutationBuilder`, rather than overloading `LoggerConfigBuilder`.
-  `LoggerMutationBuilder` supports explicit collection mutation semantics for
-  handlers and filters:
+  Runtime transactions accept every built-in Rust handler builder, including
+  `HTTPHandlerBuilder`. `LoggerMutationBuilder` supports explicit collection
+  mutation semantics for handlers and filters:
 
   - leave the collection unchanged
   - replace the collection with a specific ordered ID list
@@ -1001,6 +1002,65 @@ per-logger attachment metadata produced by the applied plans.
   full bootstrap-style replacement, but it now seeds the manager runtime
   metadata so later `RuntimeConfigBuilder` calls can mutate the live
   configuration safely.
+
+### 3.2. Definition lifecycle and reachability
+
+Handler and filter definitions owned by the manager are *reachable-only state*:
+a published registry holds exactly those definitions that some logger in the
+attachment graph references. This includes filters referenced by an attached
+handler as well as filters attached directly to a logger. Dormant definitions
+with a bounded lifecycle are not supported, and there is no unregister or
+remove-definition operation. Detaching the last reference to a definition is
+how a caller retires it.
+
+- **Reachable-only registries:** After any runtime mutation, the handler and
+  filter registries contain only the definitions reachable from the resulting
+  logger attachment graph. Reachability is computed from the *planned*
+  attachments, before anything is built, so a definition that cannot become
+  reachable is never part of the transaction.
+
+- **Unreferenced definitions are rejected, not dropped:** A
+  `RuntimeConfigBuilder` transaction that declares a handler or filter the
+  resulting logger graph cannot reach fails with `ConfigError::InvalidMutation`
+  (`ValueError` in Python). The message lists the unreferenced handler IDs and
+  filter IDs separately, so a misspelled ID is reported as a mistake rather
+  than silently ignored. The check runs before construction, so a rejected
+  transaction never opens a file, dials a socket, or spawns a worker thread —
+  which is why the regression tests assert that no file appears on disk for a
+  rejected file handler.
+
+- **Define and attach in one transaction:** A definition is legal as long as
+  the same transaction makes it reachable from a logger, directly or through
+  one of its handlers. Defining and attaching are therefore a single atomic
+  step; there is no window in which a new definition is published but
+  unreferenced. Redefining an ID that the same transaction detaches from its
+  last logger is rejected: the freshly built object would be unreachable and
+  pruned immediately, so accepting it would report success while discarding the
+  caller's work.
+
+- **Last-reference pruning:** Removing the last reference to a definition
+  removes it from the published registry in the same commit
+  (`replace_runtime_state()`), not on a later sweep. Nothing has to be
+  remembered for a future collection pass, because the registries are always
+  consistent with the attachment graph.
+
+- **Bootstrap builds everything, publishes only what is reachable:**
+  `ConfigBuilder.build_and_init()` still constructs and validates every
+  declared handler and filter, because a declaration error must surface even if
+  the definition is unattached. Publication is narrower: only definitions the
+  logger plans reach are committed to the manager registries.
+
+- **Replacement releases the superseded object:** Replacing a definition under
+  an existing ID builds the new object, publishes it under that ID, and drops
+  the previous one once no logger and no in-flight record still references it.
+  Reference counting is what makes the release prompt, and the logger's bounded
+  flush timeout bounds how long an in-flight record can defer it. That timeout
+  is a bound on *observing* the release, not a guarantee that a handler's
+  worker thread has exited by then: file and HTTP handlers close their
+  resources on a timeout-bounded path, so a test that waits for a `Weak`
+  upgrade to fail may still see it succeed briefly while a worker winds down.
+  Tests that need a hard barrier must drain the logger queue before asserting
+  release.
 
 ## 4. Integration with Rust Ecosystem
 
