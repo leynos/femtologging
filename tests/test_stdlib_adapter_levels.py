@@ -11,18 +11,18 @@ and dispatch live in ``tests/test_stdlib_adapter.py``.
 from __future__ import annotations
 
 import logging
+from unittest import mock
 
 import pytest
 
 from femtologging import StdlibHandlerAdapter
 from tests.stdlib_adapter_support import (
     AdapterProbe,
+    CapturingHandler,
     CountingFilter,
-    CountingHandler,
     HandlerLevelCase,
     HandlerSetup,
     LogRequest,
-    RejectingFilter,
     dispatch,
     emitted_messages,
 )
@@ -106,47 +106,52 @@ class TestHandleRecordFilterAndLockContract:
     @staticmethod
     def test_handle_and_filter_counts_by_level() -> None:
         """Rejected records skip the handler; accepted ones run it once."""
-        handler = CountingHandler()
+        handler = CapturingHandler()
         handler.setLevel(logging.ERROR)
         counting_filter = CountingFilter()
         handler.addFilter(counting_filter)
         adapter = StdlibHandlerAdapter(handler)
 
-        dispatch(adapter, "DEBUG", "suppressed")
-        assert handler.handle_calls == 0, (
-            f"rejected record still entered handle(): {handler.handle_calls} calls"
-        )
-        assert counting_filter.calls == 0, (
-            f"rejected record still reached the filter: {counting_filter.calls} calls"
-        )
-        assert not handler.records, (
-            f"rejected record was emitted: {emitted_messages(handler)!r}"
-        )
+        with mock.patch.object(handler, "handle", wraps=handler.handle) as handle_spy:
+            dispatch(adapter, "DEBUG", "suppressed")
+            assert handle_spy.call_count == 0, (
+                f"rejected record still entered handle(): {handle_spy.call_count} calls"
+            )
+            assert counting_filter.calls == 0, (
+                "rejected record still reached the filter: "
+                f"{counting_filter.calls} calls"
+            )
+            assert not handler.records, (
+                f"rejected record was emitted: {emitted_messages(handler)!r}"
+            )
 
-        dispatch(adapter, "ERROR", "accepted")
-        assert handler.handle_calls == 1, (
-            f"accepted record should enter handle() once: {handler.handle_calls}"
-        )
-        assert counting_filter.calls == 1, (
-            f"accepted record should consult the filter once: {counting_filter.calls}"
-        )
-        assert emitted_messages(handler) == ["accepted"], (
-            f"unexpected emitted records: {emitted_messages(handler)!r}"
-        )
+            dispatch(adapter, "ERROR", "accepted")
+            assert handle_spy.call_count == 1, (
+                "accepted record should enter handle() once: "
+                f"{handle_spy.call_count} calls"
+            )
+            assert counting_filter.calls == 1, (
+                "accepted record should consult the filter once: "
+                f"{counting_filter.calls} calls"
+            )
+            assert emitted_messages(handler) == ["accepted"], (
+                f"unexpected emitted records: {emitted_messages(handler)!r}"
+            )
 
     @staticmethod
     def test_filter_rejection_still_runs_handle() -> None:
         """A record above the level is still subject to the handler's filters."""
-        handler = CountingHandler()
+        handler = CapturingHandler()
         handler.setLevel(logging.ERROR)
-        rejecting_filter = RejectingFilter()
+        rejecting_filter = CountingFilter(should_accept=False)
         handler.addFilter(rejecting_filter)
         adapter = StdlibHandlerAdapter(handler)
 
-        dispatch(adapter, "CRITICAL", "filtered out")
+        with mock.patch.object(handler, "handle", wraps=handler.handle) as handle_spy:
+            dispatch(adapter, "CRITICAL", "filtered out")
 
-        assert handler.handle_calls == 1, (
-            f"an accepted record should still enter handle(): {handler.handle_calls}"
+        assert handle_spy.call_count == 1, (
+            f"an accepted record should still enter handle(): {handle_spy.call_count}"
         )
         assert rejecting_filter.calls == 1, (
             f"an accepted record should consult the filter once: "

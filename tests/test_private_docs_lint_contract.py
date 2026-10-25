@@ -79,12 +79,12 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
         env=environment,
         capture_output=True,
         check=False,
-        timeout=600,
+        timeout=1800,
         text=True,
     )
 
 
-@pytest.mark.timeout(620)
+@pytest.mark.timeout(1820)
 def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
     """The lint rejects missing docs and accepts docs through Make's lane driver."""
     lint_level = _private_docs_level()

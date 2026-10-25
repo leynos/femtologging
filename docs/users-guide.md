@@ -515,11 +515,12 @@ reject a level-accepted record before emission or lock acquisition. Records
 discarded by the level comparison never enter `handle()`, so their filters do
 not run.
 
-The handler-level restrictions described under
+The restrictions on setting a handler's `level` in the
 [dictConfig](#dictconfig-restricted-compatibility-layer) and
-[fileConfig](#fileconfig-ini-compatibility) apply only to those configuration
-schemas; they do not constrain a `logging.Handler` wrapped in a
-`StdlibHandlerAdapter`, which honours its own `level` as described above.
+[fileConfig](#fileconfig-ini-compatibility) schemas apply only to those
+configuration formats. They do not limit a standard-library handler wrapped in
+`StdlibHandlerAdapter`; the adapter honours that handler's own `level` as
+described above.
 
 Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
 and `timestamp` are forwarded to the `LogRecord` where matching attributes

@@ -19,8 +19,6 @@ from femtologging import FemtoLogger, StdlibHandlerAdapter
 from tests.stdlib_adapter_handler_support import (
     CapturingHandler,
     CountingFilter,
-    CountingHandler,
-    RejectingFilter,
     emitted_messages,
 )
 
@@ -28,12 +26,10 @@ __all__ = [
     "AdapterProbe",
     "CapturingHandler",
     "CountingFilter",
-    "CountingHandler",
     "HandlerLevelCase",
     "HandlerSetup",
     "LevelCase",
     "LogRequest",
-    "RejectingFilter",
     "build_adapter_probe",
     "dispatch",
     "emitted_messages",
@@ -266,7 +262,7 @@ def dispatch(adapter: StdlibHandlerAdapter, level: str, message: str) -> None:
 
     Examples
     --------
-    >>> handler = CountingHandler()
+    >>> handler = CapturingHandler()
     >>> handler.setLevel(logging.ERROR)
     >>> dispatch(StdlibHandlerAdapter(handler), "ERROR", "boom")
     >>> [record.getMessage() for record in handler.records]

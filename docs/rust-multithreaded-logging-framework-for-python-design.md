@@ -1535,6 +1535,45 @@ the entire ecosystem to adopt a new set of logging macros, `femtologging` can
 gain traction by serving as a high-performance, robust backend for these
 established interfaces.
 
+### 6.5. Python Standard-library Handler Adapter
+
+The `StdlibHandlerAdapter` honours the femtologging logger threshold before
+dispatch and then checks the wrapped standard-library handler's level before
+calling `Handler.handle()`. Records below the handler threshold are discarded;
+accepted records pass through `handle()` once, preserving its normal filter and
+I/O lock behaviour.
+
+For screen readers: FemtoLogger sends a record to the adapter, which constructs
+a standard-library `LogRecord`. The adapter compares the mapped level with the
+wrapped handler's level and discards lower records without calling `handle()`.
+Accepted records enter `Handler.handle()`, where filters run. If a filter
+accepts the record, the handler acquires its I/O lock and emits it; if a filter
+rejects the record, it is not emitted.
+
+```mermaid
+sequenceDiagram
+    participant Logger as FemtoLogger
+    participant Adapter as StdlibHandlerAdapter
+    participant Handler as logging.Handler
+    participant Filter as logging.Filter
+
+    Logger->>Adapter: handle_record(record)
+    Adapter->>Adapter: _make_log_record(record)
+    alt log_record.levelno >= handler.level
+        Adapter->>Handler: handle(log_record)
+        Handler->>Filter: filter(log_record)
+        alt filter accepts
+            Handler->>Handler: acquire lock and emit
+        else filter rejects
+            Handler-->>Adapter: no emission
+        end
+    else log_record.levelno < handler.level
+        Adapter-->>Logger: discard without handle()
+    end
+```
+
+**Figure: Wrapped standard-library handler level and filter dispatch.**
+
 ## 7. Configuration and Runtime Control
 
 Effective logging requires not only initial setup but also the ability to
