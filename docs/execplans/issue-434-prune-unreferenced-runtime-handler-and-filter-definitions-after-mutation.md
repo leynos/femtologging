@@ -317,7 +317,32 @@ configured filter IDs.
   skipped, all 66 snapshots passed, and every Rust feature lane passed. The
   only warning was the previously observed upstream
   `PytestAssertRewriteWarning` in `tests.steps.logging_context_steps`.
-- [ ] Draft pull request to be opened.
+- [x] (2026-10-25) Verified the confirming gate run. A first attempt at
+  `make test` failed with 27 doctest link errors
+  (`undefined symbol: PyObject_GC_UnTrack`, all from `pyo3-0.30.1`) with no
+  `-lpython` on the link line. This was **not** a code defect: the same tree
+  (`31bae53`) had already passed the identical gate, and the failure coincided
+  with a second agent session building in this same worktree and running
+  `make build`, which clears and repopulates `.venv` (`UV_VENV_CLEAR=1`) while
+  the doctest link was being formed. The competing session's own run finished
+  `788 passed, 5 skipped, 66 snapshots`, with zero `undefined symbol` lines, on
+  the same code.
+- [x] (2026-10-25) Confirmed the previously unverified BDD scenario. In the
+  green run,
+  `tests/steps/test_runtime_reconfiguration_steps.py::
+  test_a_mutation_declaring_an_unattached_handler_is_rejected PASSED`,
+  so all six scenarios in `runtime_reconfiguration.feature` execute and pass.
+- [x] (2026-10-25) Addressed CodeRabbit's one finding on the 21-file commit: two
+  runtime test modules defined duplicate `reset_logger_state` and `core_config`
+  fixtures. Both moved to `tests/conftest.py`, with reset isolation kept scoped
+  to the owning modules through a module-level `pytestmark`. Committed as
+  `9e99cca`, and all six gates re-passed afterwards.
+- [x] (2026-10-25) Force-pushed the rebased branch over the pre-rebase remote
+  head `abc25fb` (recoverable from
+  `refs/backup/issue-434-rebase/old-head-abc25fb`), refreshed the tracking ref,
+  set the upstream to `origin`, and opened
+  [PR #548](https://github.com/leynos/femtologging/pull/548) as a draft with
+  `Closes #434` and the required session reference.
 
 ## Surprises & Discoveries
 
