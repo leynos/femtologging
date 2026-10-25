@@ -159,6 +159,7 @@ Milestone 2 detail:
 - [x] Sixth review round returned six findings (five distinct); all fixed.
 - [x] Seventh review round returned four findings; all fixed, including a test
       that asserted nothing and was rebuilt and mutation-tested.
+- [x] Eighth review round returned five findings (four distinct); all fixed.
 
 Re-gated at `467f406`:
 
@@ -401,6 +402,42 @@ duration, because the first probe ran before the dropping thread was scheduled.
 The final version was mutation-tested — with
 `let _mutation = self.handlers.write();` added to `Drop` it fails with the
 intended message and passes without it — and the mutation was then reverted.
+
+**Eighth review round (2026-10-25): five findings, four distinct, fixed.** Two
+findings asked for the same thing in the migration guide, so they are counted
+once.
+
+`handler_can_be_removed` in `rust_extension/tests/logger_tests.rs` flushed the
+handler and then slept 10 ms, which was written before records were queued on a
+shared shard. With the pool in place the worker may not have delivered "one"
+when the handler flush runs, so the 10 ms was the only thing making the
+assertion reliable, and it is a guess under load. It now calls
+`logger.flush_handlers()`, which waits on the shard barrier before flushing the
+attached handlers, and asserts the drain succeeded. This is the same class of
+defect the plan already records for a different test: a fixed sleep standing in
+for a barrier.
+
+`snapshot_runtime_state` and `replace_runtime_state` in
+`rust_extension/src/manager/registry.rs` put `#[cfg(feature = "python")]`
+before their `///` blocks, contrary to the repository rule that attributes
+follow doc comments. Both were reordered. A scan of `rust_extension/src` found
+three further attribute-before-doc sites; each is a `pyclass`/`cfg_attr` on a
+struct or a `cfg` on a struct field rather than a function, so they are a
+different case and were left alone rather than widened into this change.
+
+`rust_extension/src/manager_tests.rs` was a dead duplicate: it sat at the
+source root while `src/manager.rs`'s `mod manager_tests;` resolves to
+`src/manager/manager_tests.rs`, so nothing compiled it. Its test bodies were a
+strict subset of the live file, and `cargo test --lib -- --list` showed only
+`manager::manager_tests::*` entries. It was deleted.
+
+The migration guide's bounded-logger section described only Python behaviour
+while this branch made both Rust constructors fallible. It now states that
+`FemtoLogger::new` returns `PyResult<Self>` (with `ValueError` for a bad name)
+and `FemtoLogger::with_parent` returns `Result<Self, DispatcherError>` (with
+`RuntimeError` for a failed pool start), that `DispatcherError` is re-exported
+from the crate root, and that the next logger creation retries a failed pool
+start.
 
 **Discovery (2026-10-23): the off-by-one was invisible below the cap.** The
 capacity predicate meant "one more fits", but every projected call site passed
@@ -866,6 +903,11 @@ Milestone 1 detail:
   test that took an unrelated lock and so asserted nothing. The test was
   rebuilt against the logger's real handler list and mutation-tested in both
   directions.
+- 2026-10-25: eighth review round, **five findings (four distinct), all
+  fixed**: a fixed sleep replaced by `flush_handlers()`'s barrier, two `cfg`
+  attributes moved below their doc comments, a dead root-level
+  `manager_tests.rs` deleted, and the migration guide's Rust constructor
+  changes documented.
 - 2026-10-24: sixth review round, **six findings (five distinct), all fixed**:
   one shared deadline for `wait_for_drain`, an allocation-free own-target guard,
   `.expect()` replaced by propagated `DispatcherError` in the Loom arm, a

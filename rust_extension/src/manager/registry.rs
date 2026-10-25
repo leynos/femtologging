@@ -293,20 +293,20 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("logger {name:?} not found")))
 }
 
-#[cfg(feature = "python")]
 /// Copy the manager's current Python runtime configuration.
 ///
 /// The snapshot lets callers inspect or stage changes without holding the
 /// process-wide manager lock while they do so.
+#[cfg(feature = "python")]
 pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
 }
 
-#[cfg(feature = "python")]
 /// Replace the runtime registries and logger attachments as one state update.
 ///
 /// Keeping the replacement under one write lock prevents readers from seeing
 /// a mixture of the old and new configuration.
+#[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
     handler_filter_ids: BTreeMap<String, Vec<String>>,

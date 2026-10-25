@@ -151,6 +151,16 @@ If the operating system cannot start the pool because the process has reached
 its thread limit, logger creation raises `RuntimeError` instead of panicking. A
 later logger creation retries pool startup.
 
+Rust callers must handle the same failures as values, because both constructors
+are now fallible. `FemtoLogger::new` returns `PyResult<Self>` and rejects an
+invalid name; Python callers see that refusal as `ValueError`.
+`FemtoLogger::with_parent` returns `Result<Self, DispatcherError>` and reports
+a pool that could not start, which Python callers see as `RuntimeError`.
+`DispatcherError` is re-exported from the crate root, so both can be matched
+without naming the module path. Code that used either result directly as a
+`FemtoLogger` no longer compiles. A failed pool startup is retried by the next
+logger creation.
+
 ______________________________________________________________________
 
 ## `StdlibHandlerAdapter` propagates `contextvars`
