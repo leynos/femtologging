@@ -851,6 +851,16 @@ Milestone 1 detail:
   preceding `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`,
   and `make typecheck` gates also passed. The subsequent post-turn Git diff
   check passed after filesystem space was available again.
+- 2026-10-25: the pushed candidate's CodeScene gate identified three
+  `Large Method` findings in the bridge saturation tests and
+  `FemtoLogger::send_to_local_handlers`. Split the tests into target dispatch,
+  setup, and assertion helpers, and separated producer handler selection from
+  shard admission. The local `cs delta origin/main --output-format json`
+  reports no new findings after the refactor. The revised candidate passed
+  `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`,
+  `make typecheck`, and `make test` sequentially. Rust feature, UI, doc, and 14
+  Loom model suites passed; pytest reported 805 passed, 5 skipped, and 66
+  snapshots passed. Remote CodeScene re-evaluation is pending the next push.
 
 ## Outcomes & retrospective
 

@@ -57,6 +57,87 @@ fn metadata_for_target(target: String) -> &'static Metadata<'static> {
     metadata
 }
 
+fn emit_target(dispatch: &Dispatch, target: &str, disable_propagation: bool) {
+    let metadata = metadata_for_target(target.to_owned());
+    assert!(
+        dispatch.enabled(metadata),
+        "the subscriber should enable target {target:?}",
+    );
+    if disable_propagation {
+        Python::attach(|py| {
+            manager::get_logger(py, target)
+                .expect("the enabled path should create the logger")
+                .borrow(py)
+                .set_propagate(false);
+        });
+    }
+    let values = metadata.fields().value_set_all(&[]);
+    dispatch.event(&Event::new(metadata, &values));
+}
+
+fn dispatch_valid_targets(dispatch: &Dispatch) {
+    for index in 0..MAX_LOGGERS {
+        emit_target(dispatch, &format!("tracing-bridge-{index}"), true);
+    }
+}
+
+fn dispatch_overflow_targets(dispatch: &Dispatch) {
+    for index in 0..3 {
+        emit_target(dispatch, &format!("tracing-bridge-overflow-{index}"), false);
+    }
+}
+
+fn create_root_logger() -> (Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize) {
+    Python::attach(|py| {
+        let root = manager::get_logger(py, "root").expect("root should be available");
+        let handler = Arc::new(CollectingHandler::default());
+        root.borrow(py)
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
+            .expect("native collecting handler should register");
+        let initial_worker_count = worker_count_for_test();
+        assert!(initial_worker_count > 0, "resolving root starts the pool");
+        (root, handler, initial_worker_count)
+    })
+}
+
+fn assert_saturated_state(
+    root: &Py<crate::FemtoLogger>,
+    first: &Py<crate::FemtoLogger>,
+    handler: &CollectingHandler,
+    initial_worker_count: usize,
+) {
+    Python::attach(|py| {
+        assert!(
+            root.borrow(py).flush_handlers(),
+            "root should drain its queue",
+        );
+        let collected_names = handler
+            .collected()
+            .iter()
+            .map(|record| record.logger().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collected_names,
+            vec!["root"; 3],
+            "events beyond the cap must reach the existing root logger",
+        );
+        assert!(
+            manager::get_logger(py, "tracing-bridge-0")
+                .expect("existing logger still resolves")
+                .is(first),
+            "existing logger identity must survive saturation",
+        );
+        assert!(
+            manager::get_logger(py, "root")
+                .expect("root remains available")
+                .is(root),
+            "root identity must survive saturation",
+        );
+        assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
+        assert_eq!(worker_count_for_test(), initial_worker_count);
+    });
+}
+
 fn run_isolated_child(test_filter: &str) {
     let executable = std::env::current_exe().expect("the Rust test executable should be known");
     let output = Command::new(executable)
@@ -82,37 +163,9 @@ fn tracing_target_resolution_keeps_cardinality_bounded() {
 fn tracing_target_saturation_child() {
     let subscriber = tracing_subscriber::registry().with(FemtoTracingLayer);
     let dispatch = Dispatch::new(subscriber);
+    let (root, handler, initial_worker_count) = create_root_logger();
 
-    let (root, handler, initial_worker_count) = Python::attach(|py| {
-        let root = manager::get_logger(py, "root").expect("root should be available");
-        let handler = Arc::new(CollectingHandler::default());
-        root.borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native collecting handler should register");
-        let initial_worker_count = worker_count_for_test();
-        assert!(initial_worker_count > 0, "resolving root starts the pool");
-        (root, handler, initial_worker_count)
-    });
-
-    for index in 0..MAX_LOGGERS {
-        let target = format!("tracing-bridge-{index}");
-        let metadata = metadata_for_target(target.clone());
-        assert!(
-            dispatch.enabled(metadata),
-            "the subscriber should enable valid target {target:?}",
-        );
-
-        // The event still enters the layer's `on_event` path, but does not
-        // also enqueue a second copy at root while this test fills the cap.
-        Python::attach(|py| {
-            manager::get_logger(py, &target)
-                .expect("the layer's enabled path should create the logger")
-                .borrow(py)
-                .set_propagate(false);
-        });
-        let values = metadata.fields().value_set_all(&[]);
-        dispatch.event(&Event::new(metadata, &values));
-    }
+    dispatch_valid_targets(&dispatch);
 
     assert_eq!(
         named_logger_count_for_test(),
@@ -128,48 +181,6 @@ fn tracing_target_saturation_child() {
     let first = Python::attach(|py| {
         manager::get_logger(py, "tracing-bridge-0").expect("first logger remains")
     });
-    for index in 0..3 {
-        let target = format!("tracing-bridge-overflow-{index}");
-        let metadata = metadata_for_target(target.clone());
-        assert!(
-            dispatch.enabled(metadata),
-            "an overflow target should stay enabled through root fallback",
-        );
-        let values = metadata.fields().value_set_all(&[]);
-        dispatch.event(&Event::new(metadata, &values));
-    }
-
-    Python::attach(|py| {
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root should drain its queue"
-        );
-        assert_eq!(
-            handler
-                .as_any()
-                .downcast_ref::<CollectingHandler>()
-                .expect("handler downcast")
-                .collected()
-                .iter()
-                .map(|record| record.logger().to_owned())
-                .collect::<Vec<_>>(),
-            vec!["root"; 3],
-            "events beyond the cap must reach the existing root logger",
-        );
-
-        assert!(
-            manager::get_logger(py, "tracing-bridge-0")
-                .expect("existing logger still resolves")
-                .is(&first),
-            "existing logger identity must survive saturation",
-        );
-        assert!(
-            manager::get_logger(py, "root")
-                .expect("root remains available")
-                .is(&root),
-            "root identity must survive saturation",
-        );
-        assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
-        assert_eq!(worker_count_for_test(), initial_worker_count);
-    });
+    dispatch_overflow_targets(&dispatch);
+    assert_saturated_state(&root, &first, &handler, initial_worker_count);
 }

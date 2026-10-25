@@ -6,7 +6,9 @@
 //! rather than the code doing the logging.
 
 use log::warn;
+use std::sync::Arc;
 
+use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
@@ -165,29 +167,10 @@ impl FemtoLogger {
     }
 
     /// Queue a record for this logger's local handlers on its dispatch shard.
-    fn send_to_local_handlers(&self, mut record: FemtoLogRecord) {
-        let attachments = self.handlers.read().clone();
-        if attachments.is_empty() {
-            #[cfg(feature = "tracing-compat")]
-            tracing::trace!(
-                target: "femtologging::internal",
-                operation = "producer_handler_dispatch",
-                handler_kind = "none",
-                dispatch_outcome = "no_local_handlers",
-            );
+    fn send_to_local_handlers(&self, record: FemtoLogRecord) {
+        let Some((record, handlers)) = self.select_local_handlers(record) else {
             return;
-        }
-        let handlers = handler_filters::filter_handlers(&mut record, attachments);
-        if handlers.is_empty() {
-            #[cfg(feature = "tracing-compat")]
-            tracing::trace!(
-                target: "femtologging::internal",
-                operation = "producer_handler_dispatch",
-                handler_kind = "none",
-                dispatch_outcome = "no_handlers_accepted",
-            );
-            return;
-        }
+        };
         #[cfg(feature = "tracing-compat")]
         let handler_kind = handler_filters::handler_kind(&handlers);
         #[cfg(feature = "python")]
@@ -202,14 +185,57 @@ impl FemtoLogger {
                 return;
             }
         };
-        #[cfg(feature = "tracing-compat")]
-        let dispatch_started = std::time::Instant::now();
         let queued = Box::new(QueuedRecord {
             record,
             handlers,
             #[cfg(feature = "python")]
             context,
         });
+        self.admit_local_record(
+            queued,
+            #[cfg(feature = "tracing-compat")]
+            handler_kind,
+        );
+    }
+
+    /// Return the filtered record and handlers that are ready for dispatch.
+    fn select_local_handlers(
+        &self,
+        mut record: FemtoLogRecord,
+    ) -> Option<(FemtoLogRecord, Vec<Arc<dyn FemtoHandlerTrait>>)> {
+        let attachments = self.handlers.read().clone();
+        if attachments.is_empty() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_handler_dispatch",
+                handler_kind = "none",
+                dispatch_outcome = "no_local_handlers",
+            );
+            return None;
+        }
+        let handlers = handler_filters::filter_handlers(&mut record, attachments);
+        if handlers.is_empty() {
+            #[cfg(feature = "tracing-compat")]
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "producer_handler_dispatch",
+                handler_kind = "none",
+                dispatch_outcome = "no_handlers_accepted",
+            );
+            return None;
+        }
+        Some((record, handlers))
+    }
+
+    /// Admit one prepared record and report a refused submission as dropped.
+    fn admit_local_record(
+        &self,
+        queued: Box<QueuedRecord>,
+        #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
+    ) {
+        #[cfg(feature = "tracing-compat")]
+        let dispatch_started = std::time::Instant::now();
         if self.shard.admit(queued, &self.budget).is_ok() {
             #[cfg(feature = "tracing-compat")]
             tracing::trace!(
