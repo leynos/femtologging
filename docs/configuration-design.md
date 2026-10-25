@@ -974,10 +974,11 @@ commit are returned to the caller rather than dropped in place: a handler's
 lock is released.
 
 Atomicity is a caller-perspective guarantee, not a global configuration lock.
-Producers never acquire a common lock; they observe per-logger state through
-whole-vector swaps of `Arc` values. A record already snapshotted onto a logger
-queue before a commit is not retracted and will still reach the handlers
-captured in that snapshot.
+Producers observe per-logger state through whole-vector swaps of `Arc` values.
+When a producer propagates a record, it resolves the parent through
+`manager::get_logger` and may wait while a commit holds the manager write lock.
+A record already snapshotted onto a logger queue before a commit is not
+retracted and will still reach the handlers captured in that snapshot.
 
 **Figure: Configuration preparation and atomic commit.**
 
