@@ -9,14 +9,15 @@
 //! for duplicate keys. Python task-local context is not transferred to this
 //! Rust bridge.
 
+mod max_level;
+
 use std::borrow::Cow;
 use std::sync::{
     Arc, LazyLock, OnceLock,
-    atomic::{AtomicU8, Ordering},
+    atomic::AtomicU8,
 };
 
 use log::{Metadata, Record};
-use parking_lot::Mutex;
 use pyo3::prelude::*;
 
 use crate::level::FemtoLevel;
@@ -225,6 +226,13 @@ fn is_enabled_by_global_max(level: log::Level) -> bool {
     log::max_level() >= level.to_level_filter()
 }
 
+/// Resolve a normalized target's threshold, using root or the default as fallback.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(effective_logger_level("unknown.target"), DEFAULT_LOGGER_LEVEL);
+/// ```
 fn effective_logger_level(target: &str) -> FemtoLevel {
     let normalized = normalize_target(target);
     let logger_name = if manager::is_valid_logger_name(normalized.as_ref()) {
@@ -235,6 +243,14 @@ fn effective_logger_level(target: &str) -> FemtoLevel {
     manager::registered_logger_level(logger_name).unwrap_or(DEFAULT_LOGGER_LEVEL)
 }
 
+/// Compare a Rust record level with the target logger's femtologging threshold.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(!is_enabled_by_logger_level(log::Level::Debug, FemtoLevel::Warn));
+/// assert!(is_enabled_by_logger_level(log::Level::Warn, FemtoLevel::Warn));
+/// ```
 fn is_enabled_by_logger_level(level: log::Level, threshold: FemtoLevel) -> bool {
     u8::from(FemtoLevel::from(level)) >= u8::from(threshold)
 }
@@ -306,37 +322,6 @@ static FEMTO_LOG_ADAPTER: FemtoLogAdapter = FemtoLogAdapter;
 ///
 /// For example, later calls reuse the first `true` or `false` result.
 static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
-static MAX_LEVEL_UPDATE_LOCK: Mutex<()> = Mutex::new(());
-
-fn adapter_is_installed() -> bool {
-    INSTALL_RESULT.get().is_some_and(|installed| *installed)
-}
-
-fn map_femto_to_log_filter(level: FemtoLevel) -> log::LevelFilter {
-    match level {
-        FemtoLevel::Trace => log::LevelFilter::Trace,
-        FemtoLevel::Debug => log::LevelFilter::Debug,
-        FemtoLevel::Info => log::LevelFilter::Info,
-        FemtoLevel::Warn => log::LevelFilter::Warn,
-        FemtoLevel::Error => log::LevelFilter::Error,
-        FemtoLevel::Critical => log::LevelFilter::Off,
-    }
-}
-
-fn conservative_max_level_from(levels: impl Iterator<Item = FemtoLevel>) -> log::LevelFilter {
-    levels
-        .chain(std::iter::once(DEFAULT_LOGGER_LEVEL))
-        .map(map_femto_to_log_filter)
-        .fold(log::LevelFilter::Off, std::cmp::max)
-}
-
-fn conservative_max_level() -> log::LevelFilter {
-    conservative_max_level_from(manager::registered_logger_levels().into_iter())
-}
-
-fn refresh_global_max_level_locked() {
-    log::set_max_level(conservative_max_level());
-}
 
 /// Recompute the facade's broadest accepted level after registry changes.
 ///
@@ -345,31 +330,12 @@ fn refresh_global_max_level_locked() {
 /// default would reject that level. It is refreshed without taking the
 /// manager lock; the index's lock ordering is always manager then index.
 pub(crate) fn refresh_global_max_level() {
-    if !adapter_is_installed() {
-        return;
-    }
-
-    let _guard = MAX_LEVEL_UPDATE_LOCK.lock();
-    refresh_global_max_level_locked();
+    max_level::refresh_global_max_level();
 }
 
 /// Update a logger threshold while keeping the global prefilter conservative.
 pub(crate) fn update_logger_level(level: &Arc<AtomicU8>, new_level: FemtoLevel) {
-    let _guard = MAX_LEVEL_UPDATE_LOCK.lock();
-    let installed = adapter_is_installed();
-    if installed {
-        let new_maximum = map_femto_to_log_filter(new_level);
-        if new_maximum > log::max_level() {
-            // Widen before lowering the logger threshold so a concurrent
-            // logging macro cannot suppress a newly accepted record.
-            log::set_max_level(new_maximum);
-        }
-    }
-
-    level.store(u8::from(new_level), Ordering::Relaxed);
-    if installed {
-        refresh_global_max_level_locked();
-    }
+    max_level::update_logger_level(level, new_level);
 }
 
 /// Install femtologging as the global Rust logger.

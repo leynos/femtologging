@@ -114,32 +114,25 @@ def when_mutate_logger_level(name: str, level: str) -> None:
 
 
 @then(
-    parsers.parse('the Rust log levels "{levels}" are disabled for target "{target}"')
-)
-def then_log_levels_are_disabled(levels: str, target: str) -> None:
-    """Assert the Rust log facade rejects every listed target level."""
-    enabled_levels = [
-        level
-        for level in levels.split(",")
-        if rust._rust_log_enabled(level.strip(), target)
-    ]
-    assert not enabled_levels, (
-        f"expected the target {target!r} to reject {levels}, "
-        f"but enabled {enabled_levels!r}"
+    parsers.re(
+        r'the Rust log levels "(?P<levels>[^"]+)" are '
+        r'(?P<expectation>disabled|enabled) for target "(?P<target>[^"]+)"'
     )
-
-
-@then(parsers.parse('the Rust log levels "{levels}" are enabled for target "{target}"'))
-def then_log_levels_are_enabled(levels: str, target: str) -> None:
-    """Assert the Rust log facade accepts every listed target level."""
-    disabled_levels = [
-        level
+)
+def then_log_levels_have_expected_enablement(
+    levels: str, expectation: str, target: str
+) -> None:
+    """Assert that the Rust log facade matches each target-level expectation."""
+    should_be_enabled = expectation == "enabled"
+    mismatched_levels = [
+        level.strip()
         for level in levels.split(",")
-        if not rust._rust_log_enabled(level.strip(), target)
+        if rust._rust_log_enabled(level.strip(), target) != should_be_enabled
     ]
-    assert not disabled_levels, (
-        f"expected the target {target!r} to accept {levels}, "
-        f"but disabled {disabled_levels!r}"
+    expected_action = "accept" if should_be_enabled else "reject"
+    assert not mismatched_levels, (
+        f"expected the target {target!r} to {expected_action} {levels}, "
+        f"but mismatched {mismatched_levels!r}"
     )
 
 
