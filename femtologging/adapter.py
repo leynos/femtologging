@@ -42,22 +42,28 @@ class StdlibHandlerAdapter:
     femtologging's handler pipeline.  When femtologging dispatches a
     record, the adapter constructs a ``logging.LogRecord``, discards it
     when its level falls below the wrapped handler's configured level,
-    and otherwise calls the wrapped handler's ``handle()`` method so
-    that attached filters and stdlib locking semantics are applied. Filters
-    may still reject a record that passes the level check; the handler acquires
-    its I/O lock only when its filters accept the record.
+    and otherwise calls the wrapped handler's ``handle()`` method, preserving
+    that handler's own dispatch path. When the handler retains the standard
+    library's base ``Handler.handle()`` behaviour, normal execution evaluates
+    its filter chain once, then acquires the I/O lock and invokes ``emit()`` if
+    the chain accepts the record. A subclass that overrides ``handle()``
+    controls its own internal filtering, locking and emission behaviour.
 
     Two thresholds therefore apply.  The femtologging logger's own level
     decides whether a record is dispatched at all.  The wrapped stdlib
     handler's level, set with ``logging.Handler.setLevel()``, then decides
-    whether the record enters that handler's ``handle()`` path. Its filters
-    can further reject the record before emission.
+    whether the record enters that handler's ``handle()`` path. For a handler
+    retaining base ``Handler.handle()`` behaviour, normal execution evaluates
+    its filter chain before ``emit()`` is invoked.
 
     Femtologging dispatches asynchronously on a dedicated worker thread. It
     captures the producer's ``contextvars`` context before queueing and runs the
-    wrapped handler's entire ``handle()`` call (filters, formatters, and
-    ``emit()``) inside it. Other thread-local state, such as ``threading.local``,
-    remains worker-local.
+    wrapped handler's entire ``handle()`` call inside it. For handlers
+    retaining base ``Handler.handle()`` behaviour, this includes the filter
+    chain and, when that chain accepts, the I/O lock and ``emit()`` invocation.
+    Any formatting performed by the concrete handler also runs in this
+    context. Other thread-local state, such as ``threading.local``, remains
+    worker-local.
 
     Parameters
     ----------
@@ -127,15 +133,19 @@ class StdlibHandlerAdapter:
         and is not this method's concern. This method first constructs a
         ``LogRecord``, then applies the wrapped handler's ``level``, mirroring
         ``logging.Logger.callHandlers()``: a record whose mapped stdlib level is
-        below that level is discarded without calling ``handle()``. Because the
-        level is read on every call, a ``setLevel()`` on the wrapped handler
-        affects the next record.
+        below that level is discarded without calling ``handle()``. The level
+        is read on every call, so a sequential ``setLevel()`` between calls is
+        reflected by the later read. Concurrent updates are not synchronized
+        with the gate or handler work.
 
         A record that passes the level check is passed through
         ``self._handler.handle()`` exactly once rather than ``emit()`` directly.
-        ``Handler.handle()`` applies attached ``logging.Filter`` instances once
-        and acquires the I/O lock only when those filters accept the record.
-        Filters may therefore reject a level-accepted record before emission.
+        For a handler retaining the base ``logging.Handler.handle()``
+        behaviour, normal execution evaluates its filter chain once and
+        acquires the I/O lock only when the chain accepts the record. A filter
+        exception does not reach ``emit()``; invoking ``emit()`` does not
+        guarantee successful output. A subclass overriding ``handle()``
+        defines its own internal path.
         ``logging.NOTSET`` needs no special case: it is numeric zero, so every
         mapped level clears the comparison.
 

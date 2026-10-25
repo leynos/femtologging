@@ -1540,15 +1540,22 @@ established interfaces.
 The `StdlibHandlerAdapter` honours the femtologging logger threshold before
 dispatch and then checks the wrapped standard-library handler's level before
 calling `Handler.handle()`. Records below the handler threshold are discarded;
-accepted records pass through `handle()` once, preserving its normal filter and
-I/O lock behaviour.
+accepted records are passed to the handler's `handle()` method once. For
+handlers retaining the base `logging.Handler.handle()` behaviour, normal
+execution evaluates the filter chain once and, if it accepts, acquires the I/O
+lock and invokes `emit()`. A subclass overriding `handle()` controls its own
+internal behaviour.
 
-For screen readers: FemtoLogger sends a record to the adapter, which constructs
-a standard-library `LogRecord`. The adapter compares the mapped level with the
-wrapped handler's level and discards lower records without calling `handle()`.
-Accepted records enter `Handler.handle()`, where filters run. If a filter
-accepts the record, the handler acquires its I/O lock and emits it; if a filter
-rejects the record, it is not emitted.
+For screen readers: This sequence describes normal execution for a wrapped
+handler retaining the base `logging.Handler.handle()` behaviour. FemtoLogger
+sends a record to the adapter, which constructs a standard-library `LogRecord`
+and compares its mapped level with the level value observed on the handler.
+Lower records are discarded without calling `handle()`. The handler then
+evaluates its filter chain once, which may short-circuit. If the chain accepts,
+the handler acquires its I/O lock and invokes `emit()`; if the chain rejects or
+a filter raises an exception, it does not acquire the lock or invoke `emit()`.
+An `emit()` invocation does not guarantee successful output. Handler subclasses
+overriding `handle()` define their own internal path.
 
 ```mermaid
 sequenceDiagram
