@@ -203,7 +203,7 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-25) Validated the accessible diagram and behaviour changes with
   all six candidate gates. The run passed 770 tests, skipped five, and reported
   one warning; all other gates passed. Increased the main-branch private-docs
-  contract timeout to 1,800 seconds (1,820 seconds for pytest) because healthy
+  contract timeout to 1,800 seconds (3,620 seconds for pytest) because healthy
   shared compiler admission made its eight Clippy lanes exceed 600 seconds.
   CodeScene then identified a duplicated handler probe; replacing the subclass
   with a spy around the existing handler cleared the finding.
@@ -224,8 +224,15 @@ Known uncertainties identified upfront, with mitigations.
   `af7539d`: the named test now describes its TRACE, DEBUG and INFO cases, and
   the rationale no longer claims an equivalent zero-threshold shortcut fails.
   All six gates passed (797 tests passed, 5 skipped); CodeScene found no issues.
-- [ ] (2026-10-25) Request a fresh review of the corrected candidate. Publish
-  the rebased branch and bring draft PR #546 to merge after the review is clear.
+- [x] (2026-10-25) Published candidate `1077f49` on draft PR #546. Hosted run
+  `40192246149` passed on all four Python versions, and CodeScene reported six
+  quality gates passed. The completeness assessment found no runtime defect;
+  its three plan-record findings include narrowing the finite test-domain
+  claim, and are being applied before a candidate-bound follow-up. The
+  proof-specific assessment is still pending.
+- [ ] (2026-10-25) Complete and validate the assessment corrections, obtain
+  clear completeness and proof assessments for the resulting head, then mark PR
+  #546 ready and finish formal review and merge.
 
 ## Surprises & discoveries
 
@@ -354,17 +361,23 @@ without conflicts or patch changes; subsequent commits added the diagram and
 addressed review findings. All six gates passed on the candidate based on
 `9be9cc6` with the current documentation corrections (797 tests passed, 5
 skipped), and CodeScene delta found no applicable code changes. CodeRabbit's
-fresh review of `9be9cc6` returned four minor documentation findings: two about
-this outcome's stale status claims, one about the new heading's capitalization,
-and one about an implementation instruction that differed from the final guard.
+review of `9be9cc6` returned four minor documentation findings: two about this
+outcome's stale status claims, one about the new heading's capitalization, and
+one about an implementation instruction that differed from the final guard.
 These findings are corrected, and the corrected implementation candidate passed
 all six gates. The final progress update passed formatting, Markdown and
 Mermaid gates. A review of `af7539d` found one inaccurate claim about the
 `NOTSET` test detecting a truthiness shortcut; its test description and plan
 rationale were corrected, and all six gates passed on that repair. CodeScene
-found no issues. A fresh CodeRabbit review of the corrected candidate is
-pending. Draft PR #546 still points to the pre-rebase branch head and must be
-updated after the new candidate is reviewed.
+found no issues. The branch is now published at `1077f49`; hosted CI and the
+current CodeScene check pass. The completeness assessment of that head found no
+runtime defect and requested three plan-record corrections: current publication
+status, verification evidence and timeout accuracy. It also noted that the
+finite test matrix is not exhaustive over every possible handler threshold.
+Those corrections are being validated. The assessment could not independently
+verify the historical authorization recorded for the scope expansion; it did
+not identify this as a runtime defect. The proof-specific assessment and formal
+review remain pending, and PR #546 remains a draft.
 
 ## Context and orientation
 
@@ -469,11 +482,12 @@ Issue#435-AC6 (document both thresholds)       -> EP-M2 -> docs/users-guide.md, 
 
 The behaviour under change is a single guard in one method. It introduces one
 invariant and one ordering lemma, and it depends on one non-trivial axiom about
-the standard library. No non-trivial proof obligation arises beyond these, and
-an attempt to use a formal prover here would be disproportionate: the guard is
-a single comparison whose correctness is established exhaustively by a finite
-partition, because the input domain (six femtologging levels crossed with a
-small set of handler levels) is small enough to enumerate completely.
+the standard library. No formal prover is used: the guard is a direct numeric
+comparison, and the tests provide finite behavioural evidence. They exhaust all
+six femtologging levels against an `ERROR` handler, and separately exercise
+`NOTSET`, dynamic `setLevel()`, and filter behaviour. This test matrix does not
+enumerate every possible numeric handler threshold and is not an unbounded
+proof.
 
 Axiom A1: in CPython's `logging`, `Handler.handle()` applies `self.filters`,
 does *not* consult `self.level`, and acquires `self.lock` only when its filters
@@ -814,9 +828,24 @@ captured: 'info-should-be-suppressed\n'
 
 Expected after the fix: `captured: ''`.
 
-The red-stage transcript and the green-stage transcript of the focused test
-modules belong here too, along with the gate summaries and any CodeRabbit
-findings and their resolutions.
+The isolated red-stage and green-stage transcripts for the focused modules were
+not retained. The red observation is the manual reproduction above: before the
+guard, an `INFO` record is emitted by an `ERROR` handler. The green full test
+run on 2026-10-25 passed 797 tests, skipped five and passed 66 snapshots; it
+includes the six `ERROR`-threshold cases, the `NOTSET` cases, filter/`handle()`
+counts, and the dynamic `setLevel()` sequence. The six sequential local gates
+passed, and hosted
+[run 40192246149](https://github.com/leynos/femtologging/actions/runs/40192246149)
+passed all four Python-version jobs. The current
+[CodeScene result](https://codescene.io/projects/68445/delta/results/8117957)
+passed six quality gates with no annotations.
+
+The completeness assessment for published head `1077f49` is recorded at
+[issue comment 6397731459](https://github.com/leynos/femtologging/pull/546#issuecomment-6397731459).
+It found no runtime defect and requested corrections to the publication
+status, verification record, timeout summary, and scope of the finite
+enumeration. This worktree applies those plan-record corrections; the
+candidate-bound follow-up and separate proof-specific assessment remain pending.
 
 ## Interfaces and dependencies
 
@@ -852,4 +881,7 @@ processed, recorded the zero-finding final review, and noted the force-with-
 lease update to draft PR #546. Revised 2026-10-25 after `main` advanced to
 `d234990`: the 16-commit issue series replayed without conflicts, and the user
 guide now distinguishes the unsupported configuration `level` fields from
-filters that `dictConfig` now supports.
+filters that `dictConfig` now supports. Revised again 2026-10-25 after
+CodeRabbit's completeness assessment of `1077f49` to correct publication
+status, verification evidence, timeout accounting and the scope of the finite
+test matrix.
