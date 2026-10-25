@@ -82,7 +82,7 @@ def test_close_while_handle_is_blocked_returns_without_raising(
 
 @pytest.mark.concurrency
 @pytest.mark.parametrize("builder_name", BUILDER_NAMES)
-@pytest.mark.parametrize("operation", ["handle", "flush"])
+@pytest.mark.parametrize("operation", ["handle", "flush", "close"])
 def test_handler_operation_during_close_observes_closed_handler(
     tmp_path: Path, builder_name: str, operation: str
 ) -> None:
