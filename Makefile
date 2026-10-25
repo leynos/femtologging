@@ -92,7 +92,7 @@ all: release spelling ## Build the release artifact and enforce spelling
 
 build: ## Build dev artifact and install into venv
 	UV_VENV_CLEAR=1 uv venv
-	$(CARGO_BUILD_ENV) uv sync --group dev
+	UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml $(CARGO_BUILD_ENV) uv sync --group dev
 	# Install the mixed Rust/Python package into the venv for tests/tools
 	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST) --features python,test-util
 
@@ -276,7 +276,7 @@ test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
 	# Nothing executed them before, and three test-helper examples named
 	# variables that were never bound. An example nobody runs is a comment
 	# that looks like evidence.
-	uv run pytest -v --doctest-modules
+	FEMTOLOGGING_EXPECT_TEST_UTIL=1 UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml uv run pytest -v --doctest-modules
 
 typecheck: build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter

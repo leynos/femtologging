@@ -204,8 +204,6 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
         str(out_dir),
         "--manifest-path",
         str(root / "rust_extension/Cargo.toml"),
-        "--features",
-        "python,test-util",
     ]
     # ruff: ignore[subprocess-without-shell-equals-true] the command vector is
     # built from repository-local paths and the pinned maturin module only.
@@ -213,6 +211,7 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
         command,
         check=True,
         cwd=root,
+        timeout=3600,
     )
     wheels = sorted(out_dir.glob("*.whl"))
     if len(wheels) != 1:

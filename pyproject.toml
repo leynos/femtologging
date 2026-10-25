@@ -466,14 +466,11 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "."
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
-# Coverage jobs install femtologging from source in an ephemeral environment,
-# so they do not inherit the Makefile's explicit `python,test-util` feature
-# flags. Keep `test-util` enabled here so those source builds expose the timed
-# rotation test hooks and exercise the full snapshot set.
-# Security note: this also exposes test-only helper APIs to source builds.
-# Production packaging should continue to use explicit release feature sets and
-# must not rely on these helpers as stable runtime surface.
-features = ["test-util"]
+# Persistent package builds are production builds: the Python bindings are on,
+# while the timed-rotation test hooks stay out of wheels and sdists. Coverage
+# opts in through `.github/uv-test-util.toml`; development and heavy tests pass
+# their feature set explicitly.
+features = ["python"]
 
 [tool.pytest.ini_options]
 timeout = 30
