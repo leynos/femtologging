@@ -1535,7 +1535,7 @@ the entire ecosystem to adopt a new set of logging macros, `femtologging` can
 gain traction by serving as a high-performance, robust backend for these
 established interfaces.
 
-### 6.5. Python Standard-library Handler Adapter
+### 6.5. Python standard-library handler adapter
 
 The `StdlibHandlerAdapter` honours the femtologging logger threshold before
 dispatch and then checks the wrapped standard-library handler's level before
