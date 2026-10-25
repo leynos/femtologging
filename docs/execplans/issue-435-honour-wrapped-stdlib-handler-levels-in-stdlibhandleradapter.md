@@ -226,13 +226,16 @@ Known uncertainties identified upfront, with mitigations.
   All six gates passed (797 tests passed, 5 skipped); CodeScene found no issues.
 - [x] (2026-10-25) Published candidate `1077f49` on draft PR #546. Hosted run
   `40192246149` passed on all four Python versions, and CodeScene reported six
-  quality gates passed. The completeness assessment found no runtime defect;
-  its three plan-record findings include narrowing the finite test-domain
-  claim, and are being applied before a candidate-bound follow-up. The
-  proof-specific assessment is still pending.
-- [ ] (2026-10-25) Complete and validate the assessment corrections, obtain
-  clear completeness and proof assessments for the resulting head, then mark PR
-  #546 ready and finish formal review and merge.
+  quality gates passed. The completeness assessment found no runtime defect and
+  requested corrections to publication status, verification evidence, timeout
+  accounting and the finite test-domain claim. These corrections are recorded
+  below and in the subsequent candidate validation.
+- [x] (2026-10-25) Candidate `e065086` passed all six sequential local gates,
+  hosted run `40205578288` on Python 3.12–3.15, and CodeScene result `8119031`.
+  The completeness corrections are recorded; candidate-bound follow-up and
+  proof-specific assessments remain pending while PR #546 is a draft.
+- [ ] (2026-10-25) Obtain clear completeness and proof assessments for the
+  resulting head, then mark PR #546 ready and finish formal review and merge.
 
 ## Surprises & discoveries
 
@@ -369,15 +372,16 @@ all six gates. The final progress update passed formatting, Markdown and
 Mermaid gates. A review of `af7539d` found one inaccurate claim about the
 `NOTSET` test detecting a truthiness shortcut; its test description and plan
 rationale were corrected, and all six gates passed on that repair. CodeScene
-found no issues. The branch is now published at `1077f49`; hosted CI and the
-current CodeScene check pass. The completeness assessment of that head found no
-runtime defect and requested three plan-record corrections: current publication
-status, verification evidence and timeout accuracy. It also noted that the
-finite test matrix is not exhaustive over every possible handler threshold.
-Those corrections are being validated. The assessment could not independently
-verify the historical authorization recorded for the scope expansion; it did
-not identify this as a runtime defect. The proof-specific assessment and formal
-review remain pending, and PR #546 remains a draft.
+found no issues. Candidate `1077f49` was published while PR #546 remained a
+draft; its hosted CI and CodeScene check passed. The completeness assessment of
+that head found no runtime defect and requested plan-record corrections to
+publication status, verification evidence, timeout accounting and the finite
+test-domain claim. Candidate `e065086` records those corrections and passed all
+six local gates, hosted run `40205578288` and CodeScene result `8119031`. The
+assessment could not independently verify the historical authorization recorded
+for the scope expansion; it did not identify this as a runtime defect. The
+candidate-bound follow-up, proof-specific assessment and formal review remain
+pending, and PR #546 remains a draft.
 
 ## Context and orientation
 
@@ -838,14 +842,19 @@ passed, and hosted
 [run 40192246149](https://github.com/leynos/femtologging/actions/runs/40192246149)
 passed all four Python-version jobs. The current
 [CodeScene result](https://codescene.io/projects/68445/delta/results/8117957)
-passed six quality gates with no annotations.
+passed six quality gates with no annotations on the earlier candidate.
 
 The completeness assessment for published head `1077f49` is recorded at
 [issue comment 6397731459](https://github.com/leynos/femtologging/pull/546#issuecomment-6397731459).
 It found no runtime defect and requested corrections to the publication
 status, verification record, timeout summary, and scope of the finite
-enumeration. This worktree applies those plan-record corrections; the
-candidate-bound follow-up and separate proof-specific assessment remain pending.
+enumeration. Candidate `e065086` records those corrections and passed the six
+local gates, hosted
+[run 40205578288](https://github.com/leynos/femtologging/actions/runs/40205578288/attempts/1),
+and current CodeScene
+[result 8119031](https://codescene.io/projects/68445/delta/results/8119031).
+The candidate-bound follow-up and separate proof-specific assessment remain
+pending.
 
 ## Interfaces and dependencies
 
