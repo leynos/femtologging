@@ -155,6 +155,8 @@ Milestone 2 detail:
       description updated with the findings and the new verification figures.
 - [x] Third review round returned ten findings; all ten verified and fixed.
 - [x] Fourth review round returned seven findings (five distinct); all fixed.
+- [x] Fifth review round returned two findings, one defect; fixed and re-gated.
+- [x] Sixth review round returned six findings (five distinct); all fixed.
 
 Re-gated at `467f406`:
 
@@ -323,6 +325,41 @@ Re-gated at this commit: `make fmt`, `make check-fmt`, `make lint`,
 every ordinary lane compiled it. Gating the accessor `#[cfg(not(loom))]` with
 its only caller is the fix; the alternative — an `#[allow(dead_code)]` — would
 have hidden the fact that the Loom drop path deliberately does not read it.
+
+**Sixth review round (2026-10-24): six findings, five distinct, all fixed.**
+`wait_for_drain` was reported twice with the same rationale, so it is counted
+once. No defect among them; four were bounds or allocation, one was prose.
+
+`Shard::wait_for_drain` applied `BARRIER_TIMEOUT` twice in sequence — once to
+`send_timeout`, once to `recv_timeout` — so a full queue behind a slow worker
+blocked for four seconds while `flush_handlers` documents two. Both waits are
+halves of one wait, so they now share one deadline, with only the remainder
+passed to `recv_timeout`. `Drop` and `flush_handlers` both call this path.
+
+`log_compat::should_ignore_target` ran `normalize_target` on every record,
+which allocates a `String` whenever the target contains `::` — the common case,
+since that is what the `log` crate records for a module path. `resolve_logger`
+normalizes the same target again. The guard now compares the raw target against
+each family root and requires the next character to be a separator or the end,
+so it still matches `femtologging`, `femtologging.x` and `femtologging::x`
+while no longer matching `femtologgingx`. `OWN_TARGET_PREFIX` became unused and
+was removed. The new `the_family_check_requires_a_separator_after_the_root`
+pins both directions of the boundary, and was checked against a naive prefix
+check, which fails it on exactly the two near-miss cases.
+
+The Loom arm of `FemtoLogger::with_parent` called `.expect()` on
+`Shard::start`, which the repository forbids outside tests. `DispatcherError`
+gained a `pub(super)` constructor so both arms map the refusal the same way;
+the pool path uses it too, replacing its inline struct literal. The
+users-guide's compatibility section still claimed "1,024 per logger/handler"
+and implied each logger owns a queue; it now states the real bound (half the
+shard's depth, capped at 1,024) and the handler's own 1,024 default. The
+execplan used a first-person pronoun, contrary to the Markdown rule against
+them.
+
+Re-gated at `cf2e419`: `make fmt`, `make check-fmt`, `make lint`,
+`make typecheck`, `make markdownlint`, `make nixie` and `make test` all exit 0
+(`805 passed, 5 skipped`, 66 snapshots; four Rust feature lanes).
 
 **Discovery (2026-10-23): the off-by-one was invisible below the cap.** The
 capacity predicate meant "one more fits", but every projected call site passed
@@ -782,6 +819,11 @@ Milestone 1 detail:
   GIL held across a flush barrier, and a per-logger budget equal to a
   single-shard pool's depth). All eight fixed in five atomic commits and pushed
   to `467f406`, with the Loom lane re-run for the first time on the fixes.
+- 2026-10-24: sixth review round, **six findings (five distinct), all fixed**:
+  one shared deadline for `wait_for_drain`, an allocation-free own-target guard,
+  `.expect()` replaced by propagated `DispatcherError` in the Loom arm, a
+  corrected users-guide capacity claim, and a first-person pronoun. The re-gate
+  at `cf2e419` is green across all eight targets.
 - 2026-10-23: third review round, **ten findings — one correctness defect, nine
   bound, wording or spelling issues**. Verified individually before changing
   anything; all ten were real.
