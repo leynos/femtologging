@@ -31,14 +31,18 @@ use super::{
 #[cfg_attr(feature = "python", pyclass)]
 /// Handler forwarding records to a socket using MessagePack framing.
 pub struct FemtoSocketHandler {
+    /// Sends records and lifecycle commands to the worker.
     tx: Option<crossbeam_channel::Sender<SocketCommand>>,
+    /// Owns the worker until it finishes or is detached after a timeout.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Counts dropped records and limits warning frequency.
     warner: RateLimitedWarner,
     /// The shutdown signal shared with the worker.
     ///
     /// `Some` for as long as the handler is open. `None` once `close` has
     /// given up on the worker, or after a close that had nothing to do.
     signal: Option<Arc<ShutdownSignal>>,
+    /// Budget shared by flush and shutdown waits.
     flush_timeout: Duration,
 }
 
@@ -92,6 +96,9 @@ impl FemtoSocketHandler {
         }
     }
 
+    /// Clone the live worker sender, if the handler has not closed.
+    ///
+    /// Example: a missing sender makes `handle` return `HandlerError::Closed`.
     fn sender(&self) -> Option<crossbeam_channel::Sender<SocketCommand>> {
         self.tx.as_ref().cloned()
     }
@@ -164,6 +171,42 @@ impl FemtoSocketHandler {
             .notify_on_wait()
     }
 
+    /// Pause the worker at its next backoff wait until the test resumes it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (started, resume) = handler.pause_next_wait();
+    /// started.recv().expect("the worker reached backoff");
+    /// resume.send(()).expect("resume the worker");
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn pause_next_wait(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        self.signal
+            .as_ref()
+            .expect("an open handler has a signal")
+            .pause_next_wait()
+    }
+
+    /// Clone the worker signal so a test can observe shutdown before releasing
+    /// a worker paused at the backoff boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let signal = handler.signal_for_test();
+    /// assert!(!signal.is_shutting_down());
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn signal_for_test(&self) -> Arc<ShutdownSignal> {
+        Arc::clone(self.signal.as_ref().expect("an open handler has a signal"))
+    }
+
+    /// Join the worker after its acknowledgement or channel disconnection.
+    ///
+    /// Example: an acknowledged shutdown takes and joins the worker handle.
     fn join_worker(&mut self) {
         self.signal.take();
         let Some(handle) = self.handle.lock().take() else {
@@ -213,6 +256,9 @@ enum ShutdownOutcome {
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoSocketHandler {
+    /// Convert Python arguments to a record and enqueue it for delivery.
+    ///
+    /// Example: `handler.handle("app", "INFO", "started")` queues one record.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -291,14 +337,14 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
 /// Drop the handler, closing it with the GIL released.
 ///
 /// A handler whose worker has already gone has nothing to close, and attaching
-/// would initialise an interpreter to do nothing with it; the check keeps that
+/// would initialize an interpreter to do nothing with it; the check keeps that
 /// case out of the GIL's way entirely. The close itself is the same one
 /// [`FemtoSocketHandler::close`] performs, so a handler dropped without an
 /// explicit close is bounded by the same budget, and the join it may perform
 /// happens with the interpreter available to a worker that wants it.
 ///
 /// Under `--cfg loom` there is no interpreter to attach to: no model builds one
-/// of these handlers, and attaching would initialise Python on a Loom
+/// of these handlers, and attaching would initialize Python on a Loom
 /// coroutine's small stack.
 #[cfg(not(loom))]
 impl Drop for FemtoSocketHandler {

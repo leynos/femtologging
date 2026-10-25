@@ -24,7 +24,7 @@ if typ.TYPE_CHECKING:
     from femtologging import FemtoHTTPHandler
 
 # What ``close`` is allowed to take against a server that never answers.
-CLOSE_ALLOWANCE_SECONDS = 3.0
+CLOSE_ALLOWANCE_SECONDS = 0.7
 # The handler's flush and shutdown budget.
 CLOSE_BUDGET_MS = 200
 # How long the worker is kept busy, and so how long an unbounded join waits.
@@ -38,17 +38,14 @@ GIL_POLLS_REQUIRED = 10
 class _StallingHandler(http.server.BaseHTTPRequestHandler):
     """Accept requests and never answer them."""
 
-    # Held rather than dropped: closing the connection lets the client fail
-    # immediately and end the very block this server exists to create.
-    connections: typ.ClassVar[list[typ.Any]] = []
-
     def do_POST(self) -> None:
         """Read the request and stall without replying."""
+        server = typ.cast("_StallingServer", self.server)
+        server.connections.append(self.connection)
         length = int(self.headers.get("Content-Length", "0"))
         self.rfile.read(length)
-        self.connections.append(self.connection)
-        server = typ.cast("_StallingServer", self.server)
         server.arrived.set()
+        server.release.wait()
 
     def log_message(
         self,
@@ -67,7 +64,9 @@ class _StallingServer(http.server.ThreadingHTTPServer):
 
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), _StallingHandler)
+        self.connections: list[typ.Any] = []
         self.arrived = threading.Event()
+        self.release = threading.Event()
 
 
 @pytest.fixture(name="stalling_server")
@@ -79,10 +78,11 @@ def fixture_stalling_server() -> cabc.Iterator[_StallingServer]:
         try:
             yield server
         finally:
-            for connection in _StallingHandler.connections:
+            server.release.set()
+            for connection in server.connections:
                 with contextlib.suppress(OSError):
                     connection.close()
-            _StallingHandler.connections.clear()
+            server.connections.clear()
             server.shutdown()
             thread.join(timeout=1)
 
@@ -166,7 +166,6 @@ def test_close_releases_the_gil_while_it_waits(
     )
 
     polls = 0
-    closed = threading.Event()
     probing = True
 
     def probe() -> None:
@@ -175,23 +174,19 @@ def test_close_releases_the_gil_while_it_waits(
             polls += 1
             time.sleep(0.001)
 
-    def close_handler() -> None:
-        handler.close()
-        closed.set()
-
     probe_thread = threading.Thread(target=probe, daemon=True)
     probe_thread.start()
-    closer = threading.Thread(target=close_handler, daemon=True)
-    closer.start()
+    started = time.monotonic()
     try:
-        assert closed.wait(timeout=CLOSE_ALLOWANCE_SECONDS * 4), (
-            "close must return within its allowance"
-        )
+        handler.close()
     finally:
+        elapsed = time.monotonic() - started
         probing = False
-        closer.join(timeout=1)
         probe_thread.join(timeout=1)
 
+    assert elapsed < CLOSE_ALLOWANCE_SECONDS, (
+        f"close took {elapsed:.3f}s, allowed {CLOSE_ALLOWANCE_SECONDS}s"
+    )
     assert polls >= GIL_POLLS_REQUIRED, (
         f"the probe thread ran only {polls} times across the close; the "
         "interpreter was not available while close was waiting"

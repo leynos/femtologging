@@ -23,44 +23,14 @@ use std::time::{Duration, Instant};
 
 use rstest::rstest;
 
-use super::{send_info_record, tcp_listener};
+use super::{HandlerError, send_info_record, spawn_stalled_tls_peer, tcp_listener};
 use crate::handlers::{HandlerBuilderTrait, socket_builder::SocketHandlerBuilder};
 use crate::socket_handler::{
     FemtoSocketHandler, SocketHandlerConfig,
-    config::BackoffPolicy,
-    transport::{SocketTransport, TcpTransport},
+    transport::{SocketTransport, TcpTransport, TlsOptions},
 };
 
-/// Spawn a server that accepts connections and then never reads them.
-///
-/// A worker talking to it fills its socket buffer and blocks in `write_all`
-/// until the write timeout expires, then retries and blocks again. It is
-/// therefore busy, and not reading its command channel, for a window the test
-/// chooses. That is what makes the close path's behaviour on a worker that
-/// never acknowledges observable rather than incidental.
-///
-/// The accepted streams are held rather than dropped: closing them would let
-/// the write fail immediately and end the very block this fixture exists to
-/// create.
-///
-/// The receiver it returns yields once per connection accepted. A test waits on
-/// it rather than sleeping, so the worker is known to be connected, and
-/// therefore inside its write, before the test goes on.
-fn spawn_unread_server(listener: TcpListener) -> io::Result<(SocketAddr, mpsc::Receiver<()>)> {
-    let addr = listener.local_addr()?;
-    let (accepted_tx, accepted_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let mut held = Vec::new();
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { break };
-            held.push(stream);
-            let _ = accepted_tx.send(());
-        }
-    });
-    Ok((addr, accepted_rx))
-}
-
-/// How long a test waits for the worker to reach the server.
+/// How long a test waits for the client hello to reach the stalled TLS peer.
 const CONNECT_ALLOWANCE: Duration = Duration::from_secs(10);
 
 /// How long the worker is kept busy, and so how long an unbounded join waits.
@@ -70,70 +40,53 @@ const CLOSE_BUDGET: Duration = Duration::from_millis(200);
 /// What `close` is allowed to take. Generous against `CLOSE_BUDGET` so a
 /// loaded host cannot fail it, and far below `BUSY_WINDOW` so an unbounded
 /// join cannot pass it.
-const CLOSE_ALLOWANCE: Duration = Duration::from_secs(3);
+const CLOSE_ALLOWANCE: Duration = Duration::from_millis(700);
 
 /// The message `abandon_worker` logs, and the marker both close tests turn on.
 const ABANDON_MARKER: &str = "abandoning it rather than blocking the caller";
 
-/// Build a handler whose worker will block writing to a server that never
-/// reads, with a command queue holding `capacity` entries.
+/// Build a handler whose worker blocks in a TLS handshake with a stalled peer.
 fn build_stuck_handler(addr: SocketAddr, capacity: usize) -> FemtoSocketHandler {
     let config = SocketHandlerConfig {
         capacity,
         transport: SocketTransport::Tcp(TcpTransport {
             host: addr.ip().to_string(),
             port: addr.port(),
-            tls: None,
+            tls: Some(TlsOptions {
+                domain: "localhost".into(),
+                insecure_skip_verify: true,
+            }),
         }),
-        // Short, so the worker cycles through write attempts quickly and
-        // spends its time in the write rather than in the connect.
-        connect_timeout: CLOSE_BUDGET,
+        // Longer than the handler's close budget, so the in-flight handshake
+        // cannot finish before close gives up waiting for its acknowledgement.
+        connect_timeout: BUSY_WINDOW,
         write_timeout: CLOSE_BUDGET,
-        backoff: BackoffPolicy {
-            base: Duration::from_millis(10),
-            cap: Duration::from_millis(20),
-            reset_after: Duration::from_secs(60),
-            deadline: BUSY_WINDOW,
-        },
         ..Default::default()
     };
     FemtoSocketHandler::with_config(config)
 }
 
-/// A payload large enough to fill a socket buffer that nobody is draining.
-///
-/// A frame small enough to fit in the kernel's send buffer returns from
-/// `write_all` at once and never blocks, which is exactly the case this test
-/// must not be in. One mebibyte is the configuration's own maximum frame size
-/// and far more than any loopback send buffer.
-fn flood_record(handler: &mut FemtoSocketHandler) -> Result<(), crate::handler::HandlerError> {
-    let message = "x".repeat(1 << 20);
-    send_info_record(handler, &message)
-}
-
-/// Wait until the worker has connected, so a shutdown reaches a worker that is
-/// inside its write rather than one that has not started.
-fn await_connection(accepted: &mpsc::Receiver<()>) {
-    accepted
+/// Wait until the worker has sent its TLS hello and is waiting for a reply.
+fn await_tls_handshake(hello_sent: &mpsc::Receiver<()>) {
+    hello_sent
         .recv_timeout(CONNECT_ALLOWANCE)
-        .expect("the worker should reach the server");
+        .expect("the worker should reach the stalled TLS handshake");
 }
 
-/// Scenario: the worker is stuck writing to a server that never reads, so it
-/// never acknowledges the shutdown.
+/// Scenario: the worker is stuck in a TLS handshake with a peer that never
+/// answers, so it cannot acknowledge the shutdown.
 ///
 /// Invariant: `close` returns within its own flush budget rather than waiting
 /// for the worker. Before this change the shutdown command was sent with a
 /// blocking `send`, the acknowledgement's timeout was discarded with `let _ =`,
 /// and the join that followed was unconditional - so a worker that never
-/// answered held the caller for the whole of its backoff deadline, a figure
-/// nothing in the configuration describes. `close` runs from `Drop`, so a
+/// answered held the caller until its in-flight network operation finished,
+/// a figure nothing in the configuration describes. `close` runs from `Drop`, so a
 /// logger being torn down could hold a thread for that whole window.
 ///
-/// The two figures are deliberately far apart. `CLOSE_BUDGET` is 200ms and
-/// `BUSY_WINDOW` is ten seconds, and the assertion sits at three seconds:
-/// fifteen times the budget, so a loaded host cannot fail it, and a third of
-/// the window, so an unbounded join cannot pass it.
+/// `CLOSE_BUDGET` is 200ms and `BUSY_WINDOW` is ten seconds. The assertion
+/// allows the budget plus 500ms for scheduling, which is far short of the
+/// window an unbounded join would wait out.
 ///
 /// Proved by reverting: with the bound removed, this fails with an elapsed
 /// time around the ten-second window. The abandonment warning is asserted too,
@@ -151,46 +104,74 @@ fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
     tcp_listener: io::Result<TcpListener>,
 ) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, accepted) = spawn_unread_server(tcp_listener).expect("spawn unread server");
+    let (addr, hello_sent, release_peer) =
+        spawn_stalled_tls_peer(tcp_listener).expect("spawn stalled TLS peer");
     crate::handlers::file::test_support::install_test_logger();
     let mut handler = build_stuck_handler(addr, 16);
-    flood_record(&mut handler).expect("record should be queued");
-    await_connection(&accepted);
-    await_connection(&accepted);
+    send_info_record(&mut handler, "stuck in TLS handshake").expect("record should be queued");
+    await_tls_handshake(&hello_sent);
 
     assert_close_abandons_within_budget(&mut handler);
+    release_peer
+        .send(())
+        .expect("release the stalled TLS peer after close");
+    let worker_logs = crate::handlers::file::test_support::wait_for_message(
+        "FemtoSocketHandler dropped 1 records during shutdown",
+        Duration::from_secs(2),
+    );
+    assert!(
+        worker_logs.iter().any(|entry| entry
+            .message
+            .contains("FemtoSocketHandler dropped 1 records during shutdown")),
+        "the stalled handshake should report its in-flight record as a shutdown drop; got {worker_logs:?}"
+    );
 }
 
-/// Scenario: the worker is stuck writing and its command queue is full when the
-/// handler is closed.
+/// Scenario: the worker is stuck in TLS and its command queue is full at close.
 ///
 /// Invariant: `close` still returns within its budget. The shutdown command has
 /// to be queued before any acknowledgement can be awaited, and on a full
 /// bounded channel a plain send blocks until the worker next reads, which a
-/// stuck worker does not do for the whole of its backoff deadline.
+/// stuck worker does not do while the handshake is in flight.
 ///
 /// A queue of one entry makes the state reachable deterministically: the worker
-/// holds the first record in its write, and the second fills the queue.
+/// holds the first record in its handshake, and the second fills the queue.
 ///
 /// Mutation proof: sending the shutdown command with a plain `send` fails this
-/// test at roughly the ten-second window, and no other.
+/// test at roughly the ten-second connection timeout, and no other.
 #[rstest]
 #[serial_test::serial]
 fn close_returns_within_its_budget_when_the_queue_is_full(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, accepted) = spawn_unread_server(tcp_listener).expect("spawn unread server");
+    let (addr, hello_sent, release_peer) =
+        spawn_stalled_tls_peer(tcp_listener).expect("spawn stalled TLS peer");
     crate::handlers::file::test_support::install_test_logger();
     let mut handler = build_stuck_handler(addr, 1);
-    flood_record(&mut handler).expect("first record should be queued");
-    await_connection(&accepted);
-    await_connection(&accepted);
-    flood_record(&mut handler).expect("second record should be queued");
+    send_info_record(&mut handler, "held in TLS handshake").expect("first record should queue");
+    await_tls_handshake(&hello_sent);
+    send_info_record(&mut handler, "fills the queue").expect("second record should queue");
     assert!(
-        flood_record(&mut handler).is_err(),
-        "the queue should be full, or the shutdown send is not under test"
+        matches!(
+            send_info_record(&mut handler, "overflows"),
+            Err(HandlerError::QueueFull)
+        ),
+        "a further record should report QueueFull while TLS holds the worker"
     );
 
     assert_close_abandons_within_budget(&mut handler);
+    release_peer
+        .send(())
+        .expect("release the stalled TLS peer after close");
+    let worker_logs = crate::handlers::file::test_support::wait_for_message(
+        "queued records at its shutdown deadline",
+        Duration::from_secs(2),
+    );
+    assert!(
+        worker_logs
+            .iter()
+            .any(|entry| entry.message.contains("discarded 1 queued records")),
+        "the detached worker should report its queued record; got {worker_logs:?}"
+    );
 }
 
 /// Close `handler`, asserting it returned inside the allowance and said it
@@ -260,6 +241,9 @@ fn a_close_whose_worker_answers_does_not_report_abandoning_it(
     crate::handlers::file::test_support::install_test_logger();
     let mut handler = SocketHandlerBuilder::new()
         .with_tcp(addr.ip().to_string(), addr.port())
+        // Leave an idle worker enough scheduling room to acknowledge shutdown
+        // on a loaded host; other close tests exercise the one-second bound.
+        .with_write_timeout_ms(5_000)
         .build_inner()
         .expect("build handler");
     send_info_record(&mut handler, "healthy close").expect("record should be queued");

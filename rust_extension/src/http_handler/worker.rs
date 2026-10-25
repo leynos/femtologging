@@ -61,19 +61,27 @@ pub fn spawn_worker(
     (tx, handle)
 }
 
+/// Run the worker loop; the spawned thread supplies the receiver and signal.
 fn worker_loop(rx: Receiver<HTTPCommand>, config: HTTPHandlerConfig, signal: Arc<ShutdownSignal>) {
     Worker::new(config, signal).run(rx);
 }
 
+/// Owns HTTP request state and retry policy for one worker thread.
 struct Worker {
+    /// Request settings used to encode and send each record.
     config: HTTPHandlerConfig,
+    /// Reusable agent for ordinary requests outside shutdown draining.
     agent: Agent,
+    /// Retry delays accumulated across transient request failures.
     backoff: BackoffState,
+    /// Counts records lost to request failures and limits warning frequency.
     warner: RateLimitedWarner,
+    /// Lets requests and backoff waits observe the handler's shutdown budget.
     signal: Arc<ShutdownSignal>,
 }
 
 impl Worker {
+    /// Create a worker; it starts with the configured HTTP timeouts.
     fn new(config: HTTPHandlerConfig, signal: Arc<ShutdownSignal>) -> Self {
         let agent = AgentBuilder::new()
             .timeout_connect(config.connect_timeout)
@@ -90,6 +98,7 @@ impl Worker {
         }
     }
 
+    /// Send one record; invalid input is counted as dropped without a request.
     fn handle_record_command(&mut self, record: FemtoLogRecord) {
         let payload = match self.serialize_record(&record) {
             Ok(p) => p,
@@ -102,6 +111,7 @@ impl Worker {
         self.send_request(&payload);
     }
 
+    /// Encode with the configured format and fields; JSON input produces JSON.
     fn serialize_record(&self, record: &FemtoLogRecord) -> io::Result<String> {
         let fields = self.config.record_fields.as_deref();
         match self.config.format {
@@ -110,12 +120,15 @@ impl Worker {
         }
     }
 
+    /// Send with retries while running; a retryable response waits through backoff.
     fn send_request(&mut self, payload: &str) {
         loop {
             if self.signal.is_aborted() {
+                self.warn_shutdown_drops();
                 return;
             }
             let Some(agent) = self.agent_for_attempt() else {
+                self.warn_shutdown_drops();
                 return;
             };
             let now = Instant::now();
@@ -167,6 +180,7 @@ impl Worker {
         )
     }
 
+    /// Execute one request; HTTP 503 is classified as retryable.
     fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
         // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
         let request = match self.config.method {
@@ -183,6 +197,7 @@ impl Worker {
         }
     }
 
+    /// Build a GET request; the payload follows any existing query data.
     fn build_get_request(
         &self,
         payload: &str,
@@ -199,6 +214,7 @@ impl Worker {
         req.call().map_err(Box::new)
     }
 
+    /// Build a POST request; JSON format sends an `application/json` body.
     fn build_post_request(
         &self,
         payload: &str,
@@ -216,6 +232,7 @@ impl Worker {
         req.send_string(payload).map_err(Box::new)
     }
 
+    /// Add authentication; bearer configuration sets an `Authorization` header.
     fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
         match &self.config.auth {
             AuthConfig::None => req,
@@ -228,6 +245,7 @@ impl Worker {
         }
     }
 
+    /// Apply custom headers; configured `X-Trace-Id` is copied onto the request.
     fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
         for (key, value) in &self.config.headers {
             req = req.set(key, value);
@@ -267,18 +285,21 @@ impl Worker {
         }
     }
 
+    /// Count a serialization drop; invalid input increments the drop count.
     fn warn_serialization_drops(&self) {
         warn_drops(&self.warner, |count| {
             warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
         });
     }
 
+    /// Count a permanent failure; a non-retryable 4xx increments the drop count.
     fn warn_permanent_drops(&self) {
         warn_drops(&self.warner, |count| {
             warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
         });
     }
 
+    /// Count an abandoned retry; close increments the shutdown drop count.
     fn warn_shutdown_drops(&self) {
         warn_drops(&self.warner, |count| {
             warn!("FemtoHTTPHandler dropped {count} records during shutdown");
@@ -311,28 +332,34 @@ impl Worker {
     /// still waiting for.
     fn drain_pending(&mut self, rx: &Receiver<HTTPCommand>, shutdown_ack: Option<Sender<()>>) {
         let mut discarded = 0_u64;
+        let mut shutdown_acks = Vec::new();
         loop {
             if self.signal.is_aborted() {
-                discarded += discard_rest(rx);
+                discarded += discard_rest(rx, &mut shutdown_acks);
                 break;
             }
             match rx.try_recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
                 Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
-                Ok(HTTPCommand::Shutdown(ack)) => {
-                    let _ = ack.send(());
-                }
+                Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
         }
         warn_discarded(discarded);
-        // Last, so a handler waiting on the acknowledgement knows the queue
-        // behind it has been dealt with.
+        self.warner.flush(|count| {
+            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
+        });
+        // Keep every shutdown acknowledgement behind the last request and
+        // cleanup. The final send is the worker's final action.
+        for ack in shutdown_acks {
+            let _ = ack.send(());
+        }
         if let Some(ack) = shutdown_ack {
             let _ = ack.send(());
         }
     }
 
+    /// Consume commands; shutdown starts draining before its acknowledgement.
     fn run(mut self, rx: Receiver<HTTPCommand>) {
         loop {
             // Checked before the blocking receive as well as on the command,

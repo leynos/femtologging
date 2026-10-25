@@ -35,8 +35,11 @@ use super::{
 /// Uses exponential backoff for transient failures (5xx, 429, network errors)
 /// and drops records on permanent failures (4xx except 429).
 pub struct FemtoHTTPHandler {
+    /// Sends records and lifecycle commands to the worker.
     tx: Option<crossbeam_channel::Sender<HTTPCommand>>,
+    /// Owns the worker until it finishes or is detached after a timeout.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Counts dropped records and limits warning frequency.
     warner: RateLimitedWarner,
     /// The shutdown signal shared with the worker.
     ///
@@ -103,6 +106,9 @@ impl FemtoHTTPHandler {
         }
     }
 
+    /// Clone the live worker sender, if the handler has not closed.
+    ///
+    /// Example: a missing sender makes `handle` return `HandlerError::Closed`.
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
@@ -157,28 +163,46 @@ impl FemtoHTTPHandler {
         }
     }
 
-    /// Ask to be told when the worker next begins a backoff delay.
+    /// Pause the worker at its next backoff wait until the test resumes it.
     ///
-    /// Exposed for tests, and only compiled for them. A test that asserts a
-    /// close is observed *during* a retry delay has to know the worker reached
-    /// that delay first; the alternative is a sleep long enough to guess it,
-    /// which measures the host rather than the handler.
+    /// This keeps the worker inside the wait until the test has requested
+    /// shutdown, making the interruption check independent of scheduling.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let backoffs = handler.wait_notification();
+    /// let (backoffs, resume) = handler.pause_next_wait();
     /// handler.handle(record).expect("queue the record");
-    /// backoffs.recv_timeout(one_second).expect("the worker should be backing off");
+    /// backoffs.recv_timeout(one_second).expect("the worker reached the wait");
+    /// resume.send(()).expect("resume the worker");
     /// ```
     #[cfg(test)]
-    pub(crate) fn wait_notification(&self) -> std::sync::mpsc::Receiver<()> {
+    pub(crate) fn pause_next_wait(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
         self.signal
             .as_ref()
             .expect("an open handler has a signal")
-            .notify_on_wait()
+            .pause_next_wait()
     }
 
+    /// Clone the worker signal so tests can observe shutdown before resuming
+    /// a worker paused at the backoff boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let signal = handler.signal_for_test();
+    /// assert!(!signal.is_shutting_down());
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn signal_for_test(&self) -> Arc<ShutdownSignal> {
+        Arc::clone(self.signal.as_ref().expect("an open handler has a signal"))
+    }
+
+    /// Join the worker after its acknowledgement or channel disconnection.
+    ///
+    /// Example: an acknowledged shutdown takes and joins the worker handle.
     fn join_worker(&mut self) {
         self.signal.take();
         let Some(handle) = self.handle.lock().take() else {
@@ -229,6 +253,9 @@ enum ShutdownOutcome {
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoHTTPHandler {
+    /// Convert Python arguments to a record and enqueue it for delivery.
+    ///
+    /// Example: `handler.handle("app", "INFO", "started")` queues one record.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -265,8 +292,8 @@ impl FemtoHTTPHandler {
     /// Close the handler, waiting for the worker at most ``write_timeout``.
     ///
     /// A worker that acknowledges the shutdown within ``write_timeout`` is
-    /// joined. One that does not, typically because it is still retrying a
-    /// request against an unresponsive endpoint, is abandoned with a warning
+    /// joined. One that does not, typically because a request already in
+    /// flight is waiting on an unresponsive endpoint, is abandoned with a warning
     /// rather than waited for. Once abandoned it stops rather than draining:
     /// the records still queued are discarded with a warning, because sending
     /// them is what would have taken the time ``write_timeout`` just ran out
@@ -310,14 +337,14 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
 /// Drop the handler, closing it with the GIL released.
 ///
 /// A handler whose worker has already gone has nothing to close, and attaching
-/// would initialise an interpreter to do nothing with it; the check keeps that
+/// would initialize an interpreter to do nothing with it; the check keeps that
 /// case out of the GIL's way entirely. The close itself is the same one
 /// [`FemtoHTTPHandler::close`] performs, so a handler dropped without an
 /// explicit close is bounded by the same budget, and the join it may perform
 /// happens with the interpreter available to a worker that wants it.
 ///
 /// Under `--cfg loom` there is no interpreter to attach to: no model builds one
-/// of these handlers, and attaching would initialise Python on a Loom
+/// of these handlers, and attaching would initialize Python on a Loom
 /// coroutine's small stack.
 #[cfg(not(loom))]
 impl Drop for FemtoHTTPHandler {

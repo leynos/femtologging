@@ -36,8 +36,11 @@ use super::{
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
 )]
 pub enum SocketCommand {
+    /// Carry one record for serialization and socket delivery.
     Record(FemtoLogRecord),
+    /// Flush the active connection and acknowledge completion.
     Flush(Sender<()>),
+    /// Begin shutdown and acknowledge after worker cleanup.
     Shutdown(Sender<()>),
 }
 
@@ -51,6 +54,7 @@ pub fn spawn_worker(
     (tx, handle)
 }
 
+/// Run the worker loop; the spawned thread supplies its receiver and signal.
 fn worker_loop(
     rx: Receiver<SocketCommand>,
     config: SocketHandlerConfig,
@@ -59,15 +63,22 @@ fn worker_loop(
     Worker::new(config, signal).run(rx);
 }
 
+/// Owns socket connection state and retry policy for one worker thread.
 struct Worker {
+    /// Transport, timeout and framing settings for records.
     config: SocketHandlerConfig,
+    /// Reused connection, if the latest connect attempt succeeded.
     connection: Option<ActiveConnection>,
+    /// Retry delays accumulated across connection and write failures.
     backoff: BackoffState,
+    /// Counts discarded records and limits warning frequency.
     warner: RateLimitedWarner,
+    /// Lets connection, write and backoff operations observe shutdown.
     signal: Arc<ShutdownSignal>,
 }
 
 impl Worker {
+    /// Create a worker; it starts disconnected with fresh retry state.
     fn new(config: SocketHandlerConfig, signal: Arc<ShutdownSignal>) -> Self {
         let backoff = BackoffState::new(config.backoff.clone());
         let warner = RateLimitedWarner::new(config.warn_interval);
@@ -80,6 +91,7 @@ impl Worker {
         }
     }
 
+    /// Send one record; an oversized frame is counted as dropped without a write.
     fn handle_record_command(&mut self, record: FemtoLogRecord) {
         let frame = match prepare_frame(&record, &self.config) {
             Ok(frame) => frame,
@@ -97,25 +109,27 @@ impl Worker {
         self.send_frame_to_connection(&frame, now);
     }
 
-    /// Wait out a backoff delay, or wake when a shutdown arrives.
-    ///
-    /// The replacement for the bare sleep this used to be. A delay that
-    /// outlives the deadline it was protecting is time nobody is willing to
-    /// spend, and a close that lands during one is observed here rather than
-    /// after it.
+    /// Wait out backoff; close wakes the wait before its delay expires.
     fn sleep_if_backing_off(&mut self, now: Instant) {
         if let Some(delay) = self.backoff.next_sleep(now) {
             let _ = self.signal.wait(delay);
         }
     }
 
+    /// Count a failed connection; close wakes the following backoff wait.
     fn handle_connect_error(&mut self, err: io::Error, now: Instant) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
-        });
+        if self.signal.is_shutting_down() {
+            self.warn_shutdown_drops();
+            warn!("FemtoSocketHandler failed to connect during shutdown: {err}");
+        } else {
+            warn_drops(&self.warner, |count| {
+                warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
+            });
+        }
         self.sleep_if_backing_off(now);
     }
 
+    /// Drop a failed connection; a write error clears it before backoff begins.
     fn handle_write_error(&mut self, err: io::Error, now: Instant) {
         warn!("FemtoSocketHandler write failed: {err}");
         self.connection = None;
@@ -125,11 +139,20 @@ impl Worker {
         self.sleep_if_backing_off(now);
     }
 
+    /// Count a record refused by an exhausted shutdown budget.
+    fn warn_shutdown_drops(&self) {
+        warn_drops(&self.warner, |count| {
+            warn!("FemtoSocketHandler dropped {count} records during shutdown");
+        });
+    }
+
+    /// Reuse or connect; an expired shutdown budget returns `false` without I/O.
     fn ensure_connection(&mut self, now: Instant) -> bool {
         if self.connection.is_some() {
             return true;
         }
         let Some(budget) = self.signal.clamp(self.config.connect_timeout) else {
+            self.warn_shutdown_drops();
             return false;
         };
         match connect_transport(&self.config.transport, budget, &self.signal) {
@@ -148,6 +171,7 @@ impl Worker {
         }
     }
 
+    /// Send a frame; success resets the connection backoff state.
     fn send_frame_to_connection(&mut self, frame: &[u8], now: Instant) {
         if !self.ensure_connection(now) {
             return;
@@ -156,6 +180,7 @@ impl Worker {
         // the budget: a write started after a slow connect must not be handed
         // the configuration's full write timeout.
         let Some(timeout) = self.signal.clamp(self.config.write_timeout) else {
+            self.warn_shutdown_drops();
             return;
         };
         if let Some(conn) = self.connection.as_mut() {
@@ -173,6 +198,7 @@ impl Worker {
         }
     }
 
+    /// Flush and acknowledge; even a disconnected worker replies to the request.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
         let success = self.flush_connection();
         let _ = ack.send(());
@@ -181,6 +207,9 @@ impl Worker {
         }
     }
 
+    /// Flush the active connection within the remaining write budget.
+    ///
+    /// Example: no active connection returns `false` without network I/O.
     fn flush_connection(&mut self) -> bool {
         match self.connection.as_mut() {
             Some(conn) => {
@@ -197,11 +226,7 @@ impl Worker {
         }
     }
 
-    /// Flush the connection for the last time, ignoring the outcome.
-    ///
-    /// Runs before the shutdown acknowledgement so the acknowledgement is the
-    /// worker's final act. A caller released by it is entitled to conclude the
-    /// handler is done, and it would not be if a flush followed.
+    /// Flush the connection before acknowledging shutdown, ignoring the outcome.
     fn flush_silently(&mut self) {
         if let Some(conn) = self.connection.as_mut() {
             let _ = self.signal.clamp(self.config.write_timeout).map(|timeout| {
@@ -211,38 +236,38 @@ impl Worker {
         }
     }
 
-    /// Attempt each queued command once, then acknowledge the shutdown.
-    ///
-    /// No retries: `handle_*_error` only sleeps when the signal is running, and
-    /// by the time a drain is under way it is not. Nothing is attempted once
-    /// the deadline has passed, and the rest of the queue is discarded rather
-    /// than written, because a queue that outlasts its deadline is a queue
-    /// nobody is still waiting for.
+    /// Drain once per record; discard the queue when the shutdown deadline expires.
     fn drain_pending(&mut self, rx: &Receiver<SocketCommand>, shutdown_ack: Option<Sender<()>>) {
         let mut discarded = 0_u64;
+        let mut shutdown_acks = Vec::new();
         loop {
             if self.signal.is_aborted() {
-                discarded += discard_rest(rx);
+                discarded += discard_rest(rx, &mut shutdown_acks);
                 break;
             }
             match rx.try_recv() {
                 Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
                 Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
-                Ok(SocketCommand::Shutdown(ack)) => {
-                    let _ = ack.send(());
-                }
+                Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
         }
         warn_discarded(discarded);
+        self.warner.flush(|count| {
+            warn!("FemtoSocketHandler dropped {count} records during shutdown");
+        });
         self.flush_silently();
-        // Last, so a handler waiting on the acknowledgement knows the queue
-        // behind it has been dealt with.
+        // Keep every shutdown acknowledgement behind the last request and
+        // cleanup. The final send is the worker's final action.
+        for ack in shutdown_acks {
+            let _ = ack.send(());
+        }
         if let Some(ack) = shutdown_ack {
             let _ = ack.send(());
         }
     }
 
+    /// Consume commands; shutdown starts a bounded drain before its acknowledgement.
     fn run(mut self, rx: Receiver<SocketCommand>) {
         loop {
             // Checked before the blocking receive as well as on the command,
@@ -273,10 +298,10 @@ impl Worker {
 
 /// Throw away everything left in the queue, without touching the network.
 ///
-/// Returns how many records were discarded. Flush and shutdown senders still
-/// receive their acknowledgement: their callers are blocked on a reply, and a
-/// worker on its way out is the last thing that will send one.
-fn discard_rest(rx: &Receiver<SocketCommand>) -> u64 {
+/// Returns how many records were discarded. Flush senders receive their
+/// acknowledgement immediately; shutdown senders are saved for the worker's
+/// final action, after it has finished all remaining cleanup.
+fn discard_rest(rx: &Receiver<SocketCommand>, shutdown_acks: &mut Vec<Sender<()>>) -> u64 {
     let mut discarded = 0_u64;
     loop {
         match rx.try_recv() {
@@ -284,9 +309,7 @@ fn discard_rest(rx: &Receiver<SocketCommand>) -> u64 {
             Ok(SocketCommand::Flush(ack)) => {
                 let _ = ack.send(());
             }
-            Ok(SocketCommand::Shutdown(ack)) => {
-                let _ = ack.send(());
-            }
+            Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,
         }
     }
@@ -304,6 +327,7 @@ fn warn_discarded(discarded: u64) {
     warn!("FemtoSocketHandler discarded {discarded} queued records at its shutdown deadline");
 }
 
+/// Build a framed record; payloads within `max_frame_size` are writable.
 fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::Result<Vec<u8>> {
     serialize_record(record).and_then(|payload| {
         frame_payload(&payload, config.max_frame_size)
@@ -311,11 +335,13 @@ fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::R
     })
 }
 
+/// Count a failed record; repeated failures warn when the rate limit expires.
 fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.record_drop();
     warner.warn_if_due(log);
 }
 
+/// Enqueue one record; a full queue returns `HandlerError::QueueFull` and counts a drop.
 pub fn enqueue_record(
     tx: &Sender<SocketCommand>,
     record: FemtoLogRecord,
@@ -357,3 +383,7 @@ pub fn flush_queue(tx: &Sender<SocketCommand>, timeout: Duration) -> bool {
     let remaining = deadline.saturating_duration_since(Instant::now());
     ack_rx.recv_timeout(remaining).is_ok()
 }
+
+#[cfg(test)]
+#[path = "worker_tests.rs"]
+mod tests;
