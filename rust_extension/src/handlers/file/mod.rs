@@ -160,7 +160,10 @@ impl FemtoFileHandler {
     /// The wait runs with the interpreter lock released. Closing does not
     /// cancel a `handle` call that is already waiting for queue capacity; that
     /// call returns only when the worker makes room or the channel closes. See
-    /// the user guide for the shutdown contract.
+    /// the user guide for the shutdown contract. While this method waits, its
+    /// exclusive Python borrow prevents concurrent `handle`, `flush`, or
+    /// `close` calls on the same object; PyO3 reports those calls as
+    /// `RuntimeError`.
     #[pyo3(name = "close")]
     fn py_close(&mut self, py: Python<'_>) {
         py.detach(|| self.close());

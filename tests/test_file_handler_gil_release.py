@@ -53,18 +53,37 @@ def test_timed_handle_releases_the_gil(tmp_path: Path, builder_name: str) -> Non
 
 
 @pytest.mark.concurrency
-def test_blocking_flush_releases_the_gil(tmp_path: Path) -> None:
-    """``flush()`` waiting on a parked worker must release the GIL."""
-    run_scenario("file", "flush", tmp_path / "flush.log")
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_blocking_flush_releases_the_gil(tmp_path: Path, builder_name: str) -> None:
+    """Every file-handler wrapper releases the GIL while flushing."""
+    path = tmp_path / f"{builder_name}-flush.log"
+    run_scenario(builder_name, "flush", path)
 
 
 @pytest.mark.concurrency
-def test_blocking_close_releases_the_gil(tmp_path: Path) -> None:
-    """``close()`` waiting on a parked worker must release the GIL."""
-    run_scenario("file", "close", tmp_path / "close.log")
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_blocking_close_releases_the_gil(tmp_path: Path, builder_name: str) -> None:
+    """Every file-handler wrapper releases the GIL while closing."""
+    path = tmp_path / f"{builder_name}-close.log"
+    run_scenario(builder_name, "close", path)
 
 
 @pytest.mark.concurrency
-def test_close_while_handle_is_blocked_raises_runtime_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_close_while_handle_is_blocked_raises_runtime_error(
+    tmp_path: Path, builder_name: str
+) -> None:
     """A concurrent ``close()`` must fail cleanly rather than corrupt state."""
-    run_scenario("file", "concurrent-close", tmp_path / "concurrent-close.log")
+    path = tmp_path / f"{builder_name}-concurrent-close.log"
+    run_scenario(builder_name, "concurrent-close", path)
+
+
+@pytest.mark.concurrency
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+@pytest.mark.parametrize("operation", ["handle", "flush"])
+def test_handler_operation_during_close_raises_runtime_error(
+    tmp_path: Path, builder_name: str, operation: str
+) -> None:
+    """A detached close keeps its exclusive borrow until its wait finishes."""
+    path = tmp_path / f"{builder_name}-close-{operation}.log"
+    run_scenario(builder_name, f"close-{operation}", path)
