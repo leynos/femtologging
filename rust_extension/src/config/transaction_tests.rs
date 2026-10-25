@@ -98,6 +98,29 @@ fn snapshot_runtime_attachments() -> RuntimeAttachmentSnapshot {
 /// rejection.
 const TRANSACTION_LOGGER_NAMES: [&str; 3] = ["root", "keep", "stale"];
 
+/// Invalid logger-plan changes exercised by the rollback regression.
+#[derive(Clone, Copy, Debug)]
+enum InvalidLoggerConfiguration {
+    UnknownHandlerId,
+    UnknownFilterId,
+    InvalidLoggerName,
+}
+
+impl InvalidLoggerConfiguration {
+    /// Add this invalid logger plan after the valid plans in `builder`.
+    fn append_to(self, builder: ConfigBuilder) -> ConfigBuilder {
+        match self {
+            Self::UnknownHandlerId => {
+                builder.with_logger("zzz", LoggerConfigBuilder::new().with_handlers(["missing"]))
+            }
+            Self::UnknownFilterId => {
+                builder.with_logger("zzz", LoggerConfigBuilder::new().with_filters(["missing"]))
+            }
+            Self::InvalidLoggerName => builder.with_logger("a..b", LoggerConfigBuilder::new()),
+        }
+    }
+}
+
 /// Return a builder carrying the shared handler and filter definitions.
 fn transactional_builder(root: LoggerConfigBuilder) -> ConfigBuilder {
     ConfigBuilder::new()
@@ -185,45 +208,19 @@ fn assert_rejected_configuration_changes_nothing(
 }
 
 #[rstest]
+#[case::unknown_handler_id(InvalidLoggerConfiguration::UnknownHandlerId)]
+#[case::unknown_filter_id(InvalidLoggerConfiguration::UnknownFilterId)]
+#[case::invalid_logger_name(InvalidLoggerConfiguration::InvalidLoggerName)]
 #[serial]
-fn later_unknown_handler_id_rolls_back_every_logger(
+fn invalid_logger_configuration_rolls_back_every_logger(
     _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+    #[case] invalid_configuration: InvalidLoggerConfiguration,
 ) {
     Python::attach(|py| {
         let (_, root) = base_logger_builder;
         assert_rejected_configuration_changes_nothing(py, root, |builder| {
-            // The unknown id is on the last logger, after the plan for `keep`
-            // has already been prepared and any eager commit would have run.
-            builder.with_logger("zzz", LoggerConfigBuilder::new().with_handlers(["missing"]))
-        });
-    });
-}
-
-#[rstest]
-#[serial]
-fn later_unknown_filter_id_rolls_back_every_logger(
-    _gil_and_clean_manager: (),
-    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-) {
-    Python::attach(|py| {
-        let (_, root) = base_logger_builder;
-        assert_rejected_configuration_changes_nothing(py, root, |builder| {
-            builder.with_logger("zzz", LoggerConfigBuilder::new().with_filters(["missing"]))
-        });
-    });
-}
-
-#[rstest]
-#[serial]
-fn invalid_logger_name_rolls_back_every_logger(
-    _gil_and_clean_manager: (),
-    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-) {
-    Python::attach(|py| {
-        let (_, root) = base_logger_builder;
-        assert_rejected_configuration_changes_nothing(py, root, |builder| {
-            builder.with_logger("a..b", LoggerConfigBuilder::new())
+            invalid_configuration.append_to(builder)
         });
     });
 }

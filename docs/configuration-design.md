@@ -979,6 +979,40 @@ whole-vector swaps of `Arc` values. A record already snapshotted onto a logger
 queue before a commit is not retracted and will still reach the handlers
 captured in that snapshot.
 
+**Figure: Configuration preparation and atomic commit.**
+
+For screen readers: The caller starts `build_and_init()`. The builder validates
+logger names, builds runtime components, prepares logger plans, stages logger
+objects, and commits the configuration. Under the manager lock, the manager
+applies logger state, disables omitted loggers, and publishes runtime
+registries. It then returns displaced attachments so the builder can drop their
+resources after the lock is released. Preparation errors return to the caller
+without a commit.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Builder as ConfigBuilder
+    participant Manager
+    participant Logger
+    participant Resources
+
+    Caller->>Builder: build_and_init()
+    Builder->>Manager: validate_logger_names()
+    Builder->>Resources: build_runtime_components()
+    Builder->>Builder: prepare_logger_plan()
+    Builder->>Manager: stage_loggers()
+    Builder->>Manager: commit_configuration()
+    activate Manager
+    Manager->>Logger: apply prepared state
+    Manager->>Logger: disable_omitted_loggers()
+    Manager->>Manager: publish runtime registries
+    deactivate Manager
+    Manager-->>Builder: return displaced attachments
+    Builder->>Resources: drop displaced resources after unlock
+    Builder-->>Caller: success or preparation error
+```
+
 #### Disabled loggers
 
 `disable_existing_loggers` uses an explicit per-logger `disabled` flag rather
@@ -990,6 +1024,33 @@ checks the emitting logger's disabled flag, while `Logger.callHandlers()` walks
 ancestor handlers without checking their disabled flags. Only the emitting
 logger checks the flag, so an *enabled* logger still dispatches to its
 ancestors exactly as before.
+
+**Figure: Disabled logger rejection and enabled propagation.**
+
+For screen readers: The producer's `log()` call returns `None` immediately when
+its logger is disabled, before level checks, filters, formatting, or
+propagation. When the logger is enabled, it creates the record, dispatches it
+to local handlers, and propagates it to an ancestor, which dispatches it to its
+handlers.
+
+```mermaid
+sequenceDiagram
+    actor Producer
+    participant Logger
+    participant Ancestor
+    participant Handler
+
+    Producer->>Logger: log()
+    alt logger disabled
+        Logger-->>Producer: None
+        Note over Logger,Handler: No level checks, filters, formatting, or propagation
+    else logger enabled
+        Logger->>Logger: log_record()
+        Logger->>Handler: dispatch local record
+        Logger->>Ancestor: propagate record
+        Ancestor->>Handler: dispatch propagated record
+    end
+```
 
 Commit targets are computed from the live registry under the lock, so a logger
 registered by another caller between preparation and commit is disabled rather
