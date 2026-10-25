@@ -195,7 +195,8 @@ Known uncertainties identified upfront, with mitigations.
   `12cc9fc` returned zero findings, and the branch was force-pushed with a
   lease to draft PR #546.
 - [x] (2026-10-23) Updated draft PR #546's validation summary for the rebased
-  candidate and moved the Lody session link to the final `References` section.
+  candidate and placed the Lody session link in the PR body's terminal
+  `## References` section.
 - [x] (2026-10-24) Added the requested wrapped-handler level and filter
   sequence to section 6.5 of the architecture design, with a labelled
   screen-reader description and visible figure caption.
@@ -212,9 +213,9 @@ Known uncertainties identified upfront, with mitigations.
   support, but no adapter implementation or shared test helper changes. Since
   `dictConfig` now supports handler filters while still rejecting handler
   `level`, clarified the guide sentence to name the `level` restriction only.
-- [ ] (2026-10-25) Run all required gates sequentially on the rebased candidate
-  and exact diagram, threshold documentation, and handler-probe changes; then
-  review, commit, and publish that candidate.
+- [ ] (2026-10-25) Resolve CodeRabbit's findings on `887ebf4`; rerun all six
+  gates and review the corrected candidate, then commit, publish and bring
+  draft PR #546 to merge.
 
 ## Surprises & discoveries
 
@@ -344,8 +345,8 @@ inconsistencies and ambiguity about when a live level change affects queued
 records. Those findings were corrected, and the final review returned zero
 findings. The rebased branch was force-pushed with a lease after confirming the
 remote still matched its expected prior head. Draft PR #546 remains open, with
-the issue-closing summary, final validation results, and Lody reference in
-place.
+its issue-closing summary, final validation results, and a terminal
+`References` section linking to the Lody session.
 
 ## Context and orientation
 
@@ -374,9 +375,10 @@ The relevant files are:
   `_stdlib_levelno()` remain private to this module.
 - `tests/stdlib_adapter_support.py` — the vocabulary the three adapter suites
   share: the `LevelCase`/`LogRequest`/`HandlerSetup`/`HandlerLevelCase`
-  dataclasses, the `AdapterProbe` harness, the `CapturingHandler` /
-  `CountingHandler` / `CountingFilter` / `RejectingFilter` helpers, and the
-  synchronous `dispatch()` / `emitted_messages()` / `femto_logger()` helpers.
+  dataclasses, the `AdapterProbe` harness, and the synchronous `dispatch()` /
+  `femto_logger()` helpers.
+- `tests/stdlib_adapter_handler_support.py` — the `CapturingHandler`,
+  `CountingFilter`, and `emitted_messages()` probes shared by adapter tests.
 - `tests/test_stdlib_adapter.py` — construction, dispatch, level mapping,
   producer `contextvars` propagation, and exception/stack forwarding. It builds
   an `AdapterProbe` fixture (a `StringIO` stream, a `logging.StreamHandler`
@@ -524,14 +526,14 @@ reconstructing the adapter.
   real reachable defect, not a hypothetical one.
 
 - Obligation: L1, covering one `handle()` call after a passing level gate and
-  no handler path after a rejected level gate. Method: named tests using a
-  counting handler subclass and a counting `logging.Filter` subclass.
-  Rationale: this is a side-effect-ordering claim, not an input/output claim,
-  so counting observed invocations through the real stdlib objects is a direct
-  and stronger observation than inspecting output text. Domain: handler level
-  `logging.ERROR`; one accepted record (`ERROR`), one rejected record
-  (`DEBUG`), and one record that passes the level gate but is rejected by a
-  filter. Artefact: `tests/test_stdlib_adapter_levels.py`,
+  no handler path after a rejected level gate. Method: named tests spying on
+  `handler.handle` with `mock.patch.object()` and counting filter consultations
+  with `CountingFilter`. Rationale: this is a side-effect-ordering claim, not
+  an input/output claim, so counting observed invocations through the real
+  stdlib objects is a direct and stronger observation than inspecting output
+  text. Domain: handler level `logging.ERROR`; one accepted record (`ERROR`),
+  one rejected record (`DEBUG`), and one record that passes the level gate but
+  is rejected by a filter. Artefact: `tests/test_stdlib_adapter_levels.py`,
   `TestHandleRecordFilterAndLockContract`. Evidence: after the folded-in
   rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
   count unchanged and emits nothing; an `ERROR` record increments both by
@@ -611,9 +613,8 @@ Changes:
   the synchronous `setLevel()` sequence. This module is chosen for the dynamic
   test because `_emit_femto_record()` calls `handle_record()` directly, which
   makes the sequence deterministic with no worker-thread timing involvement.
-- `tests/stdlib_adapter_support.py`: share `CapturingHandler`,
-  `CountingHandler`, and counting/rejecting filter helpers with the adapter
-  test modules.
+- `tests/stdlib_adapter_handler_support.py`: share `CapturingHandler` and
+  `CountingFilter(should_accept=...)` with the adapter test modules.
 - `tests/test_stdlib_adapter_levels.py`: keep the filter/`handle()` call-count
   contract test beside the level threshold cases.
 
