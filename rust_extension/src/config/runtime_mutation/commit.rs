@@ -14,10 +14,11 @@ use crate::{
         types::HandlerBuilder,
     },
     filters::{FemtoFilter, FilterBuilder},
-    logger::{FemtoLogger, HandlerAttachment},
+    logger::{DetachedOwners, FemtoLogger, HandlerAttachment},
     manager::{self, LoggerAttachmentState, RuntimeStateSnapshot},
 };
 
+use super::super::DeferredDrop;
 use super::{KnownIds, LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
 
 /// Built handler and filter registries ready to merge into the runtime snapshot.
@@ -192,7 +193,15 @@ pub(crate) fn build_filters(
 }
 
 /// Publishes live logger attachments and the registry snapshot after validation succeeds.
-pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(), ConfigError> {
+///
+/// Owners that this commit displaces are pushed onto `deferred_drop` instead of
+/// being released here. The caller drops that bundle after releasing the runtime
+/// transaction guard, so a Python finalizer cannot re-enter a held transaction.
+pub(crate) fn apply_commit(
+    py: Python<'_>,
+    commit: &RuntimeCommit,
+    deferred_drop: &mut DeferredDrop,
+) -> Result<(), ConfigError> {
     for (name, logger) in &commit.impacted_loggers {
         let logger_ref = logger.borrow(py);
         let attachment_state = commit
@@ -229,18 +238,20 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
             &commit.filter_registry,
             "filter",
         )?;
-        logger_ref.replace_handlers(next_handlers);
-        logger_ref.replace_filters(next_filters);
+        deferred_drop.detached.push(DetachedOwners {
+            attachments: logger_ref.replace_handlers(next_handlers),
+            filters: logger_ref.replace_filters(next_filters),
+        });
         if let Some(mutation) = commit.scalar_mutations.get(name) {
             apply_scalar_mutation(&logger_ref, mutation);
         }
     }
-    manager::replace_runtime_state(
+    deferred_drop.snapshots.push(manager::replace_runtime_state(
         commit.handler_registry.clone(),
         commit.handler_filter_ids.clone(),
         commit.filter_registry.clone(),
         commit.logger_states.clone(),
-    );
+    ));
     Ok(())
 }
 

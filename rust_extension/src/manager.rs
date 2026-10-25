@@ -18,8 +18,10 @@
 //! them as the one path callers already use.
 
 mod registry;
+
 #[cfg(feature = "python")]
 mod runtime_state;
+
 mod validation;
 
 pub use registry::{get_logger, reset_manager};
@@ -73,6 +75,7 @@ pub(crate) use registry::flush_all_handlers;
 
 #[cfg(test)]
 mod manager_tests;
+
 #[cfg(all(test, feature = "python"))]
 #[path = "manager/manager_tests_capacity.rs"]
 mod manager_tests_capacity;
