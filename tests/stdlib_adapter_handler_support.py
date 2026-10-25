@@ -38,76 +38,33 @@ class CapturingHandler(logging.Handler):
         self.records.append(record)
 
 
-class CountingHandler(logging.Handler):
-    """Count handler calls and capture records accepted by filters.
-
-    ``handle()`` counts entry into the filter path. ``emit()`` is reached only
-    when that path accepts the record.
-
-    Attributes
-    ----------
-    handle_calls : int
-        Number of calls to ``handle()``.
-    records : list[logging.LogRecord]
-        Records emitted after the handler's filters accept them.
-
-    """
-
-    def __init__(self) -> None:
-        """Initialize with zero handle calls and no captured records."""
-        super().__init__()
-        self.handle_calls = 0
-        self.records: list[logging.LogRecord] = []
-
-    @typ.override
-    def handle(self, record: logging.LogRecord) -> bool:
-        """Count a handler call, then apply filters and emit if accepted.
-
-        Parameters
-        ----------
-        record
-            Record to pass through the handler's filter path.
-
-        Returns
-        -------
-        bool
-            Whether the filters accepted the record.
-
-        """
-        self.handle_calls += 1
-        return super().handle(record)
-
-    @typ.override
-    def emit(self, record: logging.LogRecord) -> None:
-        """Capture a record accepted by the handler's filters.
-
-        Parameters
-        ----------
-        record
-            Record accepted by the handler's filter path.
-
-        """
-        self.records.append(record)
-
-
 class CountingFilter(logging.Filter):
-    """Accept records while counting filter consultations.
+    """Count filter consultations and return the configured decision.
 
     Attributes
     ----------
     calls : int
         Number of records passed to ``filter()``.
+    should_accept : bool
+        Decision returned by ``filter()`` for every record.
 
     """
 
-    def __init__(self) -> None:
-        """Initialize with a zero filter-call count."""
+    def __init__(self, *, should_accept: bool = True) -> None:
+        """Initialize the call count and filter decision.
+
+        Parameters
+        ----------
+        should_accept
+            Whether the filter accepts each record.
+        """
         super().__init__()
         self.calls = 0
+        self.should_accept = should_accept
 
     @typ.override
     def filter(self, record: logging.LogRecord) -> bool:
-        """Count a filter consultation and accept the record.
+        """Count a filter consultation and return the configured decision.
 
         Parameters
         ----------
@@ -117,48 +74,14 @@ class CountingFilter(logging.Filter):
         Returns
         -------
         bool
-            Always ``True``.
+            Whether this filter accepts the record.
 
         """
         self.calls += 1
-        return True
+        return self.should_accept
 
 
-class RejectingFilter(logging.Filter):
-    """Reject every record and count filter consultations.
-
-    Attributes
-    ----------
-    calls : int
-        Number of records passed to ``filter()``.
-
-    """
-
-    def __init__(self) -> None:
-        """Initialize with a zero filter-call count."""
-        super().__init__()
-        self.calls = 0
-
-    @typ.override
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Count a filter consultation and reject the record.
-
-        Parameters
-        ----------
-        record
-            Record being checked by the handler.
-
-        Returns
-        -------
-        bool
-            Always ``False``.
-
-        """
-        self.calls += 1
-        return False
-
-
-def emitted_messages(handler: CapturingHandler | CountingHandler) -> list[str]:
+def emitted_messages(handler: CapturingHandler) -> list[str]:
     """Return the messages of every record *handler* emitted.
 
     Parameters

@@ -196,6 +196,25 @@ Known uncertainties identified upfront, with mitigations.
   lease to draft PR #546.
 - [x] (2026-10-23) Updated draft PR #546's validation summary for the rebased
   candidate and moved the Lody session link to the final `References` section.
+- [x] (2026-10-24) Added the requested wrapped-handler level and filter
+  sequence to section 6.5 of the architecture design, with a labelled
+  screen-reader description and visible figure caption.
+- [x] (2026-10-25) Validated the accessible diagram and behaviour changes with
+  all six candidate gates. The run passed 770 tests, skipped five, and reported
+  one warning; all other gates passed. Increased the main-branch private-docs
+  contract timeout to 1,800 seconds (1,820 seconds for pytest) because healthy
+  shared compiler admission made its eight Clippy lanes exceed 600 seconds.
+  CodeScene then identified a duplicated handler probe; replacing the subclass
+  with a spy around the existing handler cleared the finding.
+- [x] (2026-10-25) Rebased the 16 issue commits from `5377ceb` onto updated
+  `origin/main` at `d234990` (`#426`), with no conflicts. `range-diff` matched
+  all 16 commits. Main added configuration-level handler filters and formatter
+  support, but no adapter implementation or shared test helper changes. Since
+  `dictConfig` now supports handler filters while still rejecting handler
+  `level`, clarified the guide sentence to name the `level` restriction only.
+- [ ] (2026-10-25) Run all required gates sequentially on the rebased candidate
+  and exact diagram, threshold documentation, and handler-probe changes; then
+  review, commit, and publish that candidate.
 
 ## Surprises & discoveries
 
@@ -279,6 +298,27 @@ Known uncertainties identified upfront, with mitigations.
   changed paths do not overlap this issue's 13 paths and its new support-doc
   checker targets Rust test support. Run the expanded `make lint` on the
   rebased candidate. Date/Author: 2026-10-23, implementing agent.
+- Decision: Add the requested adapter sequence as a new section 6.5 in the
+  architecture design, after the existing Rust interoperability material and
+  before section 7. Rationale: this keeps the behaviour in the design document
+  while preserving the existing section structure and gives the diagram a
+  concise accessible caption and a screen-reader description immediately before
+  the diagram. Date/Author: 2026-10-24, implementing agent.
+- Decision: Keep the screen-reader description as adjacent prose instead of
+  Mermaid `accTitle` and `accDescr` directives. Rationale: the pinned Nixie
+  parser rejects those Mermaid directives, while the labelled screen-reader
+  paragraph and visible figure caption remain accessible and pass the
+  repository's diagram validation. Date/Author: 2026-10-24, implementing agent.
+- Decision: Configure `CountingFilter` to accept or reject records and remove
+  the duplicate `RejectingFilter` implementation. Rationale: CodeScene found
+  duplicated filter bodies in the handler-level tests; one configurable probe
+  keeps both test cases clear while removing the duplication. Date/Author:
+  2026-10-24, implementing agent.
+- Observation: the repository's pinned Nixie parser rejects Mermaid's
+  `accTitle` and `accDescr` directives. Impact: keep the full screen-reader
+  description as adjacent prose and retain the visible figure caption, so the
+  diagram remains accessible while `make nixie` can validate its syntax.
+  Date/Author: 2026-10-24, implementing agent.
 
 ## Outcomes & retrospective
 
@@ -791,4 +831,7 @@ Initial draft created 2026-10-14. Revised 2026-10-23 to record the rebase and
 post-rebase validation, complete the outcomes, and mark the active draft PR
 state. Clarified that `setLevel()` changes affect queued records not yet
 processed, recorded the zero-finding final review, and noted the force-with-
-lease update to draft PR #546.
+lease update to draft PR #546. Revised 2026-10-25 after `main` advanced to
+`d234990`: the 16-commit issue series replayed without conflicts, and the user
+guide now distinguishes the unsupported configuration `level` fields from
+filters that `dictConfig` now supports.
