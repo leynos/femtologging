@@ -80,7 +80,7 @@ def test_close_while_handle_is_blocked_raises_runtime_error(
 
 @pytest.mark.concurrency
 @pytest.mark.parametrize("builder_name", BUILDER_NAMES)
-@pytest.mark.parametrize("operation", ["handle", "flush"])
+@pytest.mark.parametrize("operation", ["handle", "flush", "close"])
 def test_handler_operation_during_close_raises_runtime_error(
     tmp_path: Path, builder_name: str, operation: str
 ) -> None:

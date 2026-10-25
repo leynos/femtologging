@@ -75,4 +75,5 @@ guard(body)
 CLOSE_BORROW_CALLS = {
     "close-handle": 'handler.handle("core", "INFO", "during-close")',
     "close-flush": "handler.flush()",
+    "close-close": "handler.close()",
 }
