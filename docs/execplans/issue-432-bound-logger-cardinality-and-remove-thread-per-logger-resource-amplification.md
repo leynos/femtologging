@@ -1,7 +1,7 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: COMPLETE — delivered as draft PR #544; all gates green and the
-CodeRabbit findings addressed.
+Status: REVIEW IN PROGRESS — PR #544 is open; the latest review feedback is
+being repaired and re-gated.
 
 ## Purpose and big picture
 
@@ -160,6 +160,9 @@ Milestone 2 detail:
 - [x] Seventh review round returned four findings; all fixed, including a test
       that asserted nothing and was rebuilt and mutation-tested.
 - [x] Eighth review round returned five findings (four distinct); all fixed.
+- [ ] Ninth review round: verify and repair the current fork-safety,
+      configuration-staging capacity, test-oracle, and diagnostic findings;
+      re-run the full gates on the published candidate.
 
 Re-gated at `467f406`:
 
@@ -1031,6 +1034,48 @@ Milestone 1 detail:
   lint, typecheck, and tests. Pytest reported 805 passed, 5 skipped, and 66
   snapshots with no warnings; the nested policy contract passed. Hosted checks
   for this correction are pending the next push.
+
+2026-10-25: follow-up review on PR #544 head `129dcd8` found that the shared
+dispatcher and inherited logger state reused parent queues after `fork`, staged
+configuration built logger objects before checking the registry cap, the
+shard-permit test exercised only the per-logger budget, the tracing test module
+was undeclared, and one refusal warning described only a full queue. Repaired
+the process-aware pool and logger rebinding, added the stage-cap and fork
+regression tests, restored tracing-test coverage, corrected the shard-permit
+oracle and diagnostic, and addressed already-fixed or duplicate comments with
+source evidence. The first gate pass found three Python lint violations in the
+new fork test and a missing `log::warn` import after moving the admission
+helper; both were fixed at source. Formatting, Markdown lint, and Mermaid
+validation passed on that first pass. The next sequence passed `typecheck` but
+found prohibited typing imports, a broad exception catch, nested pool lookup,
+and a feature-specific unused import. Those have been corrected using the
+repository's typing aliases, specific OS/Python error types, a pool lookup
+helper, and a Python-feature-gated import. The third pass cleared the Python
+lint stages and type checking, but `make test` still stopped before unit tests
+on a test that accessed the removed budget field directly. That test now reads
+the budget through the logger's process-aware dispatch accessor. The next full
+sequential gate run is pending. The fourth pass confirmed that reactivating the
+tracing test module also exposed stale constructor and queue assumptions in its
+helpers. Those constructors now propagate their fallible results, and the
+rejection case fills a real one-slot shard behind a held handler so it tests
+the current admission path rather than a removed queue field. The fifth
+sequential gate pass passed formatting, type checking, Markdown lint, and
+Mermaid validation. Lint and tests both exposed the same compile errors in the
+split tracing helper: it could not import the sibling `python_logger`, and its
+private rejection function could not be re-exported across the test module
+boundary. The helper now imports the sibling and exposes a parent wrapper; the
+fresh sequential pass is pending. The sixth pass confirmed the import and
+re-export issues were fixed, then found that the child function itself needs
+`pub(super)` for the wrapper to call it. Its visibility is now limited to the
+parent helper module. The seventh full sequential pass then passed
+`make check-fmt`, `make lint`, `make typecheck`, `make test`,
+`make markdownlint`, and `make nixie` on the review-fix candidate based on
+`129dcd8`. Pytest reported 806 passed, 5 skipped, and 66 snapshots; every Rust
+feature lane, trybuild suite, and doc-test passed. The shared build admission
+controller stayed healthy throughout; its queueing extended the test run but
+did not produce a gate failure. `git diff --check` was clean. Hosted CI,
+CodeScene, and review-thread reconciliation remain pending publication of this
+candidate.
 
 ## Outcomes & retrospective
 

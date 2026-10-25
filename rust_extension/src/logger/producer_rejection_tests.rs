@@ -86,8 +86,11 @@ fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
         "filtered-out",
     ));
 
+    let (_, budget) = logger
+        .dispatch_state()
+        .expect("test logger's dispatcher should be available");
     assert_eq!(
-        logger.budget.in_flight(),
+        budget.in_flight(),
         1,
         "a rejected record must not reserve a dispatch permit",
     );

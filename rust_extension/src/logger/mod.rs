@@ -2,9 +2,10 @@
 //!
 //! This module provides the [`FemtoLogger`] struct, which handles log message
 //! filtering, formatting, and asynchronous output through the process-wide
-//! dispatch pool. A logger holds a reference to one shard of that pool rather
-//! than a thread of its own, so the threads a process spends on logging follow
-//! the machine rather than the number of loggers it has created.
+//! dispatch pool. A logger uses one shard of that pool rather than owning a
+//! thread, so the threads a process spends on logging follow the machine rather
+//! than the number of loggers it has created. If a logger crosses a `fork`, it
+//! rebinds to the child process's pool before its next dispatch.
 #![allow(
     clippy::too_many_arguments,
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
@@ -88,23 +89,17 @@ pub struct FemtoLogger {
     /// Rate limiter for warnings about failed context captures.
     #[cfg(feature = "python")]
     context_capture_warner: RateLimitedWarner,
-    /// The shard this logger's records are dispatched on.
-    ///
-    /// A shard, not a thread: the pool is shared, so the number of loggers a
-    /// process creates no longer decides how many threads it runs.
-    ///
-    /// Borrowed from a pool that outlives the process's loggers, or — in a Loom
-    /// model, which has no pool — owned by this logger alone.
     #[cfg(not(loom))]
-    shard: &'static Shard,
+    /// Inline process-specific shard state, refreshed after a fork.
+    dispatch: worker::DispatchState,
     #[cfg(loom)]
+    /// A Loom model's shard is owned by the logger and shut down on drop.
     shard: Arc<Shard>,
-    /// How much of the shard's in-flight capacity this logger may hold.
+    /// In-flight allowance used by this logger in its Loom model.
     ///
-    /// Per logger, so one logger's slow handler cannot consume the shard's
-    /// whole permit pool and starve the loggers sharing it. Shared with the
-    /// permits it was charged against, so a record's charge is returned when
-    /// its handlers finish even if this logger has already been dropped.
+    /// Ordinary builds keep the budget with the shard in [`DispatchState`],
+    /// so the two can be replaced together after a fork.
+    #[cfg(loom)]
     budget: Arc<LoggerBudget>,
 }
 
@@ -375,16 +370,7 @@ impl Drop for FemtoLogger {
         // registry lock that is dropping them. A logger with nothing in flight
         // has nothing of its own to drain.
         #[cfg(not(loom))]
-        if self.budget.in_flight() > 0 {
-            // The wait is taken while detached from the Python interpreter,
-            // because a handler on the shard may be a Python object that needs
-            // the GIL to finish and holding it here would deadlock the two.
-            // When there is no interpreter, no Python handler can be mid-call
-            // either, so the wait is taken directly.
-            if Python::try_attach(|py| py.detach(|| self.shard.wait_for_drain())).is_none() {
-                let _ = self.shard.wait_for_drain();
-            }
-        }
+        self.finish_dispatch_state();
     }
 }
 

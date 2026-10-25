@@ -53,8 +53,8 @@ const ROOT_LOGGER_NAME: &str = "root";
 pub(super) struct Manager {
     /// Strong references to loggers, keyed by their stable names.
     pub(super) loggers: HashMap<String, Py<FemtoLogger>>,
-    #[cfg(feature = "python")]
     /// Python handler, filter, and attachment state associated with the loggers.
+    #[cfg(feature = "python")]
     pub(super) runtime: RuntimeStateSnapshot,
 }
 

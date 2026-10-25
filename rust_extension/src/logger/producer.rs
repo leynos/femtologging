@@ -5,6 +5,7 @@
 //! counted as dropped, so a slow handler slows the loggers sharing its shard
 //! rather than the code doing the logging.
 
+#[cfg(feature = "python")]
 use log::warn;
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
+mod admission;
 mod handler_filters;
 
 #[cfg(test)]
@@ -228,41 +230,6 @@ impl FemtoLogger {
         Some((record, handlers))
     }
 
-    /// Admit one prepared record and report a refused submission as dropped.
-    fn admit_local_record(
-        &self,
-        queued: Box<QueuedRecord>,
-        #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
-    ) {
-        #[cfg(feature = "tracing-compat")]
-        let dispatch_started = std::time::Instant::now();
-        if self.shard.admit(queued, &self.budget).is_ok() {
-            #[cfg(feature = "tracing-compat")]
-            tracing::trace!(
-                target: "femtologging::internal",
-                operation = "producer_queue_dispatch",
-                handler_kind,
-                dispatch_outcome = "queued",
-                elapsed_us = dispatch_started.elapsed().as_micros(),
-            );
-            return;
-        }
-        #[cfg(feature = "tracing-compat")]
-        tracing::trace!(
-            target: "femtologging::internal",
-            operation = "producer_queue_dispatch",
-            handler_kind,
-            dispatch_outcome = "rejected",
-            elapsed_us = dispatch_started.elapsed().as_micros(),
-        );
-        self.dropped_records
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.drop_warner.record_drop();
-        self.drop_warner.warn_if_due(|count| {
-            warn!("FemtoLogger: dropped {count} records; dispatch queue full");
-        });
-    }
-
     /// Capture Python context for the exact handler snapshot being queued.
     #[cfg(feature = "python")]
     fn capture_context_for_dispatch(
@@ -353,19 +320,22 @@ impl FemtoLogger {
     /// interpreter to detach from, which is also when no Python handler can be
     /// mid-call.
     fn wait_for_dispatch_to_drain(&self) -> bool {
-        // Loom has no interpreter, and a model's shard is its own, so the
-        // count is read only where there is a pool to share.
         #[cfg(not(loom))]
-        if self.budget.in_flight() == 0 {
+        let (shard, budget) = match self.dispatch_state() {
+            Ok(dispatch) => dispatch,
+            Err(_) => return false,
+        };
+        #[cfg(not(loom))]
+        if budget.in_flight() == 0 {
             return true;
         }
-        // Loom has no interpreter, and a model's shard is its own.
         #[cfg(not(loom))]
-        if let Some(drained) =
-            pyo3::Python::try_attach(|py| py.detach(|| self.shard.wait_for_drain()))
-        {
+        if let Some(drained) = pyo3::Python::try_attach(|py| py.detach(|| shard.wait_for_drain())) {
             return drained;
         }
+        #[cfg(not(loom))]
+        return shard.wait_for_drain();
+        #[cfg(loom)]
         self.shard.wait_for_drain()
     }
 

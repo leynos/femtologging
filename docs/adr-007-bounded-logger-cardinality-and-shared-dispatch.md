@@ -124,7 +124,10 @@ each owning a worker thread. The pool holds at most four shards
 Thread count is now a function of the machine rather than of the logger count,
 which is the property the issue asked for. A logger is assigned a shard
 round-robin at construction and keeps it, so each logger's records stay FIFO on
-a single queue.
+a single queue. The pool records the process that owns its workers. After a
+`fork`, both inherited logger instances and newly constructed loggers detect
+the changed process ID and bind to the child's pool before dispatching; the
+parent's worker queues are never reused in the child.
 
 Each shard bounds work twice:
 

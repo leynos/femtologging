@@ -9,7 +9,7 @@
 //!
 //! [`get_logger`]: super::get_logger
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use pyo3::prelude::*;
 
@@ -28,19 +28,29 @@ pub(crate) fn stage_loggers<'a>(
     py: Python<'_>,
     names: impl IntoIterator<Item = &'a str>,
 ) -> PyResult<BTreeMap<String, Py<FemtoLogger>>> {
-    let mgr = MANAGER.read();
-    names
+    let requested_names: BTreeSet<String> = names
         .into_iter()
         .map(|name| {
             validate_logger_name(name)?;
-            let logger = match mgr.loggers.get(name) {
+            Ok(name.to_string())
+        })
+        .collect::<PyResult<_>>()?;
+    let mgr = MANAGER.read();
+    let additions = new_logger_names(&mgr, requested_names.iter().map(String::as_str));
+    if !registry_has_room_for(named_logger_count(&mgr), additions.len()) {
+        return Err(registry_full_error());
+    }
+    requested_names
+        .into_iter()
+        .map(|name| {
+            let logger = match mgr.loggers.get(&name) {
                 Some(logger) => logger.clone_ref(py),
                 None => Py::new(
                     py,
-                    FemtoLogger::with_parent(name.to_string(), calculate_parent_name(name))?,
+                    FemtoLogger::with_parent(name.clone(), calculate_parent_name(&name))?,
                 )?,
             };
-            Ok((name.to_string(), logger))
+            Ok((name, logger))
         })
         .collect()
 }

@@ -29,9 +29,11 @@
 //! counted as dropped, exactly as a full per-logger queue did, so a slow
 //! handler degrades the loggers on its shard rather than the process.
 //!
-//! The pool is process-wide, started once on first use, and deliberately never
-//! torn down: a process that has finished with the loggers it created will make
-//! more, and reclaiming a handful of idle threads would buy nothing.
+//! Each process gets one pool, started on first use and deliberately never torn
+//! down: a process that has finished with the loggers it created will make
+//! more, and reclaiming a handful of idle threads would buy nothing. A child
+//! detects that the inherited pool belongs to its parent and replaces it
+//! before assigning a shard to a newly created logger.
 //! Starting it can fail, because a process at its thread limit cannot have
 //! them; that failure is returned to the caller rather than panicking, and a
 //! later logger retries.
@@ -45,10 +47,9 @@ use pyo3::{PyErr, exceptions::PyRuntimeError};
 mod dispatcher_tests;
 
 #[cfg(not(loom))]
-use std::sync::atomic::{AtomicUsize, Ordering};
-
+use std::ptr::NonNull;
 #[cfg(not(loom))]
-use once_cell::sync::{Lazy, OnceCell};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
 pub(crate) use shard::{LoggerBudget, Shard};
 
@@ -96,20 +97,51 @@ pub(crate) const LOOM_RECORDS_PER_LOGGER: usize = 8;
 /// `-D warnings`, does not fail on dead code it structurally cannot reach.
 #[cfg(not(loom))]
 pub(crate) struct Dispatcher {
+    /// Process whose workers consume this dispatcher's queues.
+    process_id: u32,
     /// Shards that share the process-wide dispatch workload.
     shards: Vec<Shard>,
     /// Index used to assign new loggers to shards in round-robin order.
     next_shard: AtomicUsize,
 }
 
-/// The process-wide pool, started on first use.
+/// The current process's pool, started on first use.
 ///
 /// Deliberately not built under `--cfg loom`: `loom::model` runs its closure
 /// repeatedly in one process, so a pool started in one iteration would still
 /// be running its workers, blocked on channels, in the next. Under Loom each
-/// model builds and ends its own dispatcher instead.
+/// model builds and ends its own dispatcher instead. Published pools are never
+/// freed: logger instances can retain references to a parent's shard across a
+/// fork, so replacing the pointer in a child must leave those inherited
+/// references valid until the child exits.
 #[cfg(not(loom))]
-static POOL: Lazy<OnceCell<Dispatcher>> = Lazy::new(OnceCell::new);
+static POOL: AtomicPtr<Dispatcher> = AtomicPtr::new(std::ptr::null_mut());
+
+/// Process ID holding the lock-free pool-start reservation, or zero when free.
+///
+/// A child that inherits its parent's reservation can replace it because the
+/// owner PID differs; no mutex left locked by a vanished thread can strand it.
+#[cfg(not(loom))]
+static POOL_STARTING_PROCESS: AtomicU32 = AtomicU32::new(0);
+
+/// Release the process-local pool-start reservation after success or failure.
+#[cfg(not(loom))]
+struct PoolStartGuard {
+    /// PID that claimed the reservation.
+    process_id: u32,
+}
+
+#[cfg(not(loom))]
+impl Drop for PoolStartGuard {
+    fn drop(&mut self) {
+        let _ = POOL_STARTING_PROCESS.compare_exchange(
+            self.process_id,
+            0,
+            Ordering::Release,
+            Ordering::Relaxed,
+        );
+    }
+}
 
 /// Why the dispatch pool could not be started.
 ///
@@ -169,6 +201,20 @@ impl std::error::Error for DispatcherError {
 
 #[cfg(not(loom))]
 impl Dispatcher {
+    /// Return the published pool if it belongs to `process_id`.
+    ///
+    /// The pointer is process-sensitive because a child inherits the parent's
+    /// static but not its workers. Published allocations remain alive after a
+    /// child replaces the pointer, so callers can safely inspect the owner PID.
+    #[cfg(not(loom))]
+    fn pool_for_process(process_id: u32) -> Option<&'static Self> {
+        let current = NonNull::new(POOL.load(Ordering::Acquire))?;
+        // SAFETY: every published pool is a Box intentionally retained for
+        // process lifetime, including after a child replaces the pointer.
+        let dispatcher = unsafe { current.as_ref() };
+        (dispatcher.process_id == process_id).then_some(dispatcher)
+    }
+
     /// Return the process-wide pool, starting it if it is not running.
     ///
     /// # Errors
@@ -186,7 +232,48 @@ impl Dispatcher {
     /// ```
     #[cfg(not(loom))]
     pub(crate) fn shared() -> Result<&'static Self, DispatcherError> {
-        POOL.get_or_try_init(Self::start)
+        let process_id = std::process::id();
+        loop {
+            if let Some(dispatcher) = Self::pool_for_process(process_id) {
+                return Ok(dispatcher);
+            }
+
+            match POOL_STARTING_PROCESS.compare_exchange(
+                0,
+                process_id,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    let _start_guard = PoolStartGuard { process_id };
+                    // Recheck after reserving startup: another caller may have
+                    // finished between our first load and this reservation.
+                    if let Some(dispatcher) = Self::pool_for_process(process_id) {
+                        return Ok(dispatcher);
+                    }
+
+                    // Only the reservation holder starts workers, so concurrent
+                    // first use cannot exceed the fixed pool's thread bound.
+                    let candidate = Box::into_raw(Box::new(Self::start()?));
+                    POOL.store(candidate, Ordering::Release);
+                    // SAFETY: the published Box remains allocated for the
+                    // process lifetime, including after a child replaces it.
+                    return Ok(unsafe { &*candidate });
+                }
+                Err(owner) if owner == process_id => std::thread::yield_now(),
+                Err(owner) => {
+                    // A different PID can only be the parent reservation
+                    // copied by fork. The child is the sole survivor there,
+                    // so it may safely clear that stale reservation and retry.
+                    let _ = POOL_STARTING_PROCESS.compare_exchange(
+                        owner,
+                        0,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                }
+            }
+        }
     }
 
     /// Assign a shard to a newly created logger.
@@ -208,6 +295,7 @@ impl Dispatcher {
             shards.push(shard);
         }
         Ok(Self {
+            process_id: std::process::id(),
             shards,
             next_shard: AtomicUsize::new(0),
         })
@@ -237,7 +325,7 @@ pub(crate) fn shard_count() -> usize {
     any(feature = "log-compat", feature = "tracing-compat")
 ))]
 pub(crate) fn worker_count_for_test() -> usize {
-    POOL.get().map_or(0, |dispatcher| dispatcher.shards.len())
+    Dispatcher::pool_for_process(std::process::id()).map_or(0, |dispatcher| dispatcher.shards.len())
 }
 
 /// Start the process-wide pool from a test-controlled shard count.
@@ -264,6 +352,7 @@ mod test_support {
             shards.push(Shard::start(index, super::RECORDS_PER_LOGGER * count)?);
         }
         Ok(Dispatcher {
+            process_id: std::process::id(),
             shards,
             next_shard: std::sync::atomic::AtomicUsize::new(0),
         })

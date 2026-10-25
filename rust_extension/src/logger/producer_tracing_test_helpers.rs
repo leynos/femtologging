@@ -8,12 +8,19 @@ use tracing::field::{Field, Visit};
 
 use super::{
     ContextVarsSnapshotProvider, FemtoLogger, FixedDecisionFilter, InternalEventCollector,
-    NativeTestHandler, QueuedRecord, TestSnapshotProvider, python_logger, with_sensitive_context,
+    TestSnapshotProvider, python_logger, with_sensitive_context,
 };
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
+
+#[path = "producer_tracing_test_rejection.rs"]
+mod rejection;
+
+pub(super) fn emit_rejected_native_dispatch() -> Result<(), String> {
+    rejection::emit_rejected_native_dispatch()
+}
 
 /// One tracing event captured by the test subscriber.
 #[derive(Clone, Debug)]
@@ -188,26 +195,8 @@ pub(super) fn emit_capture_failure(collector: &InternalEventCollector) -> Result
     Ok(())
 }
 
-pub(super) fn emit_rejected_native_dispatch() -> Result<(), String> {
-    let mut logger = FemtoLogger::new("trace-reject".to_owned());
-    logger
-        .add_handler(Arc::new(NativeTestHandler { fail: false }))
-        .map_err(|error| error.to_string())?;
-    let (rejected_sender, rejected_receiver) = crate::sync::bounded::<QueuedRecord>(1);
-    drop(rejected_receiver);
-    logger.tx = Some(rejected_sender);
-    if logger
-        .log(FemtoLevel::Info, "message-secret-not-traced")
-        .is_none()
-    {
-        return Err("rejected dispatch should have accepted its producer record".to_owned());
-    }
-    drop(logger);
-    Ok(())
-}
-
 pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
-    let mixed_logger = FemtoLogger::new("trace-filter-mixed".to_owned());
+    let mixed_logger = FemtoLogger::new("trace-filter-mixed".to_owned())?;
     let accepted = CollectingHandler::new();
     let rejected = CollectingHandler::new();
     mixed_logger
@@ -231,7 +220,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
     assert_eq!(accepted.collected().len(), 1);
     assert!(rejected.collected().is_empty());
 
-    let all_rejected_logger = FemtoLogger::new("trace-filter-all-rejected".to_owned());
+    let all_rejected_logger = FemtoLogger::new("trace-filter-all-rejected".to_owned())?;
     let all_rejected = CollectingHandler::new();
     all_rejected_logger
         .add_handler_with_filters(
@@ -247,7 +236,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
     assert!(all_rejected_logger.flush_handlers_blocking());
     assert!(all_rejected.collected().is_empty());
 
-    let no_handler_logger = FemtoLogger::new("trace-filter-no-handlers".to_owned());
+    let no_handler_logger = FemtoLogger::new("trace-filter-no-handlers".to_owned())?;
     no_handler_logger.dispatch_to_handlers(FemtoLogRecord::new(
         "trace-filter-no-handlers",
         FemtoLevel::Info,
@@ -266,7 +255,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
             )
             .expect("root handler should attach");
         let child =
-            FemtoLogger::with_parent("trace-filter-child".to_owned(), Some("root".to_owned()));
+            FemtoLogger::with_parent("trace-filter-child".to_owned(), Some("root".to_owned()))?;
         child.dispatch_to_handlers(FemtoLogRecord::new(
             "trace-filter-child",
             FemtoLevel::Info,

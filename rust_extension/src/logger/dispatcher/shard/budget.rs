@@ -46,6 +46,10 @@ pub(super) struct Permit {
     permits: Arc<Permits>,
     /// The logger whose record this permit authorizes.
     logger: Arc<LoggerBudget>,
+    /// Process that charged the logger budget, so an inherited permit cannot
+    /// release a charge after the child resets that budget.
+    #[cfg(not(loom))]
+    process_id: u32,
 }
 
 /// One logger's share of a shard's in-flight capacity.
@@ -103,6 +107,16 @@ impl LoggerBudget {
             limit,
             in_flight: AtomicUsize::new(0),
         }
+    }
+
+    /// Forget charges held by workers that did not survive a fork.
+    ///
+    /// A child inherits the logger's atomic state but not the parent's worker
+    /// threads. Its replacement shard starts with an empty budget, and a permit
+    /// inherited from the parent cannot release a charge from it.
+    #[cfg(not(loom))]
+    pub(crate) fn reset_after_fork(&self) {
+        self.in_flight.store(0, Ordering::Release);
     }
 
     /// Return the number of unhandled records this logger may hold.
@@ -183,6 +197,8 @@ impl Permit {
             Ok(()) => Some(Self {
                 permits: Arc::clone(permits),
                 logger: Arc::clone(logger),
+                #[cfg(not(loom))]
+                process_id: std::process::id(),
             }),
             // The shard is full, so nothing was queued. Undo the budget charge
             // here rather than letting it leak: a charge with no permit would
@@ -206,6 +222,10 @@ impl Drop for Permit {
         // A failed send can only mean the pool is already full, which would be
         // a double release; ignoring it keeps the count from inflating.
         let _ = self.permits.returned.try_send(());
+        #[cfg(not(loom))]
+        if self.process_id != std::process::id() {
+            return;
+        }
         self.logger.release();
     }
 }

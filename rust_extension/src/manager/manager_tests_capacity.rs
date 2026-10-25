@@ -14,8 +14,10 @@ use std::collections::HashSet;
 use pyo3::Python;
 use serial_test::serial;
 
-use super::registry::{MANAGER, ensure_registry_capacity, get_logger, new_logger_names};
-use super::reset_manager;
+use super::registry::{
+    MANAGER, ensure_registry_capacity, get_logger, new_logger_names, stage_loggers,
+};
+use super::{MAX_LOGGERS, reset_manager};
 
 fn names(values: &[&str]) -> HashSet<String> {
     values.iter().map(|name| (*name).to_string()).collect()
@@ -104,6 +106,29 @@ fn an_ancestor_is_counted_before_its_descendant() {
             vec!["api", "api.v1", "api.v1.handlers"],
             "the chain must be planned outermost first so each parent exists \
              before the child that names it",
+        );
+    });
+}
+
+/// A configuration over the cap is rejected before its logger objects are staged.
+#[test]
+#[serial]
+fn staging_refuses_more_distinct_names_than_the_registry_can_hold() {
+    Python::attach(|py| {
+        reset_manager();
+        let requested: Vec<String> = (0..=MAX_LOGGERS)
+            .map(|index| format!("staged-{index}"))
+            .collect();
+
+        let result = stage_loggers(py, requested.iter().map(String::as_str));
+
+        assert!(
+            result.is_err(),
+            "staging must reject a set whose distinct names exceed the cap"
+        );
+        assert!(
+            MANAGER.read().loggers.is_empty(),
+            "a refused staged set must not change the registry"
         );
     });
 }

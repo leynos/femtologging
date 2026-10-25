@@ -19,3 +19,6 @@ mod producer_rejection_tests;
 #[cfg(not(loom))]
 #[path = "producer_tests.rs"]
 mod producer_tests;
+#[cfg(all(not(loom), feature = "tracing-compat"))]
+#[path = "producer_tracing_tests.rs"]
+mod producer_tracing_tests;

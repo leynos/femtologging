@@ -1,10 +1,10 @@
 //! Construction of [`FemtoLogger`] and the dispatch shard it draws from.
 //!
 //! A logger no longer owns a worker thread. Construction resolves the
-//! process-wide dispatch pool and takes a shard from it, and that is the one
-//! step which can fail: a process at its thread limit cannot start the pool,
-//! and the refusal is reported to the caller rather than panicking inside
-//! `thread::spawn`.
+//! process-wide dispatch pool and takes a shard from it. A logger inherited
+//! across `fork` rebinds its shard on first dispatch because its parent's worker
+//! threads did not survive; either pool start can fail at the process thread
+//! limit and is reported rather than panicking inside `thread::spawn`.
 //!
 //! Under `--cfg loom` there is no shared pool. `loom::model` runs its closure
 //! repeatedly in one process, so a pool started in one iteration would still be
@@ -22,6 +22,8 @@ use crate::sync::RwLock;
 
 use super::FemtoLogger;
 use super::HandlerAttachment;
+#[cfg(not(loom))]
+use super::LoggerBudget;
 use super::Shard;
 #[cfg(not(loom))]
 use super::dispatcher::Dispatcher;
@@ -31,16 +33,173 @@ use super::dispatcher::LOOM_RECORDS_PER_LOGGER;
 
 /// How a logger refers to the shard its records are dispatched on.
 ///
-/// A process-wide pool outlives every logger, so a logger borrows its shard;
-/// nothing has to be kept alive in the other direction. A Loom model has no
-/// pool: it builds a shard for the run and must join that shard's worker before
-/// the run ends, so the logger owns the shard and its drop is what ends it.
+/// A process-wide pool outlives every logger, so each process-specific dispatch
+/// state borrows its shard; nothing has to be kept alive in the other direction.
+/// A Loom model has no pool: it builds a shard for the run and must join that
+/// shard's worker before the run ends, so the logger owns the shard and its
+/// drop is what ends it.
 #[cfg(not(loom))]
 type ShardHandle = &'static Shard;
 #[cfg(loom)]
 type ShardHandle = std::sync::Arc<Shard>;
 
+/// The shard and admission budget assigned to one logger in one process.
+///
+/// A logger may survive a `fork`, but its parent's worker threads do not. The
+/// process ID lets the logger replace this state before its next dispatch.
+#[cfg(not(loom))]
+pub(super) struct DispatchState {
+    /// Process whose dispatcher owns the shard pointer.
+    process_id: std::sync::atomic::AtomicU32,
+    /// PID reserving the one-time rebind after a fork, or zero when free.
+    starting_process: std::sync::atomic::AtomicU32,
+    /// Shard assigned to this logger in `process_id`.
+    shard: std::sync::atomic::AtomicPtr<Shard>,
+    /// This logger's admission budget on `shard`.
+    budget: std::sync::Arc<LoggerBudget>,
+}
+
+/// Release a logger's process-local rebind reservation after success or error.
+#[cfg(not(loom))]
+struct DispatchRebindGuard<'a> {
+    /// Atomic reservation owned by the logger.
+    starting_process: &'a std::sync::atomic::AtomicU32,
+    /// PID that claimed the reservation.
+    process_id: u32,
+}
+
+#[cfg(not(loom))]
+impl Drop for DispatchRebindGuard<'_> {
+    fn drop(&mut self) {
+        let _ = self.starting_process.compare_exchange(
+            self.process_id,
+            0,
+            std::sync::atomic::Ordering::Release,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+#[cfg(not(loom))]
+impl DispatchState {
+    /// Build this logger's process-local shard and in-flight budget.
+    fn new(shard: &'static Shard) -> Self {
+        Self {
+            process_id: std::sync::atomic::AtomicU32::new(std::process::id()),
+            starting_process: std::sync::atomic::AtomicU32::new(0),
+            shard: std::sync::atomic::AtomicPtr::new(shard as *const Shard as *mut Shard),
+            budget: shard.budget(),
+        }
+    }
+
+    /// Return the shard and budget after the process ID has been checked.
+    fn handles(&self) -> (&Shard, &std::sync::Arc<LoggerBudget>) {
+        let shard = self.shard.load(std::sync::atomic::Ordering::Acquire);
+        // SAFETY: construction and rebind publish a shard from the process-wide
+        // pool, which outlives logger state and is never freed after a fork.
+        (unsafe { &*shard }, &self.budget)
+    }
+}
+
 impl FemtoLogger {
+    /// Return this logger's dispatch state for the current process.
+    ///
+    /// A child inherits logger objects but not its parent's worker threads.
+    /// Replacing the state on first use routes even those inherited loggers to
+    /// a shard in the child's newly started pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatcherError`] if the child cannot start its replacement
+    /// pool. The failed start is not cached, so another call can retry.
+    #[cfg(not(loom))]
+    pub(super) fn dispatch_state(
+        &self,
+    ) -> Result<(&Shard, &std::sync::Arc<LoggerBudget>), DispatcherError> {
+        let process_id = std::process::id();
+        loop {
+            if self
+                .dispatch
+                .process_id
+                .load(std::sync::atomic::Ordering::Acquire)
+                == process_id
+            {
+                return Ok(self.dispatch.handles());
+            }
+
+            match self.dispatch.starting_process.compare_exchange(
+                0,
+                process_id,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    let _guard = DispatchRebindGuard {
+                        starting_process: &self.dispatch.starting_process,
+                        process_id,
+                    };
+                    if self
+                        .dispatch
+                        .process_id
+                        .load(std::sync::atomic::Ordering::Acquire)
+                        == process_id
+                    {
+                        return Ok(self.dispatch.handles());
+                    }
+
+                    let dispatcher = Dispatcher::shared()?;
+                    let shard = dispatcher.assign_shard();
+                    self.dispatch.budget.reset_after_fork();
+                    self.dispatch.shard.store(
+                        shard as *const Shard as *mut Shard,
+                        std::sync::atomic::Ordering::Release,
+                    );
+                    self.dispatch
+                        .process_id
+                        .store(process_id, std::sync::atomic::Ordering::Release);
+                    return Ok((shard, &self.dispatch.budget));
+                }
+                Err(owner) if owner == process_id => std::thread::yield_now(),
+                Err(owner) => {
+                    // A different PID can only be the parent's reservation
+                    // copied by fork. The child may clear it and retry.
+                    let _ = self.dispatch.starting_process.compare_exchange(
+                        owner,
+                        0,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Drain work this logger sent to its current dispatch state.
+    ///
+    /// State inherited from a parent process is left untouched: its shard may
+    /// still be borrowed by another inherited logger in the child.
+    #[cfg(not(loom))]
+    pub(super) fn finish_dispatch_state(&mut self) {
+        if self
+            .dispatch
+            .process_id
+            .load(std::sync::atomic::Ordering::Acquire)
+            != std::process::id()
+        {
+            return;
+        }
+        let (shard, budget) = self.dispatch.handles();
+        if budget.in_flight() > 0 {
+            // The wait is taken while detached from the Python interpreter,
+            // because a handler on the shard may be a Python object that needs
+            // the GIL. When no interpreter is attached, no Python handler can
+            // be mid-call either, so wait directly.
+            if pyo3::Python::try_attach(|py| py.detach(|| shard.wait_for_drain())).is_none() {
+                let _ = shard.wait_for_drain();
+            }
+        }
+    }
+
     /// Create a logger with an explicit parent name.
     ///
     /// # Errors
@@ -132,6 +291,9 @@ impl FemtoLogger {
         // The budget belongs to this logger and is enforced by the shard it
         // was given, so it is derived from that shard. The shard sizes the
         // budget below its depth so one logger can never take every permit.
+        #[cfg(not(loom))]
+        let dispatch = DispatchState::new(shard);
+        #[cfg(loom)]
         let budget = shard.budget();
         Self {
             name,
@@ -150,7 +312,11 @@ impl FemtoLogger {
             context_capture_failures: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "python")]
             context_capture_warner: RateLimitedWarner::default(),
+            #[cfg(not(loom))]
+            dispatch,
+            #[cfg(loom)]
             shard,
+            #[cfg(loom)]
             budget,
         }
     }
