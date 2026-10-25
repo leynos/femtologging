@@ -6,10 +6,12 @@ worker starves every other Python thread. These tests pin the contract that
 fixes it; ``tests/file_handler_gil_support.py`` holds the scenario harness that
 runs each case in its own interpreter and explains how the verdict is reached.
 
-PyO3's ``detach`` does not release the handler's borrow flag, so a blocked
-``handle()`` keeps its shared borrow for the whole wait. A concurrent
-``close()`` therefore fails to take the exclusive borrow it needs, which PyO3
-reports as ``RuntimeError``; that scenario pins the resulting contract.
+``close()`` takes only a shared PyO3 borrow, so it can start while another
+thread is blocked inside ``handle()`` or ``flush()``. It takes the shutdown
+state and waits on the same worker-completion signal as every other closer, so
+a concurrent close neither raises nor corrupts the handler; the scenarios below
+pin that contract, including the closed-handler behaviour of calls that arrive
+while the close is still waiting.
 """
 
 from __future__ import annotations
@@ -53,18 +55,37 @@ def test_timed_handle_releases_the_gil(tmp_path: Path, builder_name: str) -> Non
 
 
 @pytest.mark.concurrency
-def test_blocking_flush_releases_the_gil(tmp_path: Path) -> None:
-    """``flush()`` waiting on a parked worker must release the GIL."""
-    run_scenario("file", "flush", tmp_path / "flush.log")
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_blocking_flush_releases_the_gil(tmp_path: Path, builder_name: str) -> None:
+    """Every file-handler wrapper releases the GIL while flushing."""
+    path = tmp_path / f"{builder_name}-flush.log"
+    run_scenario(builder_name, "flush", path)
 
 
 @pytest.mark.concurrency
-def test_blocking_close_releases_the_gil(tmp_path: Path) -> None:
-    """``close()`` waiting on a parked worker must release the GIL."""
-    run_scenario("file", "close", tmp_path / "close.log")
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_blocking_close_releases_the_gil(tmp_path: Path, builder_name: str) -> None:
+    """Every file-handler wrapper releases the GIL while closing."""
+    path = tmp_path / f"{builder_name}-close.log"
+    run_scenario(builder_name, "close", path)
 
 
 @pytest.mark.concurrency
-def test_close_while_handle_is_blocked_raises_runtime_error(tmp_path: Path) -> None:
-    """A concurrent ``close()`` must fail cleanly rather than corrupt state."""
-    run_scenario("file", "concurrent-close", tmp_path / "concurrent-close.log")
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_close_while_handle_is_blocked_returns_without_raising(
+    tmp_path: Path, builder_name: str
+) -> None:
+    """A concurrent ``close()`` must wait on the shared completion signal."""
+    path = tmp_path / f"{builder_name}-concurrent-close.log"
+    run_scenario(builder_name, "concurrent-close", path)
+
+
+@pytest.mark.concurrency
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+@pytest.mark.parametrize("operation", ["handle", "flush"])
+def test_handler_operation_during_close_observes_closed_handler(
+    tmp_path: Path, builder_name: str, operation: str
+) -> None:
+    """Calls made during a close must see the closed handler, not a borrow."""
+    path = tmp_path / f"{builder_name}-close-{operation}.log"
+    run_scenario(builder_name, f"close-{operation}", path)
