@@ -65,7 +65,8 @@ jobs:
       - name: Build editable extension
         run: |
           source .venv/bin/activate
-          maturin develop --manifest-path rust_extension/Cargo.toml
+          maturin develop --manifest-path rust_extension/Cargo.toml \
+            --features python,test-util
       # The Loom build lives in its own target directory and cache, apart from
       # the ordinary build's: `--cfg loom` changes every crate's fingerprint,
       # so sharing a directory would rebuild both on every run. The key names
@@ -85,6 +86,8 @@ jobs:
           RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo test --release --manifest-path rust_extension/Cargo.toml \
             --no-default-features --test heavy --no-run
       - name: Run formatters and tests
+        env:
+          FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
         run: |
           source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check

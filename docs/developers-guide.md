@@ -155,6 +155,19 @@ compatibility checks through the normal `make test` gate. The synchronization
 test in `tests/test_maturin_build.py` verifies that the maturin pins stay
 aligned across `pyproject.toml` and `.github/workflows/heavy-tests.yml`.
 
+### Maturin build features
+
+The persistent `[tool.maturin].features = ["python"]` setting is the production
+build configuration. It keeps the test-only `test-util` feature and
+timed-rotation hooks out of ordinary wheel builds.
+
+Tests that exercise those hooks opt in explicitly. `make build` and the heavy
+test workflow run `maturin develop --features python,test-util`. The coverage
+action uses `.github/uv-test-util.toml` through `UV_CONFIG_FILE` so its source
+install receives the same features without changing `pyproject.toml`. Coverage
+and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
+then fails before tests start if the extension omitted the hooks.
+
 For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
