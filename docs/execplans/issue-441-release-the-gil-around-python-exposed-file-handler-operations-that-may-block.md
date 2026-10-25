@@ -26,7 +26,7 @@ Observable outcomes:
   Python thread.
 - `handler.flush()` and `handler.close()` release the lock across their waits.
 - While detached `close()` waits with its exclusive PyO3 borrow, concurrent
-  `handle()`, `flush()`, and `close()` calls on the same object raise
+  `handle()`, `flush()`, and a second `close()` call on the same object raise
   `RuntimeError`.
 - The rotating and timed-rotating wrappers inherit the same contract.
 - Python tests, isolated in subprocesses, demonstrate a second thread making
@@ -98,8 +98,8 @@ for this issue; no new public signature or dependency is introduced.
   scenarios check timeout failure, accepted-record output, `flush() == False`
   after its deadline, and the `RuntimeError` from a concurrent Python `close()`
   while a blocked call retains its shared PyO3 borrow. They also check that
-  `handle()` and `flush()` fail with `RuntimeError` while detached `close()`
-  holds the exclusive PyO3 borrow.
+  `handle()`, `flush()`, and a second `close()` fail with `RuntimeError` while
+  detached `close()` holds the exclusive PyO3 borrow.
 - **External interface assumptions:** the version-matched PyO3 0.30.1 API
   documents `Python::detach` and its `Ungil` bound at
   <https://docs.rs/pyo3/0.30.1/pyo3/marker/struct.Python.html#method.detach>.
@@ -176,8 +176,14 @@ for this issue; no new public signature or dependency is introduced.
       `make check-fmt`, `make markdownlint`, and `make nixie` passed. The
       CodeRabbit follow-up reviewed all 12 changed files and reported 0
       findings.
-- [ ] Commit the gated changes, push the branch, and open the requested draft
-      PR with `Closes #441` and the Lody session link.
+- [x] Pushed the original implementation and created draft PR #550 with
+      `Closes #441` and the Lody session reference.
+- [x] The final CodeRabbit review identified missing coverage for a second
+      `close()` call during detached close. Added the case for all three
+      builders; the complete six-gate run passed with 807 tests passed, 5
+      skipped, 1 warning, and 66 snapshots passed.
+- [ ] Commit and push the close-on-close review follow-up, then obtain a clean
+      CodeRabbit review on the updated PR head.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -295,8 +301,10 @@ working changes then reapplied without conflicts. The rebased branch reports
 `0 13` against `origin/main` at `d234990`.
 
 The earlier six-gate run and CodeRabbit review apply to `a994236`, before this
-rebase. All deterministic gates have now passed on the rebased candidate. The
-CodeRabbit retry remains pending after its required cooldown.
+rebase. The post-cooldown review and its follow-up also completed on the
+rebased candidate. The latest review identified a missing close-on-close
+assertion; that test-only follow-up now passes all six deterministic gates,
+with another CodeRabbit review pending before it is pushed.
 
 The earlier pre-rebase gate results did not apply to this dependency and lint
 matrix. The complete gate run on the rebased candidate is recorded in
@@ -358,10 +366,11 @@ passed. That run reported 763 Python tests passed, 5 skipped, 1 warning, and 66
 snapshots passed, including all nine then-current GIL regression cases.
 Markdownlint checked 61 files with no errors, and Nixie validated every diagram.
 
-The first requested CodeRabbit review then identified twelve follow-ups. The
-current candidate remains in progress while those findings are addressed and
-revalidated. This section records the superseded gate interruptions without
-attributing host contention to the implementation.
+The first requested CodeRabbit review identified twelve follow-ups, which were
+addressed and revalidated before publication. A later review requested the
+close-on-close case now recorded in `Progress`; its all-gates result supersedes
+the earlier interrupted attempts listed here. This section records those
+interruptions without attributing host contention to the implementation.
 
 ## Context and orientation
 

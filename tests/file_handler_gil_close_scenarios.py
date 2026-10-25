@@ -87,4 +87,9 @@ CLOSE_BORROW_CALLS = {
             "a flush during close must report that the worker is gone"
         )
 """,
+    # A second closer shares the first one's completion wait; it must return
+    # without raising once the worker stops or its own deadline expires.
+    "close-close": """
+        handler.close()
+""",
 }
