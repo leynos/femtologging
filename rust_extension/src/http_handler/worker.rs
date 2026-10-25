@@ -41,7 +41,7 @@ use crate::{
 
 use super::{
     config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
-    queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
+    queue::{HTTPCommand, discard_rest, flush_drops, warn_discarded, warn_drops},
     request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
@@ -379,21 +379,7 @@ impl Worker {
                 }
             }
         }
-        // The worker's last act: nothing else will report what it recorded.
-        flush_drops(&self.warner);
     }
-}
-
-/// Report drops the worker found, ignoring the rate limit.
-///
-/// Drops the worker discovers — serialization failures, retry exhaustion,
-/// permanent errors — are recorded here rather than by the handler, so only the
-/// worker can report them. A suppressed interval would otherwise keep the count
-/// until the next due warning, which on a worker that is exiting never comes.
-fn flush_drops(warner: &RateLimitedWarner) {
-    warner.flush(|count| {
-        warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-    });
 }
 
 #[cfg(test)]

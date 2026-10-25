@@ -45,6 +45,19 @@ pub(crate) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.warn_if_due(log);
 }
 
+/// Report worker-owned drops without waiting for the warning interval.
+///
+/// Drops the worker discovers — serialization failures, retry exhaustion,
+/// permanent errors — are recorded by the worker rather than by the handler, so
+/// only the worker can report them. A suppressed interval would otherwise keep
+/// the count until the next due warning, which on a worker that is exiting
+/// never comes.
+pub(crate) fn flush_drops(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+    });
+}
+
 /// Throw away everything left in the queue, without touching the network.
 ///
 /// Returns how many records were discarded. Flush senders receive their

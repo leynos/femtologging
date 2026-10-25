@@ -333,7 +333,7 @@ fn stream_handler_rate_limits_warnings() {
             record.level() == log::Level::Warn
                 && record.args().to_string().contains(DROPPED_RECORD_WARNING)
         })
-        .map(|record| reported_count(&record.args().to_string()))
+        .map(|record| reported_count(record.args()))
         .collect();
     assert_eq!(
         warnings,

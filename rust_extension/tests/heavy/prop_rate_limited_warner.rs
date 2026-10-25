@@ -27,6 +27,7 @@ use proptest::prelude::*;
 /// seam a property test uses to make "has the interval elapsed?" a decision the
 /// case makes rather than one the scheduler makes.
 struct StepClock {
+    /// Current fake time in milliseconds.
     now_ms: AtomicU64,
 }
 

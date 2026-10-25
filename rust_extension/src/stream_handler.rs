@@ -189,7 +189,6 @@ impl FemtoStreamHandler {
     }
 }
 
-
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
     pub fn stdout() -> Self {
@@ -298,7 +297,6 @@ impl FemtoStreamHandler {
         StreamShutdown::new(handle, completion, self.flush_timeout)
     }
 }
-
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {

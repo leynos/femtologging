@@ -55,6 +55,13 @@ pub struct FemtoSocketHandler {
     abandoned: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
+/// Report drops owned by the handler, regardless of the warning interval.
+fn flush_drop_warner(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
+    });
+}
+
 impl FemtoSocketHandler {
     /// Construct a handler targeting the provided transport with default configuration.
     pub fn new(transport: SocketTransport) -> Self {
@@ -100,7 +107,10 @@ impl FemtoSocketHandler {
     /// begins after the deadline, each queued record gets one attempt, and
     /// whatever is still queued at the deadline is discarded with a warning
     /// rather than written.
+    ///
+    /// Pending handler-side drop warnings are reported before shutdown.
     pub fn close(&mut self) {
+        flush_drop_warner(&self.warner);
         match self.request_shutdown() {
             ShutdownOutcome::Finished => self.join_worker(),
             ShutdownOutcome::TimedOut => self.abandon_worker(),
@@ -299,9 +309,7 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
         // Reported before the closed check: records refused after close are
         // recorded by the handler, so a flush that returned early would leave
         // their count pending on a handler that is never going to warn again.
-        self.warner.flush(|count| {
-            log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
-        });
+        flush_drop_warner(&self.warner);
         let Some(tx) = self.sender() else {
             return false;
         };

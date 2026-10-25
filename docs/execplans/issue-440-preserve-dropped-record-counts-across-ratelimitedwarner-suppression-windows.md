@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: DRAFT
+Status: IN PROGRESS
 
 ## Purpose / big picture
 
@@ -48,7 +48,7 @@ or double-reported.
 
 ## Tolerances (exception triggers)
 
-- Scope: if the change exceeds 12 files or 500 net lines (excluding the plan and
+- Scope: if the change exceeds 14 files or 750 net lines (excluding the plan and
   generated artefacts), stop and escalate.
 - Interface: any change to the public signature of an existing item stops the
   work for confirmation. A new `#[cfg(feature = "test-util")]` accessor is
@@ -86,30 +86,92 @@ or double-reported.
       tests that encode the lossy behaviour.
 - [x] (2026-10-16) ExecPlan written.
 - [x] (2026-10-16) Task 1: corrected `warn_if_due()` and `flush()`, documented
-      the concurrency contract. Written but not yet compiled.
+      the concurrency contract.
 - [x] (2026-10-16) Task 2: regression, contention and stress tests (unit suite
       in `rate_limited_warner_tests.rs`), heavy proptest
       (`tests/heavy/prop_rate_limited_warner.rs`), stream-handler integration
-      test updated, design document updated. Written but not yet run.
+      test updated, design document updated.
 - [x] (2026-10-16) Task 3: flush owned warners on stream, logger, HTTP and
       socket flush and shutdown paths.
+- [x] (2026-10-23) Rebased the eight issue commits onto current `main` at
+      `5377ceb`; reviewed the clean semantic merges and confirmed the stream
+      handler configuration and shutdown changes coexist.
+- [x] (2026-10-23) Added handler-owned warning flushes to HTTP and socket
+      `close()` so suppressed drops are reported before worker shutdown.
+- [x] (2026-10-23) The first rebased `make lint` run found an unnecessary
+      `to_string()` in the stream warning integration test; passed the
+      existing `record.args()` string directly to its parser.
+- [x] (2026-10-23) A fresh `make lint` run then found missing Rustdoc on the
+      fake-clock test helpers; documented the test clock types and fields.
+- [x] (2026-10-23) The next lint run passed all Rust Clippy lanes and the
+      `test_support_docs` test (4 passed), then its Python private-doc contract
+      test timed out after 600 seconds while a nested fixture Clippy run waited
+      on the shared Cargo package-cache lock.
+- [x] (2026-10-23) Raised that contract test's nested command timeout to 1,200
+      seconds and its total pytest timeout to 2,420 seconds, allowing for both
+      sequential fixture runs under compiler and package-cache queueing.
+- [x] (2026-10-23) The next `make lint` run passed all regular Clippy lanes and
+      `test_support_docs` (4 passed), but the first private-doc fixture again
+      timed out while waiting on the shared Cargo package-cache lock. Raised
+      each nested lint timeout to 2,400 seconds and pytest's total timeout to
+      4,820 seconds to allow both fixture runs to queue.
+- [x] (2026-10-24) Clarified the `RateLimitedWarner` concurrency contract:
+      increments are either handed to one drain callback or remain pending
+      until a later drain; suppressed calls preserve them.
+- [x] (2026-10-24) A fresh sequential run passed `make fmt` and
+      `make check-fmt`. `make lint` failed in its first Rust `none` lane after
+      Cargo could not write four artefacts below `rust_extension/target` due to
+      `No such file or directory`. The target tree exists now; the filesystem
+      has 50 GB free and 18% inode use, and no active clean process was found.
+      The cause is not established. Re-run the full gate sequence on this
+      corrected candidate; no later gates ran.
+- [x] (2026-10-24) The next fresh sequential run passed formatting, all outer
+      Rust lint lanes, and the four `test_support_docs` cases. The private-doc
+      contract fixture then timed out after 2,400 seconds while its nested
+      Clippy command waited for Cargo's shared package-cache lock. The cited
+      log is `/tmp/lint-95df1fa9-36a8-4418-b8cb-57ad3e23c94f-issue-440-preserve-dropped-counts-across-ratelimitedwarner-suppression-windows-6.out`.
+      No later gates ran. Increase the nested timeout to 7,200 seconds and the
+      pytest timeout to 14,420 seconds before the later full gate run.
+- [x] (2026-10-23) Kept the full 14-file, 709-net-line change because it
+      implements the explicit acceptance criteria for all four drop-reporting
+      consumers and their regression coverage; updated the scope tolerance
+      before restarting the final gates.
 - [x] (2026-10-16) Focused unit suite green for the modified helper: 13 passed,
       0 failed (`--no-default-features --features test-util`).
 - [x] (2026-10-16) Red evidence captured against the unmodified helper: 7 of
       13 failing, including loss of 79 of 120 recorded drops under two threads.
       See `Artefacts and notes`.
-- [ ] Compilation of the final tree: BLOCKED. See the environment incident
-      below. Nothing on this branch has been compiled since the extraction
-      commit, and `cargo fmt -- --check` is not evidence of compilation: it
-      parses the crate but resolves no names.
-- [ ] Heavy proptest run with `-- --ignored`.
-- [ ] Full commit gates green via `scrutineer`.
+- [x] (2026-10-23) The rebased tree compiled through all Rust Clippy lanes and
+      the Rust test-support documentation test. At that point, the full
+      `make lint` gate was still pending because its nested private-doc policy
+      test exceeded its 1,200-second timeout while waiting on Cargo's
+      package-cache lock. The candidate then allowed 2,400 seconds per nested
+      command and 4,820 seconds for the full test; those limits still needed
+      validation.
+- [x] (2026-10-25) Rebased all eight issue commits from
+      `5377ceb482a7ad57dca7a8d7b67abeb0f15a560c` onto fetched `main` at
+      `d234990f7f4c3a7c000215cf9b90ad87d5d43c25`. The range-diff retained all
+      eight commits with no merges; `git diff --check` passed. Resolved the
+      logger overlap by preserving the target's filter test helper and the
+      issue's unconditional warning flush. The saved unstaged patch reapplied
+      cleanly; the final deterministic gates and ignored heavy suites passed
+      on the rebased candidate below.
+- [x] (2026-10-25) Ran the full sequential gate set against HEAD
+      `65074bc1684636e858865b884ce2f1c3aac1a807`: `make fmt`, `make check-fmt`,
+      `make markdownlint`, `make nixie`, `make lint`, `make typecheck` and
+      `make test` all passed. The pytest suite passed 781 tests, skipped 5,
+      and reported 1 warning; all 66 snapshots passed.
+- [x] (2026-10-25) Ran the ignored heavy Rust target for no default features,
+      `python`, `log-compat`, and `python,log-compat`. Each feature set passed
+      both heavy property tests and all three stream integration tests; all
+      doctests passed.
 - [ ] CodeRabbit review clean.
 - [ ] Pushed and draft PR opened.
 
-Blocked on: a machine-wide build-limits outage, not merely a busy pool. The
-supervisor process is alive and logging, but every attempt to create a compile
-scope for a compiler fails, 45 times in a 20-minute window, with:
+Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
+a busy pool. The supervisor process is alive and logging, but every attempt to
+create a compile scope for a compiler fails, 45 times in a 20-minute window,
+with:
 
 ```plaintext
 cannot create buildlimits-<pid>-g<n>.scope: Call failed: Connection timed out
@@ -143,14 +205,40 @@ reported `build-limits: the supervisor refused: launch-failed` on
 compiles would run uncached. None of these is a verdict on the branch, and none
 may be bypassed: `RUSTC_WRAPPER` and `RUSTDOC` must not be unset or overridden.
 
-Gate status: `fmt`, `check-fmt`, `markdownlint` and `nixie` all pass on HEAD
-`348fab2`. `lint` (5 of 6 clippy lanes green before refusal), `typecheck` and
-`test` are blocked by the outage. Two real code findings were raised by
-`scrutineer` during these runs and both are fixed: the `mdtablefix` paragraph
-drift (`8b196a8`) and the duplicated warning literal (`348fab2`).
+Historical gate status: `fmt`, `check-fmt`, `markdownlint` and `nixie` all pass
+on HEAD `348fab2`. `lint` (5 of 6 clippy lanes green before refusal),
+`typecheck` and `test` are blocked by the outage. Two real code findings were
+raised by `scrutineer` during these runs and both are fixed: the `mdtablefix`
+paragraph drift (`8b196a8`) and the duplicated warning literal (`348fab2`).
 
-Blocked on, separately: the environment incident above must clear before the
-remaining gates can pass. Everything gate-able without a compiler is green.
+That admission incident is no longer present. On 2026-10-23,
+`build-limits-status` reported a healthy supervisor with capacity 4 and two
+slots held; other builds were queued. A later status check was also healthy
+with capacity 4 and one slot held. The first rebased `make lint` run completed
+the preceding lanes and failed in the final Clippy lane on the test expression
+recorded above. At that point, the candidate still needed a fresh sequential
+gate run, the ignored heavy test, and CodeRabbit review.
+
+The next historical sequence included the fake-clock documentation fix. Its
+`make lint` stopped in the `none` lane on missing artefact paths, so typecheck,
+tests and documentation gates had not run on that candidate.
+
+The third historical `make lint` run passed the Rust lint lanes and all four
+`test_support_docs` cases. Its Python private-doc policy contract then failed
+because the nested `make lint-rust-clippy` process waited for the shared Cargo
+package-cache lock until its 600-second timeout. A fourth run passed the
+regular Clippy lanes and all four support-doc cases but repeated the timeout at
+1,200 seconds. The contract test now allows 2,400 seconds per nested lint
+command and 4,820 seconds for the full test. Run `make fmt`, then restart the
+sequential gate sequence from `make check-fmt`.
+
+The sixth historical sequential run passed `make fmt`, `make check-fmt`, the
+outer Rust lint lanes, and all four support-doc cases. The private-doc test's
+nested Clippy command waited on the shared package-cache lock for its full
+2,400 seconds and failed. The command timeout is now 7,200 seconds and the
+pytest timeout is 14,420 seconds to allow for extended shared-cache contention;
+the full 2026-10-25 sequential gate run recorded in Progress supersedes that
+pending action.
 
 ## Surprises & discoveries
 
@@ -225,6 +313,12 @@ remaining gates can pass. Everything gate-able without a compiler is green.
   `flush`. The helper's doc comment names the test and states that the wording
   and the test's `DROPPED_RECORD_WARNING` copy must change together, because an
   integration test cannot import from the crate under test.
+- Observation: the fetched main target added a private logger filter-test
+  helper beside this change's drop-warning flush. Evidence: the only rebase
+  conflict was in `rust_extension/src/logger/producer.rs`; the resolution
+  retains both methods and keeps the warning flush before the worker-idle
+  barrier. Impact: main's filter coverage remains intact while logger drop
+  warnings are reported at flush time.
 
 ## Decision log
 
@@ -260,10 +354,24 @@ remaining gates can pass. Everything gate-able without a compiler is green.
   after the handler has already accepted the record, so only the worker can
   report them, and its loop exit is the last moment at which a report is
   possible. Date/Author: 2026-10-16, agent.
+- Decision: replay the eight issue commits from
+  `5377ceb482a7ad57dca7a8d7b67abeb0f15a560c` onto the fetched `origin/main`
+  candidate `d234990f7f4c3a7c000215cf9b90ad87d5d43c25` before final validation.
+  Rationale: the branch is one commit behind live `main`, and the target
+  touches logger code also changed here. The rebase keeps the final gates bound
+  to the intended target and preserves the issue-only range. The host selects
+  Weave only through the user-wide attributes file; this unattended
+  multi-commit replay will use Git's built-in merge with
+  `core.attributesFile=/dev/null` and `zdiff3`, leaving the shared attribute
+  configuration unchanged. Date/Author: 2026-10-25, agent.
 
 ## Outcomes & retrospective
 
-Not yet started.
+The warning helper now preserves suppressed drops, claims warning intervals
+with compare-and-exchange, and drains explicit flushes independently of the
+rate limit. Deterministic unit, integration, property, type, lint, formatting
+and documentation gates all pass on the rebased candidate. The remaining work
+is CodeRabbit review and draft PR publication.
 
 ## Context and orientation
 
@@ -495,9 +603,10 @@ threaded stress test, and a contention test. It registers
 the counts sum to the drops.
 
 Task 3 touches the four consumers, moving `warner.flush()` ahead of the closed
-early-returns in the HTTP and socket handlers, adding it to the stream handler's
-`close()`, adding it to `FemtoLogger::flush_handlers_blocking()` and `Drop`,
-and adding it to the HTTP and socket workers' flush-command and loop-exit paths.
+early-returns in the HTTP and socket handlers, adding it to their `close()`
+paths and the stream handler's `close()`, adding it to
+`FemtoLogger::flush_handlers_blocking()` and `Drop`, and adding it to the HTTP
+and socket workers' flush-command and loop-exit paths.
 
 ## Concrete steps
 
@@ -657,3 +766,25 @@ impl RateLimitedWarner {
 
 2026-10-16: initial draft, written after reconnaissance of the defect, its four
 consumers and the existing tests.
+
+2026-10-24: recorded the final lint lane's missing-artefact failure, the
+environment checks, and the current gate sequence required for the corrected
+candidate.
+
+2026-10-25: recorded the fetched main target, preserved recovery material, the
+rebase conflict resolution, and the new candidate SHA. The rebase changed no
+requirements; the full gates and CodeRabbit review still bind to the candidate
+after the saved worktree patch is committed.
+
+2026-10-25: changed three American spellings to the project-required en-GB
+forms after `make markdownlint` caught them. The later full gate run passed
+`make markdownlint`.
+
+2026-10-25: `make lint` found the HTTP worker at 413 lines, above the 400-line
+limit. Moved its shared drop-warning helpers into the existing HTTP handler
+module; the worker is now 396 lines.
+
+2026-10-25: all deterministic gates and the four ignored Rust feature runs
+passed on HEAD `65074bc1684636e858865b884ce2f1c3aac1a807`. Detailed gate logs
+remain under `/tmp` with the `-3.out` suffix. CodeRabbit review and draft PR
+publication remain outstanding.

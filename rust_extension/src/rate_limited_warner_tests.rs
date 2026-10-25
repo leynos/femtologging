@@ -13,7 +13,9 @@ use std::sync::Barrier;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::thread;
 
+/// A test clock that advances only when the test requests it.
 struct FakeClock {
+    /// Current fake time in milliseconds.
     now: AtomicU64,
 }
 
@@ -43,8 +45,7 @@ fn clock() -> Arc<FakeClock> {
 }
 
 #[fixture]
-fn warner() -> (RateLimitedWarner, Arc<FakeClock>) {
-    let clock = Arc::new(FakeClock::default());
+fn warner(clock: Arc<FakeClock>) -> (RateLimitedWarner, Arc<FakeClock>) {
     (
         RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone() as Arc<dyn Clock>),
         clock,
