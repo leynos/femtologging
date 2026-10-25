@@ -56,49 +56,39 @@ fn build_root_and_child(
 }
 
 #[rstest]
+#[case::explicitly_disabled(Some(false), false)]
+#[case::default_propagation(None, true)]
 #[serial]
-fn propagate_flag_applied(
+fn logger_propagation_controls_root_delivery(
     _gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
+    #[case] propagate: Option<bool>,
+    #[case] expected_root_delivery: bool,
 ) {
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
-        let child_cfg = LoggerConfigBuilder::new()
-            .with_level(FemtoLevel::Info)
-            .with_propagate(false);
+        let child_cfg = match propagate {
+            Some(propagate) => LoggerConfigBuilder::new()
+                .with_level(FemtoLevel::Info)
+                .with_propagate(propagate),
+            None => LoggerConfigBuilder::new().with_level(FemtoLevel::Info),
+        };
         let (child, root) = build_root_and_child(py, root_handler, child_cfg)
             .expect("build and lookup should succeed");
+        assert_eq!(
+            child.borrow(py).propagate(),
+            expected_root_delivery,
+            "the child should retain the configured propagation value",
+        );
         assert!(child.borrow(py).handlers_for_test().is_empty());
         child.borrow(py).log(FemtoLevel::Info, "msg");
         assert_flush!(py, child, "child");
         assert_flush!(py, root, "root");
-        assert!(
-            read_log_file(&file)
-                .expect("test log file must be readable")
-                .is_empty(),
-            "root handler should receive no records"
-        );
-    });
-}
-
-#[rstest]
-#[serial]
-fn record_propagates_to_root(
-    _gil_and_clean_manager: (),
-    new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
-) {
-    Python::attach(|py| {
-        let (root_handler, file) = new_root_file_handler.expect("create temp log file");
-        let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
-        let (child, root) = build_root_and_child(py, root_handler, child_cfg)
-            .expect("build and lookup should succeed");
-        child.borrow(py).log(FemtoLevel::Info, "msg");
-        assert_flush!(py, child, "child");
-        assert_flush!(py, root, "root");
         let contents = read_log_file(&file).expect("test log file must be readable");
-        assert!(
+        assert_eq!(
             contents.contains("msg"),
-            "root handler should receive one record"
+            expected_root_delivery,
+            "root delivery should match the child's propagation setting"
         );
     });
 }
