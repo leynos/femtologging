@@ -308,6 +308,15 @@ configured filter IDs.
   six gates, is HEAD's tree with only a 6-line progress note added to this
   plan. The confirming gate run is therefore a re-verification of an
   already-green tree, not a first-pass attempt.
+- [x] (2026-10-25) CodeRabbit reviewed 21 files at local HEAD
+  `c0dd2f712d34c2dec7a699b9f8dcc8f7547a0510` and found one trivial duplicate
+  pytest-fixture issue. Moved `reset_logger_state` and `core_config` to
+  `tests/conftest.py`; module-level `pytestmark` keeps reset isolation scoped
+  to the two owning test modules. `make fmt` and all six deterministic gates
+  then passed on the three-file repair: 788 pytest tests passed, 5 were
+  skipped, all 66 snapshots passed, and every Rust feature lane passed. The
+  only warning was the previously observed upstream
+  `PytestAssertRewriteWarning` in `tests.steps.logging_context_steps`.
 - [ ] Draft pull request to be opened.
 
 ## Surprises & Discoveries

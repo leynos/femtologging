@@ -12,7 +12,6 @@ from femtologging import (
     ConfigBuilder,
     FileHandlerBuilder,
     FormatterBuilder,
-    LevelFilterBuilder,
     LoggerConfigBuilder,
     LoggerMutationBuilder,
     NameFilterBuilder,
@@ -20,7 +19,6 @@ from femtologging import (
     RuntimeConfigBuilder,
     StreamHandlerBuilder,
     get_logger,
-    reset_manager,
 )
 from tests.helpers import poll_file_for_text
 
@@ -35,35 +33,7 @@ if typ.TYPE_CHECKING:
 ROOT_OVERLAP_MESSAGE = 'with_root_logger() and with_logger("root", ...)'
 
 
-@pytest.fixture(autouse=True)
-def reset_logger_state() -> cabc.Iterator[None]:
-    """Reset the global manager around each test."""
-    reset_manager()
-    yield
-    reset_manager()
-
-
-@pytest.fixture(name="core_config")
-def fixture_core_config(reset_logger_state: None) -> None:
-    """Install the baseline ``core`` logger used by the mutation tests.
-
-    Depends on ``reset_logger_state`` so the configuration is installed after
-    the manager has been reset, never before it.
-    """
-    (
-        ConfigBuilder()
-        .with_handler("stderr", StreamHandlerBuilder.stderr())
-        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
-        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
-        .with_logger(
-            "core",
-            LoggerConfigBuilder()
-            .with_level("DEBUG")
-            .with_handlers(["stderr"])
-            .with_filters(["lvl"]),
-        )
-        .build_and_init()
-    )
+pytestmark = pytest.mark.usefixtures("reset_logger_state")
 
 
 def test_runtime_builder_dict_matches_snapshot(snapshot: SnapshotAssertion) -> None:
