@@ -10,12 +10,12 @@ mod logger_tests;
 #[cfg(not(loom))]
 #[path = "logger_tests_helpers.rs"]
 mod logger_tests_helpers;
+#[cfg(all(not(loom), feature = "python"))]
+#[path = "producer_context_tests.rs"]
+mod producer_context_tests;
 #[cfg(not(loom))]
 #[path = "producer_rejection_tests.rs"]
 mod producer_rejection_tests;
 #[cfg(not(loom))]
 #[path = "producer_tests.rs"]
 mod producer_tests;
-#[cfg(all(not(loom), feature = "python"))]
-#[path = "producer_context_tests.rs"]
-mod producer_context_tests;

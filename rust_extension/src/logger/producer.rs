@@ -164,6 +164,7 @@ impl FemtoLogger {
         });
     }
 
+    /// Queue a record for this logger's local handlers on its dispatch shard.
     fn send_to_local_handlers(&self, mut record: FemtoLogRecord) {
         let attachments = self.handlers.read().clone();
         if attachments.is_empty() {

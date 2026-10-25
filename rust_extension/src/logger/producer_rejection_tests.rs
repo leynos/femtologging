@@ -7,10 +7,11 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use rstest::rstest;
 
-use super::logger_tests_helpers::CountingHandler;
+use super::logger_tests_helpers::CollectingHandler;
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::HandlerError;
+use crate::logger::dispatcher::Shard;
 
 /// Filter fixture that rejects every record without enriching it.
 struct RejectingFilter;
@@ -51,12 +52,10 @@ impl FemtoHandlerTrait for BlockingHandler {
 
 #[rstest]
 fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
-    let logger = FemtoLogger::new("producer".to_string());
-    let tx = logger
-        .tx
-        .as_ref()
-        .expect("logger should have a queue")
-        .clone();
+    let shard: &'static Shard = Box::leak(Box::new(
+        Shard::start(0, 4).expect("a four-record test shard should start"),
+    ));
+    let logger = FemtoLogger::assembled_for_test("producer".to_string(), shard);
     let (started_tx, started_rx) = bounded(1);
     let (release_tx, release_rx) = bounded(1);
     logger
@@ -78,7 +77,7 @@ fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
 
     logger.handlers.write().clear();
     logger.handlers.write().push(HandlerAttachment {
-        handler: Arc::new(CountingHandler::default()),
+        handler: Arc::new(CollectingHandler::new()),
         filters: vec![Arc::new(RejectingFilter)],
     });
     logger.dispatch_to_handlers(FemtoLogRecord::new(
@@ -87,10 +86,62 @@ fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
         "filtered-out",
     ));
 
-    let queued_jobs = tx.len();
+    assert_eq!(
+        logger.budget.in_flight(),
+        1,
+        "a rejected record must not reserve a dispatch permit",
+    );
     release_tx
         .send(())
         .expect("blocked handler should receive its release signal");
 
-    assert_eq!(queued_jobs, 0, "rejected records must not occupy the queue");
+    assert!(
+        logger.flush_handlers(),
+        "the blocked record should drain after release",
+    );
+}
+
+/// A shard refusal reaches the logger's producer-side drop counter.
+#[test]
+fn refused_shard_admission_increments_the_logger_drop_count() {
+    let shard: &'static Shard = Box::leak(Box::new(
+        Shard::start(0, 1).expect("a one-record test shard should start"),
+    ));
+    let logger = FemtoLogger::assembled_for_test("producer-drop".to_string(), shard);
+    let (started_tx, started_rx) = bounded(1);
+    let (release_tx, release_rx) = bounded(1);
+    logger
+        .add_handler(Arc::new(BlockingHandler {
+            started: started_tx,
+            release: release_rx,
+        }))
+        .expect("native held handler should register");
+
+    assert!(
+        logger
+            .log(FemtoLevel::Info, "occupies the only permit")
+            .is_some(),
+        "the first record should be accepted for dispatch",
+    );
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the worker should start handling the first record");
+
+    assert!(
+        logger.log(FemtoLevel::Info, "cannot fit").is_some(),
+        "the public logging call still formats a refused record",
+    );
+    assert_eq!(
+        logger.get_dropped(),
+        1,
+        "a shard refusal must reach the logger's producer drop counter",
+    );
+
+    release_tx
+        .send(())
+        .expect("the worker should still be waiting for its first record");
+    assert!(
+        logger.flush_handlers(),
+        "the accepted record should drain after the handler is released",
+    );
 }

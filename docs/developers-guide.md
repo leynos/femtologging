@@ -233,9 +233,9 @@ that, some operations are outside the model by design:
 - Loom has no clock, so the timed waits, `recv_timeout` and `send_timeout`,
   wait without a bound. A worker that can fail to answer hangs the model
   instead of failing it, and the step's timeout turns that hang into a failure;
-- `recv_either`, the seam's replacement for `crossbeam_channel::select!`,
-  prefers its first receiver when both are ready, where `select!` picks at
-  random;
+- the production shard worker blocks on `recv()` instead of polling an idle
+  timeout. Loom models stop their owned worker with `Job::Stop`; no model
+  treats an empty queue as shutdown;
 - the handler list is shared through `std::sync::Arc`, whose reference counts
   Loom does not schedule;
 - the topology models attach a synchronous test handler rather than stream
@@ -258,6 +258,46 @@ stops the heavy suite, the Clippy lanes and `pytest` from reporting.
 positive `LOOM_MAX_PREEMPTIONS`, selects every model, carries no `--no-run`, is
 bounded and runs last; that the compile step does carry `--no-run`; and that
 the model list names exactly the models the heavy target defines.
+
+## Logger cardinality and shared dispatch
+
+The accepted design for logger names and dispatch is recorded in
+[ADR 007](adr-007-bounded-logger-cardinality-and-shared-dispatch.md). Names are
+validated before registry lookup: no empty dotted segments, at most 255 UTF-8
+bytes and 32 segments, and no control characters or Unicode line and paragraph
+separators. The process-wide registry keeps at most 10,000 named loggers;
+`root` is exempt, and a refused new name or parent chain is rejected without
+evicting or partially inserting existing logger state.
+
+The manager starts its process-wide dispatcher lazily when the first logger is
+constructed. It starts between one and four shards, clamped from the machine's
+available parallelism, then assigns each logger a shard round-robin. Each shard
+has one named worker and a queue and permit pool of `1,024 × shard count`
+records. Each logger has its own in-flight budget, capped at 1,024 and below
+the shard depth. Queue, shard-permit, and per-logger-budget refusals return the
+record to the producer; the logger increments its drop counter and emits a
+rate-limited warning without waiting. One logger's records remain FIFO on its
+shard, while records from different loggers on that shard share a worker and
+can delay one another.
+
+`flush_handlers()` queues a barrier only when that logger has work in flight.
+The barrier drains records ahead of it on the same shard and has a two-second
+timeout; an idle logger does not consume a queue slot or wait for unrelated
+work. Dropping a logger follows the same per-logger in-flight check. The pool
+itself lives for the process lifetime. If the operating system refuses to start
+a worker, construction returns `DispatcherError` in Rust or `RuntimeError`
+through Python. The pool is not marked failed, so a later construction retries.
+
+The production pool is outside the Loom model. Each Loom run owns and stops its
+own shard so worker threads do not survive between model iterations; the
+topology tests exercise routing and handler isolation with a smaller
+`LOOM_RECORDS_PER_LOGGER` depth. The primitives behind both workers live in
+`rust_extension/src/sync.rs`: production `spawn_named` returns the operating
+system's spawn error and gives shard workers recognizable names, while Loom's
+implementation keeps the same signature without process thread names. Its timed
+send and receive operations keep their normal API shape, but Loom has no clock,
+so the heavy lane's outer timeout bounds waits that would otherwise remain
+blocked. The shard worker uses blocking `recv()` and has no idle polling tick.
 
 ## Producer/worker context propagation
 

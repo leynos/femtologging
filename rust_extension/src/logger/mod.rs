@@ -32,7 +32,9 @@ use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
 
-use crate::{formatter::SharedFormatter, level::FemtoLevel, log_record::FemtoLogRecord};
+#[cfg(test)]
+use crate::log_record::FemtoLogRecord;
+use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::RwLock;

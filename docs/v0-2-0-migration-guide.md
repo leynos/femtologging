@@ -117,20 +117,56 @@ metadata explicitly when a request crosses that boundary.
 
 ______________________________________________________________________
 
+## Bounded logger names and shared dispatch
+
+Logger names now have explicit shape and capacity limits. A name must be
+non-empty, must not start or end with `.`, and must not contain consecutive
+dots. It is limited to 255 UTF-8 bytes and 32 dot-separated segments, and may
+not contain control characters or the Unicode line and paragraph separators.
+Invalid names raise `ValueError` before they become registry keys.
+
+The process-wide registry holds at most 10,000 named loggers. The root logger
+is exempt; names already registered keep their identity, and the manager never
+evicts a logger to make room. A new name whose full parent chain would exceed
+the cap raises `RuntimeError`. Names used by the Rust `log` and `tracing`
+bridges fall back to the root logger when validation or the registry cap
+refuses them. The `log` bridge emits a rate-limited diagnostic; the tracing
+layer currently falls back silently.
+
+Use stable component names such as `service.database`, and put request, user,
+or tenant identifiers in structured fields instead. A one-logger-per-request
+pattern now reaches the cap and is refused. See the
+[users' guide](users-guide.md#creating-and-naming-loggers) for examples.
+
+Loggers no longer own worker threads. A process lazily starts a fixed pool of
+one to four dispatch workers, based on available parallelism, and assigns
+loggers to their workers round-robin. Loggers sharing a shard also share its
+worker; per-logger FIFO order is preserved. Code that relied on a custom
+handler's `threading.local` state being private to one logger must use
+`contextvars` for producer context or keep that state explicitly with the
+handler. Python `contextvars` are captured before dispatch and restored while
+the handler runs.
+
+If the operating system cannot start the pool because the process has reached
+its thread limit, logger creation raises `RuntimeError` instead of panicking. A
+later logger creation retries pool startup.
+
+______________________________________________________________________
+
 ## `StdlibHandlerAdapter` propagates `contextvars`
 
 When a record is sent through `StdlibHandlerAdapter`, femtologging captures the
 producer thread's `contextvars` context before queueing the record. On the
-dedicated worker thread, `Context.run` calls the wrapped stdlib handler's
-complete `handle()` method inside that context, including its filters,
-formatters, and `emit()` method. Dispatch remains asynchronous. Existing
-filters and formatters that read a `contextvars.ContextVar` therefore observe
-the value set by the thread that emitted the record.
+logger's shared dispatch-shard worker, `Context.run` calls the wrapped stdlib
+handler's complete `handle()` method inside that context, including its
+filters, formatters, and `emit()` method. Dispatch remains asynchronous.
+Existing filters and formatters that read a `contextvars.ContextVar` therefore
+observe the value set by the thread that emitted the record.
 
 No code changes are required for this behaviour. Only `contextvars` are
-propagated; other thread-local state, including `threading.local`, still
-belongs to the worker thread. Update filters that depend on such state to use
-`contextvars` when they need values from the emitting thread.
+propagated; other thread-local state, including `threading.local`, belongs to
+the shared shard worker and may be observed by handlers serving different
+loggers. Update filters that depend on producer state to use `contextvars`.
 
 ______________________________________________________________________
 

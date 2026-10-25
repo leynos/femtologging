@@ -399,7 +399,7 @@ class Collector:
         self.records: list[tuple[str, str, str]] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
-        # Runs inside the FemtoLogger worker thread
+        # Runs on the worker for this logger's shared dispatch shard.
         self.records.append((logger, level, message))
 
 
@@ -529,12 +529,12 @@ exist.  Custom key-value pairs from `metadata.key_values` are propagated into
 the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 `%(request_id)s`) and filters.
 
-The adapter runs on femtologging's dedicated worker thread. Before a record is
-queued, femtologging captures the producer's `contextvars` context and runs the
-wrapped handler's entire `handle()` call inside it, including its filters,
-formatters, and `emit()`. A `contextvars.ContextVar` therefore observes the
-value set by the log caller, even though the handler dispatch itself is
-asynchronous on the worker thread.
+The adapter runs on the worker for the logger's dispatch shard, which may also
+serve other loggers. Before a record is queued, femtologging captures the
+producer's `contextvars` context and runs the wrapped handler's entire
+`handle()` call inside it, including its filters, formatters, and `emit()`. A
+`contextvars.ContextVar` therefore observes the value set by the log caller,
+even though the handler dispatch itself is asynchronous on a shared worker.
 
 **Limitations:**
 
@@ -545,7 +545,8 @@ asynchronous on the worker thread.
   capture these values.  `relativeCreated` is recomputed from
   `metadata.timestamp` when present, so elapsed-time values can be accurate.
 - Only `contextvars` are propagated. Other thread-local state, including
-  `threading.local`, remains the dedicated worker thread's state.
+  `threading.local`, belongs to the shared shard worker and may be observed by
+  handlers serving different loggers on that shard.
 
 ## Configuration options
 
@@ -759,13 +760,14 @@ For upgrade steps covering handler filters and formatter builders, see the
   `stack_info` are supported as keyword-only arguments to `log()` and the
   convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
-  and run on dedicated worker threads.  Existing stdlib `logging.Handler`
-  subclasses can be reused via
+  and run on the fixed pool of dispatch workers. Loggers assigned to the same
+  shard share its worker. Existing stdlib `logging.Handler` subclasses can be
+  reused via
   [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
 - The `dictConfig` schema supports registered handler filters and formatter
-  attachment, but lacks incremental updates and handler levels. `fileConfig`
-  is cut down and does not support formatter declarations.
+  attachment, but lacks incremental updates and handler levels. `fileConfig` is
+  cut down and does not support formatter declarations.
 - Dispatch capacity is bounded. Each logger may hold at most half of its
   shard's depth in flight, capped at 1,024 records, and each handler queue
   holds 1,024 records by default. The stdlib blocks the emitting thread;

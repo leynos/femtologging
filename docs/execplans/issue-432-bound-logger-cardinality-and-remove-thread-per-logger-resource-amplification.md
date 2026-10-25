@@ -548,27 +548,14 @@ Milestone 1 detail:
 
 ## Decision log
 
-- 2026-10-23: `test_stream_builder_applies_callable_formatter` is diagnosed
-  but **not fixed** in this change. Rationale: it exercises a defect this
-  change did not introduce and cannot reach, and fixing it would widen the diff
-  past the issue. Evidence, so the next person does not re-derive it: the test
-  builds only a `StreamHandlerBuilder`, no `FemtoLogger`, so no dispatcher
-  shard is involved; `stream_handler.rs` and `formatter/python.rs` are
-  untouched by this branch (`git diff` empty). The defect is that `close()`
-  waits on a done-signal the worker only sends after it has formatted every
-  queued record, and formatting a Python-callable formatter needs the GIL
-  (`Python::attach`) while the calling thread still holds it inside `close()`,
-  so the wait cannot be satisfied until `close()` returns. Measured directly:
-  with a Python callable, `close()` burns its full one-second timeout on
-  200/200 runs (p50 1.0003 s); with the Rust default formatter it returns in
-  0.1 ms. The record itself is still written in 60/60 runs once the
-  interruptible wait releases the GIL, which is why the test usually passes.
-  Under load around 25 it fails about one run in ten: `capfd` then reads the fd
-  before the write lands, capturing `''` or a torn `'allable:hello'` — the two
-  shapes actually observed. No worker thread leaks: `/proc/self/status` thread
-  count is unchanged across ten handler closes. The correct fix is to release
-  the GIL around the wait in `close()` and to have the worker acknowledge each
-  command, which is stream-handler work and belongs in its own change.
+- 2026-10-23: `test_stream_builder_applies_callable_formatter` was diagnosed
+  and deferred because it exercised a stream-handler GIL interaction outside
+  the dispatcher change. At that point the stream handler and Python formatter
+  were untouched. `close()` waited for a done signal while the worker needed
+  `Python::attach` to run a Python callable; the test usually passed because
+  the worker wrote after the timeout, but under load `capfd` could read before
+  the write landed. This scope decision was superseded by the final test gate
+  on 2026-10-25, recorded below.
 
 - 2026-10-14: reuse the existing `HandlerError::Capacity` path rather than
   exporting a new exception type. Rationale: the project already maps handler
@@ -837,11 +824,33 @@ Milestone 1 detail:
   child-process saturation tests for the `log` adapter and tracing target
   resolver, plus a convenience-function case. They assert the exact
   named-logger cap, root fallback where the bridge can fall back, stable
-  existing logger identities, and a fixed shard-worker count. The tracing macro
-  requires static targets, so its runtime resolver is the boundary that can
-  exercise request-derived target strings. ADR 007 now records that the `log`
-  adapter emits a rate-limited refusal diagnostic while tracing currently falls
-  back silently.
+  existing logger identities, and a fixed shard-worker count. ADR 007 now
+  records that the `log` adapter emits a rate-limited refusal diagnostic while
+  tracing currently falls back silently.
+- 2026-10-24: CodeRabbit paused its automatic review because the branch was
+  under active development; this was not a rate-limit notice. Its latest review
+  identified that the tracing saturation case still called the private
+  resolver, not the subscriber event path. Reworked that isolated test to
+  create runtime-target `tracing::Event` metadata and dispatch through
+  `Dispatch::enabled` and `Dispatch::event`, asserting cap, overflow fallback,
+  identity, and worker count through the actual layer. Added a producer-path
+  regression proving a refused record increments `get_dropped()`. Updated the
+  migration and developer guides for bounded names, shared workers, Loom, and
+  the sync seam, and corrected stale worker ownership text. The final candidate
+  gate result is recorded in the 2026-10-25 entry below.
+
+- 2026-10-25: the first final `make test` run exposed the deferred stream
+  formatter race: the Python `close()` wrapper waited while holding the GIL,
+  preventing the worker from invoking the callable formatter. Updated the Python
+  `flush()` and `close()` wrappers to detach while they wait, allowing the
+  worker to acquire the GIL and finish queued records. The private-doc fixture
+  was also narrowed to the `none` lane it asserts, avoiding redundant full
+  feature-matrix compilation. After a transient filesystem-full failure, the
+  exact candidate passed `make test`: all Rust feature, UI, and Loom suites
+  passed; pytest reported 805 passed, 5 skipped, and 66 snapshots passed. The
+  preceding `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`,
+  and `make typecheck` gates also passed. The subsequent post-turn Git diff
+  check passed after filesystem space was available again.
 
 ## Outcomes & retrospective
 

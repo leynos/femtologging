@@ -271,9 +271,9 @@ def test_propagation_still_reaches_root_at_the_cap() -> None:
     child whose parent was never registered would stop propagating with no
     diagnostic at all.
     """
-    records: list[dict[str, object]] = []
+    records: list[cabc.Mapping[str, object]] = []
 
-    def capture(record: dict[str, object]) -> str:
+    def capture(record: cabc.Mapping[str, object]) -> str:
         records.append(record)
         return "captured"
 

@@ -22,6 +22,10 @@ _FEATURES: typ.Final = (
     "tracing-compat",
     "test-util",
 )
+_LINT_GATE_TIMEOUT_SECONDS: typ.Final = 600
+# This contract runs the lint gate twice, once for each fixture variant.
+# Allow both subprocess budgets to expire plus time for test setup and teardown.
+_CONTRACT_TIMEOUT_SECONDS: typ.Final = 2 * _LINT_GATE_TIMEOUT_SECONDS + 20
 
 
 def _private_docs_level() -> str:
@@ -63,7 +67,7 @@ def _write_fixture(directory: Path, lint_level: str, source: str) -> Path:
 
 
 def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
-    """Run all configured Clippy lanes against a fixture manifest."""
+    """Run the no-feature Clippy lane against a fixture manifest."""
     make_executable = shutil.which("make")
     if make_executable is None:
         message = "make unavailable"
@@ -74,17 +78,22 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
         _REPO_ROOT / "target" / "private-docs-policy-clippy"
     )
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed Make target and manifest arguments
-        [make_executable, "lint-rust-clippy", f"RUST_MANIFEST={manifest}"],
+        [
+            make_executable,
+            "lint-rust-clippy",
+            f"RUST_MANIFEST={manifest}",
+            "RUST_LINT_FEATURE_LANES=none",
+        ],
         cwd=_REPO_ROOT,
         env=environment,
         capture_output=True,
         check=False,
-        timeout=600,
+        timeout=_LINT_GATE_TIMEOUT_SECONDS,
         text=True,
     )
 
 
-@pytest.mark.timeout(620)
+@pytest.mark.timeout(_CONTRACT_TIMEOUT_SECONDS)
 def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
     """The lint rejects missing docs and accepts docs through Make's lane driver."""
     lint_level = _private_docs_level()

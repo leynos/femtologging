@@ -10,7 +10,8 @@ libraries. Use the links below to explore each topic.
 - [developers-guide.md](./developers-guide.md)
   - Records developer toolchain ownership and validation boundaries.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes the next-minor structured logging additions and migration notes.
+  - Describes structured logging additions and the bounded logger and shared
+    dispatch changes in v0.2.0.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)
@@ -24,8 +25,8 @@ libraries. Use the links below to explore each topic.
   - Records the v0.1.0 renames from British to Oxford spelling across the
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes the breaking `BasicConfig` slotted-dataclass change in v0.2.0
-    and how to migrate.
+  - Describes the `BasicConfig` slots, bounded logger names and registry, and
+    shared dispatch changes in v0.2.0 with migration guidance.
 
 ## Architecture decision records
 
