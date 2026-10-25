@@ -220,6 +220,10 @@ Known uncertainties identified upfront, with mitigations.
   first full gate run on those corrections also passed all six gates.
 - [x] (2026-10-25) Ran formatting, format-check, Markdown and Mermaid gates on
   this final progress update; all passed.
+- [x] (2026-10-25) Corrected the `NOTSET` coverage claim from the review of
+  `af7539d`: the named test now describes its TRACE, DEBUG and INFO cases, and
+  the rationale no longer claims an equivalent zero-threshold shortcut fails.
+  All six gates passed (797 tests passed, 5 skipped); CodeScene found no issues.
 - [ ] (2026-10-25) Request a fresh review of the corrected candidate. Publish
   the rebased branch and bring draft PR #546 to merge after the review is clear.
 
@@ -355,9 +359,12 @@ this outcome's stale status claims, one about the new heading's capitalization,
 and one about an implementation instruction that differed from the final guard.
 These findings are corrected, and the corrected implementation candidate passed
 all six gates. The final progress update passed formatting, Markdown and
-Mermaid gates. A fresh CodeRabbit review of the corrected candidate is pending.
-Draft PR #546 still points to the pre-rebase branch head and must be updated
-after the new candidate is reviewed.
+Mermaid gates. A review of `af7539d` found one inaccurate claim about the
+`NOTSET` test detecting a truthiness shortcut; its test description and plan
+rationale were corrected, and all six gates passed on that repair. CodeScene
+found no issues. A fresh CodeRabbit review of the corrected candidate is
+pending. Draft PR #546 still points to the pre-rebase branch head and must be
+updated after the new candidate is reviewed.
 
 ## Context and orientation
 
@@ -451,7 +458,7 @@ Trace links:
 
 ```plaintext
 Issue#435-AC1 (reject below handler level)     -> EP-M1 -> TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold
-Issue#435-AC2 (preserve NOTSET semantics)      -> EP-M1 -> TestHandlerLevelThreshold::test_notset_handler_accepts_every_level
+Issue#435-AC2 (preserve NOTSET semantics)      -> EP-M1 -> TestHandlerLevelThreshold::test_notset_handler_accepts_low_severity_levels
 Issue#435-AC3 (single handle/filter path)      -> EP-M1 -> TestHandleRecordFilterAndLockContract::test_handle_and_filter_counts_by_level
 Issue#435-AC4 (ERROR handler level matrix)     -> EP-M1 -> TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold
 Issue#435-AC5 (dynamic setLevel)               -> EP-M1 -> TestDynamicHandlerLevel::test_set_level_after_construction_applies
@@ -517,24 +524,22 @@ reconstructing the adapter.
   `Artefacts and notes`, where the identical test body succeeds only for rows
   whose expected outcome the broken code happens to match.
 
-- Obligation: I1 at the `NOTSET` boundary, and the equivalence of "handler
-  level `NOTSET`" with "accept every mapped level". Method: named test, plus a
-  second named test asserting the pre-existing default-handler case in the
-  sibling module. Rationale: `NOTSET` is the one value where a plausible
-  "simplification" (for example `if self._handler.level:` truthiness) would
-  silently regress, because `NOTSET` is numeric zero and therefore falsy. A
-  named regression test is the proportionate guard. Domain: handler level
-  `logging.NOTSET`; records at `TRACE` (stdlib level 5, the lowest mapped
-  level) and `INFO`; logger thresholds `"TRACE"` and default. Artefact:
-  `tests/test_stdlib_adapter_levels.py`,
-  `TestHandlerLevelThreshold::test_notset_handler_accepts_every_level`, and
-  `tests/test_stdlib_adapter_records.py`,
+- Obligation: I1 at the `NOTSET` boundary, where the handler accepts mapped
+  records beginning at `TRACE`. Method: a named parameterized test for `TRACE`,
+  `DEBUG` and `INFO`, plus a second named test asserting the pre-existing
+  default-handler case in the sibling module. Rationale: `NOTSET` is numeric
+  zero and means that the handler imposes no level threshold. The test pins
+  this observable contract without requiring a particular implementation of the
+  zero threshold. Domain: handler level `logging.NOTSET`; records at `TRACE`
+  (stdlib level 5, the lowest mapped level), `DEBUG` and `INFO`; logger
+  threshold `"TRACE"`. Artefact: `tests/test_stdlib_adapter_levels.py`,
+  `TestHandlerLevelThreshold::test_notset_handler_accepts_low_severity_levels`,
+  and `tests/test_stdlib_adapter_records.py`,
   `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
-  Evidence: all accepted records appear with stdlib level numbers 5 and 20
-  respectively. Non-vacuity: `TRACE` maps to the lowest nonzero numeric level
-  in the mapping, so if `NOTSET` were treated as a hard threshold rather than
-  as "no threshold", this row is the first to fail. The truthiness hazard is a
-  real reachable defect, not a hypothetical one.
+  Evidence: the tested records appear with stdlib level numbers 5, 10 and 20;
+  the dynamic test also captures `TRACE` after resetting the handler to
+  `NOTSET`. Non-vacuity: `TRACE` is the lowest mapped level, so its acceptance
+  verifies that `NOTSET` does not discard the least severe femtologging record.
 
 - Obligation: L1, covering one `handle()` call after a passing level gate and
   no handler path after a rejected level gate. Method: named tests spying on

@@ -77,16 +77,15 @@ class TestHandlerLevelThreshold:
         ["TRACE", "DEBUG", "INFO"],
         ids=["trace", "debug", "info"],
     )
-    def test_notset_handler_accepts_every_level(
+    def test_notset_handler_accepts_low_severity_levels(
         probe: AdapterProbe,
         level: str,
     ) -> None:
-        """A NOTSET handler should accept records at every mapped level.
+        """A NOTSET handler accepts each tested low-severity mapped level.
 
-        ``logging.NOTSET`` is numeric zero, which is falsy. A truthiness test
-        in place of the documented comparison would treat it as an
-        impossibly high threshold and silently drop everything, so TRACE -- the
-        lowest mapped numeric level -- is the case that exposes that mistake.
+        TRACE is the lowest mapped numeric level, so its acceptance pins the
+        observable no-threshold contract. This test covers behaviour without
+        requiring a particular way to implement the zero threshold.
         """
         output = probe.capture(
             LogRequest("app", level, "accepted", logger_level="TRACE"),
