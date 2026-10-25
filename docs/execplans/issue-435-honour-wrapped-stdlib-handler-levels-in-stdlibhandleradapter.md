@@ -232,10 +232,14 @@ Known uncertainties identified upfront, with mitigations.
   below and in the subsequent candidate validation.
 - [x] (2026-10-25) Candidate `e065086` passed all six sequential local gates,
   hosted run `40205578288` on Python 3.12–3.15, and CodeScene result `8119031`.
-  The completeness corrections are recorded; candidate-bound follow-up and
-  proof-specific assessments remain pending while PR #546 is a draft.
-- [ ] (2026-10-25) Obtain clear completeness and proof assessments for the
-  resulting head, then mark PR #546 ready and finish formal review and merge.
+  The completeness corrections are recorded.
+- [x] (2026-10-25) The completeness follow-up on `6e24864` confirmed the four
+  prior findings resolved and found no runtime defect. It identified two more
+  plan inaccuracies: the dynamic test's four dispatches and cached-level
+  rationale, plus the filter-rejected `CRITICAL` record. Corrected below.
+- [ ] (2026-10-25) Validate these final plan corrections, obtain candidate-bound
+  confirmation and a clear proof-specific assessment, then mark PR #546 ready
+  and finish formal review and merge.
 
 ## Surprises & discoveries
 
@@ -378,10 +382,14 @@ that head found no runtime defect and requested plan-record corrections to
 publication status, verification evidence, timeout accounting and the finite
 test-domain claim. Candidate `e065086` records those corrections and passed all
 six local gates, hosted run `40205578288` and CodeScene result `8119031`. The
-assessment could not independently verify the historical authorization recorded
-for the scope expansion; it did not identify this as a runtime defect. The
-candidate-bound follow-up, proof-specific assessment and formal review remain
-pending, and PR #546 remains a draft.
+follow-up on `6e24864` confirmed those findings resolved and found no runtime
+defect, but identified two more verification-plan inaccuracies: the dynamic
+test has four dispatches, and its construction-time cache rationale was wrong;
+the filter-rejected record is `CRITICAL`. Both are corrected in the current
+worktree. The assessment could not independently verify the historical
+authorization recorded for the scope expansion; it did not identify this as a
+runtime defect. Candidate-bound confirmation, proof-specific assessment and
+formal review remain pending, and PR #546 remains a draft.
 
 ## Context and orientation
 
@@ -566,39 +574,42 @@ reconstructing the adapter.
   an input/output claim, so counting observed invocations through the real
   stdlib objects is a direct and stronger observation than inspecting output
   text. Domain: handler level `logging.ERROR`; one accepted record (`ERROR`),
-  one rejected record (`DEBUG`), and one record that passes the level gate but
-  is rejected by a filter. Artefact: `tests/test_stdlib_adapter_levels.py`,
+  one rejected record (`DEBUG`), and one `CRITICAL` record that passes the
+  level gate but is rejected by a filter. Artefact:
+  `tests/test_stdlib_adapter_levels.py`,
   `TestHandleRecordFilterAndLockContract`. Evidence: after the folded-in
   rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
   count unchanged and emits nothing; an `ERROR` record increments both by
-  exactly one and emits exactly one record; the filter-rejected `ERROR` record
-  increments `handle()` once, increments the filter count once, and emits
-  nothing. Non-vacuity: the test asserts counts rather than "not zero", so an
-  implementation that calls `handle()` twice or that skips filters entirely
-  fails. The filter-rejected row proves the filter chain is genuinely reached
-  through `Handler.handle()`, so "the gate ran but the filter never did" cannot
-  pass unnoticed. Residual gap: the handler's I/O lock is exercised implicitly
-  by the real `Handler.handle()` implementation rather than asserted directly,
-  because the stdlib does not expose lock acquisition as a public observable. A
-  test that monkeypatched the lock would verify the monkeypatch, not the stdlib.
+  exactly one and emits exactly one record; the filter-rejected `CRITICAL`
+  record increments `handle()` once, increments the filter count once, and
+  emits nothing. Non-vacuity: the test asserts counts rather than "not zero",
+  so an implementation that calls `handle()` twice or that skips filters
+  entirely fails. The filter-rejected row proves the filter chain is genuinely
+  reached through `Handler.handle()`, so "the gate ran but the filter never
+  did" cannot pass unnoticed. Residual gap: the handler's I/O lock is exercised
+  implicitly by the real `Handler.handle()` implementation rather than asserted
+  directly, because the stdlib does not expose lock acquisition as a public
+  observable. A test that monkeypatched the lock would verify the monkeypatch,
+  not the stdlib.
 
 - Obligation: I2 for a live `setLevel()` sequence.
-  Method: named test over an ordered sequence of three dispatches with two
-  intervening `setLevel()` calls. Rationale: this is an ordering property over
-  a short operation sequence rather than a property over generated inputs;
-  enumerating the three states explicitly is clearer than generating them, and
+  Method: named test over four dispatches across three handler-level states,
+  with two `setLevel()` calls. Rationale: this is an ordering property over a
+  short operation sequence rather than a property over generated inputs;
+  enumerating the operations explicitly is clearer than generating them, and
   the sequence is short enough to be read as a specification. Domain: adapter
-  constructed with a `NOTSET` handler; `INFO` dispatch;
+  constructed with a `NOTSET` handler; initial `INFO` dispatch;
   `setLevel(logging.ERROR)` then `INFO` and `ERROR` dispatches;
   `setLevel(logging.NOTSET)` then a `TRACE` dispatch. Artefact:
   `tests/test_stdlib_adapter_records.py`,
   `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
-  Evidence: discharges to exactly the records `INFO`, then `ERROR`, then
-  `TRACE`, with the final `TRACE` record reporting `levelno == 5`. Non-vacuity:
-  the sequence tests all three transitions that a cached level could get wrong
-  — loosening, tightening, and returning to `NOTSET`. A construction-time cache
-  fails the second dispatch; a construction-time cache that happens to work
-  because the handler was already `NOTSET` still fails the third.
+  Evidence: the initial `INFO` is emitted; the `INFO` after tightening to
+  `ERROR` is rejected; the `ERROR` record is emitted; and the `TRACE` record
+  after restoring `NOTSET` is emitted with `levelno == 5`. Non-vacuity: the
+  sequence covers the initial, tightened, and restored handler-level states. A
+  construction-time cache of the initial `NOTSET` level fails the second
+  dispatch by accepting the `INFO` record; the `ERROR` boundary and restored
+  `NOTSET` state are also checked explicitly.
 
 ## Plan of work
 
@@ -853,8 +864,12 @@ local gates, hosted
 [run 40205578288](https://github.com/leynos/femtologging/actions/runs/40205578288/attempts/1),
 and current CodeScene
 [result 8119031](https://codescene.io/projects/68445/delta/results/8119031).
-The candidate-bound follow-up and separate proof-specific assessment remain
-pending.
+The completeness follow-up at
+[issue comment 6400122970](https://github.com/leynos/femtologging/pull/546#issuecomment-6400122970)
+confirmed the prior findings resolved and identified two remaining
+inaccuracies in the dynamic-level sequence and filter-rejection example. This
+worktree corrects them; candidate-bound confirmation and the separate
+proof-specific assessment remain pending.
 
 ## Interfaces and dependencies
 
@@ -893,4 +908,6 @@ guide now distinguishes the unsupported configuration `level` fields from
 filters that `dictConfig` now supports. Revised again 2026-10-25 after
 CodeRabbit's completeness assessment of `1077f49` to correct publication
 status, verification evidence, timeout accounting and the scope of the finite
-test matrix.
+test matrix. Revised again after the completeness follow-up on `6e24864` to
+correct the dynamic dispatch count and cache rationale, and the filter-rejected
+record's level.
