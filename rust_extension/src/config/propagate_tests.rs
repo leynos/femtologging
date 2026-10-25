@@ -121,7 +121,9 @@ fn disabled_logger_cannot_reach_root_handler(
                 "omitted",
                 LoggerConfigBuilder::new().with_level(FemtoLevel::Info),
             );
-        initial.build_and_init().expect("initial build should succeed");
+        initial
+            .build_and_init()
+            .expect("initial build should succeed");
 
         let omitted = manager::get_logger(py, "omitted").expect("omitted logger exists");
         assert!(
@@ -131,7 +133,11 @@ fn disabled_logger_cannot_reach_root_handler(
 
         let rebuild = ConfigBuilder::new()
             .with_handler("h", FileHandlerBuilder::new(file.path()))
-            .with_root_logger(LoggerConfigBuilder::new().with_level(FemtoLevel::Info))
+            .with_root_logger(
+                LoggerConfigBuilder::new()
+                    .with_level(FemtoLevel::Info)
+                    .with_handlers(["h"]),
+            )
             .with_disable_existing_loggers(true);
         rebuild.build_and_init().expect("rebuild should succeed");
         assert!(
@@ -140,7 +146,9 @@ fn disabled_logger_cannot_reach_root_handler(
         );
 
         assert_eq!(
-            omitted.borrow(py).log(FemtoLevel::Info, "must not reach root"),
+            omitted
+                .borrow(py)
+                .log(FemtoLevel::Info, "must not reach root"),
             None,
             "a disabled logger must return no formatted message",
         );
@@ -153,6 +161,81 @@ fn disabled_logger_cannot_reach_root_handler(
                 .expect("test log file must be readable")
                 .is_empty(),
             "an omitted logger must not reach the configured root handler",
+        );
+    });
+}
+
+#[rstest]
+#[serial]
+fn configured_child_propagates_through_disabled_kept_ancestor(
+    _gil_and_clean_manager: (),
+    new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
+) {
+    Python::attach(|py| {
+        let (root_handler, file) = new_root_file_handler.expect("create temp log file");
+        let initial = ConfigBuilder::new()
+            .with_handler("h", root_handler)
+            .with_root_logger(
+                LoggerConfigBuilder::new()
+                    .with_level(FemtoLevel::Info)
+                    .with_handlers(["h"]),
+            )
+            .with_logger("a", LoggerConfigBuilder::new().with_handlers(["h"]));
+        initial
+            .build_and_init()
+            .expect("initial build should succeed");
+
+        let disable_a = ConfigBuilder::new()
+            .with_handler("h", FileHandlerBuilder::new(file.path()))
+            .with_root_logger(
+                LoggerConfigBuilder::new()
+                    .with_level(FemtoLevel::Info)
+                    .with_handlers(["h"]),
+            )
+            .with_disable_existing_loggers(true);
+        disable_a
+            .build_and_init()
+            .expect("omitting a should disable it");
+
+        let configure_child = ConfigBuilder::new()
+            .with_handler("h", FileHandlerBuilder::new(file.path()))
+            .with_root_logger(
+                LoggerConfigBuilder::new()
+                    .with_level(FemtoLevel::Info)
+                    .with_handlers(["h"]),
+            )
+            .with_logger(
+                "a.b",
+                LoggerConfigBuilder::new().with_level(FemtoLevel::Info),
+            )
+            .with_disable_existing_loggers(true);
+        configure_child
+            .build_and_init()
+            .expect("configured descendant should preserve its ancestor");
+
+        let ancestor = manager::get_logger(py, "a").expect("ancestor logger exists");
+        let child = manager::get_logger(py, "a.b").expect("child logger exists");
+        let root = manager::get_logger(py, "root").expect("root logger exists");
+        assert!(
+            ancestor.borrow(py).is_disabled(),
+            "keeping an ancestor must not re-enable it",
+        );
+        assert!(
+            !child.borrow(py).is_disabled(),
+            "the explicitly configured child must be enabled",
+        );
+
+        child
+            .borrow(py)
+            .log(FemtoLevel::Info, "child record reaches root");
+        assert_flush!(py, child, "child");
+        assert_flush!(py, ancestor, "ancestor");
+        assert_flush!(py, root, "root");
+        assert!(
+            read_log_file(&file)
+                .expect("test log file must be readable")
+                .contains("child record reaches root"),
+            "an enabled child must propagate through a disabled kept ancestor",
         );
     });
 }

@@ -13,10 +13,7 @@ use pyo3::prelude::*;
 
 use crate::config::ConfigError;
 use crate::{
-    filters::FemtoFilter,
-    handler::FemtoHandlerTrait,
-    level::FemtoLevel,
-    logger::HandlerAttachment,
+    filters::FemtoFilter, handler::FemtoHandlerTrait, level::FemtoLevel, logger::HandlerAttachment,
     manager,
 };
 
@@ -84,9 +81,11 @@ impl ConfigBuilder {
                 .root_logger()
                 .map(|config| ("root", config))
                 .into_iter()
-                .chain(self.logger_builders().iter().map(|(name, config)| {
-                    (name.as_str(), config)
-                }));
+                .chain(
+                    self.logger_builders()
+                        .iter()
+                        .map(|(name, config)| (name.as_str(), config)),
+                );
             let plans = targets
                 .map(|(name, config)| self.prepare_logger_plan(name, config, &components))
                 .collect::<Result<Vec<_>, _>>()?;

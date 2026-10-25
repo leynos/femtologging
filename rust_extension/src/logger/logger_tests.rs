@@ -136,9 +136,9 @@ fn clear_handlers_removes_all() {
     logger
         .add_handler(h)
         .expect("native handler should register");
-    assert_eq!(logger.handler_ptrs_for_test().len(), 1);
+    assert_eq!(logger.handler_ptrs_for_test_native().len(), 1);
     logger.clear_handlers();
-    assert!(logger.handler_ptrs_for_test().is_empty());
+    assert!(logger.handler_ptrs_for_test_native().is_empty());
 }
 
 #[test]

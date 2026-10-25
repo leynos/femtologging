@@ -10,13 +10,11 @@ from hypothesis import strategies as st
 import femtologging
 from femtologging import (
     ConfigBuilder,
-    FileHandlerBuilder,
     FormatterBuilder,
     LoggerConfigBuilder,
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
-    get_logger,
 )
 from femtologging import config as config_module
 
@@ -272,144 +270,6 @@ def test_unsupported_handler_builder_type_preserves_extraction_error() -> None:
         "RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, "
         "SocketHandlerBuilder, or HTTPHandlerBuilder (got Python type: object)"
     ), "unsupported handler builders should preserve the extraction error"
-
-
-def test_disable_existing_loggers_clears_unmentioned(
-    new_info_stderr_builder: BuilderFactory,
-) -> None:
-    """Loggers not present in new config are disabled."""
-    builder = new_info_stderr_builder().with_logger(
-        "stale", LoggerConfigBuilder().with_handlers([HANDLER_ID])
-    )
-    builder.build_and_init()
-
-    stale = get_logger("stale")
-    assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
-
-    disable_existing = True
-    rebuild = (
-        ConfigBuilder()
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_disable_existing_loggers(disable_existing)
-    )
-    rebuild.build_and_init()
-
-    stale = get_logger("stale")
-    assert not stale.handler_ptrs_for_test(), (
-        "stale logger should be disabled once it is absent from the new config"
-    )
-    assert stale.disabled, (
-        "an omitted logger must be flagged disabled, not merely stripped of handlers"
-    )
-
-
-def test_disabled_logger_cannot_reach_configured_root_handler(
-    new_info_stderr_builder: BuilderFactory, tmp_path: pathlib.Path
-) -> None:
-    """An omitted logger must not emit through the new configuration's handlers.
-
-    The omitted logger keeps the default ``propagate = True``, so only the
-    disabled flag can stop its records reaching root.
-    """
-    builder = new_info_stderr_builder().with_logger(
-        "omitted", LoggerConfigBuilder().with_level("INFO")
-    )
-    builder.build_and_init()
-    omitted = get_logger("omitted")
-    assert omitted.propagate, "the omitted logger should start with propagation enabled"
-
-    log_path = tmp_path / "root.log"
-    disable_existing = True
-    rebuild = (
-        ConfigBuilder()
-        .with_handler("root_file", FileHandlerBuilder(str(log_path)))
-        .with_root_logger(
-            LoggerConfigBuilder().with_level("INFO").with_handlers(["root_file"])
-        )
-        .with_disable_existing_loggers(disable_existing)
-    )
-    rebuild.build_and_init()
-
-    assert omitted.disabled, "the omitted logger should be disabled"
-    assert omitted.log("ERROR", "must not escape") is None, (
-        "a disabled logger must reject the record instead of dispatching it"
-    )
-    omitted.flush_handlers()
-    get_logger("root").flush_handlers()
-    contents = log_path.read_text() if log_path.exists() else ""
-    assert "must not escape" not in contents, (
-        "an omitted logger must not reach the configured root handler"
-    )
-
-
-def test_explicitly_named_logger_is_reenabled(
-    new_info_stderr_builder: BuilderFactory,
-) -> None:
-    """Naming a logger again must clear the disabled flag."""
-    builder = new_info_stderr_builder().with_logger(
-        "core", LoggerConfigBuilder().with_handlers([HANDLER_ID])
-    )
-    builder.build_and_init()
-
-    disable_existing = True
-    (
-        ConfigBuilder()
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_disable_existing_loggers(disable_existing)
-    ).build_and_init()
-    assert get_logger("core").disabled, "core should be disabled while omitted"
-
-    rebuild = new_info_stderr_builder().with_logger(
-        "core", LoggerConfigBuilder().with_level("DEBUG").with_handlers([HANDLER_ID])
-    )
-    rebuild.build_and_init()
-
-    core = get_logger("core")
-    assert not core.disabled, "naming the logger again should re-enable it"
-    assert core.isEnabledFor("DEBUG"), "the re-enabled logger should honour its level"
-
-
-@pytest.mark.parametrize(
-    "ancestors",
-    [
-        ["parent"],
-        ["grandparent", "grandparent.parent"],
-    ],
-    ids=["parent", "grandparent"],
-)
-def test_disable_existing_loggers_keeps_ancestors(
-    new_info_stderr_builder: BuilderFactory, ancestors: list[str]
-) -> None:
-    """Ancestor loggers remain active when their descendants are configured."""
-    builder = new_info_stderr_builder()
-    for name in ancestors:
-        builder = builder.with_logger(
-            name, LoggerConfigBuilder().with_handlers([HANDLER_ID])
-        )
-    builder.build_and_init()
-
-    initial_handlers = {
-        name: get_logger(name).handler_ptrs_for_test() for name in ancestors
-    }
-
-    child_name = f"{ancestors[-1]}.child"
-    disable_existing = True
-    rebuild = (
-        new_info_stderr_builder()
-        .with_logger(child_name, LoggerConfigBuilder().with_handlers([HANDLER_ID]))
-        .with_disable_existing_loggers(disable_existing)
-    )
-    rebuild.build_and_init()
-
-    child = get_logger(child_name)
-    assert len(child.handler_ptrs_for_test()) == 1, (
-        f"newly configured logger {child_name!r} should have exactly one handler"
-    )
-    for name in ancestors:
-        assert get_logger(name).handler_ptrs_for_test() == initial_handlers[name], (
-            f"ancestor logger {name!r} should retain its handler when a "
-            "descendant is configured"
-        )
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,9 @@ from femtologging import (
 from femtologging._rust_compat import _runtime_attachment_state_for_test
 
 type AttachmentState = tuple[tuple[str, ...], tuple[str, ...]] | None
-type LoggerState = tuple[tuple[int, ...], tuple[int, ...], str, bool, bool, AttachmentState]
+type LoggerState = tuple[
+    tuple[int, ...], tuple[int, ...], str, bool, bool, AttachmentState
+]
 
 _LOGGER_NAMES = ("api", "api.worker", "batch", "batch.worker")
 _HANDLER_ID = "stderr"
@@ -93,24 +95,27 @@ def test_failed_reconfiguration_preserves_generated_logger_state(
             .with_root_logger(LoggerConfigBuilder().with_level("ERROR"))
             .with_disable_existing_loggers(disable_existing_loggers)
         )
-        if invalid_reference == "handler":
-            failed = failed.with_logger(
-                "broken", LoggerConfigBuilder().with_handlers(["missing"])
-            )
-            expected_error: type[Exception] = KeyError
-            expected_match = "missing"
-        elif invalid_reference == "filter":
-            failed = failed.with_logger(
-                "broken", LoggerConfigBuilder().with_filters(["missing"])
-            )
-            expected_error = KeyError
-            expected_match = "missing"
-        else:
-            # A malformed logger name must be rejected by the same preparation
-            # pass, after the plans for the generated loggers have been built.
-            failed = failed.with_logger("broken..name", LoggerConfigBuilder())
-            expected_error = ValueError
-            expected_match = "consecutive dots"
+        match invalid_reference:
+            case "handler":
+                failed = failed.with_logger(
+                    "broken", LoggerConfigBuilder().with_handlers(["missing"])
+                )
+                expected_error: type[Exception] = KeyError
+                expected_match = "missing"
+            case "filter":
+                failed = failed.with_logger(
+                    "broken", LoggerConfigBuilder().with_filters(["missing"])
+                )
+                expected_error = KeyError
+                expected_match = "missing"
+            case _:
+                # A malformed logger name must be rejected by the same
+                # preparation pass, after the generated logger plans are built.
+                failed = failed.with_logger("broken..name", LoggerConfigBuilder())
+                # ConfigBuilder wraps the manager's invalid-name ValueError in
+                # its public RuntimeError contract.
+                expected_error = RuntimeError
+                expected_match = "consecutive dots"
 
         with pytest.raises(expected_error, match=expected_match):
             failed.build_and_init()

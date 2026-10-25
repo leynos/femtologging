@@ -15,11 +15,11 @@ use crate::logger::FemtoLogger;
 #[cfg(feature = "python")]
 mod configuration;
 #[cfg(feature = "python")]
+use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
+#[cfg(feature = "python")]
 pub(crate) use configuration::{
     DisplacedAttachments, PreparedConfiguration, PreparedLogger, commit_configuration,
 };
-#[cfg(feature = "python")]
-use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
 
 /// Point-in-time handler and filter identifiers attached to one logger.
 #[cfg(feature = "python")]
@@ -166,9 +166,7 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
 ///
 /// [`ValueError`]: pyo3::exceptions::PyValueError
 #[cfg(feature = "python")]
-pub(crate) fn validate_logger_names<'a>(
-    names: impl IntoIterator<Item = &'a str>,
-) -> PyResult<()> {
+pub(crate) fn validate_logger_names<'a>(names: impl IntoIterator<Item = &'a str>) -> PyResult<()> {
     for name in names {
         if is_invalid_logger_name(name) {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(

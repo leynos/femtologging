@@ -9,10 +9,6 @@ use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 
 use super::{FemtoLogger, HandlerAttachment, PyHandler, validate_handler};
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 generates Python-exposed wrappers and signature shims with many parameters"
-)]
 #[pymethods]
 impl FemtoLogger {
     /// Create a new logger with the given name.
@@ -151,19 +147,11 @@ impl FemtoLogger {
 
     /// Capture handler addresses for tests that verify attachment replacement.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
-        self.handlers
-            .read()
-            .iter()
-            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
-            .collect()
+        self.handler_ptrs_for_test_native()
     }
 
+    /// Capture filter addresses for tests that verify attachment replacement.
     fn filter_ptrs_for_test(&self) -> Vec<usize> {
-        self.filters
-            .read()
-            .iter()
-            .map(|f| Arc::as_ptr(f) as *const () as usize)
-            .collect()
+        self.filter_ptrs_for_test_native()
     }
 }
-

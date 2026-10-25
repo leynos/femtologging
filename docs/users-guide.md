@@ -726,6 +726,19 @@ For upgrade steps covering handler filters and formatter builders, see the
   not available; supply a callable formatter for more complex output.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
+- `disable_existing_loggers=True` rejects records at each omitted logger,
+  including descendants of configured loggers, and clears their handlers and
+  filters. Ancestors of configured loggers remain available for propagation.
+  This differs from stdlib `dictConfig`, which exempts descendants of
+  configured loggers and leaves handlers and filters attached to other disabled
+  loggers. A later configuration that explicitly names a disabled logger
+  enables it again.
+
+Configuration preparation validates logger names and resource references before
+changing live logger state. If validation fails, every existing logger keeps
+its state. Records already queued before a successful change are not retracted,
+and handler construction can open destinations before a later preparation error
+is reported.
 
 ## Operational tips and caveats
 

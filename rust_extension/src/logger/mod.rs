@@ -2,17 +2,12 @@
 //!
 //! This module provides the [`FemtoLogger`] struct which handles log message
 //! filtering, formatting, and asynchronous output via a background thread.
-#![allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
-
 #[cfg(feature = "python")]
 mod context_snapshot;
 mod convenience_methods;
 mod producer;
-mod python_api;
 mod py_handler;
+mod python_api;
 mod python_helpers;
 mod queue;
 #[cfg(feature = "python")]
@@ -20,18 +15,19 @@ mod runtime_mutation;
 mod worker;
 
 use pyo3::prelude::*;
-use pyo3::{Py, PyAny};
 use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(test)]
+use crate::level::FemtoLevel;
 #[cfg(all(test, not(loom)))]
 use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
 
-use crate::{formatter::SharedFormatter, level::FemtoLevel};
+use crate::formatter::SharedFormatter;
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::{JoinHandle, Mutex, RwLock, Sender};
@@ -96,7 +92,6 @@ pub struct FemtoLogger {
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
-
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
@@ -120,16 +115,6 @@ impl FemtoLogger {
         self.add_handler_attachment(HandlerAttachment::new(handler))
     }
 
-    /// Attach a handler with filters evaluated on the producer thread.
-    #[cfg(feature = "python")]
-    pub(crate) fn add_handler_with_filters(
-        &self,
-        handler: Arc<dyn FemtoHandlerTrait>,
-        filters: Vec<Arc<dyn FemtoFilter>>,
-    ) -> Result<(), HandlerError> {
-        self.add_handler_attachment(HandlerAttachment::with_filters(handler, filters))
-    }
-
     /// Validate contextual dispatch support before publishing a handler attachment.
     fn add_handler_attachment(&self, attachment: HandlerAttachment) -> Result<(), HandlerError> {
         #[cfg(feature = "python")]
@@ -139,6 +124,16 @@ impl FemtoLogger {
         }
         self.handlers.write().push(attachment);
         Ok(())
+    }
+
+    /// Attach a handler with producer-side filters for logger unit tests.
+    #[cfg(all(test, feature = "python"))]
+    pub(crate) fn add_handler_with_filters(
+        &self,
+        handler: Arc<dyn FemtoHandlerTrait>,
+        filters: Vec<Arc<dyn FemtoFilter>>,
+    ) -> Result<(), HandlerError> {
+        self.add_handler_attachment(HandlerAttachment { handler, filters })
     }
 
     /// Attach a filter to this logger.
@@ -197,6 +192,7 @@ impl FemtoLogger {
     /// Sequentially consistent, matching the propagation flag. Records already
     /// snapshotted by [`Self::send_to_local_handlers`] are not retracted, as
     /// with [`Self::clear_handlers`].
+    #[cfg(feature = "python")]
     pub(crate) fn set_disabled(&self, flag: bool) {
         self.disabled.store(flag, Ordering::SeqCst);
     }
@@ -207,6 +203,24 @@ impl FemtoLogger {
             .read()
             .iter()
             .map(|attachment| attachment.handler.clone())
+            .collect()
+    }
+
+    /// Capture handler addresses for Rust transaction tests and Python test hooks.
+    pub(crate) fn handler_ptrs_for_test_native(&self) -> Vec<usize> {
+        self.handlers
+            .read()
+            .iter()
+            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
+            .collect()
+    }
+
+    /// Capture filter addresses for Rust transaction tests and Python test hooks.
+    pub(crate) fn filter_ptrs_for_test_native(&self) -> Vec<usize> {
+        self.filters
+            .read()
+            .iter()
+            .map(|filter| Arc::as_ptr(filter) as *const () as usize)
             .collect()
     }
 
