@@ -439,6 +439,16 @@ and `FemtoLogger::with_parent` returns `Result<Self, DispatcherError>` (with
 from the crate root, and that the next logger creation retries a failed pool
 start.
 
+`make fmt` was run before that gate set and again afterwards; the second run
+was byte-identical, and `make check-fmt` passes, so the tree the gates saw is
+the tree that was committed. Deleting the root-level `manager_tests.rs` drew no
+gate complaint: the run listed sixteen distinct `manager::manager_tests*`
+symbols, all from the live file.
+
+Re-gated at `b0f612e`: `make fmt`, `make check-fmt`, `make lint`,
+`make typecheck`, `make markdownlint`, `make nixie` and `make test` all exit 0
+(`805 passed, 5 skipped`, 66 snapshots; four Rust feature lanes).
+
 **Discovery (2026-10-23): the off-by-one was invisible below the cap.** The
 capacity predicate meant "one more fits", but every projected call site passed
 the post-insertion total, so each path reserved a slot twice and the name that
@@ -907,7 +917,7 @@ Milestone 1 detail:
   fixed**: a fixed sleep replaced by `flush_handlers()`'s barrier, two `cfg`
   attributes moved below their doc comments, a dead root-level
   `manager_tests.rs` deleted, and the migration guide's Rust constructor
-  changes documented.
+  changes documented. Committed as `b0f612e` and re-gated green on that tree.
 - 2026-10-24: sixth review round, **six findings (five distinct), all fixed**:
   one shared deadline for `wait_for_drain`, an allocation-free own-target guard,
   `.expect()` replaced by propagated `DispatcherError` in the Loom arm, a
