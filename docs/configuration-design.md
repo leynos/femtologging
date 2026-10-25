@@ -985,8 +985,11 @@ captured in that snapshot.
 than relying on emptied handler lists. A disabled logger rejects records in its
 own producer path, so it emits nothing locally and nothing reaches its
 ancestors: an omitted logger can no longer resume emission merely because an
-ancestor handler exists. Only the emitting logger checks the flag, so an
-*enabled* logger still dispatches to its ancestors exactly as before.
+ancestor handler exists. This matches the stdlib split: `Logger.isEnabledFor()`
+checks the emitting logger's disabled flag, while `Logger.callHandlers()` walks
+ancestor handlers without checking their disabled flags. Only the emitting
+logger checks the flag, so an *enabled* logger still dispatches to its
+ancestors exactly as before.
 
 Commit targets are computed from the live registry under the lock, so a logger
 registered by another caller between preparation and commit is disabled rather
@@ -997,12 +1000,15 @@ explicitly in the configuration are re-enabled.
 
 This differs from the standard library in three ways:
 
-- Ancestors of configured loggers are kept, so a configured `a.b` does not
-  suppress records an existing `a` would have emitted.
-- An omitted logger has its handlers and filters cleared as well as being
-  disabled, matching the stdlib's destructive behaviour.
-- Descendants of an omitted logger are not exempt; they are disabled on their
-  own merits if they are also omitted.
+- Ancestors of configured loggers are kept. Stdlib `dictConfig` instead exempts
+  descendants of explicitly named loggers from disabling, resetting their
+  level, clearing their handlers, and enabling propagation.
+- Femtologging disables every omitted logger, including descendants of
+  configured loggers. Stdlib `dictConfig` preserves those descendants through
+  its child-logger exemption.
+- Femtologging clears handlers and filters from omitted loggers as well as
+  disabling them. Stdlib `dictConfig` leaves handler and filter attachments on
+  other disabled loggers; its child-logger exemption clears handlers only.
 
 #### Transaction limits
 
@@ -1011,6 +1017,8 @@ snapshotted onto a logger before the commit are not retracted. And handler
 construction, which happens during preparation, can open a file or socket
 before a later preparation failure rejects the configuration; only live logger
 state is rolled back, not such construction side effects.
+
+### 3.2. Runtime mutation control plane
 
 - **Dynamic Log Level Updates:** As outlined in the [Rust multithreaded
   logging framework for Python
