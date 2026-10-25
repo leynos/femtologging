@@ -26,17 +26,20 @@ escalation, not a workaround.
 
 - After translating a record, the handler-level threshold must gate entry to
   `logging.Handler.handle()`. A level-rejected record must not enter the
-  handler's filter or emission path. A level-accepted record calls `handle()`
-  exactly once; its filters run once, and the I/O lock is acquired only if the
-  filters accept it. The adapter never calls `emit()` directly.
+  handler's `handle()` path. A level-accepted record calls `handle()` exactly
+  once. For handlers retaining the base `logging.Handler.handle()` behaviour,
+  that call, on normal completion, evaluates the filter chain once and acquires
+  the I/O lock only when the chain accepts the record. The adapter never calls
+  `emit()` directly.
 - `logging.NOTSET` (numeric value `0`) semantics must be preserved. In stdlib,
   `Handler.setLevel(logging.NOTSET)` means "accept every record", because the
   `record.levelno >= handler.level` comparison is trivially true for a
   non-negative level number. The adapter must not special-case `NOTSET`; it
   must rely on the same comparison.
-- The wrapped handler's `level` attribute must be read on every dispatch. Any
-  `setLevel()` call made after the adapter is constructed must affect the very
-  next record.
+- The wrapped handler's `level` attribute must be read on every dispatch. A
+  sequential `setLevel()` call between dispatches must affect the level value
+  read by the next dispatch. Concurrent updates are not atomic with the gate or
+  subsequent handler work.
 - The femtologging-to-stdlib level mapping, `_make_log_record()`, the
   warning-only `handle()` fallback, and the `flush()`/`close()` forwarders are
   unchanged behaviourally.
@@ -237,8 +240,8 @@ Known uncertainties identified upfront, with mitigations.
   prior findings resolved and found no runtime defect. It identified two more
   plan inaccuracies: the dynamic test's four dispatches and cached-level
   rationale, plus the filter-rejected `CRITICAL` record. Corrected below.
-- [ ] (2026-10-25) Validate these final plan corrections, obtain candidate-bound
-  confirmation and a clear proof-specific assessment, then mark PR #546 ready
+- [ ] (2026-10-25) Apply the proof-specific precision corrections, validate the
+  revised plan and obtain candidate-bound confirmation, then mark PR #546 ready
   and finish formal review and merge.
 
 ## Surprises & discoveries
@@ -349,47 +352,50 @@ Known uncertainties identified upfront, with mitigations.
 
 The adapter now translates each femtologging record and compares its mapped
 stdlib level with the wrapped handler's live `level` before calling
-`Handler.handle()`. Below-threshold records stop before filters or emission;
-accepted records enter `handle()` once, preserving the stdlib filter and lock
-path. The regression tests cover the level matrix, `NOTSET`, dynamic
-`setLevel()` changes, filter rejection, and handle/filter call counts. The user
-and migration guides explain how the femtologging logger threshold and wrapped
-handler threshold combine. This meets the intended outcome: low-severity
-records no longer reach a higher-severity-only destination. The user guide also
-states that `setLevel()` changes apply when records are processed, including
-records already queued but not yet handled.
+`Handler.handle()`. Below-threshold records do not enter `handle()`; accepted
+records enter it once. Handlers retaining the base `Handler.handle()` behaviour
+then use the stdlib filter and lock path. The regression tests cover the level
+matrix, `NOTSET`, dynamic `setLevel()` changes, filter rejection, and
+handle/filter call counts. The user and migration guides explain how the
+femtologging logger threshold and wrapped handler threshold combine. This meets
+the intended outcome: low-severity records no longer reach a
+higher-severity-only destination. The user guide also states that `setLevel()`
+changes apply when records are processed, including records already queued but
+not yet handled.
 
 The implementation, regression tests and user documentation meet the intended
 behaviour: the wrapped stdlib handler's live level is checked before
-`Handler.handle()`, while accepted records retain the normal filter and lock
-path. The design document now includes the accessible level-gating sequence.
-The original 16 issue commits were rebased onto `origin/main` at `d234990`
-without conflicts or patch changes; subsequent commits added the diagram and
-addressed review findings. All six gates passed on the candidate based on
-`9be9cc6` with the current documentation corrections (797 tests passed, 5
-skipped), and CodeScene delta found no applicable code changes. CodeRabbit's
-review of `9be9cc6` returned four minor documentation findings: two about this
-outcome's stale status claims, one about the new heading's capitalization, and
-one about an implementation instruction that differed from the final guard.
-These findings are corrected, and the corrected implementation candidate passed
-all six gates. The final progress update passed formatting, Markdown and
-Mermaid gates. A review of `af7539d` found one inaccurate claim about the
-`NOTSET` test detecting a truthiness shortcut; its test description and plan
-rationale were corrected, and all six gates passed on that repair. CodeScene
-found no issues. Candidate `1077f49` was published while PR #546 remained a
-draft; its hosted CI and CodeScene check passed. The completeness assessment of
-that head found no runtime defect and requested plan-record corrections to
-publication status, verification evidence, timeout accounting and the finite
-test-domain claim. Candidate `e065086` records those corrections and passed all
-six local gates, hosted run `40205578288` and CodeScene result `8119031`. The
-follow-up on `6e24864` confirmed those findings resolved and found no runtime
-defect, but identified two more verification-plan inaccuracies: the dynamic
-test has four dispatches, and its construction-time cache rationale was wrong;
-the filter-rejected record is `CRITICAL`. Both are corrected in the current
-worktree. The assessment could not independently verify the historical
-authorization recorded for the scope expansion; it did not identify this as a
-runtime defect. Candidate-bound confirmation, proof-specific assessment and
-formal review remain pending, and PR #546 remains a draft.
+`Handler.handle()`. Handlers retaining the base implementation use its normal
+filter and lock path for accepted records. The design document now includes the
+accessible level-gating sequence. The original 16 issue commits were rebased
+onto `origin/main` at `d234990` without conflicts or patch changes; subsequent
+commits added the diagram and addressed review findings. All six gates passed
+on the candidate based on `9be9cc6` with the current documentation corrections
+(797 tests passed, 5 skipped), and CodeScene delta found no applicable code
+changes. CodeRabbit's review of `9be9cc6` returned four minor documentation
+findings: two about this outcome's stale status claims, one about the new
+heading's capitalization, and one about an implementation instruction that
+differed from the final guard. These findings are corrected, and the corrected
+implementation candidate passed all six gates. The final progress update passed
+formatting, Markdown and Mermaid gates. A review of `af7539d` found one
+inaccurate claim about the `NOTSET` test detecting a truthiness shortcut; its
+test description and plan rationale were corrected, and all six gates passed on
+that repair. CodeScene found no issues. Candidate `1077f49` was published while
+PR #546 remained a draft; its hosted CI and CodeScene check passed. The
+completeness assessment of that head found no runtime defect and requested
+plan-record corrections to publication status, verification evidence, timeout
+accounting and the finite test-domain claim. Candidate `e065086` records those
+corrections and passed all six local gates, hosted run `40205578288` and
+CodeScene result `8119031`. The follow-up on `6e24864` confirmed those findings
+resolved and found no runtime defect, but identified two more verification-plan
+inaccuracies: the dynamic test has four dispatches, and its construction-time
+cache rationale was wrong; the filter-rejected record is `CRITICAL`. Both are
+corrected in the current worktree. The assessment could not independently
+verify the historical authorization recorded for the scope expansion; it did
+not identify this as a runtime defect. The proof-specific assessment was
+received on `fb5a5df` and identified precision corrections recorded below.
+Confirmation on the revised candidate and formal review remain pending; the PR
+is still a draft.
 
 ## Context and orientation
 
@@ -449,12 +455,13 @@ distinct:
    record at all. This happens before any handler sees anything and is outside
    the adapter's control.
 2. The wrapped stdlib handler threshold. `logging.Handler.setLevel(...)` sets
-   `handler.level`. In the standard library this is enforced by
-   `Logger.callHandlers()`, which checks `record.levelno >= handler.level`
-   before calling `handler.handle()`. `Handler.handle()` itself applies the
-   handler's filters and acquires its I/O lock only when those filters accept
-   the record; it never checks `level`. The pre-change adapter called
-   `handler.handle()` directly without reproducing that threshold check.
+  `handler.level`. In the standard library this is enforced by
+  `Logger.callHandlers()`, which checks `record.levelno >= handler.level`
+  before calling `handler.handle()`. The base `Handler.handle()` implementation
+  evaluates the handler's filter chain and acquires its I/O lock only when that
+  chain accepts the record; it never checks `level`. Subclasses may override
+  this path. The pre-change adapter called `handler.handle()` directly without
+  reproducing that threshold check.
 
 The term "wrapped handler" below always means the `logging.Handler` instance
 held by `StdlibHandlerAdapter` in `self._handler`.
@@ -501,33 +508,51 @@ six femtologging levels against an `ERROR` handler, and separately exercise
 enumerate every possible numeric handler threshold and is not an unbounded
 proof.
 
-Axiom A1: in CPython's `logging`, `Handler.handle()` applies `self.filters`,
-does *not* consult `self.level`, and acquires `self.lock` only when its filters
-accept the record. Repository-owned code depends on this interaction, so it is
-verified at the contract boundary rather than assumed from documentation alone:
-tests count `handle()` and filter calls through real stdlib types. The lock
-path is exercised through the unmodified `Handler.handle()` implementation
-rather than counted directly. The environment assumption is the repository's
-pinned interpreter (Python 3.12+) with the stdlib `logging` module unmodified.
+Axiom A1: in CPython's `logging`, the base `Handler.handle()` implementation
+evaluates the handler's filter chain, does *not* consult `self.level`, and
+acquires `self.lock` only when that chain accepts the record. This axiom
+applies to handlers that retain that base dispatch, filtering and locking
+behaviour; subclasses may override `handle()`, filtering or locking. The
+adapter's own gate still controls whether it calls the wrapped handler's
+`handle()` once, but makes no claim about an overriding subclass's internal
+path. Project behaviour depends on the base-handler interaction. Tests
+corroborate dispatch and filter behaviour through real stdlib handler types,
+but they do not establish the base method's implementation. The lock ordering
+is a trusted standard-library assumption; current tests exercise but do not
+directly count lock acquisitions. An instrumented lock wrapper could observe
+acquisition through the real base `Handler.handle()` path, providing bounded
+behavioural evidence rather than proof of the stdlib implementation. The
+argument is scoped to CPython's unmodified `logging` module. The CI matrix
+covers Python 3.12 through 3.15; it does not establish behaviour for other
+implementations or versions.
 
-Invariant I1 (level gate): for every constructed `LogRecord` with numeric level
-`L` and every wrapped-handler level `H`, the adapter calls `handle()` exactly
-once if and only if `L >= H`. When `L < H`, it does not call `handle()`, so the
-handler's filters and emission path are not entered. Whether a level-accepted
-record is emitted remains subject to the handler's filters.
+Invariant I1 (level gate): for each dispatch whose record translation and level
+comparison complete normally, let `L` be the constructed `LogRecord`'s numeric
+level and `H` the wrapped handler's `level` value observed at the gate. The
+adapter calls `handle()` exactly once if and only if `L >= H`. When `L < H`, it
+does not call `handle()`, so the handler's filter, lock and emit path is not
+entered. What a level-accepted handler call does, including whether it emits,
+depends on that handler's implementation and filtering.
 
 Lemma L1 (ordering): record translation precedes the handler-level test. The
-test then runs before any handler dispatch side effect. For `L < H`, no
-`Handler.handle()` call, filter call, lock acquisition, or emission occurs. For
-`L >= H`, `Handler.handle()` is called exactly once and applies the filter
-chain once. If the filters accept, the handler acquires its I/O lock and
-continues to emission; if they reject, the handler neither acquires the lock
-nor emits.
+test then runs before the adapter calls the wrapped handler. For `L < H`, no
+`handle()` call occurs and the handler's filter, lock and emit path is not
+entered. For `L >= H`, the adapter calls `handle()` exactly once. For a handler
+retaining the base `Handler.handle()` behaviour, normal execution evaluates the
+filter chain once; if the chain accepts, the handler acquires its I/O lock and
+invokes `emit()`, while a rejection prevents lock acquisition and the `emit()`
+invocation. A filter exception does not establish acceptance or emission, and an
+`emit()` invocation does not guarantee successful output. The chain may
+short-circuit, so this does not claim that every attached filter runs.
 
 Invariant I2 (live configuration): the gate reads `handler.level` at dispatch
-time, so for a fixed adapter instance a `setLevel()` call between two
-`handle_record()` calls changes the verdict of the second call without
-reconstructing the adapter.
+time; define `H` as the value observed by that read. For a fixed adapter, a
+sequential `setLevel()` call between two `handle_record()` calls makes the
+second call use the updated level without reconstructing the adapter. It need
+not change that record's acceptance verdict. The four-dispatch test
+demonstrates selected acceptance changes only. Concurrent updates are not
+atomic with the comparison or later handler work, because the gate runs before
+the handler's I/O lock.
 
 - Obligation: I1 for a handler fixed at `logging.ERROR`.
   Method: parameterized test over the finite partition of all six femtologging
@@ -581,16 +606,17 @@ reconstructing the adapter.
   rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
   count unchanged and emits nothing; an `ERROR` record increments both by
   exactly one and emits exactly one record; the filter-rejected `CRITICAL`
-  record increments `handle()` once, increments the filter count once, and
-  emits nothing. Non-vacuity: the test asserts counts rather than "not zero",
-  so an implementation that calls `handle()` twice or that skips filters
-  entirely fails. The filter-rejected row proves the filter chain is genuinely
-  reached through `Handler.handle()`, so "the gate ran but the filter never
+  record increments `handle()` once, increments the installed filter's count
+  once, and emits nothing. Non-vacuity: the test asserts counts rather than
+  "not zero", so an implementation that calls `handle()` twice or that skips
+  filters entirely fails. The filter-rejected row proves the installed filter
+  is reached through `Handler.handle()`, so "the gate ran but the filter never
   did" cannot pass unnoticed. Residual gap: the handler's I/O lock is exercised
-  implicitly by the real `Handler.handle()` implementation rather than asserted
-  directly, because the stdlib does not expose lock acquisition as a public
-  observable. A test that monkeypatched the lock would verify the monkeypatch,
-  not the stdlib.
+  implicitly by the real `Handler.handle()` implementation rather than counted
+  by the current tests. An instrumented lock wrapper could observe acquisition
+  through that real path, but that would remain bounded test evidence rather
+  than proof of the stdlib lock implementation. No lock-count test is included
+  because the current source-based argument does not require one.
 
 - Obligation: I2 for a live `setLevel()` sequence.
   Method: named test over four dispatches across three handler-level states,
@@ -632,12 +658,13 @@ one guard in `StdlibHandlerAdapter.handle_record()`.
 Stage D (documentation and wider validation) updates the two documentation
 files and runs the full commit gates.
 
-### Milestone EP-M1: the level gate is enforced and proven
+### Milestone EP-M1: the level gate is enforced and tested
 
 Outcome: `StdlibHandlerAdapter` rejects records below the wrapped handler's
-live level and calls `handle()` once for records at or above it. The handler's
-filters run once; a filter rejection prevents both lock acquisition and
-emission. The repository is coherent on its own: the adapter and its tests
+live level and calls `handle()` once for records at or above it. For handlers
+retaining the base `Handler.handle()` behaviour, normal execution evaluates the
+filter chain once; rejection prevents lock acquisition and the `emit()`
+invocation. The repository is coherent on its own: the adapter and its tests
 agree.
 
 Changes:
@@ -649,9 +676,10 @@ Changes:
   the `handle_record()` docstring to state that the adapter honours both the
   femtologging logger threshold and the wrapped handler's level, that the
   comparison happens after record translation but before `handle()` runs the
-  filters, and that `setLevel()` changes apply to the next record. The
-  `handle()` call applies filters once; its lock is acquired only if they
-  accept.
+  filters, and that sequential `setLevel()` changes between dispatches affect
+  the level read by the next dispatch. For handlers retaining the base
+  `Handler.handle()` behaviour, normal completion evaluates the filter chain
+  and acquires its lock only if the chain accepts.
 - `tests/test_stdlib_adapter_levels.py`: add `TestHandlerLevelThreshold` with
   the six-row level matrix against an `ERROR` handler under a `"TRACE"` logger,
   and the `NOTSET` acceptance test.
@@ -672,7 +700,8 @@ Conformance check:
 - Requirements satisfied: Issue#435 acceptance criteria 1 through 5.
 - Design still followed: the adapter keeps its single `handle_record` dispatch
   path and still delegates to `Handler.handle()`.
-- Upstream assumptions still valid: CPython `Handler.handle()` semantics per
+- Upstream assumptions still valid for handlers retaining base dispatch,
+  filtering and locking behaviour: CPython `Handler.handle()` semantics per
   Axiom A1.
 - No unapproved public interface or dependency change: `handle_record()`
   signature and the package's public exports are unchanged.
@@ -792,8 +821,11 @@ Quality criteria:
 
 - Tests: `make test` passes, including the new tests. The new tests fail before
   the production change and pass after.
-- Verification: Invariants I1 and I2 and Lemma L1 are discharged as described
-  in `Verification plan`; Axiom A1 is exercised at its real boundary.
+- Verification: finite tests corroborate selected cases of I1, I2 and L1. The
+  source branch supports the scoped I1 statement; A1 remains a trusted
+  base-handler assumption, with filter behaviour exercised and lock ordering
+  based on the stdlib implementation rather than direct instrumentation. No
+  machine-checked proof discharge is claimed.
 - Lint/typecheck: `make check-fmt`, `make lint` and `make typecheck` all pass
   with no warnings.
 - Performance: the guard adds one integer comparison and one attribute read
@@ -868,8 +900,9 @@ The completeness follow-up at
 [issue comment 6400122970](https://github.com/leynos/femtologging/pull/546#issuecomment-6400122970)
 confirmed the prior findings resolved and identified two remaining
 inaccuracies in the dynamic-level sequence and filter-rejection example. This
-worktree corrects them; candidate-bound confirmation and the separate
-proof-specific assessment remain pending.
+worktree corrects them. A proof-specific assessment of `fb5a5df` accepted the
+core manual argument and identified precision corrections applied in this
+revision; new candidate-bound confirmation is pending.
 
 ## Interfaces and dependencies
 
@@ -886,8 +919,13 @@ class StdlibHandlerAdapter:
         with the wrapped handler's ``level``, matching the gate in
         ``logging.Logger.callHandlers()``. Records below the level are
         discarded before ``handle()``. A record that passes is passed to
-        ``self._handler.handle()`` exactly once, which applies filters once and
-        acquires the I/O lock only if those filters accept it.
+        ``self._handler.handle()`` exactly once. When the handler retains the
+        base ``logging.Handler.handle()`` behaviour, normal execution evaluates
+        the filter chain once and acquires the I/O lock only if the chain
+        accepts. A filter exception prevents ``emit()``; invoking ``emit()``
+        does not guarantee successful output. Sequential ``setLevel()`` calls
+        between dispatches affect the level read on the next call; concurrent
+        changes are not synchronized with the gate or handler work.
         """
 ```
 
@@ -911,3 +949,11 @@ status, verification evidence, timeout accounting and the scope of the finite
 test matrix. Revised again after the completeness follow-up on `6e24864` to
 correct the dynamic dispatch count and cache rationale, and the filter-rejected
 record's level.
+
+Revised 2026-10-25 after the proof-specific assessment of `fb5a5df`: bounded
+the handler-behaviour assumptions to subclasses retaining base
+`Handler.handle()` semantics, clarified observed-level and sequential-update
+claims, qualified normal filter/lock/emission ordering, and corrected the
+lock-instrumentation rationale. These changes refine the manual argument; the
+implementation and tests are unchanged. Candidate-bound confirmation and formal
+review remain.
