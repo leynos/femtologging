@@ -40,6 +40,19 @@ pub(crate) struct PlannedMutation {
     pub(crate) scalar_mutations: BTreeMap<String, LoggerScalarMutation>,
 }
 
+/// Inputs assembled by `apply()` before a commit can be built.
+///
+/// The three pieces travel together: the snapshot every merge starts from, the
+/// validated plan, and the definitions constructed for this transaction.
+pub(crate) struct CommitInputs {
+    /// Runtime snapshot captured before the transaction planned anything.
+    pub(crate) before: RuntimeStateSnapshot,
+    /// Validated logger mutations and the loggers they impact.
+    pub(crate) plan: PlannedMutation,
+    /// Newly built registries for this transaction.
+    pub(crate) built: BuiltRegistries,
+}
+
 /// Fully prepared state applied as one runtime mutation commit.
 pub(crate) struct RuntimeCommit {
     /// Logger attachment states after applying requested collection mutations.
@@ -93,10 +106,13 @@ impl RuntimeConfigBuilder {
     pub(crate) fn assemble_commit(
         &self,
         py: Python<'_>,
-        before: RuntimeStateSnapshot,
-        plan: PlannedMutation,
-        built: BuiltRegistries,
+        inputs: CommitInputs,
     ) -> Result<RuntimeCommit, ConfigError> {
+        let CommitInputs {
+            before,
+            plan,
+            built,
+        } = inputs;
         let mut handler_registry = before.handler_registry.clone();
         handler_registry.extend(built.handlers);
         let mut handler_filter_ids = before.handler_filter_ids.clone();

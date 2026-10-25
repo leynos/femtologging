@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    BuiltRegistries, ConfigError, LoggerMutationBuilder, LoggerScalarMutation,
+    BuiltRegistries, CommitInputs, ConfigError, LoggerMutationBuilder, LoggerScalarMutation,
     RuntimeConfigBuilder, apply_commit, apply_mutation_to_logger, build_filters, build_handlers,
 };
 
@@ -78,7 +78,14 @@ impl RuntimeConfigBuilder {
                     .map(|(id, builder)| (id.clone(), builder.filter_ids().to_vec()))
                     .collect(),
             };
-            let commit = self.assemble_commit(py, before, plan, built)?;
+            let commit = self.assemble_commit(
+                py,
+                CommitInputs {
+                    before,
+                    plan,
+                    built,
+                },
+            )?;
             apply_commit(py, &commit)?;
             Ok(())
         })
