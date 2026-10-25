@@ -53,10 +53,11 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 ///
 /// # Concurrency
 ///
-/// Every increment is drained by exactly one call to [`warn_if_due`] or
-/// [`flush`]; no drop is reported twice, and none is discarded. A batch is
-/// reported by whichever drain observes it, so a drop recorded while another
-/// thread is warning belongs to that batch or to the next one, not to both.
+/// Each increment is either removed by exactly one call to [`warn_if_due`] or
+/// [`flush`] and handed to its callback, or remains pending in the counter until a
+/// later drain. No drain can claim the same increment twice, and a suppressed call
+/// does not discard it. A drop recorded while another thread is warning belongs to
+/// that batch or to the next one, not to both.
 ///
 /// The types are safe to share across threads, and the callbacks are **not**
 /// serialized against one another. At most one [`warn_if_due`] caller emits per
@@ -221,9 +222,3 @@ impl Default for RateLimitedWarner {
 #[cfg(test)]
 #[path = "rate_limited_warner_tests.rs"]
 mod tests;
-
-    /// Atomic clock fixture that lets warning intervals advance deterministically.
-    struct FakeClock {
-        /// Current fake time in milliseconds.
-        now: AtomicU64,
-    }

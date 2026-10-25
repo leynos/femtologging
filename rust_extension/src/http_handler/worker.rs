@@ -20,6 +20,7 @@ use crate::{
 
 use super::{
     config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    handler::{flush_drops, warn_drops},
     serialize::{serialize_json, serialize_url_encoded},
 };
 
@@ -318,24 +319,6 @@ pub(crate) fn classify_status(status: u16) -> ResponseClass {
         500..=599 => ResponseClass::Retryable,
         _ => ResponseClass::Permanent,
     }
-}
-
-/// Records a drop and emits the callback only when the warning interval permits it.
-fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
-    warner.record_drop();
-    warner.warn_if_due(log);
-}
-
-/// Report drops the worker found, ignoring the rate limit.
-///
-/// Drops the worker discovers — serialization failures, retry exhaustion,
-/// permanent errors — are recorded here rather than by the handler, so only the
-/// worker can report them. A suppressed interval would otherwise keep the count
-/// until the next due warning, which on a worker that is exiting never comes.
-fn flush_drops(warner: &RateLimitedWarner) {
-    warner.flush(|count| {
-        warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-    });
 }
 
 /// Base64-encode a byte slice for Basic auth.

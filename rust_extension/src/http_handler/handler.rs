@@ -42,6 +42,26 @@ pub struct FemtoHTTPHandler {
     flush_timeout: Duration,
 }
 
+/// Report drops owned by the handler, regardless of the warning interval.
+fn flush_drop_warner(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+    });
+}
+
+/// Records a worker-owned drop and emits the callback only when due.
+pub(super) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
+    warner.record_drop();
+    warner.warn_if_due(log);
+}
+
+/// Report worker-owned drops without waiting for the warning interval.
+pub(super) fn flush_drops(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+    });
+}
+
 impl FemtoHTTPHandler {
     /// Construct the handler from a configuration object.
     pub fn with_config(config: HTTPHandlerConfig) -> Self {
@@ -76,8 +96,11 @@ impl FemtoHTTPHandler {
     /// about rather than swallowed. Two handlers with the same lifecycle
     /// should not answer the same question differently.
     ///
+    /// Any pending handler-side drop warning is reported before shutdown.
+    ///
     /// [`FemtoStreamHandler::close`]: crate::FemtoStreamHandler::close
     pub fn close(&mut self) {
+        flush_drop_warner(&self.warner);
         match self.request_shutdown() {
             ShutdownOutcome::Finished => self.join_worker(),
             ShutdownOutcome::TimedOut => self.abandon_worker(),
@@ -235,9 +258,7 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
         // Reported before the closed check: records refused after close are
         // recorded by the handler, so a flush that returned early would leave
         // their count pending on a handler that is never going to warn again.
-        self.warner.flush(|count| {
-            log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-        });
+        flush_drop_warner(&self.warner);
         let Some(tx) = self.sender() else {
             return false;
         };

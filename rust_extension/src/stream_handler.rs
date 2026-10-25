@@ -166,7 +166,6 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
-
 #[allow(
     clippy::too_many_arguments,
     reason = "PyO3 generates Python-facing wrappers with explicit method signatures"
@@ -236,7 +235,6 @@ impl FemtoStreamHandler {
         self.close();
     }
 }
-
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
@@ -344,7 +342,6 @@ impl FemtoStreamHandler {
         }
     }
 }
-
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
