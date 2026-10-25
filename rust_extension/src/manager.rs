@@ -22,8 +22,29 @@ mod registry;
 mod runtime_state;
 mod validation;
 
-pub use registry::{MAX_LOGGERS, get_logger, reset_manager};
-pub use validation::{MAX_LOGGER_NAME_BYTES, MAX_LOGGER_NAME_SEGMENTS, validate_logger_name};
+pub use registry::{get_logger, reset_manager};
+pub use validation::validate_logger_name;
+
+// The bounds are public only when this module is public or rustdoc needs them
+// to resolve links. In ordinary builds the manager module is private, so its
+// unused public re-exports fail the strict no-default-features library lane.
+#[cfg(any(feature = "test-util", doc))]
+pub use registry::MAX_LOGGERS;
+#[cfg(any(feature = "test-util", doc))]
+pub use validation::{MAX_LOGGER_NAME_BYTES, MAX_LOGGER_NAME_SEGMENTS};
+
+// Unit tests use the bounds through the manager path, but keep those imports
+// crate-private when the opt-in public test-util API is absent.
+#[cfg(all(test, not(feature = "test-util")))]
+pub(crate) use registry::MAX_LOGGERS;
+#[cfg(all(test, not(feature = "test-util")))]
+pub(crate) use validation::MAX_LOGGER_NAME_BYTES;
+#[cfg(all(
+    test,
+    any(feature = "log-compat", feature = "tracing-compat"),
+    not(feature = "test-util")
+))]
+pub(crate) use validation::MAX_LOGGER_NAME_SEGMENTS;
 
 #[cfg(feature = "log-compat")]
 pub(crate) use registry::REGISTRY_FULL_MARKER;

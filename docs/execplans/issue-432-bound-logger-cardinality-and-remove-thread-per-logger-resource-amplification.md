@@ -880,6 +880,16 @@ Milestone 1 detail:
   `tests/conftest.py` before collection. The final full gate sequence passed
   again, and pytest reported 805 passed, 5 skipped, and 66 snapshots with no
   warnings.
+- 2026-10-25: hosted run `40184868345` exposed another strict-lint failure in
+  all Python lanes. The nested `none --lib` policy check inherits CI's
+  `RUSTFLAGS=-D warnings`, revealing that public manager re-exports of the
+  bounds are unused while the manager module is private. The constants are now
+  re-exported publicly only for `test-util` and rustdoc, and crate-privately
+  only for test configurations that use them. The strict local sequence then
+  passed with `RUSTFLAGS=-D warnings` on Rust gates: formatting, documentation,
+  lint, typecheck, and tests. Pytest reported 805 passed, 5 skipped, and 66
+  snapshots with no warnings; the nested policy contract passed. Hosted checks
+  for this correction are pending the next push.
 
 ## Outcomes & retrospective
 
