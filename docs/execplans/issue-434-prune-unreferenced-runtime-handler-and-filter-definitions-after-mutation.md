@@ -343,6 +343,17 @@ configured filter IDs.
   set the upstream to `origin`, and opened
   [PR #548](https://github.com/leynos/femtologging/pull/548) as a draft with
   `Closes #434` and the required session reference.
+- [x] (2026-10-25) Repaired the two CodeScene advisory violations this branch
+  introduced. CodeScene's Pay Down Tech Debt profile failed the PR on
+  `test_runtime_reconfiguration_steps.py` (Code Duplication, 10.00 → 9.39) and
+  on `RuntimeConfigBuilder::assemble_commit` (Excess Number of Function
+  Arguments, 9.39 → 9.10). The duplicated assertions in the two `then` steps
+  now delegate to one `_assert_mutation_failed_with` helper, and
+  `assemble_commit`'s three transaction inputs are grouped into a
+  `CommitInputs` struct built by `apply()`. Behaviour is unchanged. All six
+  gates passed on the repair: 788 pytest tests, 5 skipped, 66 snapshots, and
+  every Rust feature lane (307/529/540/545 library tests). Committed as
+  `f0f51f7` and pushed over SSH; the remote head matches local HEAD.
 
 ## Surprises & Discoveries
 
