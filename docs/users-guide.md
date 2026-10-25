@@ -35,17 +35,17 @@ your process exits.
   spends on logging follow the machine rather than the number of loggers it has
   created. Calls to `logger.log()` enqueue a record on the logger's shard and
   return immediately.
-- Each shard's queue is 1,024 records deep for every shard in the pool, so a
-  four-shard pool gives each shard a depth of 4,096. Each logger may hold at
-  most half of its shard's depth, never more than 1,024, so the pool grows with
-  the machine while any one logger's share does not. The per-logger limit stops
-  one logger from consuming every permit, so an over-active logger cannot crowd
-  the loggers sharing its shard out of the queue. It does not stop a handler
-  that never returns from blocking the shard's single worker while holding its
-  permits: the other loggers on that shard can then exhaust their own
-  allowances and drop records even though the shard has permits left. Separate
-  shards, and the machine-derived shard count, are what keep one stuck handler
-  from stopping the whole process.
+- Each shard's queue holds 1,024 records multiplied by the number of shards in
+  the pool, so a four-shard pool gives each shard a depth of 4,096. Each logger
+  may hold at most half of its shard's depth, never more than 1,024, so the
+  pool grows with the machine while any one logger's share does not. The
+  per-logger limit stops one logger from consuming every permit, so an
+  over-active logger cannot crowd the loggers sharing its shard out of the
+  queue. It does not stop a handler that never returns from blocking the
+  shard's single worker while holding its permits: the other loggers on that
+  shard can then exhaust their own allowances and drop records even though the
+  shard has permits left. Separate shards, and the machine-derived shard count,
+  are what keep one stuck handler from stopping the whole process.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
@@ -105,9 +105,13 @@ your process exits.
 
 Loggers share a small fixed pool of dispatch threads rather than each owning
 one, so the number of threads the logging system uses depends on the machine
-rather than on how many loggers exist. A logger whose queue and in-flight work
-are both full drops the record instead of blocking the caller; the drop is
-counted, and `logger.get_dropped()` reports it.
+rather than on how many loggers exist. A record is dropped instead of blocking
+the caller when either bound is reached: when the logger has spent its own
+in-flight allowance, or when its shard has no free slot. Either condition is
+enough on its own, so a logger at its allowance drops records while its shard
+still has room, and a shard with every permit taken drops records from loggers
+that are below theirs. The drop is counted, and `logger.get_dropped()` reports
+it.
 
 ### Emitting records
 

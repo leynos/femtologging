@@ -149,7 +149,7 @@ struct LookupFailureDiagnostic<'a> {
     normalized: &'a str,
     /// Registry error text shown with the fallback diagnostic.
     detail: &'a str,
-    /// Number of affected records suppressed by the rate limiter.
+    /// Records this warning accounts for, including the one that triggered it.
     count: u64,
 }
 
@@ -172,7 +172,7 @@ fn lookup_failure_message(diagnostic: LookupFailureDiagnostic<'_>) -> String {
     } = diagnostic;
     format!(
         "femtologging: {reason} {} (normalized {}); falling back to root: {detail}; \
-         {count} further record(s) affected",
+         {count} record(s) affected since the last warning",
         manager::describe_name(target),
         manager::describe_name(normalized),
     )

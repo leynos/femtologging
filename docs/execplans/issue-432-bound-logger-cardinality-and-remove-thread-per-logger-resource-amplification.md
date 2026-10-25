@@ -157,6 +157,8 @@ Milestone 2 detail:
 - [x] Fourth review round returned seven findings (five distinct); all fixed.
 - [x] Fifth review round returned two findings, one defect; fixed and re-gated.
 - [x] Sixth review round returned six findings (five distinct); all fixed.
+- [x] Seventh review round returned four findings; all fixed, including a test
+      that asserted nothing and was rebuilt and mutation-tested.
 
 Re-gated at `467f406`:
 
@@ -360,6 +362,45 @@ them.
 Re-gated at `cf2e419`: `make fmt`, `make check-fmt`, `make lint`,
 `make typecheck`, `make markdownlint`, `make nixie` and `make test` all exit 0
 (`805 passed, 5 skipped`, 66 snapshots; four Rust feature lanes).
+
+**Seventh review round (2026-10-25): four findings, all fixed.** Three were
+wording and one was a test that asserted nothing.
+
+`RateLimitedWarner::warn_if_due` cleared the drop counter on a *suppressed*
+call. The count a warning reported was therefore "records dropped in the tick
+that happened to warn", not the records affected since the last warning, and a
+steady stream of failures — the exact case the limiter exists to summarize —
+reported one per interval however many it lost. The suppressed branch no longer
+touches the counter, so pending drops carry forward, and
+`rate_limits_subsequent_warnings` now asserts `vec![1, 2]` where it previously
+pinned the undercount as `vec![1, 1]`.
+
+The bridge diagnostic said "{count} further record(s) affected", but `count`
+includes the record whose call triggered the warning, so "further" was wrong by
+one. It now reads "{count} record(s) affected since the last warning", matching
+the field's own documentation.
+
+Two users-guide passages described the bounds imprecisely. The architecture
+overview said each shard's queue "is 1,024 records deep for every shard in the
+pool"; it now states the multiplication explicitly (`1,024 × shard count`,
+4,096 on a four-shard pool), which is what `Dispatcher::start` computes. The
+drop paragraph named one composite bound where the code has two independent
+ones — the logger's in-flight allowance and the shard's free permits — and
+either alone refuses a record, so the paragraph now describes both and says
+plainly that each is sufficient on its own.
+
+`drop_does_not_hold_the_handler_list_while_draining` was the real defect. It
+took a lock of its own, unrelated to the logger, so it passed whatever the drop
+did; the name claimed a property the body never tested. It now probes the
+logger's actual `handlers` lock, with the record provably in flight and the
+handler blocked so the drop cannot finish draining. The probe samples the
+*whole* window and fails if the lock is ever observed held. That detail is not
+incidental: an earlier attempt at the rewrite stopped at the first successful
+probe and passed against a mutated `Drop` that held the lock for its whole
+duration, because the first probe ran before the dropping thread was scheduled.
+The final version was mutation-tested — with
+`let _mutation = self.handlers.write();` added to `Drop` it fails with the
+intended message and passes without it — and the mutation was then reverted.
 
 **Discovery (2026-10-23): the off-by-one was invisible below the cap.** The
 capacity predicate meant "one more fits", but every projected call site passed
@@ -819,6 +860,12 @@ Milestone 1 detail:
   GIL held across a flush barrier, and a per-logger budget equal to a
   single-shard pool's depth). All eight fixed in five atomic commits and pushed
   to `467f406`, with the Loom lane re-run for the first time on the fixes.
+- 2026-10-25: seventh review round, **four findings, all fixed**: a drop
+  counter cleared on suppressed calls, a diagnostic that said "further" while
+  counting itself, two imprecise users-guide bound descriptions, and a drop
+  test that took an unrelated lock and so asserted nothing. The test was
+  rebuilt against the logger's real handler list and mutation-tested in both
+  directions.
 - 2026-10-24: sixth review round, **six findings (five distinct), all fixed**:
   one shared deadline for `wait_for_drain`, an allocation-free own-target guard,
   `.expect()` replaced by propagated `DispatcherError` in the Loom arm, a

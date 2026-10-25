@@ -49,24 +49,53 @@ fn drop_delivers_every_record_queued_before_it_in_order() {
     );
 }
 
-/// A handler that takes a second handler's lock while the drop runs its own.
+/// The drop must not hold the handler list while it drains.
 ///
-/// The drop drains its shard, so anything the shard calls while draining must
-/// not need a lock the drop is holding: if it did, this handler would block
-/// until the drain's barrier timed out and the record would be lost.
+/// `Drop` waits for the shard to finish the records this logger queued, and a
+/// queued handler may want the logger's handler list — a handler that inspects
+/// its own configuration, or one that re-reads the list, takes that lock. If
+/// the drop held it while waiting, the handler could never finish, the barrier
+/// would time out, and the record would be lost.
+///
+/// The probe reads the logger's *own* `handlers` lock, not an unrelated one.
+/// That distinction is the whole test: taking some other lock would pass no
+/// matter what the drop held, which is what an earlier version of this test
+/// did.
+///
+/// The probe samples the *whole* window rather than stopping at the first
+/// success, and that is what makes the result meaningful. The window opens just
+/// before the drop is spawned, so its early probes may run before the dropping
+/// thread is scheduled at all; a test that stopped at the first success would
+/// pass against a drop that holds the list for the rest of the window. A drop
+/// that took the list holds it until its barrier resolves, and the handler is
+/// blocked for the whole window, so the barrier cannot resolve inside it: the
+/// lock is therefore observed held by at least the later probes, and the
+/// assertion fails.
+///
+/// The handler is blocked inside `handle` before the drop starts, so the record
+/// is in flight and the shard's worker cannot advance past it. The window is
+/// well inside the shard's two-second barrier timeout, so a drop that took the
+/// list cannot time out and release it part-way through.
 #[test]
 fn drop_does_not_hold_the_handler_list_while_draining() {
-    use parking_lot::Mutex as PoisonlessMutex;
+    use crossbeam_channel::{Receiver, Sender, bounded};
+    use std::time::{Duration, Instant};
 
-    /// Handler that acquires a shared lock while the logger is dropped.
-    struct LockTakingHandler {
-        /// Lock observed after drop to prove dispatch reached this handler.
-        lock: Arc<PoisonlessMutex<usize>>,
+    /// How long the main thread samples the handler list while the drop drains.
+    const PROBE_WINDOW: Duration = Duration::from_millis(250);
+
+    /// Handler that blocks inside `handle` until the test releases it.
+    struct BlockingHandler {
+        /// Signals that dispatch has started and the record is in flight.
+        entered: Sender<()>,
+        /// Released by the test once the probe window has elapsed.
+        release: Receiver<()>,
     }
 
-    impl FemtoHandlerTrait for LockTakingHandler {
+    impl FemtoHandlerTrait for BlockingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-            *self.lock.lock() += 1;
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
             Ok(())
         }
 
@@ -75,21 +104,45 @@ fn drop_does_not_hold_the_handler_list_while_draining() {
         }
     }
 
-    let lock = Arc::new(PoisonlessMutex::new(0));
+    let (entered_tx, entered_rx) = bounded::<()>(1);
+    let (release_tx, release_rx) = bounded::<()>(1);
+
     let logger =
         FemtoLogger::new("drop-lock".to_string()).expect("test logger should be constructible");
+    let handlers = Arc::clone(&logger.handlers);
     logger
-        .add_handler(Arc::new(LockTakingHandler {
-            lock: Arc::clone(&lock),
+        .add_handler(Arc::new(BlockingHandler {
+            entered: entered_tx,
+            release: release_rx,
         }) as Arc<dyn FemtoHandlerTrait>)
-        .expect("native lock-taking test handler should register");
+        .expect("native blocking test handler should register");
 
     logger.log(FemtoLevel::Info, "guarded");
-    drop(logger);
+    entered_rx.recv_timeout(Duration::from_secs(5)).expect(
+        "the record must reach the handler before the drop starts, so the drop \
+         has something in flight to wait for",
+    );
 
-    assert_eq!(
-        *lock.lock(),
-        1,
-        "the drop must let the dispatch worker reach the handlers"
+    let dropper = std::thread::spawn(move || drop(logger));
+    let deadline = Instant::now() + PROBE_WINDOW;
+    let mut observed_held = false;
+    while Instant::now() < deadline {
+        // Drop each guard immediately: the probe is about observation, not
+        // contention. Holding it would make the next probe fail on our own
+        // account.
+        observed_held |= handlers.try_write().is_none();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    release_tx
+        .send(())
+        .expect("the handler must still be waiting to be released");
+    dropper.join().expect("the dropping thread must not panic");
+
+    assert!(
+        !observed_held,
+        "the drop must not hold the handler list while it drains: the list was \
+         observed locked during a {PROBE_WINDOW:?} window in which the drop was \
+         waiting for a blocked handler, which only a drop that took the list \
+         can cause"
     );
 }
