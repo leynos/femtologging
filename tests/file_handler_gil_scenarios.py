@@ -329,6 +329,7 @@ _BODIES = {
     "concurrent-close": CONCURRENT_CLOSE_BODY,
     "close-handle": CLOSE_BORROW_BODY,
     "close-flush": CLOSE_BORROW_BODY,
+    "close-close": CLOSE_BORROW_BODY,
 }
 
 #: Builder labels the test module parametrizes over.
