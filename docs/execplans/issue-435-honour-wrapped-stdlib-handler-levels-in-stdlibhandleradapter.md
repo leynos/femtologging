@@ -213,9 +213,15 @@ Known uncertainties identified upfront, with mitigations.
   support, but no adapter implementation or shared test helper changes. Since
   `dictConfig` now supports handler filters while still rejecting handler
   `level`, clarified the guide sentence to name the `level` restriction only.
-- [ ] (2026-10-25) Resolve CodeRabbit's findings on `887ebf4`; rerun all six
-  gates and review the corrected candidate, then commit, publish and bring
-  draft PR #546 to merge.
+- [x] (2026-10-25) Corrected three minor findings from the review of `887ebf4`
+  and passed all six gates on the resulting candidate (797 passed, 5 skipped).
+  CodeScene delta reported no issues. The fresh review of `9be9cc6` returned
+  four minor documentation findings, now corrected in the current worktree; the
+  first full gate run on those corrections also passed all six gates.
+- [x] (2026-10-25) Ran formatting, format-check, Markdown and Mermaid gates on
+  this final progress update; all passed.
+- [ ] (2026-10-25) Request a fresh review of the corrected candidate. Publish
+  the rebased branch and bring draft PR #546 to merge after the review is clear.
 
 ## Surprises & discoveries
 
@@ -335,18 +341,23 @@ records no longer reach a higher-severity-only destination. The user guide also
 states that `setLevel()` changes apply when records are processed, including
 records already queued but not yet handled.
 
-The 12 issue commits rebased onto `main` without conflicts or patch changes.
-All post-rebase validation passed: `make check-fmt`, `make test` (770 passed, 5
-skipped, with one `PytestAssertRewriteWarning`), `make typecheck`, `make lint`,
-`make fmt`, `make markdownlint`, and `make nixie`. The test warning is from
-pytest assertion rewriting for `tests.steps.logging_context_steps`; it did not
-fail the suite. CodeRabbit reviews found plan status and completion-note
-inconsistencies and ambiguity about when a live level change affects queued
-records. Those findings were corrected, and the final review returned zero
-findings. The rebased branch was force-pushed with a lease after confirming the
-remote still matched its expected prior head. Draft PR #546 remains open, with
-its issue-closing summary, final validation results, and a terminal
-`References` section linking to the Lody session.
+The implementation, regression tests and user documentation meet the intended
+behaviour: the wrapped stdlib handler's live level is checked before
+`Handler.handle()`, while accepted records retain the normal filter and lock
+path. The design document now includes the accessible level-gating sequence.
+The original 16 issue commits were rebased onto `origin/main` at `d234990`
+without conflicts or patch changes; subsequent commits added the diagram and
+addressed review findings. All six gates passed on the candidate based on
+`9be9cc6` with the current documentation corrections (797 tests passed, 5
+skipped), and CodeScene delta found no applicable code changes. CodeRabbit's
+fresh review of `9be9cc6` returned four minor documentation findings: two about
+this outcome's stale status claims, one about the new heading's capitalization,
+and one about an implementation instruction that differed from the final guard.
+These findings are corrected, and the corrected implementation candidate passed
+all six gates. The final progress update passed formatting, Markdown and
+Mermaid gates. A fresh CodeRabbit review of the corrected candidate is pending.
+Draft PR #546 still points to the pre-rebase branch head and must be updated
+after the new candidate is reviewed.
 
 ## Context and orientation
 
@@ -598,9 +609,10 @@ agree.
 Changes:
 
 - `femtologging/adapter.py`: in `handle_record()`, after
-  `log_record = _make_log_record(record)`, return early when
-  `log_record.levelno < self._handler.level`. Update the class docstring and the
-  `handle_record()` docstring to state that the adapter honours both the
+  `log_record = _make_log_record(record)`, call
+  `self._handler.handle(log_record)` only when
+  `log_record.levelno >= self._handler.level`. Update the class docstring and
+  the `handle_record()` docstring to state that the adapter honours both the
   femtologging logger threshold and the wrapped handler's level, that the
   comparison happens after record translation but before `handle()` runs the
   filters, and that `setLevel()` changes apply to the next record. The
