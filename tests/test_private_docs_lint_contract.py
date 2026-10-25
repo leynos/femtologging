@@ -15,6 +15,7 @@ import pytest
 _REPO_ROOT: typ.Final = Path(__file__).resolve().parent.parent
 _PRODUCTION_MANIFEST: typ.Final = _REPO_ROOT / "rust_extension" / "Cargo.toml"
 _LINT_NAME: typ.Final = "missing_docs_in_private_items"
+_LANE_TIMEOUT_SECONDS: typ.Final = 1800
 _FEATURES: typ.Final = (
     "extension-module",
     "python",
@@ -79,12 +80,12 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
         env=environment,
         capture_output=True,
         check=False,
-        timeout=1800,
+        timeout=_LANE_TIMEOUT_SECONDS,
         text=True,
     )
 
 
-@pytest.mark.timeout(1820)
+@pytest.mark.timeout(2 * _LANE_TIMEOUT_SECONDS + 20)
 def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
     """The lint rejects missing docs and accepts docs through Make's lane driver."""
     lint_level = _private_docs_level()
