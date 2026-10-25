@@ -740,18 +740,12 @@ Trace links, from issue #436 to milestone:
   was rate-limited again with a reported wait of 2m58s and returned no
   findings. The user requires another randomized 45-90 minute foreground
   `vsleep` before a further review retry.
-- 2026-10-25: the full source gate run passed, but pytest still emitted one
-  `PytestAssertRewriteWarning`: the logging-context step module had already
-  been imported when a test module declared it as a plugin. Moving that
-  declaration into the top-level `tests/conftest.py` makes pytest load it
-  before collection; removing the per-test declaration avoids the late second
-  registration. Full collection found 796 items without a warning. The final
-  sequential run passed `make fmt`, `make check-fmt`, `make lint`,
-  `make typecheck`, `make test`, `make markdownlint` and `make nixie`; pytest
-  reported 791 passed and 5 skipped with no warning. The documentation checks
-  passed again after this status update: `make fmt`, `make check-fmt`,
-  `make markdownlint` reported 0 errors, and `make nixie` validated all
-  diagrams.
+- 2026-10-25: a concurrent pytest plugin-registration change moved the
+  `logging_context_steps` plugin into the root `tests/conftest.py`; a later
+  full run reported 791 passed and 5 skipped without the existing
+  `PytestAssertRewriteWarning`. That change was unrelated to #436 and is
+  preserved outside this branch, so its warning-free result is not candidate
+  evidence. The #436 candidate's full test result remains retry 19 above.
 
 ## Outcomes & retrospective
 
