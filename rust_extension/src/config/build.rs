@@ -65,7 +65,11 @@ impl ConfigBuilder {
         let components = self.build_runtime_components()?;
 
         Python::attach(|py| -> Result<_, ConfigError> {
-            let _transaction = super::lock_runtime_transaction();
+            // Declared before the guard so that it drops *after* the guard on
+            // every exit path, including early `?` returns: locals drop in
+            // reverse declaration order.
+            let mut deferred_drop = super::DeferredDrop::default();
+            let transaction = super::lock_runtime_transaction(py);
             let BuiltConfigComponents {
                 built_handlers,
                 handler_filter_ids,
@@ -97,10 +101,16 @@ impl ConfigBuilder {
                 .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
 
             if let Some(keep_names) = &keep_names {
-                manager::disable_existing_loggers(py, keep_names);
+                deferred_drop
+                    .detached
+                    .extend(manager::disable_existing_loggers(py, keep_names));
             }
-            let runtime_loggers =
-                self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
+            let runtime_loggers = self.apply_committed_logger_plans(
+                py,
+                &plans,
+                &committed_loggers,
+                &mut deferred_drop,
+            )?;
             let mut handler_registry = (*built_handlers).clone();
             let mut retained_handler_filter_ids = (*handler_filter_ids).clone();
             let mut filter_registry = (*built_filters).clone();
@@ -112,12 +122,14 @@ impl ConfigBuilder {
             prune_filters(&mut filter_registry, &reachable);
             retained_handler_filter_ids
                 .retain(|handler_id, _| reachable.handlers.contains(handler_id));
-            manager::replace_runtime_state(
+            deferred_drop.snapshots.push(manager::replace_runtime_state(
                 handler_registry,
                 retained_handler_filter_ids,
                 filter_registry,
                 runtime_loggers,
-            );
+            ));
+            drop(transaction);
+            deferred_drop.release();
             Ok(())
         })?;
         Ok(())
@@ -132,6 +144,7 @@ impl ConfigBuilder {
         py: Python<'_>,
         plans: &[ConfiguredLoggerPlan],
         committed_loggers: &BTreeMap<String, Py<FemtoLogger>>,
+        deferred_drop: &mut super::DeferredDrop,
     ) -> Result<BTreeMap<String, manager::LoggerAttachmentState>, ConfigError> {
         let mut runtime_loggers = BTreeMap::new();
         for plan in plans {
@@ -141,7 +154,7 @@ impl ConfigBuilder {
                     plan.name
                 ))
             })?;
-            self.apply_logger_plan(py, logger, plan)?;
+            self.apply_logger_plan(py, logger, plan, deferred_drop)?;
             runtime_loggers.insert(
                 plan.name.clone(),
                 manager::LoggerAttachmentState::new(
@@ -287,15 +300,15 @@ impl ConfigBuilder {
         py: Python<'_>,
         logger: &Py<FemtoLogger>,
         plan: &ConfiguredLoggerPlan,
+        deferred_drop: &mut super::DeferredDrop,
     ) -> Result<(), ConfigError> {
         let logger_ref = logger.borrow(py);
-        logger_ref.clear_handlers();
+        deferred_drop.detached.push(logger_ref.detach_owners());
         for handler in &plan.handlers {
             logger_ref
                 .add_handler_with_filters(handler.handler.clone(), handler.filters.clone())
                 .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
         }
-        logger_ref.clear_filters();
         for filter in &plan.filters {
             logger_ref.add_filter(filter.clone());
         }

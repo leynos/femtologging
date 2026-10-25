@@ -62,7 +62,11 @@ impl RuntimeConfigBuilder {
     pub fn apply(&self) -> Result<(), ConfigError> {
         self.validate()?;
         Python::attach(|py| -> Result<(), ConfigError> {
-            let _transaction = super::super::lock_runtime_transaction();
+            // Declared before the guard so that it drops *after* the guard on
+            // every exit path, including early `?` returns: locals drop in
+            // reverse declaration order.
+            let mut deferred_drop = super::super::DeferredDrop::default();
+            let transaction = super::super::lock_runtime_transaction(py);
             let before = crate::manager::snapshot_runtime_state();
             let plan = self.plan_mutation(&before)?;
             self.validate_handler_filter_ids(&before)?;
@@ -86,7 +90,12 @@ impl RuntimeConfigBuilder {
                     built,
                 },
             )?;
-            apply_commit(py, &commit)?;
+            apply_commit(py, &commit, &mut deferred_drop)?;
+            // Displaced definitions are still alive here; releasing the guard
+            // before they drop keeps a Python finalizer from re-entering a
+            // transaction that this thread already holds.
+            drop(transaction);
+            deferred_drop.release();
             Ok(())
         })
     }

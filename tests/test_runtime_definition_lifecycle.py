@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import typing as typ
 
 import pytest
@@ -11,6 +12,7 @@ from femtologging import (
     HTTPHandlerBuilder,
     LoggerMutationBuilder,
     NameFilterBuilder,
+    PythonCallbackFilterBuilder,
     RuntimeConfigBuilder,
     StreamHandlerBuilder,
     get_logger,
@@ -173,4 +175,73 @@ def test_replacing_file_handler_id_keeps_one_live_handler(
 
     assert logger.log("DEBUG", "after churn") is not None, (
         "the logger must still be usable once the replacement churn finishes"
+    )
+
+
+# Populated by ``_ReenteringCallback.__del__``; a module-level list keeps the
+# assertion independent of any reference the test itself holds.
+FINALISER_APPLIED: list[str] = []
+
+
+class _ReenteringCallback:
+    """Callback filter whose finalizer applies a nested runtime mutation.
+
+    The callback is attached, then displaced by a second transaction, so its
+    ``__del__`` runs while the displacing transaction unwinds. If the
+    transaction guard were still held at that point, the nested ``apply()``
+    would wait on a non-reentrant lock owned by this same thread and the test
+    would time out instead of failing.
+    """
+
+    def __call__(self, _record: object) -> bool:
+        """Accept every record; the filter only exists to be displaced."""
+        return True
+
+    def __del__(self) -> None:
+        """Apply a nested transaction and record that it completed."""
+        (
+            RuntimeConfigBuilder()
+            .with_logger("core", LoggerMutationBuilder().with_level("WARNING"))
+            .apply()
+        )
+        FINALISER_APPLIED.append("done")
+
+
+def test_callback_finalizer_may_reenter_configuration(core_config: None) -> None:
+    """A displaced callback filter must be released outside the transaction.
+
+    Deferring the release until the transaction guard is gone is what makes the
+    nested ``apply()`` below legal. Without that deferral this test deadlocks;
+    ``pytest-timeout`` turns the hang into a failure rather than a stall.
+    """
+    FINALISER_APPLIED.clear()
+    callback = _ReenteringCallback()
+
+    (
+        RuntimeConfigBuilder()
+        .with_filter("cb", PythonCallbackFilterBuilder(callback))
+        .with_logger("core", LoggerMutationBuilder().replace_filters(["cb"]))
+        .apply()
+    )
+    del callback
+
+    (
+        RuntimeConfigBuilder()
+        .with_filter("lvl", NameFilterBuilder().with_prefix("core"))
+        .with_logger("core", LoggerMutationBuilder().replace_filters(["lvl"]))
+        .apply()
+    )
+    gc.collect()
+
+    assert FINALISER_APPLIED == ["done"], (
+        "the displaced callback's finalizer must complete a nested apply() once "
+        f"the transaction guard is released; got {FINALISER_APPLIED}"
+    )
+    logger = get_logger("core")
+    assert logger.level == "WARN", (
+        "the nested mutation's level change must be visible on the live logger; "
+        f"got {logger.level}"
+    )
+    assert logger.log("WARN", "after re-entry") is not None, (
+        "the nested mutation must leave the core logger usable"
     )

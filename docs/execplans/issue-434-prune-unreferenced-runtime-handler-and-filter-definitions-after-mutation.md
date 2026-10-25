@@ -354,6 +354,38 @@ configured filter IDs.
   gates passed on the repair: 788 pytest tests, 5 skipped, 66 snapshots, and
   every Rust feature lane (307/529/540/545 library tests). Committed as
   `f0f51f7` and pushed over SSH; the remote head matches local HEAD.
+- [x] (2026-10-25) Cleared the two CodeRabbit findings on
+  `lock_runtime_transaction` and the drop ordering of displaced owners.
+  - Finding 1 (blocking acquisition under the GIL): the guard was taken with
+    `Mutex::lock()`. `pyo3`'s `detach` requires `T: Ungil`, which on stable
+    means `Send`, and `parking_lot::MutexGuard` is not `Send` unless the
+    crate's `send_guard` feature is enabled — which this crate does not enable.
+    Wrapping the acquisition in `py.detach` therefore cannot compile. The fix
+    polls `try_lock` under the GIL and detaches only `std::thread::yield_now`,
+    so a contended acquisition never parks a GIL-holding thread behind a
+    transaction that needs the GIL to finish. `try_lock_runtime_transaction`
+    is now a named helper so the drop probes can reuse it.
+  - Finding 2 (displaced owners dropped under the guard): a displaced Python
+    callback filter can own the last `Py<PyAny>`, so dropping it runs a
+    finalizer that may re-enter configuration and deadlock on the
+    non-reentrant `RUNTIME_TRANSACTION`. `replace_handlers`,
+    `replace_filters`, `replace_runtime_state` and `disable_existing_loggers`
+    now return what they displaced, and both `apply()` and `build_and_init()`
+    collect those returns into a `DeferredDrop` bundle declared *before* the
+    guard. Rust drops locals in reverse declaration order, so the bundle
+    outlives the guard on early `?` returns as well as the success path, and
+    `DeferredDrop::release()` runs only after `drop(transaction)`.
+  - Regression coverage: a new `config::runtime_transaction_tests` module
+    (five tests) plus one Python test in
+    `tests/test_runtime_definition_lifecycle.py`. The Rust
+    `reentering_drop_can_apply_another_transaction` and the Python
+    `test_callback_finalizer_may_reenter_configuration` were each verified to
+    *fail* — both by deadlock, surfacing as the 30-second timeout — when the
+    deferral was temporarily reverted, and to pass once restored.
+  - Note: the Python test needed a rebuilt extension. A stale
+    `femtologging/_femtologging_rs*.so` from before this change silently
+    exercised the old ordering, so `make build` is required before trusting a
+    Python-level regression result here.
 
 ## Surprises & Discoveries
 
@@ -1091,3 +1123,12 @@ No new external dependencies are introduced.
   handler-filter graph required carrying each attached handler's filter IDs
   into reachability and pruning. Full gates and review must be repeated for
   this candidate because the rebase changed its source tree.
+- 2026-10-25: cleared two CodeRabbit findings on the transaction guard. The
+  guard is now acquired by polling `try_lock` while detaching only a
+  `yield_now` backoff, because `pyo3::detach` cannot carry a
+  `parking_lot::MutexGuard` (it is not `Send`). Owners displaced by a commit
+  are returned rather than dropped and released through a `DeferredDrop`
+  bundle declared before the guard, so a re-entering Python finalizer can no
+  longer deadlock on the non-reentrant transaction mutex. Added five Rust
+  tests and one Python test; the two re-entrancy tests were confirmed to fail
+  by timeout against the old ordering.
