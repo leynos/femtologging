@@ -2,7 +2,6 @@
 
 use pyo3::prelude::*;
 use std::fmt::Arguments;
-use std::process::Command;
 use std::sync::Arc;
 
 use super::{install_global_logger, resolve_logger};
@@ -91,11 +90,7 @@ fn assert_bounded_registry_and_workers(initial_worker_count: usize) {
 }
 
 fn run_isolated_child(test_filter: &str) {
-    let executable = std::env::current_exe().expect("the Rust test executable should be known");
-    let output = Command::new(executable)
-        .env_clear()
-        .args(["--ignored", test_filter, "--nocapture"])
-        .output()
+    let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)
         .expect("the isolated bridge test should start");
     assert!(
         output.status.success(),

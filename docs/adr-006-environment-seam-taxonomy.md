@@ -152,7 +152,13 @@ would bake in the building machine's `PATH`.
 The exception is narrow on purpose. It covers the value a cleared environment
 cannot supply and nothing else; every other variable the child needs is set
 explicitly, and a second read for a different variable would be a new decision
-rather than an extension of this one.
+rather than an extension of this one. Rust test children have one additional
+composition-root input: Cargo's dynamic-library search path (`LD_LIBRARY_PATH`
+on Linux, `DYLD_FALLBACK_LIBRARY_PATH` on macOS, or `PATH` on Windows). The
+test runner supplies it so a cleared child can load the same Python shared
+library as its parent. Tests may forward that one value, under an item-scoped
+expectation, to the isolated child; they must still clear every other inherited
+variable.
 
 ### Tests
 

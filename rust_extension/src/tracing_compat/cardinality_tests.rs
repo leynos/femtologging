@@ -1,7 +1,6 @@
 //! Isolated high-cardinality tests for tracing target resolution.
 
 use pyo3::prelude::*;
-use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use tracing::callsite::{Callsite, Identifier};
 use tracing::field::FieldSet;
@@ -139,11 +138,7 @@ fn assert_saturated_state(
 }
 
 fn run_isolated_child(test_filter: &str) {
-    let executable = std::env::current_exe().expect("the Rust test executable should be known");
-    let output = Command::new(executable)
-        .env_clear()
-        .args(["--ignored", test_filter, "--nocapture"])
-        .output()
+    let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)
         .expect("the isolated tracing test should start");
     assert!(
         output.status.success(),

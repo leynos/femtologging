@@ -281,7 +281,7 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
         )
 
 
-def run_policy_lane(lanes: str) -> int:
+def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
     """Run `make lint-env-policy` over the given lanes.
 
     The lint and Cargo flags are narrowed so the run exercises the recipe's
@@ -291,8 +291,8 @@ def run_policy_lane(lanes: str) -> int:
 
     Returns
     -------
-    int
-        The target's exit code.
+    subprocess.CompletedProcess[str]
+        The target's exit status and captured output.
     """
     make = shutil.which("make")
     assert make is not None, "make must be on PATH to run the policy target"
@@ -308,8 +308,9 @@ def run_policy_lane(lanes: str) -> int:
         ],
         cwd=repo_root(),
         capture_output=True,
+        text=True,
         check=False,
-    ).returncode
+    )
 
 
 @pytest.mark.timeout(620)
@@ -322,9 +323,13 @@ def test_a_failing_lane_fails_the_policy_target() -> None:
     difference. `badfeature` is not a declared feature, so Cargo rejects that
     lane before building anything.
     """
-    assert run_policy_lane("badfeature none") != 0, (
-        "a failing lane must fail lint-env-policy, even when a later lane passes"
+    failing_lane = run_policy_lane("badfeature none")
+    assert failing_lane.returncode != 0, (
+        "a failing lane must fail lint-env-policy, even when a later lane passes\n"
+        f"stdout:\n{failing_lane.stdout}\nstderr:\n{failing_lane.stderr}"
     )
-    assert run_policy_lane("none") == 0, (
-        "lint-env-policy must succeed when every lane passes"
+    passing_lane = run_policy_lane("none")
+    assert passing_lane.returncode == 0, (
+        "lint-env-policy must succeed when every lane passes\n"
+        f"stdout:\n{passing_lane.stdout}\nstderr:\n{passing_lane.stderr}"
     )

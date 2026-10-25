@@ -861,6 +861,25 @@ Milestone 1 detail:
   `make typecheck`, and `make test` sequentially. Rust feature, UI, doc, and 14
   Loom model suites passed; pytest reported 805 passed, 5 skipped, and 66
   snapshots passed. Remote CodeScene re-evaluation is pending the next push.
+- 2026-10-25: hosted CI for `6be95b0` found that the isolated `log` bridge test
+  cleared Cargo's `LD_LIBRARY_PATH`, so its child could not load the matching
+  Python shared library on Python 3.13–3.15. Both bridge tests now share a
+  child-process helper that clears unrelated variables and forwards only the
+  platform loader path; ADR 006 records this test composition-root exception.
+  Python 3.12 also reported the nested environment-policy target returning Make
+  status 2, but the exact target passed when reproduced locally. The contract
+  test now includes captured output if that nested target fails again. After
+  the repair, `make fmt`, `make check-fmt`, `make markdownlint`, `make nixie`,
+  `make lint`, and `make typecheck` all passed. `make test` also passed with
+  805 tests, 5 skipped, and 66 snapshots; it exercised both the corrected
+  log-bridge child and the previously failing environment-policy contract.
+  Hosted CI and CodeScene are pending for this revised candidate.
+- 2026-10-25: the full test run then exposed a `PytestAssertRewriteWarning`
+  because pytest attempted to rewrite the BDD step plugin after import.
+  Registered that plugin for assertion rewriting in the root
+  `tests/conftest.py` before collection. The final full gate sequence passed
+  again, and pytest reported 805 passed, 5 skipped, and 66 snapshots with no
+  warnings.
 
 ## Outcomes & retrospective
 
