@@ -7,22 +7,19 @@ import typing as typ
 import pytest
 
 from femtologging import (
-    ConfigBuilder,
     FileHandlerBuilder,
     HTTPHandlerBuilder,
-    LevelFilterBuilder,
-    LoggerConfigBuilder,
     LoggerMutationBuilder,
     NameFilterBuilder,
     RuntimeConfigBuilder,
     StreamHandlerBuilder,
     get_logger,
-    reset_manager,
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
+
+pytestmark = pytest.mark.usefixtures("reset_logger_state")
 
 # Fragment of the error raised when a transaction declares a definition that
 # no logger in the resulting attachment graph references.
@@ -30,33 +27,6 @@ UNREFERENCED_DEFINITION_MESSAGE = "unreferenced definitions"
 
 # Churn rounds make registry growth visible while keeping the suite fast.
 CHURN_ROUNDS = 32
-
-
-@pytest.fixture(autouse=True)
-def reset_logger_state() -> cabc.Iterator[None]:
-    """Reset the global manager around each test."""
-    reset_manager()
-    yield
-    reset_manager()
-
-
-@pytest.fixture(name="core_config")
-def fixture_core_config(reset_logger_state: None) -> None:
-    """Install the baseline core logger used by lifecycle tests."""
-    (
-        ConfigBuilder()
-        .with_handler("stderr", StreamHandlerBuilder.stderr())
-        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
-        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
-        .with_logger(
-            "core",
-            LoggerConfigBuilder()
-            .with_level("DEBUG")
-            .with_handlers(["stderr"])
-            .with_filters(["lvl"]),
-        )
-        .build_and_init()
-    )
 
 
 def test_runtime_apply_rejects_unreferenced_handler(

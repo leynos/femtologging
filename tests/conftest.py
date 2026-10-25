@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 import femtologging
-from femtologging import FemtoFileHandler
+from femtologging import (
+    ConfigBuilder,
+    FemtoFileHandler,
+    LevelFilterBuilder,
+    LoggerConfigBuilder,
+    StreamHandlerBuilder,
+)
 from tests.stdlib_adapter_support import AdapterProbe, build_adapter_probe
 
 # This BDD step module is loaded as a plugin during collection, so register it
@@ -30,6 +36,33 @@ warnings.filterwarnings(
 type FileHandlerFactory = cabc.Callable[
     [Path, int, int], AbstractContextManager[FemtoFileHandler]
 ]
+
+
+@pytest.fixture
+def reset_logger_state() -> cabc.Iterator[None]:
+    """Reset the global manager around a test that requests isolation."""
+    femtologging.reset_manager()
+    yield
+    femtologging.reset_manager()
+
+
+@pytest.fixture(name="core_config")
+def fixture_core_config(reset_logger_state: None) -> None:
+    """Install the baseline ``core`` logger used by runtime tests."""
+    (
+        ConfigBuilder()
+        .with_handler("stderr", StreamHandlerBuilder.stderr())
+        .with_filter("lvl", LevelFilterBuilder().with_max_level("DEBUG"))
+        .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
+        .with_logger(
+            "core",
+            LoggerConfigBuilder()
+            .with_level("DEBUG")
+            .with_handlers(["stderr"])
+            .with_filters(["lvl"]),
+        )
+        .build_and_init()
+    )
 
 
 @pytest.fixture
