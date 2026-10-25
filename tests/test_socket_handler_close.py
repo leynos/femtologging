@@ -32,7 +32,6 @@ from tests.socket_handler_support import (
     CLOSE_ALLOWANCE_SECONDS,
     CLOSE_BUDGET_MS,
     GIL_POLLS_REQUIRED,
-    StallingHandler,
     StallingServer,
     build_handler,
     handle_expecting_refusal,
@@ -48,18 +47,17 @@ if typ.TYPE_CHECKING:
 @pytest.fixture(name="stalling_server")
 def fixture_stalling_server() -> cabc.Iterator[StallingServer]:
     """Serve a loopback TCP endpoint that accepts and never reads."""
-    StallingHandler.connections = []
-    StallingHandler.arrived = threading.Event()
     with StallingServer() as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             yield server
         finally:
-            for connection in StallingHandler.connections:
+            server.release.set()
+            for connection in server.connections:
                 with contextlib.suppress(OSError):
                     connection.close()
-            StallingHandler.connections.clear()
+            server.connections.clear()
             server.shutdown()
             thread.join(timeout=1)
 
@@ -117,7 +115,6 @@ def test_close_releases_the_gil_while_it_waits(
     handler = stall_the_worker(stalling_server)
 
     polls = 0
-    closed = threading.Event()
     is_probing = True
 
     def probe() -> None:
@@ -126,23 +123,19 @@ def test_close_releases_the_gil_while_it_waits(
             polls += 1
             time.sleep(0.001)
 
-    def close_handler() -> None:
-        handler.close()
-        closed.set()
-
     probe_thread = threading.Thread(target=probe, daemon=True)
     probe_thread.start()
-    closer = threading.Thread(target=close_handler, daemon=True)
-    closer.start()
+    started = time.monotonic()
     try:
-        assert closed.wait(timeout=CLOSE_ALLOWANCE_SECONDS * 4), (
-            "close must return within its allowance"
-        )
+        handler.close()
     finally:
+        elapsed = time.monotonic() - started
         is_probing = False
-        closer.join(timeout=1)
         probe_thread.join(timeout=1)
 
+    assert elapsed < CLOSE_ALLOWANCE_SECONDS, (
+        f"close took {elapsed:.3f}s, allowed {CLOSE_ALLOWANCE_SECONDS}s"
+    )
     assert polls >= GIL_POLLS_REQUIRED, (
         f"the probe thread ran only {polls} times across the close; the "
         "interpreter was not available while close was waiting"
@@ -173,15 +166,19 @@ def test_close_during_a_connect_backoff_returns_promptly() -> None:
     )
 
 
-def test_a_queue_that_outlasts_the_budget_is_abandoned() -> None:
+def test_a_queue_that_outlasts_the_budget_is_abandoned(
+    stalling_server: StallingServer,
+) -> None:
     """A close must not work through an unbounded backlog.
 
-    The worker is occupied by the first record's failing connect, so the rest
-    are still queued when the close arrives. Draining them would cost one
-    connect timeout each, which is a close that runs for as long as the queue
-    is deep.
+    The worker is held in the flood record's stalled write, so the backlog is
+    still queued when close arrives. Draining it would cost one write timeout
+    per record and exceed the close allowance.
     """
-    handler = build_handler("127.0.0.1", unused_port(), BACKLOG_RECORDS * 4).build()
+    handler = stall_the_worker(
+        stalling_server,
+        capacity=BACKLOG_RECORDS * 4,
+    )
     for index in range(BACKLOG_RECORDS):
         handler.handle("test.logger", "INFO", f"backlog {index}")
 

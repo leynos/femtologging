@@ -1,4 +1,3 @@
-# ruff: file-ignore[assert] The shared harness asserts on its callers' behalf.
 """Shared harness for the socket handler's close-path integration tests.
 
 The tests in :mod:`tests.test_socket_handler_close` all need the same two
@@ -18,13 +17,15 @@ import socketserver
 import threading
 import typing as typ
 
+import pytest
+
 import femtologging
 
 if typ.TYPE_CHECKING:
     from femtologging import FemtoSocketHandler, SocketHandlerBuilder
 
 # What ``close`` is allowed to take against a worker that never acknowledges.
-CLOSE_ALLOWANCE_SECONDS = 3.0
+CLOSE_ALLOWANCE_SECONDS = 0.7
 # The handler's flush and shutdown budget.
 CLOSE_BUDGET_MS = 200
 # How long a worker is kept busy, and so how long an unbounded join waits.
@@ -35,6 +36,7 @@ BACKLOG_RECORDS = 16
 # bound is on the interpreter, not the handler: a busy loop in another thread
 # either gets scheduled or it does not.
 GIL_POLLS_REQUIRED = 10
+FRAME_HEADER_BYTES = 4
 
 # A record larger than the receive buffer a stalled peer will ever offer. A
 # frame small enough to fit returns from the write at once and never blocks,
@@ -63,17 +65,17 @@ def recv_exactly(stream: socket.socket, length: int) -> bytes:
 
 
 class StallingHandler(socketserver.BaseRequestHandler):
-    """Accept a connection and never read from it."""
-
-    # Held rather than dropped: closing the connection lets the client's write
-    # fail immediately and end the very block this server exists to create.
-    connections: typ.ClassVar[list[socket.socket]] = []
-    arrived: typ.ClassVar[threading.Event]
+    """Accept a frame header, then hold the connection without its payload."""
 
     def handle(self) -> None:
-        """Record the connection and stall without draining it."""
-        self.connections.append(self.request)
-        self.arrived.set()
+        """Read the frame header, then stall without draining its payload."""
+        server = typ.cast("StallingServer", self.server)
+        server.connections.append(self.request)
+        header = recv_exactly(self.request, FRAME_HEADER_BYTES)
+        if len(header) != FRAME_HEADER_BYTES:
+            return
+        server.arrived.set()
+        server.release.wait()
 
 
 class StallingServer(socketserver.ThreadingTCPServer):
@@ -84,7 +86,9 @@ class StallingServer(socketserver.ThreadingTCPServer):
 
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), StallingHandler)
+        self.connections: list[socket.socket] = []
         self.arrived = threading.Event()
+        self.release = threading.Event()
 
 
 def unused_port() -> int:
@@ -124,11 +128,10 @@ def stall_the_worker(
 ) -> FemtoSocketHandler:
     """Build a handler whose worker is known to be blocked in a write.
 
-    The flood record is what puts it there: the peer accepts the connection and
-    never reads, so the write cannot finish until the handler's own write
-    timeout expires. That is the state every close assertion in the test module
-    needs, since a close against an idle worker would be answered at once and
-    prove nothing.
+    The flood record is what puts it there: the peer reads the frame header,
+    then holds the connection without reading the payload. That is the state
+    every close assertion in the test module needs, since a close against an
+    idle worker would be answered at once and prove nothing.
 
     Returns
     -------
@@ -138,10 +141,11 @@ def stall_the_worker(
     host, port = server.server_address[:2]
     handler = build_handler(str(host), int(port), capacity).build()
     handler.handle("test.logger", "INFO", FLOOD_MESSAGE)
-    assert server.arrived.wait(timeout=ARRIVAL_ALLOWANCE_SECONDS), (
-        "the worker must reach the endpoint before the close is issued, "
-        "otherwise the close is not the path under test"
-    )
+    if not server.arrived.wait(timeout=ARRIVAL_ALLOWANCE_SECONDS):
+        pytest.fail(
+            "the worker must reach the endpoint before the close is issued, "
+            "otherwise the close is not the path under test"
+        )
     return handler
 
 

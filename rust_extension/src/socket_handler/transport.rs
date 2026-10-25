@@ -41,6 +41,9 @@ pub struct TcpTransport {
 }
 
 impl TcpTransport {
+    /// Resolve the configured host and port into candidate socket addresses.
+    ///
+    /// Example: a hostname with IPv4 and IPv6 records returns both candidates.
     fn socket_addrs(&self) -> io::Result<Vec<SocketAddr>> {
         (self.host.as_str(), self.port)
             .to_socket_addrs()
@@ -65,6 +68,9 @@ pub struct TlsOptions {
 }
 
 impl TlsOptions {
+    /// Build a TLS connector using this option set.
+    ///
+    /// Example: `insecure_skip_verify` permits the test peer's self-signed certificate.
     fn connector(&self) -> io::Result<TlsConnector> {
         let mut builder = TlsConnector::builder();
         if self.insecure_skip_verify {
@@ -77,9 +83,12 @@ impl TlsOptions {
 
 /// Active socket connection state.
 pub enum ActiveConnection {
+    /// A connected TCP stream without TLS.
     PlainTcp(TcpStream),
+    /// A connected TCP stream protected by TLS.
     Tls(Box<TlsStream<TcpStream>>),
     #[cfg(unix)]
+    /// A connected Unix domain socket.
     Unix(UnixStream),
 }
 
@@ -175,32 +184,53 @@ pub fn connect_transport(
 ) -> io::Result<ActiveConnection> {
     let deadline = Instant::now() + connect_timeout;
     match transport {
-        SocketTransport::Tcp(config) => match &config.tls {
-            Some(tls) => connect_tls(config, tls, deadline, signal),
-            None => {
-                let stream = connect_tcp(config, deadline, signal)?;
-                Ok(ActiveConnection::PlainTcp(stream))
-            }
-        },
-        SocketTransport::Unix(config) => {
-            #[cfg(unix)]
-            {
-                if signal.is_aborted() {
-                    return Err(budget_spent());
-                }
-                let stream = UnixStream::connect(&config.path)?;
-                Ok(ActiveConnection::Unix(stream))
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = (config, deadline, signal);
-                Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "unix domain sockets are not supported on this platform",
-                ))
-            }
-        }
+        SocketTransport::Tcp(config) => connect_tcp_transport(config, deadline, signal),
+        SocketTransport::Unix(config) => connect_unix_transport(config, signal),
     }
+}
+
+/// Connect a TCP transport, performing a TLS handshake when configured.
+///
+/// Example: plain TCP returns a `PlainTcp` connection without a handshake.
+fn connect_tcp_transport(
+    config: &TcpTransport,
+    deadline: Instant,
+    signal: &ShutdownSignal,
+) -> io::Result<ActiveConnection> {
+    match &config.tls {
+        Some(tls) => connect_tls(config, tls, deadline, signal),
+        None => connect_tcp(config, deadline, signal).map(ActiveConnection::PlainTcp),
+    }
+}
+
+/// Connect a Unix socket unless shutdown has already aborted the attempt.
+///
+/// Example: a live signal connects to the configured socket path.
+#[cfg(unix)]
+fn connect_unix_transport(
+    config: &UnixTransport,
+    signal: &ShutdownSignal,
+) -> io::Result<ActiveConnection> {
+    if signal.is_aborted() {
+        Err(budget_spent())
+    } else {
+        UnixStream::connect(&config.path).map(ActiveConnection::Unix)
+    }
+}
+
+/// Return the platform's unsupported error for Unix socket transports.
+///
+/// Example: this path reports `Unsupported` on Windows.
+#[cfg(not(unix))]
+fn connect_unix_transport(
+    config: &UnixTransport,
+    signal: &ShutdownSignal,
+) -> io::Result<ActiveConnection> {
+    let _ = (config, signal);
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "unix domain sockets are not supported on this platform",
+    ))
 }
 
 /// Connect, then shake hands within what is left of the same budget.

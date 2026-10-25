@@ -314,11 +314,11 @@ socket_handler = (
   exceed the configured `max_frame_size` are dropped.
 - `handler.flush()` forces the worker to flush the active socket.
 - `handler.close()` waits for the worker for at most the handler's write
-  timeout. A worker that acknowledges the shutdown in that time is joined. One
-  that does not, typically because it is blocked writing to a collector that
-  has stopped reading, is abandoned with a warning rather than blocking the
-  caller for the rest of its backoff. An abandoned worker stops where it is
-  instead of draining: records still queued when the deadline passes are
+  timeout. During that window, each pending record gets at most one best-effort
+  attempt, without retries. A worker that acknowledges the shutdown in time is
+  joined. One that does not, typically because it is blocked writing to a
+  collector that has stopped reading, is detached with a warning rather than
+  joined past the deadline. Records still queued when the deadline passes are
   discarded, and the count is warned about. The same bound applies when the
   handler is dropped without an explicit `close()`, and the wait runs with the
   GIL released.
@@ -338,16 +338,15 @@ socket_handler = (
   `.with_json_format()` mirror the socket/file builder style. Validation
   failures raise `ValueError` before the handler is built.
 - `handler.close()` waits for the worker for at most the handler's write
-  timeout. A worker that acknowledges the shutdown in that time is joined. One
-  that does not, typically because it is still retrying a request against an
-  endpoint that has stopped answering, is abandoned with a warning instead of
-  blocking the caller for the rest of its backoff.
-- An abandoned worker stops where it is rather than draining. Records still
-  queued when the shutdown deadline passes are discarded, and the count is
-  warned about, so a queue that cannot be delivered inside the timeout costs
-  those records rather than extending the close. The same bound applies when
-  the handler is dropped without an explicit `close()`, and the wait runs with
-  the GIL released.
+  timeout. During that window, each pending record gets at most one best-effort
+  attempt, without retries. A worker that acknowledges the shutdown in time is
+  joined. One that does not, typically because a request already in flight is
+  waiting on an endpoint that has stopped answering, is detached with a warning
+  rather than joined past the deadline. Records still queued when the deadline
+  passes are discarded, and the count is warned about, so a queue that cannot
+  be delivered inside the timeout costs those records rather than extending the
+  close. The same bound applies when the handler is dropped without an explicit
+  `close()`, and the wait runs with the GIL released.
 
 ### Custom Python handlers
 

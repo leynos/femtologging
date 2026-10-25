@@ -1,16 +1,13 @@
 //! Contracts for `FemtoHTTPHandler`'s close path.
 //!
-//! Split out of `tests.rs`, which reached the 400-line module limit, and split
-//! here rather than anywhere else because these two tests share a fixture
-//! nothing else uses: a server that accepts a request and never answers it.
+//! Split out of `tests.rs`, which reached the 400-line module limit. The
+//! stalled-request and full-queue tests share a fixture that accepts a request
+//! and never answers it.
 //!
-//! The first two are the two halves of one rule. One asserts that `close`
-//! returns inside its flush budget, and says it abandoned the worker, when the
-//! worker never acknowledges; the other that a worker which does acknowledge
-//! is joined rather than abandoned. The second exists because the first does
-//! not need it: abandoning unconditionally passed every other test in the
-//! crate. The third covers the step before the acknowledgement: queueing the
-//! shutdown command on a channel the stuck worker has left full.
+//! These tests cover three close outcomes. A stalled request is closed inside
+//! the shutdown budget, either cooperatively or by detaching the worker, and is
+//! not retried; a full command queue still lets close return inside its budget;
+//! and a healthy worker drains its records and is joined.
 //!
 //! Included with `#[path]` from `tests.rs`, the way
 //! `response_classification_tests.rs` already is, so both files stay inside
@@ -24,18 +21,16 @@ use std::time::{Duration, Instant};
 
 use rstest::rstest;
 
-use super::{build_http_handler, send_info_record, spawn_mock_server, tcp_listener};
+use super::{build_http_handler, send_info_record, spawn_retry_server, tcp_listener};
 use crate::http_handler::FemtoHTTPHandler;
 use crate::http_handler::config::{HTTPHandlerConfig, HTTPMethod};
 
 /// Spawn a server that accepts connections, reads each request, and never
 /// replies.
 ///
-/// A worker talking to it blocks in `ureq` until the agent's own timeout
-/// expires, then retries, and keeps doing so until its backoff deadline. It is
-/// therefore busy, and not reading its command channel, for a window the test
-/// chooses. That is what makes the close path's behaviour on a worker that
-/// never acknowledges observable rather than incidental.
+/// A worker talking to it blocks in `ureq` until its request timeout expires.
+/// The close test waits for the request to arrive before closing, so it
+/// exercises an in-flight operation rather than relying on a scheduling race.
 ///
 /// The accepted streams are held rather than dropped: closing them would let
 /// `ureq` fail immediately and end the very block this fixture exists to
@@ -74,7 +69,7 @@ const CLOSE_BUDGET: Duration = Duration::from_millis(200);
 /// What `close` is allowed to take. Generous against `CLOSE_BUDGET` so a
 /// loaded host cannot fail it, and far below `BUSY_WINDOW` so an unbounded
 /// join cannot pass it.
-const CLOSE_ALLOWANCE: Duration = Duration::from_secs(3);
+const CLOSE_ALLOWANCE: Duration = Duration::from_millis(700);
 
 /// Build a handler pointed at a server that never replies, with a command
 /// queue holding `capacity` entries.
@@ -98,35 +93,27 @@ fn build_stuck_handler(addr: SocketAddr, capacity: usize) -> FemtoHTTPHandler {
     FemtoHTTPHandler::with_config(config)
 }
 
-/// Scenario: the worker is stuck mid-request when the handler is closed, so it
-/// never acknowledges the shutdown.
+/// Scenario: the worker is stuck mid-request when the handler is closed.
 ///
-/// Invariant: `close` returns within its own flush budget rather than waiting
-/// for the worker. The shutdown request is bounded by `flush_timeout`, but the
-/// join that followed it was not, so a timed-out acknowledgement still blocked
-/// the caller for as long as the worker took to finish: here, the whole
-/// backoff deadline. `close` runs from `Drop`, so a logger being torn down
-/// could hold a thread for a window nothing in the configuration describes.
+/// Invariant: close stays inside its budget whether the request finishes
+/// cooperatively or the deadline expires and the worker is detached. Neither
+/// outcome may start another attempt for this record.
 ///
-/// The two figures are deliberately far apart. `CLOSE_BUDGET` is 200ms and
-/// `BUSY_WINDOW` is ten seconds, and the assertion sits at three seconds:
-/// fifteen times the budget, so a loaded host cannot fail it, and a third of
-/// the window, so an unbounded join cannot pass it. A test whose verdict
-/// depends on how busy the machine is asserts the machine.
+/// `BUSY_WINDOW` is ten seconds, and the assertion allows the budget plus
+/// 500ms for scheduling: enough room for a loaded host, and far short of the
+/// window an unbounded join would wait out.
 ///
 /// Proved by reverting: with the bound removed, this fails with an elapsed
-/// time around the ten-second window. The abandonment warning is asserted
-/// too, since a quick return alone could be a join that happened to be fast.
+/// time around the ten-second window. The close outcome is logged, and the
+/// absence of a second request proves that cancellation stopped this record's
+/// retries.
 ///
-/// `#[serial]` because all three tests here read one process-wide log
-/// capture: two assert the abandonment message is present, and the healthy
-/// close asserts it is absent, and these are the only tests in the binary
-/// that emit it.
+/// `#[serial]` because this module and `drain_tests.rs` share one process-wide
+/// log capture. The stalled test accepts either close warning, while the
+/// healthy-close test asserts that abandonment was not reported.
 #[rstest]
 #[serial_test::serial]
-fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
-    tcp_listener: io::Result<TcpListener>,
-) {
+fn close_cancels_a_stalled_request_within_its_budget(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let (addr, requests) = spawn_silent_server(tcp_listener).expect("spawn silent server");
     crate::handlers::file::test_support::install_test_logger();
@@ -141,34 +128,33 @@ fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
         .recv_timeout(REQUEST_ALLOWANCE)
         .expect("the worker should reach the silent server");
 
-    assert_close_abandons_within_budget(&mut handler);
+    let logged = close_within_budget(&mut handler);
+    assert!(
+        logged.iter().any(|entry| {
+            entry.message.contains(SHUTDOWN_DROP_MARKER) || entry.message.contains(ABANDON_MARKER)
+        }),
+        "close should report the cancelled record or worker detachment: {logged:?}"
+    );
+    assert!(
+        requests.recv_timeout(Duration::from_millis(300)).is_err(),
+        "the cancelled record must not be retried after close"
+    );
 }
 
-/// Close `handler`, asserting it returned inside the allowance and said it
-/// abandoned the worker.
-///
-/// Both halves are asserted because each alone admits a wrong close: a fast
-/// return with no warning could be a join that happened to be quick, and the
-/// warning with a slow return is the unbounded wait this contract forbids.
-fn assert_close_abandons_within_budget(handler: &mut FemtoHTTPHandler) {
+/// Close `handler`, asserting it returned within the deadline and margin.
+fn close_within_budget(
+    handler: &mut FemtoHTTPHandler,
+) -> Vec<crate::handlers::file::test_support::CapturedLog> {
     let started = Instant::now();
     handler.close();
     let elapsed = started.elapsed();
 
     assert!(
         elapsed < CLOSE_ALLOWANCE,
-        "close must not outlast its flush budget when the worker never \
-         acknowledges: took {elapsed:?}, allowed {CLOSE_ALLOWANCE:?}, the \
-         worker stays busy for {BUSY_WINDOW:?}"
+        "close must not outlast its flush budget and scheduling margin: \
+         took {elapsed:?}, allowed {CLOSE_ALLOWANCE:?}"
     );
-    let logged = crate::handlers::file::test_support::take_logged_messages();
-    assert!(
-        logged
-            .iter()
-            .any(|entry| entry.message.contains(ABANDON_MARKER)),
-        "a close that did not wait for its worker must say it abandoned it; \
-         close logged {logged:?}"
-    );
+    crate::handlers::file::test_support::take_logged_messages()
 }
 
 /// Scenario: the worker is stuck mid-request and its command queue is full
@@ -203,11 +189,13 @@ fn close_returns_within_its_budget_when_the_queue_is_full(tcp_listener: io::Resu
         "the queue should be full, or the shutdown send is not under test"
     );
 
-    assert_close_abandons_within_budget(&mut handler);
+    close_within_budget(&mut handler);
 }
 
-/// The message `abandon_worker` logs, and the marker both close tests turn on.
+/// The message `abandon_worker` logs; the stalled and healthy close tests use it.
 const ABANDON_MARKER: &str = "abandoning it rather than blocking the caller";
+/// The warning emitted when an in-flight request ends after shutdown begins.
+const SHUTDOWN_DROP_MARKER: &str = "FemtoHTTPHandler dropped 1 records during shutdown";
 
 /// Scenario: the worker answers the shutdown request promptly.
 ///
@@ -235,12 +223,34 @@ fn a_close_whose_worker_answers_does_not_report_abandoning_it(
     tcp_listener: io::Result<TcpListener>,
 ) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, _rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
+    let (addr, requests) =
+        spawn_retry_server(tcp_listener, vec![200, 200]).expect("spawn mock server");
     crate::handlers::file::test_support::install_test_logger();
     let mut handler = build_http_handler(addr);
-    send_info_record(&handler, "healthy close").expect("record should be queued");
+    send_info_record(&handler, "healthy record one").expect("first record should be queued");
+    send_info_record(&handler, "healthy record two").expect("second record should be queued");
 
     handler.close();
+
+    let captured: Vec<_> = (0..2)
+        .map(|_| {
+            requests
+                .recv_timeout(Duration::from_secs(2))
+                .expect("graceful close should deliver each queued record")
+        })
+        .collect();
+    assert!(
+        captured
+            .iter()
+            .any(|request| request.body.contains("msg=healthy+record+one")),
+        "the first record should reach the collector: {captured:?}"
+    );
+    assert!(
+        captured
+            .iter()
+            .any(|request| request.body.contains("msg=healthy+record+two")),
+        "the second record should reach the collector: {captured:?}"
+    );
 
     let abandoned: Vec<_> = crate::handlers::file::test_support::take_logged_messages()
         .into_iter()

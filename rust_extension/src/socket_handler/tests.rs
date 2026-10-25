@@ -2,7 +2,7 @@
 
 use std::{
     io::{self, Read},
-    net::{SocketAddr, TcpListener},
+    net::{Shutdown, SocketAddr, TcpListener},
     sync::{Arc, Barrier, mpsc},
     thread,
     time::{Duration, Instant},
@@ -17,7 +17,7 @@ use crate::{
     level::FemtoLevel,
     log_record::FemtoLogRecord,
     shutdown_signal::ShutdownSignal,
-    socket_handler::FemtoSocketHandler,
+    socket_handler::{FemtoSocketHandler, SocketHandlerConfig},
 };
 
 use super::{
@@ -115,6 +115,38 @@ fn send_info_record(handler: &mut FemtoSocketHandler, message: &str) -> Result<(
     handler.handle(FemtoLogRecord::new("test", FemtoLevel::Info, message))
 }
 
+/// Accept one TLS client, report its hello, then hold the handshake open.
+///
+/// The release sender drops the peer after the close assertion, letting the
+/// detached worker leave its in-flight handshake and discard queued records.
+///
+/// # Examples
+///
+/// ```ignore
+/// let (addr, hello, release) = spawn_stalled_tls_peer(listener)?;
+/// hello.recv_timeout(Duration::from_secs(2))?;
+/// release.send(()).expect("release the stalled peer");
+/// ```
+fn spawn_stalled_tls_peer(
+    listener: TcpListener,
+) -> io::Result<(SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>)> {
+    let addr = listener.local_addr()?;
+    let (hello_tx, hello_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut tls_record_header = [0_u8; 5];
+        if stream.read_exact(&mut tls_record_header).is_err() {
+            return;
+        }
+        let _ = hello_tx.send(());
+        let _ = release_rx.recv();
+    });
+    Ok((addr, hello_rx, release_tx))
+}
+
 fn recv_payload(
     notify_rx: &FrameRx,
     expectation: &str,
@@ -160,7 +192,15 @@ fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener
         arrange_sent_record(tcp_listener, Some(barrier.clone()), "close")
             .expect("arrange handler and record");
 
+    let close_budget = SocketHandlerConfig::default().write_timeout;
+    let started = Instant::now();
     handler.close();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < close_budget + Duration::from_millis(500),
+        "close took {elapsed:?}, allowance was {:?}",
+        close_budget + Duration::from_millis(500)
+    );
     barrier.wait();
 
     let decoded = recv_payload(&notify_rx, "payload received after close").expect("decode payload");
@@ -174,6 +214,9 @@ mod close;
 // what the handler does with the acknowledgement.
 #[path = "drain_tests.rs"]
 mod drain;
+
+#[path = "unit_tests.rs"]
+mod unit;
 
 #[rstest]
 fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
@@ -230,64 +273,71 @@ fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
 }
 
 #[rstest]
-fn frame_payload_enforces_limit() {
-    let payload = vec![0u8; 32];
-    let framed = frame_payload(&payload, 16);
-    assert!(
-        framed.is_none(),
-        "payload larger than limit must be rejected",
+#[serial_test::serial]
+fn close_interrupts_backoff_after_a_failed_socket_write(tcp_listener: io::Result<TcpListener>) {
+    let listener = tcp_listener.expect("bind ephemeral listener");
+    let addr = listener.local_addr().expect("listener has address");
+    let (reset_tx, reset_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept client connection");
+        stream
+            .shutdown(Shutdown::Both)
+            .expect("reset the peer connection");
+        reset_tx.send(()).expect("signal the reset peer");
+    });
+
+    crate::handlers::file::test_support::install_test_logger();
+    let close_budget = Duration::from_millis(500);
+    let mut handler = FemtoSocketHandler::with_config(SocketHandlerConfig {
+        capacity: 1,
+        connect_timeout: Duration::from_secs(2),
+        write_timeout: close_budget,
+        max_frame_size: 32 * 1024 * 1024,
+        transport: SocketTransport::Tcp(TcpTransport {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+            tls: None,
+        }),
+        backoff: BackoffPolicy {
+            base: Duration::from_secs(30),
+            cap: Duration::from_secs(30),
+            deadline: Duration::from_secs(60),
+            ..BackoffPolicy::default()
+        },
+        ..SocketHandlerConfig::default()
+    });
+    let backoffs = handler.wait_notification();
+    let large_message = "x".repeat(16 * 1024 * 1024);
+    send_info_record(&mut handler, &large_message).expect("queue large record");
+    reset_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("server should accept and reset the connection");
+    backoffs
+        .recv_timeout(Duration::from_secs(5))
+        .expect("failed write should enter retry backoff");
+    let worker_logs = crate::handlers::file::test_support::wait_for_message(
+        "FemtoSocketHandler write failed",
+        Duration::from_secs(2),
     );
-}
-
-#[rstest]
-fn frame_payload_prefixes_length() {
-    let payload = vec![1u8, 2, 3];
-    let framed = frame_payload(&payload, 16).expect("payload fits frame");
-    assert_eq!(&framed[..4], &3u32.to_be_bytes());
-    assert_eq!(&framed[4..], payload);
-}
-
-#[rstest]
-fn serialize_record_round_trips() {
-    let record = FemtoLogRecord::new("logger", FemtoLevel::Info, "hello");
-    let payload = serialize_record(&record).expect("serialize record");
-    let decoded: Payload = rmp_serde::from_slice(&payload).expect("decode payload");
-    assert_eq!(decoded.logger, "logger");
-    assert_eq!(decoded.level, "INFO");
-    assert_eq!(decoded.message, "hello");
-}
-
-#[rstest]
-fn backoff_enforces_minimum_sleep() {
-    let policy = BackoffPolicy {
-        base: Duration::from_millis(0),
-        cap: Duration::from_millis(0),
-        deadline: Duration::from_millis(50),
-        ..BackoffPolicy::default()
-    };
-    let mut backoff = BackoffState::new(policy);
-    let now = Instant::now();
-    let sleep = backoff
-        .next_sleep(now)
-        .expect("first backoff value must exist");
     assert!(
-        sleep >= Duration::from_millis(10),
-        "sleep {:?} should respect minimum",
-        sleep
+        worker_logs
+            .iter()
+            .any(|entry| entry.message.contains("FemtoSocketHandler write failed")),
+        "the peer reset must fail the record write; got {worker_logs:?}"
     );
-}
 
-#[rstest]
-fn backoff_respects_deadline() {
-    let policy = BackoffPolicy {
-        base: Duration::from_millis(10),
-        cap: Duration::from_millis(10),
-        deadline: Duration::from_millis(20),
-        ..BackoffPolicy::default()
-    };
-    let mut backoff = BackoffState::new(policy);
-    let now = Instant::now();
-    assert!(backoff.next_sleep(now).is_some());
-    let expired = now + Duration::from_millis(25);
-    assert!(backoff.next_sleep(expired).is_none());
+    let started = Instant::now();
+    handler.close();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < close_budget + Duration::from_millis(500),
+        "close should interrupt the long write backoff: took {elapsed:?}"
+    );
+    let close_logs = crate::handlers::file::test_support::take_logged_messages();
+    assert!(
+        close_logs
+            .iter()
+            .all(|entry| !entry.message.contains("abandoning it")),
+        "close during backoff should be acknowledged, got {close_logs:?}"
+    );
 }

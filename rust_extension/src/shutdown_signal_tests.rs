@@ -77,9 +77,9 @@ fn wait_elapses_when_nothing_interrupts_it() {
 #[rstest]
 fn a_shutdown_wakes_a_waiting_worker() {
     let signal = Arc::new(ShutdownSignal::new());
+    let waits = signal.notify_on_wait();
     let waiting = signal.clone();
     let sleeping = thread::spawn(move || waiting.wait(LONG_DELAY));
-    let waits = signal.notify_on_wait();
     waits
         .recv_timeout(SETTLE)
         .expect("the worker should reach its wait");
@@ -105,10 +105,9 @@ fn a_shutdown_wakes_a_waiting_worker() {
 #[rstest]
 fn an_abort_wakes_a_waiting_worker_told_to_stop() {
     let signal = Arc::new(ShutdownSignal::new());
-    signal.begin_shutdown(Instant::now() + BUDGET);
+    let waits = signal.notify_on_wait();
     let waiting = signal.clone();
     let sleeping = thread::spawn(move || waiting.wait(LONG_DELAY));
-    let waits = signal.notify_on_wait();
     waits
         .recv_timeout(SETTLE)
         .expect("the worker should reach its wait");
@@ -137,22 +136,17 @@ fn a_wait_started_after_the_deadline_reports_aborted() {
     assert_eq!(signal.wait(LONG_DELAY), WaitOutcome::Aborted);
 }
 
-/// Scenario: a wait is interrupted by a phase change, then run again.
+/// Scenario: a wait begins after a graceful shutdown has already started.
 ///
-/// Invariant: the second wait returns on its own delay. The interrupted wait
-/// returns by way of the loop rather than by returning from it, so a phase
-/// comparison cached before the park would let the second call return
-/// immediately and spin. A worker that busy-loops through the rest of its
-/// backlog is not a worker that has stopped.
-///
-/// The assertion is that the second call takes a real delay; a spin would
-/// return in microseconds.
+/// Invariant: it reports the existing shutdown immediately instead of
+/// sleeping. Workers must not retry after a shutdown begins, and the drain
+/// path has no retry sleeps to wait out.
 #[rstest]
-fn a_wait_after_an_interrupted_wait_still_sleeps() {
+fn a_wait_started_during_shutdown_reports_it_without_sleeping() {
     let signal = Arc::new(ShutdownSignal::new());
+    let waits = signal.notify_on_wait();
     let waiting = signal.clone();
     let sleeping = thread::spawn(move || waiting.wait(LONG_DELAY));
-    let waits = signal.notify_on_wait();
     waits
         .recv_timeout(SETTLE)
         .expect("the worker should reach its wait");
@@ -164,13 +158,15 @@ fn a_wait_after_an_interrupted_wait_still_sleeps() {
 
     assert!(!signal.is_aborted(), "the budget has barely been touched");
 
-    let delay = Duration::from_millis(50);
     let started = Instant::now();
-    signal.wait(delay);
+    let outcome = signal.wait(Duration::from_secs(2));
     assert!(
-        started.elapsed() >= delay,
-        "a shutdown in progress must not turn the next wait into a spin: \
-         it returned after {:?}, before its {delay:?} delay",
+        outcome == WaitOutcome::ShutdownRequested,
+        "a wait during graceful shutdown must report the phase, got {outcome:?}"
+    );
+    assert!(
+        started.elapsed() < BUDGET,
+        "a wait during graceful shutdown must not sleep: it returned after {:?}",
         started.elapsed()
     );
 }

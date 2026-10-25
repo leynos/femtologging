@@ -8,11 +8,16 @@ proceeds.
 
 Status: IN PROGRESS
 
-All four milestones are implemented. What remains is the deterministic gate run
-and the CodeRabbit review, neither of which has been executed yet: the build
-admission pool on this host has been saturated for the whole session, so no
-Rust compilation has completed and nothing in this plan is yet confirmed by a
-compiler. See `Surprises & discoveries`.
+All four milestones are implemented. The current candidate is rebased onto
+`origin/main` at `d234990f7f4c3a7c000215cf9b90ad87d5d43c25`; the five feature
+commits replay unchanged. Retry 19 passed all deterministic gates, including
+formatting, lint, typecheck, Rust and Python tests, Markdown lint and Mermaid
+validation. Pytest reported 791 passed, 5 skipped and 1 warning, with 66
+snapshots passed. CodeRabbit found two paths that silently dropped the
+in-flight record when its shutdown budget expired. Both are fixed and covered
+by worker tests. The follow-up ExecPlan update also passed its documentation
+gates. Two later CodeRabbit requests were rate-limited and returned no review
+findings; their cooldowns and retry history are recorded below.
 
 Related: [Issue #436](https://github.com/leynos/femtologging/issues/436).
 
@@ -55,7 +60,7 @@ handler = (
 # ... records are logged against a collector that has stopped answering ...
 started = time.monotonic()
 handler.close()
-assert time.monotonic() - started < 3.0  # bounded by write_timeout, not by the
+assert time.monotonic() - started < 0.7  # bounded by write_timeout, not by the
 # ten-second backoff deadline
 ```
 
@@ -120,9 +125,9 @@ where a user meets it.
 ## The central design problem
 
 A blocking socket call cannot be cancelled. The standard library offers no way
-to interrupt a `connect` or a `write` that is already in the kernel, and
-neither does `ureq` or `native-tls`. What a bounded close can control is
-therefore not what a worker is doing, but three other things:
+to interrupt a `connect` or a `write` that is already in the kernel, and neither
+`ureq` nor `native-tls` does. What a bounded close can control is therefore
+not what a worker is doing, but three other things:
 
 - whether the worker is *waiting* anywhere it could be woken - the retry sleeps,
   and the blocking receive on its command channel;
@@ -142,8 +147,7 @@ documents says so, and `close` handles it by not waiting.
 The second problem is a choice about what a close *means*. Once the deadline
 passes, processing the queue is the one thing that cannot be allowed, because
 each record left in it costs a connect timeout. So a shutdown is either a drain
-
-- every queued record attempted once, within the budget - or an abort, and the
+(every queued record attempted once, within the budget) or an abort, and the
 two are decided by the clock rather than by the queue's depth. Records that
 miss the deadline are dropped with a count, not retried past it.
 
@@ -204,10 +208,10 @@ suppressing its poison result.
 - Risk: the close contracts are timing tests, and timing tests fail on loaded
   hosts.
   - Severity: high. Likelihood: medium.
-  - Mitigation: every budget asserted is compared against a figure at least an
-    order of magnitude away - a 200ms budget against a 10s busy window - with
-    the assertion at 3s. Tests wait on events (`arrived`, `accepted`,
-    notification channels) rather than sleeping to reach a state.
+  - Mitigation: every budget asserted allows the configured 200ms plus 500ms
+    for scheduling, still more than an order of magnitude below the 10s busy
+    window. Tests wait on events (`arrived`, `accepted`, notification
+    channels) rather than sleeping to reach a state.
 - Risk: the `#[cfg(test)]`-only `notify_on_wait` hook is production code that
   exists for tests.
   - Severity: low. Likelihood: low.
@@ -325,8 +329,8 @@ Trace links, from issue #436 to milestone:
   blocking close/wait path" map to EP-M3.
 - The four HTTP test criteria and the four socket test criteria map to EP-M4.
 - "Assert wall-clock upper bounds with a reasonable scheduling margin" maps to
-  the constants in EP-M4's tests, each of which is at least a factor of fifteen
-  above the budget it measures.
+  the constants in EP-M4's tests, each of which allows the measured budget plus
+  500ms for scheduling.
 
 ## Surprises & discoveries
 
@@ -370,6 +374,31 @@ Trace links, from issue #436 to milestone:
   clean throughout, because import-block ordering is a `check` rule and not a
   formatting one. The remaining 8 needed hand edits; assuming a formatting pass
   makes `make lint` clean would have wasted a cycle.
+- (2026-10-23) The versioned ureq 2.12.1 `AgentBuilder` documentation confirms
+  that `.timeout()` bounds the overall request, including DNS, connection,
+  redirects and response reading, but slow DNS may exceed it because DNS
+  resolution cannot be interrupted. `.timeout_connect()` takes precedence over
+  `.timeout()` for connection setup. This supports the existing boundary: close
+  stops waiting at its deadline and detaches a worker still inside an in-flight
+  request; DNS resolution remains outside cooperative cancellation.
+- (2026-10-23) The first post-rebase full gate run found a Whitaker complexity
+  finding in `connect_transport`; extracting the TCP/TLS and Unix branches into
+  helpers removed the nested condition clusters without a suppression. The
+  following test run exposed setup assumptions: immediate 503 responses and
+  refused connects let the backlog finish before close, and a 1 MiB frame did
+  not reliably fill this host's loopback send buffer. The regression fixtures
+  now coordinate on a stalled HTTP response or TLS ClientHello, and wait on the
+  log capture condition variable for detached workers to report discarded
+  records. A shutdown-signal test now expects an immediate result when a wait
+  begins after shutdown has already started.
+- (2026-10-23) Self-review found a race in both worker drains: the worker can
+  observe the separate shutdown signal before the queued shutdown command, then
+  acknowledge that command while it is still processing later records. That
+  made the acknowledgement an unreliable barrier for the handler's join. Both
+  drains now retain queued shutdown senders until after their remaining work;
+  the socket does its final silent flush first. Focused tests queue a shutdown
+  before a record held in HTTP I/O or a TLS handshake and assert that no
+  acknowledgement is available until the record completes.
 
 ## Decision log
 
@@ -520,31 +549,30 @@ Trace links, from issue #436 to milestone:
   `make typecheck` onward is blocked behind it, because each of those gates
   compiles: `make test`, the Loom lanes, and the four `make lint-python` stages
   that have still never run.
-- Not started: the CodeRabbit review, the commit, the push and the draft pull
-  request. The plan's own rule puts the deterministic gates first: CodeRabbit
-  is not to be asked about what a gate would have caught.
+- 2026-10-16 checkpoint: CodeRabbit review, push and draft pull request had not
+  started. Deterministic gates had priority over review.
 - 2026-10-16: `make lint-python` run in full for the first time, and green -
   all six stages. Two things had to happen first. Pylint's `C0302` had to be
   answered: `tests/test_socket_handler_close.py` was 409 lines against the
   project's 400-line limit, which is both a `pyproject.toml` setting
   (`max-module-lines = 400`, with `too-many-lines` deliberately enabled to
   "flag modules that have grown large enough to deserve splitting") and an
-  AGENTS.md rule, so the file was split rather than the message suppressed.
-  The shared harness - the stalling `socketserver` pair, `stall_the_worker`,
+  AGENTS.md rule, so the file was split rather than the message suppressed. The
+  shared harness - the stalling `socketserver` pair, `stall_the_worker`,
   `build_handler`, `unused_port`, `recv_exactly` and the timing constants -
   moved to `tests/socket_handler_support.py`, following the flat
   `tests/logger_support.py` convention; the test module keeps the fixture and
   the seven tests. 283 and 165 lines now. And the compile supervisor had to
-  come back: `build-limits-status` reports `capacity 4, held 3, healthy,
-  caching through sccache`, so the 19:31 outage cleared without intervention.
-  With both in place, Ruff, `interrogate` (100%), Pylint (10.00/10),
-  `df12-python-lints` (10.00/10), `ambrleaks` and `skylos --gate` all passed -
-  the last three for the first time.
+  come back: `build-limits-status` reports
+  `capacity 4, held 3, healthy, caching through sccache`, so the 19:31 outage
+  cleared without intervention. With both in place, Ruff, `interrogate` (100%),
+  Pylint (10.00/10), `df12-python-lints` (10.00/10), `ambrleaks` and
+  `skylos --gate` all passed - the last three for the first time.
 - 2026-10-16: second gate run, delegated to `scrutineer`. Four gates passed:
   `make check-fmt`, `make markdownlint`, `make nixie` and
   `make loom-runner-test` (14 tests). Three did not, and two of the three were
-  real defects that nothing before this run could have found, because both
-  live in code that a `--lib` cdylib build never reaches.
+  real defects that nothing before this run could have found, because both live
+  in code that a `--lib` cdylib build never reaches.
   - `make lint` failed in `lint-env-policy` with `E0061`: the new `signal`
     parameter on `connect_transport` had not been added to its call site in
     `socket_handler/tests.rs`. `lint-python` and `lint-lanes-test` had already
@@ -564,11 +592,182 @@ Trace links, from issue #436 to milestone:
   `http_handler/worker.rs` imports only `Instant`. `connect_transport` has two
   call sites and both are corrected; no other signature this change alters has
   a stale caller.
+- 2026-10-23: refreshed the principal remote's `main` to
+  `da1d82e8530ea62415d0d6f97078ed945b76b69b`. The feature series was linear from
+  `27ea9feffb1452f626531f75024f2e20e7484b0c`, with no merge commits, and the
+  branch had no remote ref or stack membership. Preserved old head, base, and
+  target under `refs/codex/recovery/issue-436-20261023/`. Rebased the feature
+  series with Git's text merge driver because Weave was selected only by
+  host-global attributes. `range-diff` matched the four implementation commits
+  and this plan; the spelling-config-only commit was dropped because current
+  `main` already contains the regenerated, narrower policy. The current guide
+  now states the one-attempt drain, detach-after-deadline, and GIL-release
+  behaviour. `make check-fmt`, `make markdownlint`, and `make nixie` passed for
+  the documentation update; full candidate gates remain pending.
+- 2026-10-23: the first full post-rebase candidate run passed `make fmt`,
+  `make check-fmt`, `make lint` and `make typecheck`. `make test` passed its
+  Python and Loom stages, then reported 323 passed, 1 failed and 1 ignored in
+  the no-default-features Rust lane. The sole failure was the HTTP full-queue
+  close test expecting an abandonment warning. Its log showed the request
+  timing out, the worker observing shutdown and processing the queued record,
+  then acknowledging before the deadline; the test had required detachment even
+  though this cooperative completion is valid. The assertion is now split: that
+  full-queue case checks the deadline bound, while the non-acknowledging case
+  retains the abandonment assertion. The healthy-close case now verifies that
+  both queued records reached the collector, and close-time assertions allow
+  the configured 200ms budget plus 500ms for scheduling. The corrected
+  candidate passed the full sequence: `make fmt`, `make check-fmt`, `make lint`,
+  `make typecheck`, and `make test` (763 passed, 5 skipped, 1 warning),
+  followed by `make markdownlint` and `make nixie`. Formatting made no tracked
+  changes.
+- 2026-10-23: a later self-review found that a queued `Shutdown` command could
+  be acknowledged before the worker finished draining later records. The
+  acknowledgement now follows the full drain, discard warning and socket final
+  flush. New worker-level tests hold a request or TLS handshake open behind a
+  queued shutdown command to verify the acknowledgement stays pending. The full
+  code gate sequence must be rerun before CodeRabbit review. The first rerun
+  stopped at `make lint`: the socket worker test lacked imports for its three
+  transport types. The test import is corrected; no later gate ran in that
+  attempt. A subsequent run stopped with `No space left on device` while
+  writing the Rust incremental target and `.uv-cache` temporary files. The
+  `make clean` target removed 17.3GiB of generated Rust artefacts; the
+  filesystem now has 50GiB free. The retry-path bounds now allow the configured
+  200ms plus 500ms, and the backoff tests explicitly assert that closing does
+  not start another retry. The post-turn checks will rerun the requested gates.
+- 2026-10-24: rebased the five-commit feature series onto
+  `5377ceb482a7ad57dca7a8d7b67abeb0f15a560c`, which adds private Rust item
+  documentation and expands lint coverage. Restored the uncommitted
+  acknowledgement correction and tests. The HTTP retry-budget test now covers
+  both perpetual 429 and 503 responses, the socket capacity-one test asserts
+  `QueueFull` explicitly, and the pending-record close test checks the
+  write-timeout budget plus 500ms. No final gate has run on the rebased
+  candidate yet.
+- 2026-10-24: the scope tolerance was exceeded: the candidate changes 25 files
+  under `rust_extension/src` and 3 under `tests/`, above the plan's 20-file
+  limit. The user explicitly directed continuation until a draft PR or an
+  intractable impasse, requested the push and draft PR, and removed any
+  wall-clock limit. That direction supersedes this plan's stop trigger for this
+  issue. The cross-cutting files are required to implement and test the agreed
+  shutdown contract across both handlers, the shared signal, socket transport,
+  Python bindings and user documentation. Continue through final gates, review,
+  commit, push and draft PR.
+
+- 2026-10-24: CodeRabbit completed after the deterministic gates passed and
+  reported six minor findings: a stale close-time assertion comment, grammar,
+  HTTP abandonment wording, a Markdown sentence rendered as a list, an
+  inaccurate scheduling-margin statement, and the scope decision record added
+  above. All six findings were corrected and reviewed.
+- 2026-10-24: the next full gate run reached the private-doc contract test after
+  all Clippy lanes and test-support documentation checks passed. Its documented
+  fixture timed out after 620 seconds while compiling the full feature matrix;
+  shared compiler admission was healthy, but other repository builds held the
+  queue. The documented fixture now has a 20-minute timeout and the expected-
+  failure fixture retains 10 minutes, with a 20-second margin for the combined
+  test. This allows the successful feature-matrix run to complete without
+  relaxing the lint assertion. Rerun all gates before publication.
+- 2026-10-25: the sequential candidate run passed formatting, lint, typecheck,
+  and the no-default-feature Rust suite. The Python-feature Rust suite found
+  that a stalled request can finish cooperatively at the shutdown deadline;
+  this test first observed the worker's counted-drop warning. The separate
+  full-queue case continues to cover bounded command insertion. The first rerun
+  then failed in lint's strict second-pass Rust lane because the old
+  abandonment assertion helper had become unused. After removing that helper,
+  the next run passed lint and typecheck, but the same stalled-request test
+  observed the deadline-triggered detach warning before the worker's eventual
+  drop warning. The request and acknowledgement race at the same deadline, so
+  the test now accepts either report while asserting the close bound and no
+  retry after the request timeout. Rerun the full gate sequence before review.
+- 2026-10-25: the next post-turn gate attempt again ran out of filesystem
+  space. Trybuild could not create a temporary file under
+  `rust_extension/target`, Pylint failed while importing from its cached
+  environment, and Nixie could not create a temporary directory. Removed only
+  this worktree's generated Cargo target with `cargo clean`; this reclaimed
+  16.5GiB and left 109GiB free. No source files changed. Rerun the full gates
+  from this clean target before review.
+- 2026-10-25: after the clean-target gates and the 15-minute review observation,
+  CodeRabbit reported five minor findings: two Oxendict spelling corrections, a
+  file-level Ruff assertion suppression, and two related races in the HTTP
+  retry-delay test. Removed the suppression in favour of `pytest.fail`,
+  corrected the comments, and made the HTTP test pause the worker until close
+  publishes shutdown before releasing it. Its backoff is five seconds so an
+  uninterruptible wait also has a clear wall-clock failure. Rerun all
+  deterministic gates before the final review and publication.
+- 2026-10-25: retry 15 passed formatting, lint, and typecheck, then found the
+  socket healthy-close test's default one-second acknowledgement budget could
+  expire in the `log-compat` lane under host load, despite a preceding flush
+  acknowledgement. Raised only that positive-path fixture's timeout to five
+  seconds; the other socket tests retain their short budgets and explicit
+  elapsed-time assertions. Rerun the full deterministic sequence before review.
+- 2026-10-25: the final review found five more minor issues: two Loom-comment
+  spelling errors, a Python backlog test that used refused connects instead of
+  a stalled write, stale HTTP close-test comments, and rate-limited drops not
+  being flushed before worker acknowledgement. The Python backlog now holds the
+  worker in its flood write; the close-test comments match their assertions;
+  `RateLimitedWarner::flush` emits pending counts despite the rate limit, and
+  both workers flush those counts before their final acknowledgements. Rerun
+  all deterministic gates before the next review.
+- 2026-10-25: the next review found shutdown-budget early returns that could
+  lose the in-flight HTTP or socket record without incrementing its drop
+  counter. Both workers now count and warn when an expired budget refuses a
+  request, connect, or write. Added serialized worker tests for the aborted
+  HTTP request and expired socket connect and write budgets. The stalled TLS
+  close test also asserts the in-flight record is reported as a shutdown drop
+  when its connect budget expires. Run the complete deterministic gates before
+  the next review.
+- 2026-10-25: refreshed `origin/main` to
+  `d234990f7f4c3a7c000215cf9b90ad87d5d43c25`. Saved the prior feature head and
+  dirty worktree under `refs/codex/recovery/issue-436-20261025-*`, rebased the
+  five-commit series, and restored the dirty changes. `git range-diff` shows
+  all five commits unchanged; the merge base is now the refreshed
+  `origin/main`. Rerun the full deterministic gates on this rebased candidate
+  before review.
+- 2026-10-25: retry 18 passed formatting, all lint lanes and typecheck. The
+  no-default Rust suite passed (333 passed, 1 ignored), all six trybuild cases
+  passed, and doctests passed (27 passed, 13 ignored). The Python-feature Rust
+  suite found that the stalled TLS test waited for a later connect-error log
+  after its shutdown-drop marker; the logger helper returns as soon as the
+  marker arrives. The assertion now checks the marker itself, which is the
+  shutdown-drop contract under test. Rerun the complete gate sequence.
+- 2026-10-25: retry 19 passed `make fmt`, `make check-fmt`, `make lint`,
+  `make typecheck`, `make test`, `make markdownlint` and `make nixie`. Python
+  pytest reported 791 passed, 5 skipped and 1 warning; 66 snapshots passed. All
+  Rust feature suites, six-case trybuild matrices and doctests passed. The
+  final CodeRabbit request was rate-limited. The user requires a randomized
+  45-90 minute foreground `vsleep` before retrying; the ExecPlan update also
+  requires its documentation gates before that review.
+- 2026-10-25: the ExecPlan status update passed `make fmt`, `make check-fmt`,
+  `make markdownlint` and `make nixie`. The post-cooldown CodeRabbit request
+  was rate-limited again with a reported wait of 2m58s and returned no
+  findings. The user requires another randomized 45-90 minute foreground
+  `vsleep` before a further review retry.
+- 2026-10-25: the full source gate run passed, but pytest still emitted one
+  `PytestAssertRewriteWarning`: the logging-context step module had already
+  been imported when a test module declared it as a plugin. Moving that
+  declaration into the top-level `tests/conftest.py` makes pytest load it
+  before collection; removing the per-test declaration avoids the late second
+  registration. Full collection found 796 items without a warning. The final
+  sequential run passed `make fmt`, `make check-fmt`, `make lint`,
+  `make typecheck`, `make test`, `make markdownlint` and `make nixie`; pytest
+  reported 791 passed and 5 skipped with no warning. The documentation checks
+  passed again after this status update: `make fmt`, `make check-fmt`,
+  `make markdownlint` reported 0 errors, and `make nixie` validated all
+  diagrams.
 
 ## Outcomes & retrospective
 
-Not yet written. It is due once the gates have run, because the useful part of
-it is what the compiler and the tests said about the design above. The compiler
-has now spoken twice: once favourably about production code, and once
-adversarially about the test modules, where it found a stale call site and an
-unused import. The tests have still not spoken at all.
+The first corrected candidate passed every deterministic gate, including the
+full Rust feature lanes, Loom tests, Python tests, formatting, lint, typecheck,
+Markdown lint and Mermaid validation. An early test failure incorrectly
+required a cooperative full-queue worker to be detached; that case now checks
+the deadline without requiring detachment. A later self-review found a real
+acknowledgement-ordering race that the existing handler-level tests did not
+force. The new focused worker tests hold an in-flight request or TLS handshake
+open behind a queued shutdown and verify that the acknowledgement remains
+pending. The latest test run showed that the stalled HTTP request can either
+finish near the deadline or still be in flight when close detaches the worker.
+The test accepts either warning, checks the close bound, and waits beyond the
+request timeout to ensure no retry begins. Retry 19 passed the full
+deterministic gate sequence, and the follow-up status update passed its
+documentation gates. Two later CodeRabbit requests were rate-limited and
+returned no findings; the user-directed cooldowns are recorded in the decision
+log.

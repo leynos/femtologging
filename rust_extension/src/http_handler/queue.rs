@@ -27,8 +27,11 @@ use crate::{
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
 )]
 pub enum HTTPCommand {
+    /// Carry one record for HTTP serialization and delivery.
     Record(FemtoLogRecord),
+    /// Flush earlier commands and acknowledge completion.
     Flush(Sender<()>),
+    /// Begin shutdown and acknowledge after worker cleanup.
     Shutdown(Sender<()>),
 }
 
@@ -44,10 +47,10 @@ pub(crate) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
 
 /// Throw away everything left in the queue, without touching the network.
 ///
-/// Returns how many records were discarded. Flush and shutdown senders still
-/// receive their acknowledgement: their callers are blocked on a reply, and a
-/// worker on its way out is the last thing that will send one.
-pub(crate) fn discard_rest(rx: &Receiver<HTTPCommand>) -> u64 {
+/// Returns how many records were discarded. Flush senders receive their
+/// acknowledgement immediately; shutdown senders are saved for the worker's
+/// final action, after it has finished all remaining cleanup.
+pub(crate) fn discard_rest(rx: &Receiver<HTTPCommand>, shutdown_acks: &mut Vec<Sender<()>>) -> u64 {
     let mut discarded = 0_u64;
     loop {
         match rx.try_recv() {
@@ -55,9 +58,7 @@ pub(crate) fn discard_rest(rx: &Receiver<HTTPCommand>) -> u64 {
             Ok(HTTPCommand::Flush(ack)) => {
                 let _ = ack.send(());
             }
-            Ok(HTTPCommand::Shutdown(ack)) => {
-                let _ = ack.send(());
-            }
+            Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,
         }
     }

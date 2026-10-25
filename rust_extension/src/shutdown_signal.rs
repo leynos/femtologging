@@ -72,6 +72,7 @@ pub enum WaitOutcome {
 /// Shared as an `Arc` between a handler and its worker: the handler moves the
 /// phase on, and the worker waits for it between attempts.
 pub struct ShutdownSignal {
+    /// Current lifecycle phase used to bound and cancel worker operations.
     phase: Mutex<Phase>,
     /// Notified on every phase change. The phase is mutated under the guard and
     /// the notification is sent while still holding it, which is the
@@ -89,7 +90,16 @@ pub struct ShutdownSignal {
     /// long enough to guess that on a loaded host is a test that measures the
     /// host. This channel is that knowledge.
     #[cfg(test)]
-    waiting: Mutex<Option<mpsc::Sender<()>>>,
+    waiting: Mutex<Option<WaitHook>>,
+}
+
+/// Test coordination for observing and pausing a worker's next timed wait.
+#[cfg(test)]
+struct WaitHook {
+    /// Notifies the test when the worker reaches the wait.
+    started: mpsc::Sender<()>,
+    /// Releases the worker when the test has observed shutdown.
+    resume: Option<mpsc::Receiver<()>>,
 }
 
 impl ShutdownSignal {
@@ -253,8 +263,36 @@ impl ShutdownSignal {
     #[cfg(test)]
     pub fn notify_on_wait(&self) -> mpsc::Receiver<()> {
         let (tx, rx) = mpsc::channel();
-        *self.waiting.lock() = Some(tx);
+        *self.waiting.lock() = Some(WaitHook {
+            started: tx,
+            resume: None,
+        });
         rx
+    }
+
+    /// Pause the next wait until the test releases it.
+    ///
+    /// This lets a test place a shutdown between a worker reaching backoff and
+    /// the worker entering its timed wait, without relying on the backoff's
+    /// random jitter to leave enough time for the test thread to run.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (started, resume) = signal.pause_next_wait();
+    /// // Wait until the worker reports that it reached backoff.
+    /// started.recv().expect("worker reached the wait");
+    /// resume.send(()).expect("resume the worker");
+    /// ```
+    #[cfg(test)]
+    pub fn pause_next_wait(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        *self.waiting.lock() = Some(WaitHook {
+            started: started_tx,
+            resume: Some(resume_rx),
+        });
+        (started_rx, resume_tx)
     }
 
     /// Tell the test that registered with [`notify_on_wait`] that a wait has
@@ -263,11 +301,18 @@ impl ShutdownSignal {
     /// [`notify_on_wait`]: ShutdownSignal::notify_on_wait
     #[cfg(test)]
     fn announce_wait(&self) {
-        if let Some(tx) = self.waiting.lock().take() {
-            let _ = tx.send(());
+        let hook = self.waiting.lock().take();
+        if let Some(hook) = hook {
+            let _ = hook.started.send(());
+            if let Some(resume) = hook.resume {
+                let _ = resume.recv();
+            }
         }
     }
 
+    /// Return a snapshot of the phase while holding the state lock briefly.
+    ///
+    /// Example: `is_aborted` treats an expired drain snapshot as aborted.
     fn current(&self) -> Phase {
         *self.phase.lock()
     }

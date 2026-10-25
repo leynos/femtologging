@@ -286,7 +286,7 @@ fn spawn_retry_server(
                 break;
             };
             let response = format!(
-                "HTTP/1.1 {} {}\r\nContent-Length: 0\r\n\r\n",
+                "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                 status,
                 status_text(status)
             );
@@ -300,6 +300,7 @@ fn spawn_retry_server(
 
 #[path = "close_tests.rs"]
 mod close;
+
 #[path = "retry_tests.rs"]
 mod retry;
 // Contracts for what the worker does with the shutdown signal, as opposed to
