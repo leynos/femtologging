@@ -21,7 +21,7 @@ mod validation;
 
 pub(crate) use collection_mutation::CollectionMutation;
 pub(crate) use commit::{
-    BuiltRegistries, PlannedMutation, apply_commit, build_filters, build_handlers,
+    BuiltRegistries, CommitInputs, PlannedMutation, apply_commit, build_filters, build_handlers,
 };
 pub use logger_mutation::LoggerMutationBuilder;
 pub(crate) use validation::{

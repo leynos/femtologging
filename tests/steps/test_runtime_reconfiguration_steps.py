@@ -166,17 +166,22 @@ def logger_suppresses(name: str, level: str) -> None:
     assert actual is None, f"expected logger {name} to suppress level {level}"
 
 
+def _assert_mutation_failed_with(
+    error: BaseException, expected_type: type[BaseException], msg: str
+) -> None:
+    """Assert a captured mutation failure has the expected type and message."""
+    assert isinstance(error, expected_type), (
+        f"expected {expected_type.__name__} but got {error!r}"
+    )
+    assert msg in str(error), f"expected {msg!r} in {error!r}"
+
+
 @then(parsers.parse('the runtime mutation fails with key error containing "{msg}"'))
 def mutation_fails_with_key_error(
     runtime_mutation_error: BaseException, msg: str
 ) -> None:
     """Assert that the captured runtime mutation failure mentions the ID."""
-    assert isinstance(runtime_mutation_error, KeyError), (
-        f"expected KeyError but got {runtime_mutation_error!r}"
-    )
-    assert msg in str(runtime_mutation_error), (
-        f"expected {msg!r} in {runtime_mutation_error!r}"
-    )
+    _assert_mutation_failed_with(runtime_mutation_error, KeyError, msg)
 
 
 @then(parsers.parse('the runtime mutation fails with value error containing "{msg}"'))
@@ -184,12 +189,7 @@ def mutation_fails_with_value_error(
     runtime_mutation_error: BaseException, msg: str
 ) -> None:
     """Assert that the captured runtime mutation failure mentions the reason."""
-    assert isinstance(runtime_mutation_error, ValueError), (
-        f"expected ValueError but got {runtime_mutation_error!r}"
-    )
-    assert msg in str(runtime_mutation_error), (
-        f"expected {msg!r} in {runtime_mutation_error!r}"
-    )
+    _assert_mutation_failed_with(runtime_mutation_error, ValueError, msg)
 
 
 @then(parsers.parse('logger "{name}" runtime state matches snapshot'))
