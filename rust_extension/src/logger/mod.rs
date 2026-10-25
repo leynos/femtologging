@@ -46,6 +46,7 @@ pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 /// Maximum time a flush waits for the worker's acknowledgement, in milliseconds.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
+/// Threshold applied to loggers when the manager creates them.
 pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
 
 /// Basic logger used for early experimentation.

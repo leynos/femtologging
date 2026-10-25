@@ -2,6 +2,7 @@
 
 use log::{LevelFilter, Log};
 
+use super::max_level::{conservative_max_level_from, map_femto_to_log_filter};
 use super::*;
 use crate::handler::FemtoHandlerTrait;
 use crate::test_utils::collecting_handler::CollectingHandler;

@@ -9,17 +9,31 @@ use once_cell::sync::Lazy;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
+/// Shared benchmark setup, initialized once before Criterion measures cases.
 static BRIDGE: Lazy<BridgeBench> = Lazy::new(BridgeBench::initialize);
 
+/// Adapter and metadata used by the Rust log bridge benchmark cases.
 struct BridgeBench {
+    /// Installed adapter whose target-aware `enabled` path is measured.
     adapter: FemtoLogAdapter,
+    /// Metadata for a registered target that accepts its level.
     accepted: Metadata<'static>,
+    /// Metadata for a registered target that rejects its level.
     rejected: Metadata<'static>,
+    /// Metadata whose Rust module path is normalized before lookup.
     normalized: Metadata<'static>,
+    /// Metadata for a valid target absent from the logger index.
     unknown: Metadata<'static>,
 }
 
 impl BridgeBench {
+    /// Create loggers and install the adapter before any timed iteration.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let benchmark_setup = BridgeBench::initialize();
+    /// ```
     fn initialize() -> Self {
         Python::initialize();
         let setup_result = Python::attach(|py| {
@@ -47,16 +61,38 @@ impl BridgeBench {
     }
 }
 
+/// Set up a named logger threshold for one benchmark target.
+///
+/// # Examples
+///
+/// ```ignore
+/// set_logger_level(py, "service.worker", FemtoLevel::Warn)?;
+/// ```
 fn set_logger_level(py: Python<'_>, name: &str, level: FemtoLevel) -> PyResult<()> {
     let logger = get_logger_for_log_compat(py, name)?;
     logger.borrow(py).set_level(level);
     Ok(())
 }
 
+/// Build static log metadata for a benchmark target and level.
+///
+/// # Examples
+///
+/// ```ignore
+/// let metadata = metadata("service.worker", Level::Debug);
+/// assert_eq!(metadata.target(), "service.worker");
+/// ```
 fn metadata(target: &'static str, level: Level) -> Metadata<'static> {
     Metadata::builder().target(target).level(level).build()
 }
 
+/// Construct a diagnostic payload that makes disabled argument work measurable.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(expensive_argument().split(':').count(), 128);
+/// ```
 fn expensive_argument() -> String {
     (0..128)
         .map(|value| format!("{value:04x}"))
@@ -64,6 +100,14 @@ fn expensive_argument() -> String {
         .join(":")
 }
 
+/// Register and run the Rust log bridge hot-path benchmark cases.
+///
+/// # Examples
+///
+/// ```ignore
+/// let mut criterion = Criterion::default();
+/// bench_log_bridge(&mut criterion);
+/// ```
 fn bench_log_bridge(c: &mut Criterion) {
     let bridge = &*BRIDGE;
     let mut group = c.benchmark_group("log_bridge_enabled");

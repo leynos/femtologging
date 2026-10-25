@@ -84,6 +84,7 @@ struct Manager {
 /// Process-wide logger registry; callers hold its lock during registry access.
 static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Python-free mirror of logger thresholds, locked after `MANAGER`.
 #[cfg(feature = "log-compat")]
 static LOGGER_LEVEL_INDEX: Lazy<RwLock<HashMap<String, Arc<AtomicU8>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
@@ -98,6 +99,13 @@ fn take_runtime_state(mgr: &mut Manager) -> RuntimeStateSnapshot {
 ///
 /// A name is considered invalid when it is empty, begins or ends with a dot,
 /// or contains consecutive dots which would create empty segments.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(is_valid_logger_name("service.api"));
+/// assert!(!is_valid_logger_name("service..api"));
+/// ```
 pub(crate) fn is_valid_logger_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
@@ -105,10 +113,25 @@ pub(crate) fn is_valid_logger_name(name: &str) -> bool {
         && !name.split('.').any(str::is_empty)
 }
 
+/// Return whether `name` cannot be used as a logger identifier.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(is_invalid_logger_name("service..api"));
+/// assert!(!is_invalid_logger_name("service.api"));
+/// ```
 fn is_invalid_logger_name(name: &str) -> bool {
     !is_valid_logger_name(name)
 }
 
+/// Add a logger's shared threshold to the Python-free lookup index.
+///
+/// # Examples
+///
+/// ```ignore
+/// index_logger_level(py, "service.worker", &logger);
+/// ```
 #[cfg(feature = "log-compat")]
 fn index_logger_level(py: Python<'_>, name: &str, logger: &Py<FemtoLogger>) {
     let level = logger.borrow(py).level_handle();
@@ -116,6 +139,12 @@ fn index_logger_level(py: Python<'_>, name: &str, logger: &Py<FemtoLogger>) {
 }
 
 /// Return a registered logger's live threshold without accessing Python.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(registered_logger_level("missing"), None);
+/// ```
 #[cfg(feature = "log-compat")]
 pub(crate) fn registered_logger_level(name: &str) -> Option<FemtoLevel> {
     LOGGER_LEVEL_INDEX
@@ -125,6 +154,13 @@ pub(crate) fn registered_logger_level(name: &str) -> Option<FemtoLevel> {
 }
 
 /// Snapshot registered levels for conservative facade maximum calculation.
+///
+/// # Examples
+///
+/// ```ignore
+/// let levels = registered_logger_levels();
+/// assert!(levels.iter().all(|level| *level <= FemtoLevel::Critical));
+/// ```
 #[cfg(feature = "log-compat")]
 pub(crate) fn registered_logger_levels() -> Vec<FemtoLevel> {
     LOGGER_LEVEL_INDEX
