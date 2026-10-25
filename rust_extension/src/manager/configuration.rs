@@ -75,6 +75,26 @@ pub(crate) struct DisplacedAttachments {
     pub(crate) runtime_state: Option<RuntimeStateSnapshot>,
 }
 
+/// Identity and registry handle used while adopting a staged logger.
+struct StagedLogger<'a> {
+    /// Name used as the manager registry key.
+    name: &'a str,
+    /// Logger object prepared before the manager lock was acquired.
+    logger: Py<FemtoLogger>,
+}
+
+/// Fully resolved values that replace one logger's current state.
+struct LoggerStateUpdate {
+    /// Handler attachments that replace the current handlers.
+    handlers: Vec<HandlerAttachment>,
+    /// Filters that replace the current filters.
+    filters: Vec<Arc<dyn FemtoFilter>>,
+    /// Optional level update for the logger.
+    level: Option<FemtoLevel>,
+    /// Optional propagation update for the logger.
+    propagate: Option<bool>,
+}
+
 /// Apply a fully prepared configuration as one atomic transition.
 ///
 /// Preparation has validated every logger name, resource reference and scalar
@@ -141,8 +161,26 @@ fn apply_prepared_logger(
         level,
         propagate,
     } = plan;
-    let logger = adopt_logger(py, loggers, &name, staged, displaced);
-    apply_logger_plan(py, &logger, handlers, filters, level, propagate, displaced);
+    let logger = adopt_logger(
+        py,
+        loggers,
+        StagedLogger {
+            name: &name,
+            logger: staged,
+        },
+        displaced,
+    );
+    apply_logger_plan(
+        py,
+        &logger,
+        LoggerStateUpdate {
+            handlers,
+            filters,
+            level,
+            propagate,
+        },
+        displaced,
+    );
 
     (name, LoggerAttachmentState::new(handler_ids, filter_ids))
 }
@@ -151,17 +189,16 @@ fn apply_prepared_logger(
 fn adopt_logger(
     py: Python<'_>,
     loggers: &mut HashMap<String, Py<FemtoLogger>>,
-    name: &str,
-    staged: Py<FemtoLogger>,
+    staged: StagedLogger<'_>,
     displaced: &mut DisplacedAttachments,
 ) -> Py<FemtoLogger> {
-    match loggers.entry(name.to_owned()) {
+    match loggers.entry(staged.name.to_owned()) {
         Entry::Occupied(entry) => {
             // Defer the unused staged worker's teardown until after unlock.
-            displaced.unused_loggers.push(staged);
+            displaced.unused_loggers.push(staged.logger);
             entry.get().clone_ref(py)
         }
-        Entry::Vacant(entry) => entry.insert(staged).clone_ref(py),
+        Entry::Vacant(entry) => entry.insert(staged.logger).clone_ref(py),
     }
 }
 
@@ -169,12 +206,15 @@ fn adopt_logger(
 fn apply_logger_plan(
     py: Python<'_>,
     logger: &Py<FemtoLogger>,
-    handlers: Vec<HandlerAttachment>,
-    filters: Vec<Arc<dyn FemtoFilter>>,
-    level: Option<FemtoLevel>,
-    propagate: Option<bool>,
+    update: LoggerStateUpdate,
     displaced: &mut DisplacedAttachments,
 ) {
+    let LoggerStateUpdate {
+        handlers,
+        filters,
+        level,
+        propagate,
+    } = update;
     let logger = logger.borrow(py);
     let mut old_handlers = logger.replace_handlers(handlers);
     displaced.handlers.append(&mut old_handlers);
