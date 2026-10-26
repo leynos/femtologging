@@ -117,6 +117,31 @@ def test_every_checkout_disables_persisted_credentials() -> None:
             ), "Release and build checkouts never keep their repository token on disk."
 
 
+def test_workflows_do_not_override_reserved_runner_variables() -> None:
+    """Custom environment values do not shadow runner-owned variables."""
+    reserved = {"GITHUB_REPOSITORY", "RUNNER_OS", "RUNNER_TEMP"}
+    for workflow in (RELEASE_WORKFLOW, BUILD_WORKFLOW):
+        document = _workflow(workflow)
+        jobs = mapping(document.get("jobs"), subject=f"{workflow} jobs")
+        environments = []
+        if "env" in document:
+            environments.append(mapping(document["env"], subject="workflow env"))
+        for job_name, job in jobs.items():
+            job_document = mapping(job, subject=job_name)
+            if "env" in job_document:
+                environments.append(
+                    mapping(job_document["env"], subject=f"{job_name} env")
+                )
+            environments.extend(
+                mapping(step["env"], subject="step env")
+                for step in objects(job_document.get("steps", []), subject="steps")
+                if "env" in step
+            )
+        assert all(not reserved.intersection(env) for env in environments), (
+            f"{workflow} must not overwrite GitHub-owned environment variables."
+        )
+
+
 def test_linux_wheel_builds_prepare_openssl_perl_and_target_compilers() -> None:
     """Linux wheel containers provide Perl modules and target C compilers."""
     x86_build = sole_workflow_step(

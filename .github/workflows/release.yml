@@ -139,14 +139,14 @@ jobs:
         shell: bash
         env:
           TAG_NAME: ${{ github.ref_name }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          RUNNER_TEMP: ${{ runner.temp }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TEMP_PATH: ${{ runner.temp }}
           IS_PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
         run: |
           set -euo pipefail
-          release_list_path="${RUNNER_TEMP}/releases.json"
+          release_list_path="${RELEASE_TEMP_PATH}/releases.json"
           gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/releases" > "${release_list_path}"
+            "repos/${RELEASE_REPOSITORY}/releases" > "${release_list_path}"
           release_state="$(python3 - "${release_list_path}" "${TAG_NAME}" <<'PY'
           import json
           from pathlib import Path

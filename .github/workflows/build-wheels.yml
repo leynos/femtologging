@@ -147,10 +147,10 @@ jobs:
       - name: Verify vendored OpenSSL build tools
         shell: bash
         env:
-          RUNNER_OS: ${{ runner.os }}
+          BUILD_RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
-          case "${RUNNER_OS}" in
+          case "${BUILD_RUNNER_OS}" in
             Windows)
               echo 'C:\Strawberry\perl\site\bin' >> "${GITHUB_PATH}"
               echo 'C:\Strawberry\perl\bin' >> "${GITHUB_PATH}"
@@ -159,7 +159,7 @@ jobs:
           esac
           command -v perl
           perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
-          case "${RUNNER_OS}" in
+          case "${BUILD_RUNNER_OS}" in
             macOS)
               command -v make
               command -v cc
@@ -167,7 +167,7 @@ jobs:
             Windows)
               ;;
             *)
-              echo "Unexpected runner OS: ${RUNNER_OS}" >&2
+              echo "Unexpected runner OS: ${BUILD_RUNNER_OS}" >&2
               exit 1
               ;;
           esac
@@ -211,10 +211,10 @@ jobs:
       - name: Verify vendored OpenSSL build tools
         shell: bash
         env:
-          RUNNER_OS: ${{ runner.os }}
+          BUILD_RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
-          test "${RUNNER_OS}" = Linux
+          test "${BUILD_RUNNER_OS}" = Linux
           command -v perl
           perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
           command -v make
@@ -295,7 +295,7 @@ jobs:
         env:
           DIST_DIRECTORY: dist
           PROBE_PATH: ${{ github.workspace }}/scripts/release_wheel_probe.py
-          RUNNER_TEMP: ${{ runner.temp }}
+          WHEEL_RUNNER_TEMP: ${{ runner.temp }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -307,7 +307,7 @@ jobs:
           python3.12 -m venv .venv-wheel
           wheel_python="${PWD}/.venv-wheel/bin/python"
           "${wheel_python}" -m pip install --no-deps --no-index "${wheels[0]}"
-          wheel_probe_dir=$(mktemp -d "${RUNNER_TEMP}/femtologging-wheel-probe.XXXXXX")
+          wheel_probe_dir=$(mktemp -d "${WHEEL_RUNNER_TEMP}/femtologging-wheel-probe.XXXXXX")
           (
             cd "${wheel_probe_dir}"
             "${wheel_python}" -I "${PROBE_PATH}"
@@ -317,10 +317,10 @@ jobs:
         env:
           SDIST_PATH: ${{ steps.sdist.outputs.path }}
           PROBE_PATH: ${{ github.workspace }}/scripts/release_wheel_probe.py
-          RUNNER_TEMP: ${{ runner.temp }}
+          WHEEL_RUNNER_TEMP: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          scratch_dir=$(mktemp -d "${RUNNER_TEMP}/femtologging-sdist-rebuild.XXXXXX")
+          scratch_dir=$(mktemp -d "${WHEEL_RUNNER_TEMP}/femtologging-sdist-rebuild.XXXXXX")
           python3.12 -m venv .venv-sdist
           sdist_python="${PWD}/.venv-sdist/bin/python"
           mkdir -p "${scratch_dir}/wheelhouse"
