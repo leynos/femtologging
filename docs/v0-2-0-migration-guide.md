@@ -163,6 +163,23 @@ logger creation.
 
 ______________________________________________________________________
 
+## `StdlibHandlerAdapter` honours the wrapped handler level
+
+`StdlibHandlerAdapter` now checks two thresholds in order. `FemtoLogger` first
+checks its own level before dispatching a record; the adapter then checks the
+wrapped standard-library handler's current `level`. Records below the handler
+level are discarded before `Handler.handle()` runs, so that handler's filters
+and emission path do not run for them. `logging.NOTSET` remains permissive and
+accepts every mapped level.
+
+The adapter reads the handler level when it processes each queued record. A
+call to `handler.setLevel()` therefore affects records processed after the
+change, including queued records not yet handled. There is no need to rebuild
+the adapter. For thresholds and configuration examples, see the
+[stdlib handler guide](users-guide.md#using-standard-library-stdlib-logginghandler-subclasses).
+
+______________________________________________________________________
+
 ## `StdlibHandlerAdapter` propagates `contextvars`
 
 When a record is sent through `StdlibHandlerAdapter`, femtologging captures the
