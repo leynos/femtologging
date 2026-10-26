@@ -141,7 +141,8 @@ impl Worker {
 
     /// Count a record refused by an exhausted shutdown budget.
     fn warn_shutdown_drops(&self) {
-        warn_drops(&self.warner, |count| {
+        self.warner.record_drop();
+        self.warner.flush(|count| {
             warn!("FemtoSocketHandler dropped {count} records during shutdown");
         });
     }

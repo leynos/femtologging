@@ -393,6 +393,11 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
 
 impl Drop for FemtoStreamHandler {
     fn drop(&mut self) {
-        self.close();
+        if self.handle.lock().is_none() {
+            return;
+        }
+        if Python::try_attach(|py| py.detach(|| self.close())).is_none() {
+            self.close();
+        }
     }
 }
