@@ -6,6 +6,8 @@ exercise the ``filter_frames`` and ``get_logging_infrastructure_patterns``
 functions from the femtologging package.
 
 Shared types and helpers are imported from ``frame_filter_steps.utils``.
+Cycle-specific BDD steps are star-imported from ``frame_filter_steps.cycle_steps``
+so their pytest-bdd fixtures are registered in this module's namespace.
 
 Usage
 -----
@@ -19,35 +21,23 @@ from __future__ import annotations
 import typing as typ
 from pathlib import Path
 
-import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import filter_frames, get_logging_infrastructure_patterns
 from tests.frame_filter.conftest import make_exception_payload, make_stack_payload
+from tests.steps.frame_filter_steps.cycle_steps import *  # ruff: ignore[undefined-local-with-import-star] pytest-bdd step fixtures must land in this module's namespace
 from tests.steps.frame_filter_steps.utils import (
     FilterFixture,
     _get_frames,
     _parse_filenames,
 )
+from tests.steps.frame_filter_steps.utils import filter_fixture as filter_fixture
 
 if typ.TYPE_CHECKING:
     from tests.frame_filter.conftest import ExceptionPayload, StackPayload
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 scenarios(str(FEATURES / "frame_filter.feature"))
-
-
-@pytest.fixture
-def filter_fixture() -> FilterFixture:
-    """Provide shared state storage for filter BDD steps.
-
-    Returns
-    -------
-    FilterFixture
-        Empty TypedDict for storing payload, filtered result, and patterns.
-
-    """
-    return typ.cast("FilterFixture", {})
 
 
 # --- Given steps ---

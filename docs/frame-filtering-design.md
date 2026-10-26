@@ -20,7 +20,7 @@ which applies each configured filter in sequence to produce a filtered payload:
 ```mermaid
 flowchart TD
     A[payload dict] --> B{is_exception_payload}
-    B -->|true| C[filter_exception_payload]
+    B -->|true| C[iterative exception graph traversal]
     B -->|false| D[filter_stack_payload]
 
     C --> E[extract_frames]
@@ -56,7 +56,7 @@ flowchart TD
     T --> V[filtered_frames]
     U --> V
 
-    C --> W["rebuild exception payload<br/>with filtered frames<br/>and recursively filtered<br/>cause/context/exceptions"]
+    C --> W["rebuild exception payload<br/>with filtered frames<br/>and filtered cause/context/<br/>exception-group members"]
     D --> X["rebuild stack payload<br/>with filtered frames"]
 
     V --> W
@@ -69,8 +69,8 @@ flowchart TD
 *Figure 1: Filter flow for the `filter_frames()` function. The payload is first
 classified as exception or stack type, then filters are applied conditionally
 in sequence (exclusion filters before depth limiting). Exception payloads are
-rebuilt with recursively filtered cause/context/exceptions chains, while stack
-payloads are rebuilt with the filtered frames directly.*
+rebuilt through an iterative depth-first walk of cause/context/group edges,
+while stack payloads are rebuilt with the filtered frames directly.*
 
 ## Design decisions
 
@@ -92,6 +92,45 @@ Exclusion filters are applied before depth limiting. This ensures that:
 1. Unwanted frames are removed first
 2. The depth limit applies to the remaining useful frames
 3. Users get the expected number of relevant frames
+
+## Exception-graph traversal limits and malformed input
+
+The Python binding traverses exception payloads with an explicit `Enter` and
+`Leave` work stack. It visits `cause`, then `context`, then `exceptions[i]` in
+list order. This keeps native stack use independent of exception-chain depth
+while preserving the established edge order.
+
+Cycle detection compares Python dictionary identity on the active ancestor
+path. A repeated dictionary on that path is a cycle and raises
+`ValueError("exception payload graph contains a cycle at <path>")`; paths start
+at `$`, for example `$.cause.exceptions[2]`. The active-path check allows a
+shared acyclic dictionary to appear on multiple edges. Each occurrence is
+copied and counted independently, so shared subgraphs cannot expand work
+without consuming the node budget.
+
+The root payload has exception depth `0`. The default
+`max_exception_depth=1000` permits edges through depth 1000; a child beyond
+that depth raises
+`ValueError("exception payload graph exceeds max_exception_depth=<limit>")`.
+The root-inclusive default `max_exception_nodes=10000` bounds total payload
+occurrences, including exception-group width and repeated shared subgraphs.
+Before allocating an output list for an exception group, the binding checks
+that its complete width fits the remaining node budget. Exceeding the budget
+raises
+`ValueError("exception payload graph exceeds max_exception_nodes=<limit>")`. An
+exception root with `max_exception_nodes=0` raises
+`ValueError("max_exception_nodes=0 must be greater than zero")`.
+
+The frame-list `max_depth` keeps its existing meaning: it limits retained
+frames separately within each payload and does not limit exception-graph
+traversal. Graph limits are ignored for stack payloads.
+
+Malformed `frames` values retain their `TypeError` contract, including
+`'frames' must be a list` and `each frame must be a dict`. Malformed exception
+edges also raise `TypeError`: `'cause' must be a dict`,
+`'context' must be a dict`, `'exceptions' must be a list`, or
+`each exception must be a dict`. Negative or oversized integer limits raise
+`OverflowError` when PyO3 converts them to `usize`.
 
 ## Logging infrastructure patterns
 
@@ -141,11 +180,14 @@ filter_frames(
     exclude_functions: list[str] | None = None,
     max_depth: int | None = None,
     exclude_logging: bool = False,
+    max_exception_depth: int = 1000,
+    max_exception_nodes: int = 10_000,
 ) -> dict
 ```
 
 Returns a new payload dictionary with frames filtered according to the
-specified parameters.
+specified parameters. `max_depth` limits frames per payload; the two
+`max_exception_*` parameters independently bound traversal of exception roots.
 
 ```python
 get_logging_infrastructure_patterns() -> list[str]
