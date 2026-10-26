@@ -182,8 +182,14 @@ for this issue; no new public signature or dependency is introduced.
       `close()` call during detached close. Added the case for all three
       builders; the complete six-gate run passed with 807 tests passed, 5
       skipped, 1 warning, and 66 snapshots passed.
-- [ ] Commit and push the close-on-close review follow-up, then obtain a clean
-      CodeRabbit review on the updated PR head.
+- [x] Committed and pushed the close-on-close review follow-up as `c6ebda9`.
+- [x] The review of `c6ebda9` found two scope overstatements: the user guide's
+      GIL guarantee needed to name explicit Python calls, and the developer
+      guide needed to acknowledge other blocking handler families. Both prose
+      findings are corrected; docs gates, commit, push, PR-body refresh, and a
+      clean review remain.
+- [ ] Pass the documentation gates, push the scope-clarification commit, and
+      obtain a clean CodeRabbit review on the updated PR head.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -301,10 +307,10 @@ working changes then reapplied without conflicts. The rebased branch reports
 `0 13` against `origin/main` at `d234990`.
 
 The earlier six-gate run and CodeRabbit review apply to `a994236`, before this
-rebase. The post-cooldown review and its follow-up also completed on the
-rebased candidate. The latest review identified a missing close-on-close
-assertion; that test-only follow-up now passes all six deterministic gates,
-with another CodeRabbit review pending before it is pushed.
+rebase. The post-cooldown reviews and follow-ups also completed on the rebased
+candidate. The close-on-close test follow-up passed all six deterministic gates
+and was pushed. The latest review identified two documentation-scope claims,
+which are recorded in `Progress` and corrected in the current worktree.
 
 The earlier pre-rebase gate results did not apply to this dependency and lint
 matrix. The complete gate run on the rebased candidate is recorded in
