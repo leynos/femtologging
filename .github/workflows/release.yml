@@ -1,0 +1,388 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  PROJECT_NAME: femtologging
+  PYPI_SIMPLE_URL: https://pypi.org/simple/femtologging/
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.cargo-version.outputs.version }}
+      prerelease: ${{ steps.pyproject-version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the Rust extension version against the tag
+        id: cargo-version
+        uses: leynos/shared-actions/.github/actions/ensure-cargo-version@2f58fab140cc8dfe69756aaa6a3bbb987c426023
+        with:
+          manifests: rust_extension/Cargo.toml
+      - name: Check the Python project version against the tag
+        id: pyproject-version
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PYPROJECT_PATH: pyproject.toml
+        run: |
+          set -euo pipefail
+          python3 scripts/release_version.py
+
+  build:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-wheels.yml
+
+  attest:
+    needs:
+      - check-version
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: '*'
+          path: dist
+          merge-multiple: true
+      - name: Collect every wheel and exactly one source distribution
+        shell: bash
+        env:
+          DIST_DIRECTORY: dist
+          PUBLISH_DIRECTORY: dist/publish
+        run: |
+          set -euo pipefail
+          mkdir -p "${PUBLISH_DIRECTORY}"
+          shopt -s nullglob
+          wheels=("${DIST_DIRECTORY}"/*.whl)
+          sdists=("${DIST_DIRECTORY}"/*.tar.gz)
+          if [ "${#wheels[@]}" -eq 0 ]; then
+            echo "Expected at least one wheel." >&2
+            exit 1
+          fi
+          if [ "${#sdists[@]}" -eq 0 ]; then
+            echo "Expected exactly one source distribution, found none." >&2
+            exit 1
+          fi
+          if [ "${#sdists[@]}" -gt 1 ]; then
+            echo "Expected exactly one source distribution, found multiple." >&2
+            exit 1
+          fi
+          cp "${wheels[@]}" "${PUBLISH_DIRECTORY}/"
+          cp "${sdists[0]}" "${PUBLISH_DIRECTORY}/"
+      - name: Attest release files
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/publish/*
+      - name: Stage the run provenance bundle
+        shell: bash
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+          BUNDLE_NAME: femtologging-${{ github.ref_name }}-run${{ github.run_id }}.sigstore.json
+          ATTESTATION_DIRECTORY: dist/attestations
+        run: |
+          set -euo pipefail
+          mkdir -p "${ATTESTATION_DIRECTORY}"
+          cp "${BUNDLE_PATH}" "${ATTESTATION_DIRECTORY}/${BUNDLE_NAME}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: handoff
+        with:
+          name: release-dist
+          path: |
+            dist/publish
+            dist/attestations
+          if-no-files-found: error
+
+  draft-release:
+    needs:
+      - check-version
+      - attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG_NAME: ${{ github.ref_name }}
+      IS_PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+      - name: Create or reuse the tag's release
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          IS_PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Reusing the existing release for ${TAG_NAME}."
+          else
+            flags=(--draft --verify-tag --generate-notes --title "${TAG_NAME}")
+            if [ "${IS_PRERELEASE}" = true ]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "${TAG_NAME}" "${flags[@]}"
+          fi
+      - name: Snapshot GitHub assets and carry over existing bytes
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PUBLISH_DIRECTORY: dist/publish
+          ASSETS_PATH: github-state/assets.json
+          CARRYOVER_PATH: github-state/carryover.txt
+          GITHUB_FILES: github-state/files
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${ASSETS_PATH}")" "${GITHUB_FILES}"
+          gh release view "${TAG_NAME}" --json assets > "${ASSETS_PATH}"
+          python3 -m scripts.release_assets_cli carryover \
+            --publish "${PUBLISH_DIRECTORY}" --assets "${ASSETS_PATH}" \
+            > "${CARRYOVER_PATH}"
+          while IFS= read -r name; do
+            gh release download "${TAG_NAME}" --pattern "${name}" \
+              --dir "${GITHUB_FILES}"
+          done < "${CARRYOVER_PATH}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-github-state
+          path: github-state
+          if-no-files-found: error
+
+  publish-pypi:
+    needs:
+      - check-version
+      - attest
+      - draft-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: pypi
+      url: https://pypi.org/project/femtologging/
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_NAME: femtologging
+      PYPI_SIMPLE_URL: https://pypi.org/simple/femtologging/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-github-state
+          path: github-state
+      - name: Fetch the PyPI Simple index
+        shell: bash
+        env:
+          PYPI_SIMPLE_URL: https://pypi.org/simple/femtologging/
+          PYPI_INDEX_PATH: pypi-index.json
+          PYPI_ALLOW_MISSING: "true"
+        run: |
+          set -euo pipefail
+          scripts/fetch_pypi_index.sh
+      - name: Skip filenames already held by PyPI
+        id: stage-pypi
+        shell: bash
+        env:
+          PUBLISH_DIRECTORY: dist/publish
+          PYPI_INDEX_PATH: pypi-index.json
+          GITHUB_ASSETS_PATH: github-state/assets.json
+          GITHUB_FILES: github-state/files
+        run: |
+          set -euo pipefail
+          python3 -m scripts.release_assets_cli stage-pypi \
+            --publish "${PUBLISH_DIRECTORY}" --index "${PYPI_INDEX_PATH}" \
+            --assets "${GITHUB_ASSETS_PATH}" --github-files "${GITHUB_FILES}"
+      - name: Publish missing files through Trusted Publishing
+        if: steps.stage-pypi.outputs.remaining == 'true'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/publish/
+          skip-existing: true
+      - name: Fetch the PyPI index for GitHub reconciliation
+        shell: bash
+        env:
+          PYPI_SIMPLE_URL: https://pypi.org/simple/femtologging/
+          PYPI_INDEX_PATH: pypi-index.json
+          PYPI_ALLOW_MISSING: "false"
+        run: |
+          set -euo pipefail
+          scripts/fetch_pypi_index.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pypi-index
+          path: pypi-index.json
+          if-no-files-found: error
+
+  publish-release:
+    needs:
+      - check-version
+      - attest
+      - publish-pypi
+      - draft-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG_NAME: ${{ github.ref_name }}
+      IS_PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pypi-index
+          path: pypi-state
+      - name: Snapshot GitHub asset names and digests
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          GITHUB_ASSETS_PATH: release-assets.json
+        run: |
+          set -euo pipefail
+          gh release view "${TAG_NAME}" --json assets > "${GITHUB_ASSETS_PATH}"
+      - name: Carry over existing GitHub assets
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PUBLISH_DIRECTORY: dist/publish
+          GITHUB_ASSETS_PATH: release-assets.json
+          CARRYOVER_PATH: carryover.txt
+          GITHUB_FILES: github-files
+        run: |
+          set -euo pipefail
+          mkdir -p "${GITHUB_FILES}"
+          python3 -m scripts.release_assets_cli carryover \
+            --publish "${PUBLISH_DIRECTORY}" --assets "${GITHUB_ASSETS_PATH}" \
+            > "${CARRYOVER_PATH}"
+          while IFS= read -r name; do
+            gh release download "${TAG_NAME}" --pattern "${name}" \
+              --dir "${GITHUB_FILES}"
+          done < "${CARRYOVER_PATH}"
+      - name: Stage missing GitHub assets
+        id: stage-github
+        shell: bash
+        env:
+          PUBLISH_DIRECTORY: dist/publish
+          PYPI_INDEX_PATH: pypi-state/pypi-index.json
+          GITHUB_ASSETS_PATH: release-assets.json
+          GITHUB_FILES: github-files
+          ATTESTATION_DIRECTORY: dist/attestations
+          GITHUB_UPLOAD_DIRECTORY: github-upload
+          GITHUB_OUTPUT_PATH: pypi-fetch.tsv
+        run: |
+          set -euo pipefail
+          python3 -m scripts.release_assets_cli stage-github \
+            --publish "${PUBLISH_DIRECTORY}" --index "${PYPI_INDEX_PATH}" \
+            --assets "${GITHUB_ASSETS_PATH}" --github-files "${GITHUB_FILES}" \
+            --bundles "${ATTESTATION_DIRECTORY}" \
+            --output "${GITHUB_UPLOAD_DIRECTORY}" \
+            > "${GITHUB_OUTPUT_PATH}"
+      - name: Fetch canonical PyPI bytes and refresh its index
+        shell: bash
+        env:
+          PYPI_FETCH_LIST: pypi-fetch.tsv
+          PYPI_DOWNLOAD_DIRECTORY: github-upload
+          PYPI_SIMPLE_URL: https://pypi.org/simple/femtologging/
+          PYPI_INDEX_PATH: pypi-index.json
+          PYPI_ALLOW_MISSING: "false"
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r name url; do
+            [ -n "${name}" ] || continue
+            curl --silent --show-error --location --fail \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              --connect-timeout 10 --max-time 300 \
+              --output "${PYPI_DOWNLOAD_DIRECTORY}/${name}" "${url}"
+          done < "${PYPI_FETCH_LIST}"
+
+          scripts/fetch_pypi_index.sh
+      - name: Check all fetched PyPI bytes
+        shell: bash
+        env:
+          PUBLISH_DIRECTORY: dist/publish
+          PYPI_INDEX_PATH: pypi-index.json
+          GITHUB_ASSETS_PATH: release-assets.json
+          GITHUB_UPLOAD_DIRECTORY: github-upload
+        run: |
+          set -euo pipefail
+          python3 -m scripts.release_assets_cli check-fetched \
+            --publish "${PUBLISH_DIRECTORY}" --index "${PYPI_INDEX_PATH}" \
+            --assets "${GITHUB_ASSETS_PATH}" \
+            --output "${GITHUB_UPLOAD_DIRECTORY}"
+      - name: Upload missing assets to the GitHub Release
+        if: steps.stage-github.outputs.pending == 'true'
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          GITHUB_UPLOAD_DIRECTORY: github-upload
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=("${GITHUB_UPLOAD_DIRECTORY}"/*)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "GitHub upload was requested but no assets were staged." >&2
+            exit 1
+          fi
+          gh release upload "${TAG_NAME}" "${assets[@]}"
+      - name: Verify PyPI and GitHub Release digests
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          PUBLISH_DIRECTORY: dist/publish
+          PYPI_INDEX_PATH: pypi-index.json
+          GITHUB_ASSETS_PATH: release-assets.json
+          ATTESTATION_DIRECTORY: dist/attestations
+        run: |
+          set -euo pipefail
+          gh release view "${TAG_NAME}" --json assets > "${GITHUB_ASSETS_PATH}"
+          python3 -m scripts.release_assets_cli verify \
+            --publish "${PUBLISH_DIRECTORY}" --index "${PYPI_INDEX_PATH}" \
+            --assets "${GITHUB_ASSETS_PATH}" --bundles "${ATTESTATION_DIRECTORY}"
+      - name: Publish the GitHub Release
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          IS_PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG_NAME}" --draft=false \
+            --prerelease="${IS_PRERELEASE}"
