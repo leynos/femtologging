@@ -24,6 +24,7 @@ fn unique_logger_name() -> String {
     format!("{base}.{suffix}")
 }
 
+/// The public conversion preserves each concrete Rust facade level.
 #[rstest]
 #[case(log::Level::Trace, FemtoLevel::Trace)]
 #[case(log::Level::Debug, FemtoLevel::Debug)]
@@ -34,6 +35,7 @@ fn level_mapping_is_direct(#[case] level: log::Level, #[case] expected: FemtoLev
     assert_eq!(FemtoLevel::from(level), expected);
 }
 
+/// Each femtologging threshold maps to the broadest Rust level it accepts.
 #[rstest]
 #[case::trace(FemtoLevel::Trace, log::LevelFilter::Trace)]
 #[case::debug(FemtoLevel::Debug, log::LevelFilter::Debug)]
@@ -48,6 +50,7 @@ fn femto_threshold_maps_to_its_broadest_rust_level(
     assert_eq!(map_femto_to_log_filter(level), expected);
 }
 
+/// The facade maximum includes both the default and registered logger levels.
 #[rstest]
 fn conservative_maximum_includes_default_and_live_logger_levels() {
     assert_eq!(
@@ -122,6 +125,7 @@ proptest! {
     }
 }
 
+/// Set a permissive facade maximum for tests that call the adapter directly.
 #[fixture]
 fn log_max_level() {
     static INIT: Once = Once::new();
@@ -130,6 +134,7 @@ fn log_max_level() {
     });
 }
 
+/// Dispatching a Rust record preserves its target and source metadata.
 #[rstest]
 #[serial]
 fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
@@ -176,6 +181,7 @@ fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger
     });
 }
 
+/// Rust module targets dispatch through their normalized dotted logger name.
 #[rstest]
 #[serial]
 fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
@@ -210,6 +216,7 @@ fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name
     });
 }
 
+/// Dispatch rechecks the target threshold before queuing a record.
 #[rstest]
 #[serial]
 fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
@@ -254,6 +261,7 @@ fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String)
     });
 }
 
+/// Enablement follows the live level of a registered target logger.
 #[rstest]
 #[serial]
 fn enabled_uses_the_registered_target_threshold(_log_max_level: (), unique_logger_name: String) {
@@ -279,6 +287,7 @@ fn enabled_uses_the_registered_target_threshold(_log_max_level: (), unique_logge
     }
 }
 
+/// Enablement normalizes module targets without creating unknown loggers.
 #[rstest]
 #[serial]
 fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
@@ -309,6 +318,7 @@ fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
     assert_eq!(manager::registered_logger_level(&unknown_target), None);
 }
 
+/// Invalid targets use the root threshold, or the default when root is absent.
 #[rstest]
 #[serial]
 fn enabled_uses_root_for_invalid_targets_and_default_when_root_is_absent(_log_max_level: ()) {
