@@ -18,6 +18,7 @@ use crate::frame_filter::{
 ///
 /// This struct groups related filter parameters to reduce function argument counts
 /// and improve code clarity.
+#[derive(Clone, Copy)]
 struct FilterOptions<'a> {
     /// Optional filename substrings whose matching frames are removed.
     exclude_filenames: Option<&'a [String]>,
@@ -194,21 +195,10 @@ fn filter_stack_payload(
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
 ) -> PyResult<Py<PyAny>> {
-    let frames = extract_frames(payload)?;
-    let had_frames_key = payload.contains("frames")?;
-    let filtered = apply_filters(frames, opts);
-
-    // Clone all keys from the original payload
-    let result = payload.copy()?;
-
-    update_frames_item(py, &result, had_frames_key, &filtered)?;
-
-    Ok(result.into())
+    filter_exception_payload_node(py, payload, opts).map(Into::into)
 }
 
-/// Filter frames on one exception payload without traversing its graph.
-///
-/// Preserve all keys from the original payload, only updating its frames.
+/// Filter frames on one payload while preserving all of its other keys.
 fn filter_exception_payload_node<'py>(
     py: Python<'py>,
     payload: &Bound<'py, PyDict>,
@@ -218,9 +208,7 @@ fn filter_exception_payload_node<'py>(
     let had_frames_key = payload.contains("frames")?;
     let filtered = apply_filters(frames, opts);
 
-    // Clone all keys from the original payload (preserves unknown keys)
     let result = payload.copy()?;
-
     update_frames_item(py, &result, had_frames_key, &filtered)?;
     Ok(result)
 }
@@ -313,6 +301,7 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
 /// ```
 #[pyfunction]
 #[pyo3(signature = (payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=false, max_exception_depth=DEFAULT_MAX_EXCEPTION_DEPTH, max_exception_nodes=DEFAULT_MAX_EXCEPTION_NODES))]
+// @codescene(disable:"Excess Number of Function Arguments") Keep named API (2026-10-26)
 pub fn filter_frames(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,

@@ -17,7 +17,7 @@ fn filter_exception_payload_preserves_extra_keys() {
             .set_item("thread_id", 12345)
             .expect("failed to set thread_id");
 
-        let result = filter_frames_with_defaults(py, &payload, None, None, None, false)
+        let result = filter_frames_with_defaults(py, &payload, TestFilterOptions::default())
             .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)

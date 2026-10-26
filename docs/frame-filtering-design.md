@@ -100,6 +100,64 @@ The Python binding traverses exception payloads with an explicit `Enter` and
 list order. This keeps native stack use independent of exception-chain depth
 while preserving the established edge order.
 
+### Exception-graph traversal flow
+
+```mermaid
+flowchart TD
+    accTitle: Exception graph cycle and budget checks
+    accDescr {
+      The traversal checks each payload for an active-path cycle and graph-budget
+      overflow before filtering its frames, then follows cause, context, and
+      exception-group members.
+    }
+    A[exception payload] --> B[iterative depth-first work stack]
+    B --> C{active-path identity repeated?}
+    C -->|yes| D[raise ValueError: cycle path]
+    C -->|no| E{depth or node budget exceeded?}
+    E -->|yes| F[raise ValueError: graph limit]
+    E -->|no| G[filter frames for current payload]
+    G --> H{cause, context, or exceptions members?}
+    H -->|yes| B
+    H -->|no| I[attach filtered copy]
+```
+
+*Figure 2: Each exception payload is checked for an active-path cycle and
+graph-budget overflow before its frames are filtered; traversal follows nested
+cause, context, and exception-group members and attaches filtered copies.*
+
+### Python binding sequence
+
+```mermaid
+sequenceDiagram
+    accTitle: Python exception payload filtering sequence
+    accDescr {
+      The Python binding passes graph limits to an iterative traversal, which
+      filters each payload, schedules nested edges, checks cycles and budgets,
+      and attaches each filtered occurrence.
+    }
+    participant Caller
+    participant filter_frames
+    participant Traversal
+    participant Payload
+    participant Output
+
+    Caller->>filter_frames: filter_frames(payload, max_exception_depth, max_exception_nodes)
+    filter_frames->>Traversal: filter_exception_payload(payload, limits)
+    loop Work stack until empty
+        Traversal->>Payload: filter_exception_payload_node()
+        Payload-->>Traversal: filtered shallow copy
+        Traversal->>Traversal: schedule cause, context, and group members
+        Traversal->>Traversal: check active path and graph budgets
+        Traversal->>Output: attach filtered payload occurrence
+    end
+    Traversal-->>filter_frames: filtered exception graph
+    filter_frames-->>Caller: return dict
+```
+
+*Figure 3: The Python binding passes exception-graph limits to the iterative
+traversal, which filters each payload occurrence, schedules its nested edges,
+checks cycle and budget constraints, and assembles the returned graph.*
+
 Cycle detection compares Python dictionary identity on the active ancestor
 path. A repeated dictionary on that path is a cycle and raises
 `ValueError("exception payload graph contains a cycle at <path>")`; paths start
