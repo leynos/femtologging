@@ -4,7 +4,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::handler::{FemtoHandlerTrait, HandlerError, capped_deadline, remaining};
+use crate::handler::{FemtoHandlerTrait, HandlerError, capped_deadline, deadline_after, remaining};
 use crate::log_record::FemtoLogRecord;
 use crate::sync::{Mutex, Receiver, Sender, bounded};
 
@@ -30,6 +30,39 @@ fn capped_deadline_preserves_the_caller_deadline_when_the_budget_overflows() {
         deadline,
         "an unrepresentable local timeout must preserve the caller's bound"
     );
+}
+
+#[test]
+fn built_in_flushes_fail_closed_when_the_timeout_cannot_be_represented() {
+    use crate::formatter::DefaultFormatter;
+    use crate::http_handler::{FemtoHTTPHandler, HTTPHandlerConfig};
+    use crate::socket_handler::{FemtoSocketHandler, SocketHandlerConfig};
+    use crate::stream_handler::FemtoStreamHandler;
+
+    assert!(deadline_after(Duration::MAX).is_none());
+
+    let http = FemtoHTTPHandler::with_config(HTTPHandlerConfig {
+        write_timeout: Duration::MAX,
+        ..Default::default()
+    });
+    assert!(!http.flush(), "HTTP flush must fail closed");
+    drop(http);
+
+    let stream = FemtoStreamHandler::with_capacity_timeout(
+        std::io::sink(),
+        DefaultFormatter,
+        1,
+        Duration::MAX,
+    );
+    assert!(!stream.flush(), "stream flush must fail closed");
+    drop(stream);
+
+    let socket = FemtoSocketHandler::with_config(SocketHandlerConfig {
+        write_timeout: Duration::MAX,
+        ..Default::default()
+    });
+    assert!(!socket.flush(), "socket flush must fail closed");
+    drop(socket);
 }
 
 /// A handler that records the wait its flush was given, and optionally spends it.

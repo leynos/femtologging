@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use pyo3::prelude::*;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError, capped_deadline, remaining},
+    handler::{FemtoHandlerTrait, HandlerError, capped_deadline, deadline_after, remaining},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     sync::{JoinHandle, Mutex, RecvTimeoutError, SendTimeoutError, Sender, bounded},
@@ -94,7 +94,10 @@ impl FemtoHTTPHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        self.flush_by(Instant::now() + self.flush_timeout)
+        let Some(deadline) = deadline_after(self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(deadline)
     }
 
     /// Flush any pending log records, waiting no longer than `deadline`.
@@ -165,7 +168,9 @@ impl FemtoHTTPHandler {
             // Already closed. There is no worker left to wait for.
             return ShutdownOutcome::Finished;
         };
-        let deadline = Instant::now() + self.flush_timeout;
+        let Some(deadline) = deadline_after(self.flush_timeout) else {
+            return ShutdownOutcome::TimedOut;
+        };
         let (ack_tx, ack_rx) = bounded(1);
         match tx.send_timeout(HTTPCommand::Shutdown(ack_tx), remaining(deadline)) {
             Ok(()) => {}
@@ -199,7 +204,7 @@ impl FemtoHTTPHandler {
         }
     }
 
-    /// Detach the worker after it failed to acknowledge shutdown.
+    /// Detach the worker when shutdown could not be confirmed.
     ///
     /// The handle is taken so nothing joins it later, in particular the `Drop`
     /// that may follow this call. Once its command channel is disconnected,
@@ -208,7 +213,7 @@ impl FemtoHTTPHandler {
     /// so the worker may outlive this handler and its caller.
     fn abandon_worker(&mut self) {
         log::warn!(
-            "FemtoHTTPHandler: worker did not acknowledge shutdown within {:?}; \
+            "FemtoHTTPHandler: could not confirm worker shutdown within {:?}; \
              abandoning it rather than blocking the caller",
             self.flush_timeout
         );
@@ -222,9 +227,10 @@ enum ShutdownOutcome {
     /// The worker acknowledged, or had already left its loop. The join is
     /// bounded and worth doing, because it is also what surfaces a panic.
     Finished,
-    /// The command could not be queued, or no acknowledgement arrived, within
-    /// `flush_timeout`. The worker is busy on something whose length
-    /// `flush_timeout` does not describe.
+    /// The command could not be queued, no acknowledgement arrived within
+    /// `flush_timeout`, or that timeout could not be represented as a deadline.
+    /// The worker is busy on something whose length `flush_timeout` does not
+    /// describe, or the caller cannot safely wait for it.
     TimedOut,
 }
 

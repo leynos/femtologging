@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::handler::{FemtoHandlerTrait, capped_deadline, remaining};
+use crate::handler::{FemtoHandlerTrait, capped_deadline, deadline_after, remaining};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
@@ -314,7 +314,10 @@ impl FemtoStreamHandler {
     /// Python callers release the interpreter while waiting for the handler's
     /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
-        self.flush_by(Instant::now() + self.flush_timeout)
+        let Some(deadline) = deadline_after(self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(deadline)
     }
 
     /// Flush any pending log records, waiting no longer than `deadline`.
