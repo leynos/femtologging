@@ -65,7 +65,9 @@ per-interpreter rather than ABI3. The Linux x86_64 leg also builds exactly one
 sdist through the maturin backend. Pull-request CI calls this workflow;
 `verify-wheel-install` checks sdist cardinality, inspects the sdist contents,
 installs a native wheel and installs a rebuilt sdist into fresh environments.
-Python 3.15, free-threaded and Windows arm64 wheels are not in this matrix.
+Both isolated sdist builds constrain maturin to the workflow's
+`MATURIN_VERSION`, keeping their backend aligned with the wheel builder. Python
+3.15, free-threaded and Windows arm64 wheels are not in this matrix.
 
 The workflow phases are:
 
