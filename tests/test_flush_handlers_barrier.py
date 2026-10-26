@@ -56,41 +56,6 @@ class GilNeedingHandler:
             raise AssertionError(msg)
 
 
-def test_flush_handlers_does_not_deadlock_on_a_gil_needing_handler() -> None:
-    """A flush must not hold the interpreter while its worker needs it.
-
-    The handler blocks inside ``handle`` until the test releases it, so the
-    flush can only reach its marker once the handler has run. With the
-    interpreter held across the wait, the worker cannot run the handler and
-    the flush cannot finish; with the interpreter released, both proceed.
-    """
-    logger = FemtoLogger("gil_flush")
-    handler = GilNeedingHandler()
-    logger.add_handler(handler)
-    logger.log("INFO", "blocking record")
-
-    flushed: list[bool] = []
-    flusher = threading.Thread(target=lambda: flushed.append(logger.flush_handlers()))
-    flusher.start()
-
-    # The barrier is reached, not merely queued: the handler is running, so
-    # the worker has the record. If the flush held the interpreter, this wait
-    # would never be satisfied.
-    try:
-        assert handler.handled.wait(HANDSHAKE_SECONDS), (
-            "the worker never reached the handler; the flush is holding the "
-            "interpreter the worker needs"
-        )
-    finally:
-        handler.proceed.set()
-        flusher.join(HANDSHAKE_SECONDS)
-
-    assert not flusher.is_alive(), "flush_handlers did not return after the handler ran"
-    assert flushed == [True], (
-        f"a flush with a live worker should succeed, got {flushed!r}"
-    )
-
-
 class StallingHandler:
     """A handler that blocks the worker indefinitely."""
 
@@ -109,30 +74,75 @@ class StallingHandler:
         self.release.wait(HANDSHAKE_SECONDS)
 
 
-def test_flush_handlers_is_bounded_when_a_handler_stalls() -> None:
-    """A stalled handler must produce ``False`` within the advertised timeout.
+class TestFlushHandlersBarrier:
+    """Contracts for the logger's cross-thread flush barrier."""
 
-    The queue is left with room, so the marker is enqueued and the failure is
-    the acknowledgement timing out — the path a full queue's ``send`` used to
-    bypass entirely, because the marker was never enqueued at all.
-    """
-    logger = FemtoLogger("stalled_flush")
-    entering = threading.Event()
-    handler = StallingHandler(entering)
-    logger.add_handler(handler)
-    logger.log("INFO", "stalling record")
+    def test_flush_handlers_does_not_deadlock_on_a_gil_needing_handler(self) -> None:
+        """A flush must not hold the interpreter while its worker needs it.
 
-    try:
-        assert entering.wait(HANDSHAKE_SECONDS), "the worker never reached the handler"
+        The handler blocks inside ``handle`` until the test releases it, so the
+        flush can only reach its marker once the handler has run. With the
+        interpreter held across the wait, the worker cannot run the handler and
+        the flush cannot finish; with the interpreter released, both proceed.
+        """
+        logger = FemtoLogger("gil_flush")
+        handler = GilNeedingHandler()
+        logger.add_handler(handler)
+        logger.log("INFO", "blocking record")
 
-        started_at = time.monotonic()
-        flushed = logger.flush_handlers()
-        elapsed = time.monotonic() - started_at
-
-        assert flushed is False, "a flush the worker never acknowledges must be False"
-        assert elapsed < FLUSH_BOUND_SECONDS, (
-            f"flush_handlers took {elapsed:.2f}s with a stalled handler; the "
-            f"advertised timeout is {FLUSH_TIMEOUT_SECONDS}s"
+        flushed: list[bool] = []
+        flusher = threading.Thread(
+            target=lambda: flushed.append(logger.flush_handlers())
         )
-    finally:
-        handler.release.set()
+        flusher.start()
+
+        # The barrier is reached, not merely queued: the handler is running, so
+        # the worker has the record. If the flush held the interpreter, this wait
+        # would never be satisfied.
+        try:
+            assert handler.handled.wait(HANDSHAKE_SECONDS), (
+                "the worker never reached the handler; the flush is holding the "
+                "interpreter the worker needs"
+            )
+        finally:
+            handler.proceed.set()
+            flusher.join(HANDSHAKE_SECONDS)
+
+        assert not flusher.is_alive(), (
+            "flush_handlers did not return after the handler ran"
+        )
+        assert flushed == [True], (
+            f"a flush with a live worker should succeed, got {flushed!r}"
+        )
+
+    def test_flush_handlers_is_bounded_when_a_handler_stalls(self) -> None:
+        """A stalled handler must produce ``False`` within the advertised timeout.
+
+        The queue is left with room, so the marker is enqueued and the failure is
+        the acknowledgement timing out — the path a full queue's ``send`` used to
+        bypass entirely, because the marker was never enqueued at all.
+        """
+        logger = FemtoLogger("stalled_flush")
+        entering = threading.Event()
+        handler = StallingHandler(entering)
+        logger.add_handler(handler)
+        logger.log("INFO", "stalling record")
+
+        try:
+            assert entering.wait(HANDSHAKE_SECONDS), (
+                "the worker never reached the handler"
+            )
+
+            started_at = time.monotonic()
+            flushed = logger.flush_handlers()
+            elapsed = time.monotonic() - started_at
+
+            assert flushed is False, (
+                "a flush the worker never acknowledges must be False"
+            )
+            assert elapsed < FLUSH_BOUND_SECONDS, (
+                f"flush_handlers took {elapsed:.2f}s with a stalled handler; the "
+                f"advertised timeout is {FLUSH_TIMEOUT_SECONDS}s"
+            )
+        finally:
+            handler.release.set()

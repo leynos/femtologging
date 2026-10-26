@@ -21,6 +21,17 @@ fn test_logger() -> FemtoLogger {
     FemtoLogger::assembled_for_test("flush".to_string(), shard)
 }
 
+#[test]
+fn capped_deadline_preserves_the_caller_deadline_when_the_budget_overflows() {
+    let deadline = Instant::now() + Duration::from_secs(1);
+
+    assert_eq!(
+        capped_deadline(deadline, Duration::MAX),
+        deadline,
+        "an unrepresentable local timeout must preserve the caller's bound"
+    );
+}
+
 /// A handler that records the wait its flush was given, and optionally spends it.
 ///
 /// It takes the wait the barrier hands it, capped by a budget of its own, and

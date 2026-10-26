@@ -124,6 +124,17 @@ pub struct FemtoLogger {
     budget: Arc<LoggerBudget>,
 }
 
+
+
+
+
+
+
+
+
+
+
+
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
@@ -270,6 +281,34 @@ impl FemtoLogger {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
         // A model's shard is the logger's own, so the drop is what ends the
@@ -289,5 +328,6 @@ impl Drop for FemtoLogger {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod test_modules;
+// weave: run 'weave explain rust_extension/src/logger/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
