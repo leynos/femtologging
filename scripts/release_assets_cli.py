@@ -99,7 +99,23 @@ _COMMANDS: dict[str, cabc.Callable[[State, argparse.Namespace], None]] = {
 
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
-    """Run one reconciliation command and report failures as annotations."""
+    """Run one reconciliation command and report failures as annotations.
+
+    Parameters
+    ----------
+    argv
+        Optional argument sequence. When omitted, parse the process arguments.
+
+    Returns
+    -------
+    int
+        ``0`` when the command succeeds, or ``1`` for a reconciliation error.
+
+    Examples
+    --------
+    Running ``main(["verify", "--publish", "dist", "--assets", "assets.json",
+    "--bundles", "bundles"])`` checks the local release snapshot.
+    """
     args = _parser().parse_args(argv)
     try:
         state = State.load(args.publish, args.index, args.assets)

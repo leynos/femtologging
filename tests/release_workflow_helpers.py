@@ -90,6 +90,8 @@ def copy_release_scripts(directory: Path) -> Path:
     scripts.mkdir(parents=True, exist_ok=True)
     for name in (
         "release_asset_errors.py",
+        "release_asset_io.py",
+        "release_asset_plan.py",
         "release_assets.py",
         "release_assets_cli.py",
         "release_version.py",
