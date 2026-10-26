@@ -255,12 +255,18 @@ impl PyRotatingFileHandler {
     /// >>> handler.close()
     /// >>> handler.flush()
     /// False
+    ///
+    /// The GIL is released while waiting so a Python callable formatter can
+    /// run on the worker thread.
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.inner.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.inner.flush())
     }
 
     /// Close the handler and stop its file worker.
+    ///
+    /// The GIL is released while waiting so a Python callable formatter can
+    /// finish on the worker thread.
     ///
     /// # Examples
     ///
@@ -268,8 +274,8 @@ impl PyRotatingFileHandler {
     /// handler.py_close();
     /// ```
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.inner.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.inner.close());
     }
 }
 
