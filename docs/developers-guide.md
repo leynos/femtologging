@@ -299,12 +299,27 @@ use the captured producer context, without allowing one Python handler to
 modify another's view of it. Work deferred to another thread or process needs
 separate context propagation; non-Python handlers retain their existing path.
 
-For `StdlibHandlerAdapter`, `handle_record()` calls the wrapped handler's
-`handle()` method inside `Context.run()`. With base `Handler.handle()`
+For Python-backed handlers, the worker invokes
+`StdlibHandlerAdapter.handle_record()` through `Context.run()` before that
+method calls the wrapped handler's `handle()`. A direct call to
+`handle_record()` does not establish that context. With base `Handler.handle()`
 behaviour, the filter chain and `emit()` invocation run synchronously in the
 captured producer context, as does formatting performed during that call. A
 handler that defers formatting or emission to another thread or process needs
 separate context propagation.
+
+### Standard-library handler adapter
+
+The private `femtologging._adapter_record` module owns the adapter record
+schema and conversion to `logging.LogRecord`. `femtologging.adapter` remains
+the public import site and re-exports those record types. `FemtoLogger` applies
+its logger-level threshold before dispatch. Once the worker dispatches a record
+to the adapter, `handle_record()` calls `_make_log_record()`, compares the
+mapped level with the wrapped handler's current `level`, then calls
+`handler.handle()` exactly once when the record meets that threshold. This
+handler-level comparison happens before the handler filter chain. With base
+`Handler.handle()` behaviour, accepted records follow its existing filter and
+lock path; a subclass overriding `handle()` owns its internal dispatch path.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
 capture, handler-filter-chain evaluation, queue dispatch, and worker handler

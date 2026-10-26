@@ -1537,14 +1537,15 @@ established interfaces.
 
 ### 6.5. Python standard-library handler adapter
 
-The `StdlibHandlerAdapter` honours the femtologging logger threshold before
-dispatch and then checks the wrapped standard-library handler's level before
-calling `Handler.handle()`. Records below the handler threshold are discarded;
-accepted records are passed to the handler's `handle()` method once. For
-handlers retaining the base `logging.Handler.handle()` behaviour, normal
-execution evaluates the filter chain once and, if it accepts, acquires the I/O
-lock and invokes `emit()`. A subclass overriding `handle()` controls its own
-internal behaviour.
+`FemtoLogger` applies its logger-level threshold before dispatching records to
+handlers. When a record reaches `StdlibHandlerAdapter`, the adapter constructs
+a standard-library `LogRecord` and checks its mapped level against the wrapped
+handler's current level before calling `Handler.handle()`. Records below the
+handler threshold are discarded; accepted records are passed to the handler's
+`handle()` method once. For handlers retaining the base
+`logging.Handler.handle()` behaviour, normal execution evaluates the filter
+chain once and, if it accepts, acquires the I/O lock and invokes `emit()`. A
+subclass overriding `handle()` controls its own internal behaviour.
 
 For screen readers: This sequence describes normal execution for a wrapped
 handler retaining the base `logging.Handler.handle()` behaviour. FemtoLogger

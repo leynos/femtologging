@@ -14,6 +14,8 @@ import logging
 from unittest import mock
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from femtologging import StdlibHandlerAdapter
 from tests.stdlib_adapter_support import (
@@ -25,6 +27,20 @@ from tests.stdlib_adapter_support import (
     LogRequest,
     dispatch,
     emitted_messages,
+)
+
+_MAPPED_LEVELS = {
+    "TRACE": 5,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+_BOUNDARY_THRESHOLDS = tuple(
+    mapped_level + offset
+    for mapped_level in _MAPPED_LEVELS.values()
+    for offset in (-1, 0, 1)
 )
 
 
@@ -160,3 +176,74 @@ class TestHandleRecordFilterAndLockContract:
             f"a filter-rejected record must not be emitted: "
             f"{emitted_messages(handler)!r}"
         )
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    generated_handler_level=st.integers(min_value=-10, max_value=60),
+)
+def test_handler_level_gate_matches_numeric_boundary_for_all_mapped_levels(
+    generated_handler_level: int,
+) -> None:
+    """Mapped levels follow generated and adjacent numeric thresholds."""
+    handler_levels = {*_BOUNDARY_THRESHOLDS, generated_handler_level}
+    for handler_level in handler_levels:
+        for level_name, mapped_level in _MAPPED_LEVELS.items():
+            message = f"{level_name}-{handler_level}"
+            handler = CapturingHandler()
+            handler.setLevel(handler_level)
+            adapter = StdlibHandlerAdapter(handler)
+
+            with mock.patch.object(
+                handler, "handle", wraps=handler.handle
+            ) as handle_spy:
+                adapter.handle_record({"level": level_name, "message": message})
+
+            expected_messages = [message] if mapped_level >= handler_level else []
+            assert handle_spy.call_count == len(expected_messages), (
+                f"{level_name} at {mapped_level} with handler level "
+                f"{handler_level} entered handle() {handle_spy.call_count} times"
+            )
+            assert emitted_messages(handler) == expected_messages, (
+                f"{level_name} at {mapped_level} with handler level "
+                f"{handler_level} emitted {emitted_messages(handler)!r}"
+            )
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    steps=st.lists(
+        st.tuples(
+            st.sampled_from(tuple(_MAPPED_LEVELS)),
+            st.integers(min_value=-10, max_value=60),
+        ),
+        min_size=2,
+        max_size=20,
+    ).filter(
+        lambda generated_steps: len({threshold for _, threshold in generated_steps}) > 1
+    )
+)
+def test_generated_set_level_dispatch_sequences_use_live_threshold(
+    steps: list[tuple[str, int]],
+) -> None:
+    """Each dispatch uses the most recently assigned handler level."""
+    handler = CapturingHandler()
+    adapter = StdlibHandlerAdapter(handler)
+    accepted_messages: list[str] = []
+
+    with mock.patch.object(handler, "handle", wraps=handler.handle) as handle_spy:
+        for index, (level_name, handler_level) in enumerate(steps):
+            handler.setLevel(handler_level)
+            message = f"step-{index}"
+            adapter.handle_record({"level": level_name, "message": message})
+            if _MAPPED_LEVELS[level_name] >= handler_level:
+                accepted_messages.append(message)
+
+    assert handle_spy.call_count == len(accepted_messages), (
+        f"{len(accepted_messages)} accepted levels should produce exactly that "
+        f"many handle() calls, got {handle_spy.call_count}"
+    )
+    assert emitted_messages(handler) == accepted_messages, (
+        f"generated level changes emitted {emitted_messages(handler)!r}, "
+        f"expected {accepted_messages!r}"
+    )
