@@ -33,15 +33,17 @@ pip install femtologging
 ```
 
 The first release has not yet been published. Until then, install from a local
-checkout with [maturin](https://maturin.rs/):
+checkout:
 
 ```bash
 pip install .
 ```
 
-This source installation uses the production feature set: the Python bindings
-are enabled and the test-only `test-util` feature is excluded. `make build` is
-for development and explicitly enables `test-util` for the test hooks.
+This source installation uses maturin as its PEP 517 backend to compile the
+Rust extension, so `rustc` and `cargo` must be available on `PATH`. It uses the
+production feature set: the Python bindings are enabled and the test-only
+`test-util` feature is excluded. `make build` is for development and explicitly
+enables `test-util` for the test hooks.
 
 ## Quick example
 

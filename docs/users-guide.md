@@ -15,8 +15,10 @@ pip install femtologging
 ```
 
 The first release has not yet been published. Until then, install from the
-repository with `pip install .`; this source build uses the production feature
-set and excludes the test-only `test-util` feature.
+repository with `pip install .`. Maturin is the PEP 517 backend that compiles
+the Rust extension, so `rustc` and `cargo` must be available on `PATH`. This
+source build uses the production feature set and excludes the test-only
+`test-util` feature.
 
 Then emit a log record:
 
