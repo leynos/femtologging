@@ -264,6 +264,28 @@ fields with safe defaults does not require a version bump.
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
 
+### Flushing logger handlers
+
+`logger.flush_handlers()` waits for the logger worker to process records it has
+already accepted, then flushes the handlers in the barrier's snapshot. One
+two-second deadline covers the handler snapshot, marker insertion, worker
+acknowledgement and every handler flush. Built-in handlers keep their shorter
+configured timeouts. The Python method releases the GIL while waiting so Python
+handlers can run.
+
+The method returns `False` when a stage is not confirmed by the deadline, the
+worker has exited, or a handler reports failure or lacks deadline support. The
+timeout bounds the caller's Rust barrier wait; it cannot stop synchronous
+handler code that is still running, and shutdown joins the worker. PyO3 must
+reacquire the interpreter before returning to Python, so interpreter contention
+can delay the Python return beyond the barrier deadline.
+
+Custom Rust handlers that should participate must implement the deadline-aware
+`FemtoHandlerTrait::flush_until(deadline)` contract. Its default fails closed
+without invoking legacy synchronous `flush()` code. See the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the compatibility rules.
+
 ## Built-in handlers
 
 ### FemtoStreamHandler

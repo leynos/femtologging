@@ -357,6 +357,31 @@ microseconds. Record payloads and context values are never included. They target
 `femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
 from recursively logging its own instrumentation.
 
+## Logger handler flush barrier
+
+`FemtoLogger::flush_handlers_blocking()` creates one absolute deadline for the
+handler snapshot, marker insertion, worker acknowledgement and all handler
+flushes. Snapshot-lock acquisition and queue waits consume the remaining time;
+callbacks run on the worker after the handler-list lock is released. Built-in
+handlers also retain their shorter configured timeouts. A removed handler in
+the snapshot stays alive until the worker releases it, while later additions
+are included by a subsequent barrier.
+
+The default `FemtoHandlerTrait::flush_until(deadline)` returns `false` without
+calling legacy synchronous `flush()`. Custom handlers must override this method
+and honour the deadline; the logger cannot pre-empt arbitrary synchronous code.
+Concurrent flush calls keep separate deadlines and use the existing bounded
+queue. Shutdown joins the worker and can wait for an in-progress callback.
+
+Python-facing calls release the GIL across the barrier. Native Rust callers do
+not acquire or release it, so callers that already hold the interpreter must
+release it when queued Python work needs to run. PyO3 reacquires the
+interpreter before returning to Python; that hand-off may delay the Python
+return beyond the Rust barrier deadline, in which case the result is `false`.
+See the [Rust extension guide](rust-extension.md) and the
+[multithreaded logging design](rust-multithreaded-logging-framework-for-python-design.md#flush-barrier-states)
+for the queue state machine and deadline transitions.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` applies a complete configuration through one
