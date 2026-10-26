@@ -374,11 +374,19 @@ Known uncertainties identified upfront, with mitigations.
   green check: its output says scanning runs only at initial PR opening and
   prior results still apply. The assessment did not run local gates or inspect
   their logs, and it does not resolve the rejected-record counter warning.
-- [ ] (2026-10-26) Publish the Gecko evidence qualification, then obtain
-  candidate-bound confirmation and a separate bounded property-coverage
-  assessment on the resulting head. Obtain maintainer disposition on the
-  rejected-record counter warning, request a current-head formal CodeRabbit
-  review, reconcile findings and approval, and merge.
+- [x] (2026-10-26) Gecko qualification follow-up `6412239652`, response
+  `6412256068`, assessed base `d234990f` and head `331f2274`. CodeRabbit
+  confirmed that the plan and PR body accurately distinguish a green Gecko
+  check from a fresh scan; both checked heads' output says initial-PR-open scan
+  mode and that prior results still apply. It also confirmed CodeScene result
+  `8128057` passed on `331f2274`, while CI run `40296820545` was still in
+  progress. The assessment did not inspect the underlying Gecko scan report or
+  the full CodeScene report and did not change formal review status.
+- [ ] (2026-10-26) Publish the latest delivery-state update, obtain a separate
+  bounded property-coverage assessment on the resulting head, and obtain
+  maintainer disposition on the rejected-record counter warning. Then request a
+  current-head formal CodeRabbit review, reconcile findings and approval, and
+  merge.
 
 ## Surprises & discoveries
 
