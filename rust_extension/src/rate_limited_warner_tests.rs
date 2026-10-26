@@ -9,8 +9,8 @@
 
 use super::*;
 use rstest::*;
-use std::sync::Barrier;
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::{Barrier, Mutex, mpsc};
 use std::thread;
 
 /// A test clock that advances only when the test requests it.
@@ -55,12 +55,6 @@ fn warner(clock: Arc<FakeClock>) -> (RateLimitedWarner, Arc<FakeClock>) {
 #[fixture]
 fn warnings() -> Vec<u64> {
     Vec::new()
-}
-
-/// Callback counts shared across racing threads.
-#[fixture]
-fn shared_warnings() -> Arc<std::sync::Mutex<Vec<u64>>> {
-    Arc::new(std::sync::Mutex::new(Vec::new()))
 }
 
 #[rstest]
@@ -218,46 +212,92 @@ fn flush_with_no_drops_does_nothing(
     assert!(warnings.is_empty());
 }
 
-/// Scenario: several callers race onto one interval that has already expired.
-///
-/// Invariant: exactly one of them warns, and it reports the whole pending
-/// batch. A plain load would let several callers drain at once, splitting the
-/// batch or leaving later callers with nothing to say.
-#[rstest]
-fn one_caller_claims_an_expired_interval(shared_warnings: Arc<std::sync::Mutex<Vec<u64>>>) {
+/// Only one CAS accepts callers that observed the same expired timestamp.
+#[test]
+fn compare_exchange_rejects_the_other_same_timestamp_claims() {
     const CALLERS: usize = 8;
-    const DROPS: u64 = 5;
 
-    let clock = Arc::new(FakeClock::default());
-    let warner = Arc::new(RateLimitedWarner::with_clock(
-        Duration::from_millis(1000),
-        Arc::clone(&clock) as Arc<dyn Clock>,
-    ));
-    for _ in 0..DROPS {
-        warner.record_drop();
-    }
-    clock.advance(1000);
+    let last_warn = Arc::new(AtomicU64::new(0));
+    let observed_prev = last_warn.load(Ordering::Relaxed);
+    let start = Arc::new(Barrier::new(CALLERS));
+    let successful_claims = AtomicU64::new(0);
 
-    let start = Barrier::new(CALLERS);
     thread::scope(|scope| {
         for _ in 0..CALLERS {
-            let warner = Arc::clone(&warner);
-            let warnings = Arc::clone(&shared_warnings);
-            let start = &start;
+            let last_warn = Arc::clone(&last_warn);
+            let start = Arc::clone(&start);
+            let successful_claims = &successful_claims;
             scope.spawn(move || {
                 start.wait();
-                warner.warn_if_due(|count| warnings.lock().expect("lock").push(count));
+                if try_claim_interval(&last_warn, observed_prev, 1000) {
+                    successful_claims.fetch_add(1, Ordering::Relaxed);
+                }
             });
         }
     });
 
-    let observed = shared_warnings.lock().expect("lock").clone();
-    assert_eq!(
-        observed,
-        vec![DROPS],
-        "one caller should claim the interval and report the whole batch"
+    assert_eq!(successful_claims.load(Ordering::Relaxed), 1);
+    assert_eq!(last_warn.load(Ordering::Relaxed), 1000);
+}
+
+/// A slow callback does not hold up another warning attempt or flush.
+#[test]
+fn callback_runs_after_releasing_the_drain_lock() {
+    let warner = Arc::new(RateLimitedWarner::new(Duration::from_secs(3600)));
+    warner.record_drop();
+
+    let callback_entered = Arc::new(Barrier::new(2));
+    let callback_resume = Arc::new(Barrier::new(2));
+    let second_attempt_started = Arc::new(Barrier::new(2));
+    let warning_counts = Arc::new(Mutex::new(Vec::new()));
+    let (second_done_tx, second_done_rx) = mpsc::channel();
+
+    let second_attempt_finished_while_callback_paused = thread::scope(|scope| {
+        let first_warner = Arc::clone(&warner);
+        let first_callback_entered = Arc::clone(&callback_entered);
+        let first_callback_resume = Arc::clone(&callback_resume);
+        let first_counts = Arc::clone(&warning_counts);
+        scope.spawn(move || {
+            first_warner.warn_if_due(|count| {
+                first_counts
+                    .lock()
+                    .expect("warning counts lock")
+                    .push(count);
+                first_callback_entered.wait();
+                first_callback_resume.wait();
+            });
+        });
+        callback_entered.wait();
+
+        let second_warner = Arc::clone(&warner);
+        let worker_attempt_started = Arc::clone(&second_attempt_started);
+        let second_counts = Arc::clone(&warning_counts);
+        scope.spawn(move || {
+            second_warner.record_drop();
+            worker_attempt_started.wait();
+            second_warner.warn_if_due(|count| {
+                second_counts
+                    .lock()
+                    .expect("warning counts lock")
+                    .push(count);
+            });
+            second_done_tx.send(()).expect("second attempt receiver");
+        });
+        second_attempt_started.wait();
+        let finished_early = second_done_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        callback_resume.wait();
+        finished_early
+    });
+
+    assert!(
+        second_attempt_finished_while_callback_paused,
+        "warning callbacks must run outside the drain mutex"
     );
-    assert_eq!(warner.pending_drops(), 0);
+    assert_eq!(
+        *warning_counts.lock().expect("warning counts lock"),
+        vec![1]
+    );
+    assert_eq!(warner.pending_drops(), 1);
 }
 
 /// Scenario: threads record, warn, flush and move the clock concurrently.

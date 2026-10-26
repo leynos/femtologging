@@ -21,12 +21,14 @@ suppressed interval carries its drops forward: if three records are dropped
 inside the window and a fourth arrives after it, the next warning reports four,
 not one. An explicit `flush()` reports immediately, whatever the clock says, so
 shutdown and flush paths cannot lose the last batch. Every recorded drop is
-reported exactly once — never twice, never zero times — including when
-`record_drop()`, `warn_if_due()` and `flush()` race on several threads.
+handed to exactly one callback batch — never twice, never zero times —
+including when `record_drop()`, `warn_if_due()` and `flush()` race on several
+threads. A callback panic can still abandon its batch after handoff; the warner
+does not retry it.
 
-The user-visible evidence is a warning stream whose counts sum to the number of
-records actually dropped, and a test suite that fails if any drop is discarded
-or double-reported.
+The user-visible evidence is a warning stream whose callback counts sum to the
+number of records actually dropped when callbacks return normally, and a test
+suite that fails if any drop is discarded or handed off more than once.
 
 ## Constraints
 
@@ -34,8 +36,8 @@ or double-reported.
   `record_drop`, `warn_if_due`, `flush`, the `Clock` trait, and
   `DEFAULT_WARN_INTERVAL`. Existing call sites in `stream_handler`, `logger`,
   `http_handler` and `socket_handler` must not need signature changes.
-- The warner stays lock-free. `record_drop()` sits on the record hot path and
-  must not take a lock or allocate.
+- `record_drop()` stays lock-free and allocation-free on the record hot path.
+  `warn_if_due()` and `flush()` may briefly synchronize their claim and drain.
 - All existing warning message texts stay byte-for-byte identical; operators
   and downstream tests match on them.
 - At most one `warn_if_due()` emission per interval, and only one caller may
@@ -75,10 +77,11 @@ or double-reported.
   Severity: medium Likelihood: medium Mitigation: synchronize with a `Barrier`,
   advance the fake clock only from one thread, and make all assertions about
   conservation rather than about which thread observed what.
-- Risk: `flush()` is now unconditional while `warn_if_due()` claims an interval
-  first, so a race between them could look like a lost batch. Severity: low
-  Likelihood: medium Mitigation: state in rustdoc that a batch is reported by
-  whichever drain observes it, and cover the race in the stress test.
+- Risk: a flush can drain the batch observed by a due caller before that caller
+  claims its interval. Severity: medium Likelihood: medium Mitigation: recheck,
+  claim and drain under one per-warmer mutex; keep callbacks outside the mutex;
+  use a deterministic clock-barrier test to prove a winning flush does not
+  leave an empty interval claimed.
 
 ## Progress
 
@@ -165,7 +168,28 @@ or double-reported.
       `python`, `log-compat`, and `python,log-compat`. Each feature set passed
       both heavy property tests and all three stream integration tests; all
       doctests passed.
-- [ ] CodeRabbit review clean.
+- [x] (2026-10-26) CodeRabbit reviewed committed candidate
+      `2529125b233fce1e95059b377a640eaabf92b2a0` and returned five findings:
+      one conservation-invariant clarification, two overlapping flush/claim
+      race concerns, and two requests for stronger interval-claim evidence.
+- [x] (2026-10-26) Implemented the review fixes: serialize the due-path
+      recheck/claim/drain against flush, strengthen the CAS and flush race
+      tests, and define conservation with in-flight callback batches.
+- [x] (2026-10-26) The first fresh `make lint` found E0382 in the callback
+      concurrency test because cloned barrier bindings shadowed the outer
+      `Arc`s. Renamed the worker clones, then reran `make fmt`; the full gate
+      sequence is restarting from the beginning.
+- [x] (2026-10-26) Reran the full gates sequentially after the ownership fix:
+      `make fmt`, `make check-fmt`, `make markdownlint`, `make nixie`,
+      `make lint`, `make typecheck`, and `make test` all passed. The Python
+      suite passed 781 tests, skipped 5, and passed all 66 snapshots with one
+      warning. Ignored Rust suites passed for no default features, `python`,
+      `log-compat`, and `python,log-compat`; each passed both heavy property
+      tests and all three stream integration tests. Logs use the `-rerun3.out`
+      suffix under `/tmp`. The worktree had three tracked edits over HEAD
+      `2529125b233fce1e95059b377a640eaabf92b2a0`.
+- [ ] Commit the review fixes and obtain a clean CodeRabbit review on that
+      exact commit.
 - [ ] Pushed and draft PR opened.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
@@ -342,6 +366,15 @@ pending action.
 - Decision: keep `Ordering::Relaxed` throughout.
   Rationale: the atomics publish only their own values; no other memory is
   released or acquired through them. Date/Author: 2026-10-16, agent.
+- Decision: synchronize the due-path counter recheck, interval claim and drain
+  with `flush()` under a per-warmer mutex, but invoke callbacks after releasing
+  that mutex. `record_drop()` remains a relaxed atomic increment without a
+  lock. Rationale: a flush can otherwise empty a batch after `warn_if_due()`
+  observed it but before the interval claim, leaving later drops suppressed
+  despite no warning being emitted. Sampling the clock before taking the mutex
+  avoids calling the public clock seam while holding an internal lock; the due
+  path rechecks the counter under the mutex and does not claim an empty window.
+  Date/Author: 2026-10-26, agent, following CodeRabbit review.
 - Decision: add a `#[cfg(feature = "test-util")] pending_drops()` accessor.
   Rationale: the acceptance criteria ask for an assertion that "reported plus
   pending equals recorded". The in-module stress test can read the private
@@ -367,11 +400,14 @@ pending action.
 
 ## Outcomes & retrospective
 
-The warning helper now preserves suppressed drops, claims warning intervals
-with compare-and-exchange, and drains explicit flushes independently of the
-rate limit. Deterministic unit, integration, property, type, lint, formatting
-and documentation gates all pass on the rebased candidate. The remaining work
-is CodeRabbit review and draft PR publication.
+The warning helper preserves suppressed drops, claims warning intervals with
+compare-and-exchange, and drains explicit flushes independently of the rate
+limit. Both the original rebased candidate and the CodeRabbit-driven race fixes
+have passed the full deterministic and ignored-heavy gate suites. The fixes
+serialize the due-path recheck, claim and drain against flush, keep callbacks
+outside the mutex, and include deterministic race and CAS evidence. The
+remaining work is to commit this candidate, obtain a clean review, and publish
+the draft PR.
 
 ## Context and orientation
 
@@ -440,7 +476,7 @@ Trace links:
 ```plaintext
 issue-440 AC1 (remove the suppressed-path reset)        -> EP-M1 -> rate_limited_warner::tests::suppressed_attempts_carry_drops_forward
 issue-440 AC2 (flush is an unconditional swap)          -> EP-M1 -> rate_limited_warner::tests::flush_reports_inside_the_suppression_window
-issue-440 AC3/AC4 (concurrency contract, no loss)       -> EP-M1 -> rate_limited_warner::tests::one_caller_claims_an_expired_interval
+issue-440 AC3/AC4 (concurrency contract, no loss)       -> EP-M1 -> rate_limited_warner::tests::compare_exchange_rejects_the_other_same_timestamp_claims
 issue-440 AC5/AC6/AC7 (regression and stress tests)     -> EP-M2 -> rate_limited_warner::tests::*, tests/heavy/prop_rate_limited_warner.rs
 issue-440 AC8 (consumers report on flush and shutdown)  -> EP-M3 -> stream_handler, logger, http_handler, socket_handler
 design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/rust-multithreaded-logging-framework-for-python-design.md
@@ -451,14 +487,17 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
 ### Invariants
 
 - **INV-1 (conservation).** For any interleaving of `record_drop()`,
-  `warn_if_due()` and `flush()`, let `R` be the number of `record_drop()` calls
-  that have completed, `P` the sum of the counts passed to callbacks that have
-  returned, and `D` the counter's current value. Then `R = P + D`. Proof
-  sketch: every `record_drop()` is a single relaxed `fetch_add(1)`; every drain
-  is a single `swap(0)`, which returns the exact sum of the increments it
-  observed and resets the counter to zero. The increments partition exactly
-  across the swaps, so their values sum to the total. A drain reports its value
-  in a callback whenever that value is non-zero.
+  `warn_if_due()` and `flush()`, let `R` be the number of completed
+  `record_drop()` calls, `D` the counter's current value, `I` the sum of
+  drained counts whose callback has not yet returned or panicked, and `P` the
+  sum of drained counts whose callback has returned or panicked. Then
+  `R = P + I + D`. The `I` term includes the gap between a drain and callback
+  invocation. Proof sketch: every `record_drop()` is a single relaxed
+  `fetch_add(1)`; every drain is a single `swap(0)`, which partitions the
+  increments it observes from the increments that remain pending. Each non-zero
+  drained batch is handed to one callback, so it moves from `I` to `P` when
+  that callback settles. A panic settles the handoff but may abandon the batch;
+  the warner does not retry it.
 - **INV-2 (no double report).** No drop contributes to two callbacks. Follows
   from INV-1: `swap(0)` removes the increments it returns.
 - **INV-3 (suppression preserves).** A `warn_if_due()` call that does not
@@ -492,18 +531,20 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   suppressed `flush()` emits nothing.
 - Obligation: INV-1, INV-2, INV-4 under real thread interleavings.
   Method: a threaded stress test (normal lane) over an `Arc<RateLimitedWarner>`
-  with a `Barrier`, plus a dedicated contention test that releases N
-  `warn_if_due()` callers onto one expired interval and asserts exactly one
-  callback. Rationale: INV-1/INV-2 are universal over interleavings; a sampled
-  set of schedules is proportionate, and the contention test makes INV-4
-  falsifiable rather than probabilistic. Domain: 2–4 threads, mixed
+  with a `Barrier`, plus a CAS unit test that synchronizes N callers using the
+  same expected previous timestamp and asserts exactly one successful claim. A
+  clock-barrier race test also lets `flush()` drain a due caller's observed
+  batch and verifies that the subsequent drop is still immediately warnable.
+  Rationale: INV-1/INV-2 are universal over interleavings; a sampled set of
+  schedules is proportionate, and the CAS test makes INV-4 falsifiable rather
+  than probabilistic. Domain: 2–4 threads, mixed
   `record_drop`/`warn_if_due`/`flush`, one thread advancing the fake clock,
-  asserted at a barrier-quiesced point and after a final flush. Artefact: the
-  same in-module `tests` block. Evidence: `cargo test ... rate_limited_warner`.
-  Non-vacuity: the contention test asserts `exactly one` callback, which is
-  false for a plain-load implementation; the stress test asserts
-  `reported + pending == recorded`, which is false under the current code the
-  moment any warning is suppressed.
+  asserted after all callbacks settle and a final flush completes, when `I=0`.
+  Artefact: the same in-module `tests` block. Evidence:
+  `cargo test ... rate_limited_warner`. Non-vacuity: the CAS test gives every
+  caller the same expected timestamp, so only one compare-exchange can succeed;
+  the stress test asserts `reported + pending == recorded`, which is false
+  under the original code the moment any warning is suppressed.
 - Obligation: INV-1 over generated operation sequences.
   Method: a `proptest` in the heavy target generating 2–4 threads of
   `Record`/`WarnIfDue`/`Flush`/`Advance` operations, each case ending in a
@@ -544,9 +585,10 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   with `-- --ignored`.
 - Lint/typecheck: `make lint`, `make typecheck`, `make check-fmt`,
   `make markdownlint`, `make nixie`.
-- Performance: no criterion regression is expected; no benchmark run is
-  required, as the change adds one relaxed load to the suppressed path and
-  removes one relaxed store.
+- Performance: `record_drop()` remains one relaxed atomic increment without a
+  lock or allocation. `warn_if_due()` now takes a short per-warmer mutex and
+  rechecks the counter before claiming; callbacks remain outside the lock. No
+  benchmark run is required for this correctness fix.
 
 ## Milestones and plateaus
 
@@ -557,14 +599,14 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   concurrency. Requirements: issue-440 AC1, AC2, AC3, AC4. Acceptance evidence:
   `rate_limited_warner::tests` passes; a manual run with the old `else` branch
   restored fails the new carry-forward test. Conformance check: constraints
-  held (public shape unchanged, lock-free, messages unchanged); design followed
-  (no new dependency); upstream assumption "the rate-limited warning surfaces
-  the total" now holds as stated; no unapproved public interface change (the
-  `test-util` accessor is recorded); trace links current. Recovery:
-  `git revert` the milestone commit; the change is self-contained. Remaining
-  gaps: consumer wiring and the heavy property test. Compatibility decision:
-  none. The crate is `publish = false` and pre-1.0; the public method
-  signatures are unchanged, so no consumer needs a shim.
+  held (public shape unchanged, `record_drop()` remains lock-free, messages
+  unchanged); design followed (no new dependency); upstream assumption "the
+  rate-limited warning surfaces the total" now holds as stated; no unapproved
+  public interface change (the `test-util` accessor is recorded); trace links
+  current. Recovery: `git revert` the milestone commit; the change is
+  self-contained. Remaining gaps: consumer wiring and the heavy property test.
+  Compatibility decision: none. The crate is `publish = false` and pre-1.0; the
+  public method signatures are unchanged, so no consumer needs a shim.
 - **EP-M2 — regression, contention and stress evidence.** New unit tests, the
   heavy property test, and the updated stream-handler integration test.
   Requirements: issue-440 AC5, AC6, AC7. Acceptance evidence: the named tests
