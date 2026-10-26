@@ -38,6 +38,8 @@
 //! them; that failure is returned to the caller rather than panicking, and a
 //! later logger retries.
 
+#[cfg(not(loom))]
+mod pool_start;
 mod shard;
 
 use pyo3::{PyErr, exceptions::PyRuntimeError};
@@ -259,35 +261,7 @@ impl Dispatcher {
                 return Ok(dispatcher);
             }
 
-            match PoolStartGuard::reserve(&POOL_STARTING_PROCESS, process_id) {
-                Ok(_start_guard) => {
-                    // Recheck after reserving startup: another caller may have
-                    // finished between our first load and this reservation.
-                    if let Some(dispatcher) = Self::pool_for_process(process_id) {
-                        return Ok(dispatcher);
-                    }
-
-                    // Only the reservation holder starts workers, so concurrent
-                    // first use cannot exceed the fixed pool's thread bound.
-                    let candidate = Box::into_raw(Box::new(Self::start()?));
-                    POOL.store(candidate, Ordering::Release);
-                    // SAFETY: the published Box remains allocated for the
-                    // process lifetime, including after a child replaces it.
-                    return Ok(unsafe { &*candidate });
-                }
-                Err(owner) if owner == process_id => std::thread::yield_now(),
-                Err(owner) => {
-                    // A different PID can only be the parent reservation
-                    // copied by fork. The child is the sole survivor there,
-                    // so it may safely clear that stale reservation and retry.
-                    let _ = POOL_STARTING_PROCESS.compare_exchange(
-                        owner,
-                        0,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    );
-                }
-            }
+            Self::start_or_wait(process_id)?;
         }
     }
 

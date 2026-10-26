@@ -1,7 +1,7 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: REVIEW IN PROGRESS — PR #544 is open; the latest review feedback is
-being repaired and re-gated.
+Status: REVIEW IN PROGRESS — PR #544 is open; final12 local gates are green.
+The follow-up still needs publication and current-head review closure.
 
 ## Purpose and big picture
 
@@ -88,9 +88,10 @@ Obligations and their evidence:
    `rust_extension/src/logger/dispatcher_tests.rs`.
 5. A panicking handler does not silence later records. Artefact:
    `catch_unwind` test in the dispatcher tests.
-6. Pool-start refusal reports a Python `RuntimeError`, releases its startup
-   reservation after a partial start, and permits a later retry. Artefact: the
-   injected worker-start failure test in `dispatcher_tests.rs`.
+6. An injected partial-start refusal maps to Python `RuntimeError`; the
+   test-local reservation is released, and the same injected start seam
+   succeeds on retry. Artefact: the worker-start failure test in
+   `dispatcher_tests.rs`.
 7. Fork rebinding is exercised with the dispatcher worker already running.
    CPython may emit a `DeprecationWarning` when multiple Python-managed threads
    are active. The test captures this optional warning and validates it when
@@ -196,8 +197,19 @@ Milestone 2 detail:
       six Loom models passed. The final test run followed a second targeted
       `cargo clean -p pyo3-ffi` (72 files, 41.2 MiB) and the fork test's change
       to validate CPython's warning only when it is emitted.
-- [ ] Commit and push this validated candidate, update the PR description, and
-      obtain the candidate-bound assessment and review follow-up.
+- [x] Refactor `Dispatcher::shared` after CodeScene flagged nested conditional
+      logic: isolate reservation handling and pool publication in helpers while
+      preserving fork recovery and retry behaviour. The first lint attempt found
+      the parent module at 407 lines, so those helpers now live in the documented
+      `dispatcher/pool_start.rs` submodule.
+- [x] Final11 complete local gates passed for the CodeScene follow-up:
+      formatting, formatting check, lint, typecheck, tests (806 passed,
+      5 skipped, 66 snapshots), Markdown, Mermaid, Loom Clippy and all six Loom
+      models.
+- [x] Final12 reran the complete sequential gate set after recording final11;
+      every gate passed with the same test and Loom counts.
+- [ ] Commit and push the follow-up, update the PR description, and obtain the
+      candidate-bound assessment and review follow-up.
 
 Re-gated at `467f406`:
 
@@ -1150,7 +1162,8 @@ All eight acceptance criteria in the issue are met and evidenced:
    parallelism, measured flat against logger count in
    `test_thread_count_does_not_track_logger_count`.
 5. **Exhaustion without panic** — `DispatcherError` to `RuntimeError`, with an
-   injected partial-start failure proving reservation release and later retry.
+   injected partial-start failure proving test-local reservation release and a
+   successful retry through the shared start seam.
 6. **One policy for every entry point** — convenience functions and both Rust
    bridges resolve through the same registry.
 7. **Stress tests** — many unique names, over-long names, and
@@ -1163,3 +1176,10 @@ branch look gated while the Loom lane had never run and did not compile. A lane
 that has never been executed is not evidence, and the `-D warnings` clippy run
 under `--cfg loom` catches dead code that the Loom heavy binary structurally
 cannot — because it is an integration test, not a unit test build.
+
+## Revision note
+
+2026-10-26: Recorded the final12 green gates, narrowed the startup retry
+evidence to the test-local reservation and injected seam, and left publication
+and current-head review closure as the remaining work. The implementation scope
+is unchanged.
