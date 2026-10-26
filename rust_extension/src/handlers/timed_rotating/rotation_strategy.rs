@@ -42,14 +42,14 @@ impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
 {
-    /// Builds strategy state from a known seed so tests and mtime recovery share the same deadline calculation.
-    fn from_seed(
+    /// Samples the supplied clock and seeds the first rollover deadline from that instant.
+    pub(crate) fn new_with_clock(
         path: PathBuf,
         schedule: TimedRotationSchedule,
         backup_count: usize,
-        clock: C,
-        seed: DateTime<Utc>,
+        mut clock: C,
     ) -> Self {
+        let seed = clock.now();
         let next_rollover_at = schedule.next_rollover(seed);
         Self {
             path,
@@ -59,17 +59,6 @@ where
             created_at: seed,
             next_rollover_at,
         }
-    }
-
-    /// Samples the supplied clock and seeds the first rollover deadline from that instant.
-    pub(crate) fn new_with_clock(
-        path: PathBuf,
-        schedule: TimedRotationSchedule,
-        backup_count: usize,
-        mut clock: C,
-    ) -> Self {
-        let seed = clock.now();
-        Self::from_seed(path, schedule, backup_count, clock, seed)
     }
 
     /// Re-seed `next_rollover_at` from an externally determined instant, such as
