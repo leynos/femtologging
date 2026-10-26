@@ -534,13 +534,15 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 `%(request_id)s`) and filters.
 
 The adapter runs on femtologging's dedicated worker thread. Before a record is
-queued, femtologging captures the producer's `contextvars` context and runs the
-wrapped handler's entire `handle()` call inside it. For handlers retaining the
-base `logging.Handler.handle()` behaviour, this includes the filter chain and,
-when the chain accepts, the I/O lock and `emit()` invocation. Any formatting
-performed by the concrete handler also runs in this context. A
-`contextvars.ContextVar` therefore observes the value set by the log caller,
-even though the handler dispatch itself is asynchronous on the worker thread.
+queued, femtologging captures the producer's `contextvars` context and invokes
+the wrapped handler's `handle()` call inside it. For handlers retaining the base
+`logging.Handler.handle()` behaviour, this includes the filter chain and, when
+the chain accepts, the I/O lock and `emit()` invocation. Formatting performed
+synchronously within that call also uses the captured context. Work deferred to
+another thread or process needs separate context propagation. A
+`contextvars.ContextVar` read by an inline handler callback therefore observes
+the value set by the log caller, even though the initial handler dispatch is
+asynchronous on the worker thread.
 
 **Limitations:**
 

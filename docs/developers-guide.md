@@ -293,15 +293,18 @@ Python inside the supplied context. `FemtoLogger::add_handler()` returns
 declare this support. The default `handle_with_context()` also fails closed for
 Python-backed handlers. `PyHandler` copies the captured context for each
 callback and runs either `handle_record(record_dict)` or the legacy
-`handle(logger, level, message)` call through `Context.run()`. This keeps
-Python filters and formatters in the captured producer context without allowing
-one Python handler to modify another's view of it, while leaving non-Python
-handlers on their existing path.
+`handle(logger, level, message)` call through `Context.run()`. Python filters,
+formatters and other callbacks that execute synchronously within those calls
+use the captured producer context, without allowing one Python handler to
+modify another's view of it. Work deferred to another thread or process needs
+separate context propagation; non-Python handlers retain their existing path.
 
 For `StdlibHandlerAdapter`, `handle_record()` calls the wrapped handler's
-`handle()` method inside `Context.run()`. The complete stdlib handler call,
-including filters, formatters, and `emit()`, therefore runs in the captured
-producer context.
+`handle()` method inside `Context.run()`. With base `Handler.handle()`
+behaviour, the filter chain and `emit()` invocation run synchronously in the
+captured producer context, as does formatting performed during that call. A
+handler that defers formatting or emission to another thread or process needs
+separate context propagation.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
 capture, handler-filter-chain evaluation, queue dispatch, and worker handler
@@ -339,8 +342,9 @@ from later chains cannot mutate snapshots already captured for earlier
 handlers. Worker threads perform queued handler delivery; filter callbacks
 remain on the producer thread for femtologging-configured handler filter
 chains. This does not make Python-backed handler workers Python-free: under the
-captured context, their own callbacks can invoke Python, including a wrapped
-stdlib handler's filters, formatter, and emission.
+captured context, their synchronous callbacks can invoke Python, including a
+wrapped stdlib handler's filters, formatter, and `emit()` invocation. Work
+deferred beyond those callbacks requires separate context propagation.
 
 Handler filter IDs are resolved during configuration using the same filter
 registry as logger filters. `ConfigBuilder` resolves builder filter IDs before

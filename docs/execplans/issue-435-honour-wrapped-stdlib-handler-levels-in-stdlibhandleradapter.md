@@ -247,15 +247,35 @@ Known uncertainties identified upfront, with mitigations.
   `8121472` passed. The proof assessment and completeness follow-up confirmed
   the plan and proof corrections, while both identified remaining user-guide
   wording that overstates base-handler filter and lock behaviour.
-- [x] (2026-10-26) Qualified the user-guide handler and context claims. The
-  exact two-document worktree diff on `8fd2cdf` passed all six sequential local
+- [x] (2026-10-26) Committed and published the base-handler guide qualification
+  as `8001ddc`. Its exact worktree candidate passed all six sequential local
   gates: `check-fmt`, `test` (797 passed, 5 skipped; 66 snapshots), `typecheck`,
-  `lint`, `markdownlint` and `nixie`. CodeScene found no applicable code
-  changes. The plan and guide are the only changed paths; candidate-bound
-  assessments and hosted validation remain before formal review and merge.
-- [ ] (2026-10-26) Commit and publish the validated guide correction, obtain
-  candidate-bound completeness and proof confirmation, then bring PR #546 to
-  review equilibrium and merge it.
+  `lint`, `markdownlint` and `nixie`. CodeScene result `8122938` passed.
+  Hosted CI was still running when the candidate-bound assessments arrived.
+  Those assessments accepted the filter/lock/emission qualification and proof,
+  and identified asynchronous-context wording plus the completed publication
+  step as corrections needed in the next candidate.
+- [x] (2026-10-26) Limited context claims across the adapter documentation and
+  user, developer, migration and decision guides to synchronous handler work,
+  and recorded publication of `8001ddc` as complete. The six-path worktree
+  candidate before final formatting passed all six sequential local gates:
+  `check-fmt`, `test` (797 passed, 5 skipped; 66 snapshots), `typecheck`,
+  `lint`, `markdownlint` (61 files, no errors) and `nixie`. The old-head hosted
+  run `40249466989` completed successfully. A later `make fmt` normalized the
+  adapter docstring, changing the diff hash; the documentation gates passed on
+  that normalized content.
+- [x] (2026-10-26) The context-boundary edits passed `make lint`,
+  `make typecheck`, and the full `make test`
+  (`797 passed, 5 skipped; 66 snapshots`; all Rust feature lanes and doctests
+  passed). The first Python-feature doctest attempt had unresolved symbols from
+  an `extension-module` PyO3 artefact; an isolated rebuild and the later full
+  test passed without source changes. After the final ExecPlan evidence update,
+  `make fmt`, `make check-fmt`, `make markdownlint` (0 errors), and
+  `make nixie` passed on the exact documentation worktree.
+- [ ] (2026-10-26) Commit and publish the validated six-path correction. Run
+  CodeScene and obtain fresh candidate-bound completeness and proof assessments
+  on the pushed head, refresh hosted CI, then reconcile formal review and merge
+  PR #546.
 
 ## Surprises & discoveries
 
@@ -970,7 +990,15 @@ claims, qualified normal filter/lock/emission ordering, and corrected the
 lock-instrumentation rationale. These changes refine the manual argument; the
 implementation and tests are unchanged. The assessments of `8fd2cdf` confirmed
 those proof and plan corrections, and identified a remaining user-guide
-overstatement about handler subclasses. The guide now receives the same
-base-handler qualification. All six local gates passed on the exact
-two-document candidate; candidate-bound reassessments, hosted checks, formal
-review and merge remain.
+overstatement about handler subclasses. Candidate `8001ddc` passed all six
+local gates and CodeScene; the assessments accepted the base-handler
+qualification but found async-context overstatement in several documents and an
+outdated open publication step. The current correction updates those context
+boundaries and records that `8001ddc` is already published. The
+context-boundary source changes passed lint, typecheck, and the complete test
+target. The final ExecPlan evidence wording then passed the formatting,
+Markdown, and diagram gates. One earlier Python-feature doctest attempt linked
+against an `extension-module` PyO3 artefact and failed to resolve Python
+symbols. The isolated doctest rebuild and the complete test target then passed
+without source changes. Fresh candidate-bound assessments, CodeScene, hosted
+checks, formal review and merge remain.
