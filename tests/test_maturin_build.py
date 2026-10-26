@@ -148,7 +148,7 @@ def test_release_wheel_does_not_expose_timed_rotation_hooks(
         "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
     )
     # ruff: ignore[subprocess-without-shell-equals-true] fixed local wheel and interpreter paths.
-    subprocess.run(
+    install_result = subprocess.run(
         [
             str(python),
             "-m",
@@ -158,18 +158,25 @@ def test_release_wheel_does_not_expose_timed_rotation_hooks(
             "--no-index",
             str(production_wheel),
         ],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=120,
     )
+    assert install_result.returncode == 0, (
+        f"release wheel installation failed:\n"
+        f"{install_result.stdout}{install_result.stderr}"
+    )
     probe = repo_root() / "scripts/release_wheel_probe.py"
     # ruff: ignore[subprocess-without-shell-equals-true] fixed local probe and interpreter paths.
-    subprocess.run(
+    probe_result = subprocess.run(
         [str(python), "-I", str(probe)],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=30,
         cwd=tmp_path,
+    )
+    assert probe_result.returncode == 0, (
+        f"release wheel probe failed:\n{probe_result.stdout}{probe_result.stderr}"
     )
