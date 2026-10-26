@@ -382,11 +382,18 @@ Known uncertainties identified upfront, with mitigations.
   `8128057` passed on `331f2274`, while CI run `40296820545` was still in
   progress. The assessment did not inspect the underlying Gecko scan report or
   the full CodeScene report and did not change formal review status.
-- [ ] (2026-10-26) Publish the latest delivery-state update, obtain a separate
-  bounded property-coverage assessment on the resulting head, and obtain
-  maintainer disposition on the rejected-record counter warning. Then request a
-  current-head formal CodeRabbit review, reconcile findings and approval, and
-  merge.
+- [x] (2026-10-26) Property-coverage assessment `6412324322`, response
+  `6412344134`, assessed base `d234990f` and head `1513decf`. CodeRabbit found
+  the threshold and sequential `setLevel()` tests adequate for issue #435, with
+  no material in-scope test-oracle gap. It confirmed the generated oracle uses
+  an independent level table and that the deterministic sequence covers the
+  case where generated distinct thresholds do not change acceptance. It also
+  confirmed that direct lock-acquisition counts, exhaustive enumeration,
+  concurrent update schedules, execution statistics and formal proof are not
+  claimed by this bounded behavioural suite.
+- [ ] (2026-10-26) Obtain maintainer disposition on the rejected-record counter
+  warning. Then request a current-head formal CodeRabbit review, reconcile its
+  findings and approval, and merge.
 
 ## Surprises & discoveries
 
@@ -700,6 +707,10 @@ The Hypothesis properties sample generated levels, thresholds, and operation
 sequences; they are bounded behavioural checks, not exhaustive numeric
 enumeration. The explicit `ERROR` table remains the complete regression record
 for the six mapped record levels at that handler threshold.
+
+Both Hypothesis tests are configured with `max_examples=100`; this setting does
+not imply that exactly 100 examples executed or that those examples were
+distinct. The generated integer domain has only 71 possible handler levels.
 
 ## Plan of work
 
