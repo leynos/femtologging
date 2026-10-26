@@ -109,10 +109,10 @@ Known uncertainties identified upfront, with mitigations.
   The build succeeded after roughly two minutes of compilation; the managed
   sccache server was unreachable so the build ran uncached, which is expected
   and not a failure.
-- [x] (2026-10-14 16:05Z) Reproduced the defect with a focused test run (Red).
-  The four below-threshold cases failed with the pre-fix `handle_record()`,
-  which confirmed they exercise the defect rather than restating existing
-  behaviour; the direct reproduction is recorded in `Artefacts and notes`.
+- [x] (2026-10-14 16:05Z) Reproduced the defect with the manual `INFO` case
+  (Red). Its input and expected output are recorded in `Artefacts and notes`;
+  focused pre-fix test transcripts were not retained, so no broader red-stage
+  test result is claimed.
 - [x] (2026-10-14 16:20Z) Implemented the level gate in `handle_record()`
   (Green). All 38 tests in the two adapter suites and 45 doctests passed.
 - [x] (2026-10-14 16:35Z) Added the regression tests: level matrix, dynamic
@@ -351,10 +351,18 @@ Known uncertainties identified upfront, with mitigations.
   result `8126106` were queued at publication. CodeRabbit's summary marked
   `cd7c216` paused and unreviewed; the last formal approval still covered
   `fa210fb`. The PR body was refreshed for `cd7c216` and links to these checks.
-- [ ] (2026-10-26) Await green exact-head hosted checks, then obtain the
-  candidate-bound completeness and property-coverage assessments. Resolve the
-  observability scope disposition, request a current-head formal review through
-  the managed queue, reconcile its findings and approval, and merge.
+- [x] (2026-10-26) On published head `de14c2f`, exact-head Actions run
+  `40282766107` passed all four Python jobs and CodeScene result `8126162`
+  passed. The completeness assessment (`6410437156`, response `6410460011`)
+  found no in-scope runtime defect and identified three record-accuracy fixes,
+  now addressed in the worktree. At that head, property-coverage assessment and
+  current-head formal review were still pending; CodeRabbit's status was
+  paused, and the rejected-record counter still awaited maintainer disposition.
+- [ ] (2026-10-26) Revalidate and publish the three assessment corrections,
+  obtain a candidate-bound completeness follow-up and property-coverage
+  assessment, resolve the observability scope disposition, request a current-
+  head formal review through the managed queue, reconcile findings and
+  approval, and merge.
 
 ## Surprises & discoveries
 
@@ -518,7 +526,7 @@ missing v0.2.0 migration note, and a rejected-record counter. Candidate
 `a1ae687` reverts the unrelated timeout change, restoring the original
 600-second child and 620-second pytest limits, and adds the migration note. It
 passed all seven sequential local gates. Hosted run `40281574197` was still
-running when this status update was recorded. The remaining counter request
+running when that progress entry was written. The remaining counter request
 needs a maintainer disposition. Subsequent plan-only publication and validation
 states are recorded in Progress above.
 
@@ -1016,4 +1024,4 @@ passed. Focused outcome confirmation `6407235083` found no remaining stale
 status entry. Formal review `5647538903` of head `3333255` returned
 `CHANGES_REQUESTED`; its documentation threads and pre-merge warnings must be
 reconciled before the guarded merge. The existing review queue request is
-`e8d2e60c`.
+`e8d2e60c` completed on `fa210fb`; it does not cover later published heads.
