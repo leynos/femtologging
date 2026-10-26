@@ -317,18 +317,8 @@ Configure these settings manually before the first tag:
 
 The PyPI project and publisher are not registered by this repository change.
 The first release cannot publish until the publisher and GitHub environment
-exist.
-
-Coverage and development tests need the timed-rotation hooks, while release
-packages must not contain them. The persistent maturin feature set is `python`,
-without `test-util`. The Cargo defaults remain
-`["extension-module", "python", "log-compat", "tracing-compat"]`, and
-`test-util` is separate and non-default. `make build` and the heavy-test
-workflow opt in with `--features python,test-util`; coverage uses
-`.github/uv-test-util.toml` through an absolute `UV_CONFIG_FILE`. Coverage and
-heavy-test jobs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`, which makes the suite
-fail early if its hooks are missing. Release-wheel verification checks that the
-timed-rotation hooks are absent.
+exist. See [Maturin build features](#maturin-build-features) for the production
+and test feature sets.
 
 ## Type checking and heavy tests
 
