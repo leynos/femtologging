@@ -264,6 +264,72 @@ a nightly toolchain, and this repository pins the stable `1.99.1` (recorded
 2026-10-31, with no measurement taken on it). Revisit if the repository moves
 to a nightly pin.
 
+## Publishing a release
+
+The first release has not yet been published. Before creating its tag,
+configure the GitHub environment and PyPI Trusted Publisher described below.
+Bump the version in both `pyproject.toml` and `rust_extension/Cargo.toml` to
+the same exact string, then commit and push those changes. The Rust extension
+crate is `publish = false`; maturin includes it in the Python distribution, and
+it is never published with `cargo publish`.
+
+Push a tag whose version matches both manifests, for example `v0.2.0-beta1`. The
+`release.yml` workflow accepts `v*.*.*` tags, compares the tag with the Cargo
+package version and the exact Python project version, and marks pre-releases
+from the Python version. The versions must match without the tag's leading `v`.
+
+The workflow then proceeds through these jobs:
+
+- `build` calls `build-wheels.yml`. It builds per-interpreter CPython 3.12,
+  3.13 and 3.14 wheels for Linux x86_64 and aarch64, macOS x86_64 and arm64,
+  and Windows x86_64, plus exactly one source distribution. The build workflow
+  also runs in pull-request CI; its verification job fails if the sdist is
+  absent or duplicated and installs a wheel and a rebuilt sdist.
+- `attest` collects every wheel and the single sdist, attests those files with
+  build provenance, and passes the files and Sigstore bundle to later jobs as
+  one artefact.
+- `draft-release` creates or reuses the tag's GitHub Release as a draft and
+  snapshots any existing release assets.
+- `publish-pypi` runs in the `pypi` environment with Trusted Publishing. It
+  checks the PyPI Simple index, stages names PyPI does not already hold, and
+  uploads only those files with `skip-existing` enabled.
+- `publish-release` reconciles the GitHub Release with PyPI, checks that both
+  destinations have the same SHA-256 digest for every distribution file, then
+  publishes the draft. Pre-release status follows the checked Python version.
+
+Re-running the same tag is safe. Runs for one tag queue rather than cancel each
+other, and the workflow never overwrites an existing filename. For each name,
+existing PyPI bytes take precedence, then existing GitHub Release bytes, then
+the current build. Each destination receives only missing names, so a complete
+rerun has nothing new to upload. If the destinations already hold different
+bytes for the same name, digest verification fails and the release remains a
+draft. PyPI files cannot be deleted; resolve the conflict by removing the
+inconsistent asset from the GitHub Release, then rerun the tag.
+
+### Required publishing settings
+
+Configure these settings manually before the first tag:
+
+- In GitHub, create the `pypi` environment and restrict deployments to tags
+  matching `v*.*.*`.
+- In PyPI, add a Trusted Publisher for project `femtologging`, owner `leynos`,
+  repository `femtologging`, workflow `release.yml`, and environment `pypi`.
+
+The PyPI project and publisher are not registered by this repository change.
+The first release cannot publish until the publisher and GitHub environment
+exist.
+
+Coverage and development tests need the timed-rotation hooks, while release
+packages must not contain them. The persistent maturin feature set is `python`,
+without `test-util`. The Cargo defaults remain
+`["extension-module", "python", "log-compat", "tracing-compat"]`, and
+`test-util` is separate and non-default. `make build` and the heavy-test
+workflow opt in with `--features python,test-util`; coverage uses
+`.github/uv-test-util.toml` through an absolute `UV_CONFIG_FILE`. Coverage and
+heavy-test jobs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`, which makes the suite
+fail early if its hooks are missing. Release-wheel verification checks that the
+timed-rotation hooks are absent.
+
 ## Type checking and heavy tests
 
 `make typecheck` depends on `make build`, which creates `./.venv`, installs the

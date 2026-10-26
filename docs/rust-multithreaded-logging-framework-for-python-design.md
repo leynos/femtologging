@@ -1904,6 +1904,40 @@ scope for more advanced structured logging features:
   etc. The `tracing-opentelemetry` crate provides a good example of integrating
   with such ecosystems.
 
+### 8.5. Packaging and Release Process
+
+The Python package is built with maturin from the repository root and the Rust
+extension in `rust_extension/`. The extension crate is `publish = false` and is
+shipped inside the Python distribution. Release builds select the explicit
+`python` feature and exclude `test-util`. The Cargo defaults remain unchanged:
+
+```toml
+default = ["extension-module", "python", "log-compat", "tracing-compat"]
+```
+
+`test-util` is a separate, non-default feature. Coverage uses
+`.github/uv-test-util.toml` through `UV_CONFIG_FILE`, while development and
+heavy tests opt in to `python,test-util`. The release wheel probe verifies that
+timed-rotation test hooks do not appear in the installed production wheel.
+Fresh-failure test hooks remain a known ungated surface.
+
+The release workflow builds one sdist and native, per-interpreter wheels for
+CPython 3.12, 3.13 and 3.14 on Linux x86_64/aarch64, macOS x86_64/arm64, and
+Windows x86_64. It does not build ABI3, Python 3.15, free-threaded, or Windows
+arm64 wheels. Pull-request CI runs the reusable build and verifies that exactly
+one sdist is present, then installs a native wheel and a rebuilt sdist.
+
+On a version tag, the workflow checks the tag against both package manifests,
+attests all wheels and the sdist, and publishes them to PyPI using Trusted
+Publishing. It creates or reuses a draft GitHub Release and publishes it only
+after reconciling its assets with PyPI. Existing bytes are canonical in this
+order: PyPI, GitHub Release, then the current build. Only missing filenames are
+uploaded, and matching SHA-256 digests are required before the draft is
+published. Re-running a tag therefore succeeds without replacing assets.
+
+The workflow's release decision and known limits are recorded in
+[ADR-008](./adr-008-release-pipeline.md). Telemetry steps were not adopted.
+
 ## 9. Conclusion
 
 The proposed design for `femtologging` outlines a path towards a
