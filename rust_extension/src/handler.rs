@@ -133,24 +133,30 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
         true
     }
 
-    /// Flush pending records, giving up at `deadline` when possible.
+    /// Flush pending records only when the implementation can honour `deadline`.
     ///
     /// Returning `true` signals the flush completed successfully.
     /// Implementations may return `false` when the handler has been closed or
     /// if the flush command could not be processed.
     ///
-    /// An implementation that honours this deadline must not report success
-    /// after `deadline`.
+    /// An implementation that opts into this method must not block past
+    /// `deadline`, and must not report success after it. Synchronous arbitrary
+    /// handler code cannot be preempted, so this is an implementation contract.
     /// [`FemtoLogger::flush_handlers`] advertises one timeout for the whole
-    /// barrier — enqueueing the marker, waiting for its acknowledgement, and
-    /// flushing every handler. Each implementation should still cap its wait
-    /// at its own configured timeout, so the deadline can shorten that wait
-    /// without lengthening it.
+    /// barrier — snapshotting the handler list, enqueueing the marker, waiting
+    /// for its acknowledgement, and flushing every handler. Each built-in
+    /// implementation still caps its wait at its own configured timeout, so
+    /// the deadline can shorten that wait without lengthening it.
     ///
-    /// The default preserves existing implementations by delegating to
-    /// [`Self::flush`]. A custom handler with a blocking flush should override
-    /// this method to honour the deadline. Since `flush` is synchronous, the
-    /// barrier cannot preempt an implementation that ignores it.
+    /// The default fails closed: it returns `false` without calling
+    /// [`Self::flush`]. This keeps a legacy synchronous flush from blocking
+    /// the logger's caller indefinitely. A custom handler must override this
+    /// method to opt into the deadline-aware flush contract; the logger cannot
+    /// preempt an implementation that violates that contract.
+    ///
+    /// The logger calls this method without holding its handler-list lock. A
+    /// handler may be removed while a flush is in progress; the snapshot held
+    /// by that barrier keeps it alive until the synchronous call returns.
     ///
     /// # Examples
     ///
@@ -164,9 +170,8 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// ```
     ///
     /// [`FemtoLogger::flush_handlers`]: crate::FemtoLogger::flush_handlers
-    fn flush_until(&self, deadline: Instant) -> bool {
-        let _ = deadline;
-        self.flush()
+    fn flush_until(&self, _deadline: Instant) -> bool {
+        false
     }
 
     /// Expose a typed reference for downcasting.
@@ -193,6 +198,10 @@ impl FemtoHandlerTrait for FemtoHandler {
     }
 
     fn flush(&self) -> bool {
+        true
+    }
+
+    fn flush_until(&self, _deadline: Instant) -> bool {
         true
     }
 

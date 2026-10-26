@@ -40,11 +40,11 @@ fn default_handler_flush_returns_true() {
 }
 
 #[test]
-fn overridden_flush_called_via_trait() {
+fn legacy_flush_until_fails_closed_without_calling_flush() {
     let handler = DummyHandler::default();
     let trait_obj: &dyn FemtoHandlerTrait = &handler;
-    assert!(trait_obj.flush_until(std::time::Instant::now() + std::time::Duration::from_secs(1)));
-    assert!(*handler.flushed.lock().expect("flushed flag mutex poisoned"));
+    assert!(!trait_obj.flush_until(std::time::Instant::now() + std::time::Duration::from_secs(1)));
+    assert!(!*handler.flushed.lock().expect("flushed flag mutex poisoned"));
 }
 
 /// Handler double for checking default context-aware dispatch behavior.

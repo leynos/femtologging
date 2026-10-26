@@ -19,7 +19,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
-    worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
+    worker::{FlushFailure, SocketCommand, enqueue_record, flush_queue, spawn_worker},
 };
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -68,11 +68,18 @@ impl FemtoSocketHandler {
         let Some(tx) = self.sender() else {
             return false;
         };
-        self.warner.flush(|count| {
-            log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
-        });
+        let pending_drops = self.warner.take_due();
         let handler_deadline = capped_deadline(deadline, self.flush_timeout);
-        flush_queue(&tx, handler_deadline)
+        match flush_queue(&tx, handler_deadline, pending_drops) {
+            Ok(()) => true,
+            Err(FlushFailure::Enqueue) => {
+                if let Some(count) = pending_drops {
+                    self.warner.restore_drops(count);
+                }
+                false
+            }
+            Err(FlushFailure::Acknowledgement) => false,
+        }
     }
 
     /// Close the handler and wait for the worker to exit.

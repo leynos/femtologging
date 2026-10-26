@@ -76,13 +76,15 @@ def test_flush_handlers_does_not_deadlock_on_a_gil_needing_handler() -> None:
     # The barrier is reached, not merely queued: the handler is running, so
     # the worker has the record. If the flush held the interpreter, this wait
     # would never be satisfied.
-    assert handler.handled.wait(HANDSHAKE_SECONDS), (
-        "the worker never reached the handler; the flush is holding the "
-        "interpreter the worker needs"
-    )
+    try:
+        assert handler.handled.wait(HANDSHAKE_SECONDS), (
+            "the worker never reached the handler; the flush is holding the "
+            "interpreter the worker needs"
+        )
+    finally:
+        handler.proceed.set()
+        flusher.join(HANDSHAKE_SECONDS)
 
-    handler.proceed.set()
-    flusher.join(HANDSHAKE_SECONDS)
     assert not flusher.is_alive(), "flush_handlers did not return after the handler ran"
     assert flushed == [True], (
         f"a flush with a live worker should succeed, got {flushed!r}"
@@ -120,16 +122,17 @@ def test_flush_handlers_is_bounded_when_a_handler_stalls() -> None:
     logger.add_handler(handler)
     logger.log("INFO", "stalling record")
 
-    assert entering.wait(HANDSHAKE_SECONDS), "the worker never reached the handler"
+    try:
+        assert entering.wait(HANDSHAKE_SECONDS), "the worker never reached the handler"
 
-    started_at = time.monotonic()
-    flushed = logger.flush_handlers()
-    elapsed = time.monotonic() - started_at
+        started_at = time.monotonic()
+        flushed = logger.flush_handlers()
+        elapsed = time.monotonic() - started_at
 
-    assert flushed is False, "a flush the worker never acknowledges must be False"
-    assert elapsed < FLUSH_BOUND_SECONDS, (
-        f"flush_handlers took {elapsed:.2f}s with a stalled handler; the "
-        f"advertised timeout is {FLUSH_TIMEOUT_SECONDS}s"
-    )
-
-    handler.release.set()
+        assert flushed is False, "a flush the worker never acknowledges must be False"
+        assert elapsed < FLUSH_BOUND_SECONDS, (
+            f"flush_handlers took {elapsed:.2f}s with a stalled handler; the "
+            f"advertised timeout is {FLUSH_TIMEOUT_SECONDS}s"
+        )
+    finally:
+        handler.release.set()

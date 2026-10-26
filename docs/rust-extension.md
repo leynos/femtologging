@@ -538,9 +538,15 @@ handler. Callers may invoke a handler's `flush()` method to ensure queued
 messages are written before dropping it.
 
 The logger's `flush_handlers()` barrier also supplies its absolute deadline to
-each Rust handler through `flush_until()`. The default implementation delegates
-to `flush()` for compatibility. Custom handlers whose flush can block should
-override `flush_until(deadline)` and cap their worker wait at that instant.
+each Rust handler through `flush_until()`. Its default returns `false` without
+calling `flush()`, so a legacy custom handler cannot make the logger caller
+wait indefinitely. A custom handler must override `flush_until(deadline)` to
+opt into barrier flushing and must return by that instant. The logger cannot
+preempt synchronous handler code that violates this contract. A handler removed
+after the barrier snapshots the list remains alive for that flush; concurrent
+additions are included by a later barrier. Concurrent flushes use the existing
+bounded queue and create no helper workers. Shutdown that closes the queue
+before acknowledgement produces `false`.
 
 The `add_handler()` method is exposed through the Python bindings and can be
 called on a shared logger instance. It verifies the provided object defines a

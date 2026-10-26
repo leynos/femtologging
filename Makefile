@@ -276,7 +276,7 @@ test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
 	# Nothing executed them before, and three test-helper examples named
 	# variables that were never bound. An example nobody runs is a comment
 	# that looks like evidence.
-	uv run pytest -v --doctest-modules
+	uv run pytest -v --doctest-modules -p tests.steps.logging_context_steps
 
 typecheck: build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter

@@ -200,56 +200,79 @@ The logging process will follow these steps:
 
 #### Flush Barrier States
 
-`FemtoLogger.flush_handlers()` is a barrier over the same queue. It queues a
-marker record behind every record the logger has already accepted, waits for
-the worker to reach it, and only then flushes each handler. Because the marker
-travels through the bounded queue, the call can fail before the worker ever
-sees it, and the states below distinguish that from a worker that saw the
-marker but did not answer.
+`FemtoLogger.flush_handlers()` is a barrier over the same queue. It snapshots
+the attached handlers, queues a marker record behind every record the logger
+has already accepted, waits for the worker to reach it, and only then flushes
+the snapshot. Because the marker travels through the bounded queue, the call
+can fail before the worker ever sees it, and the states below distinguish that
+from a worker that saw the marker but did not answer.
 
 For screen readers: the following state diagram shows a `flush_handlers()` call
-moving from enqueueing its marker, to awaiting the worker's acknowledgement, to
-flushing the attached handlers. It succeeds only when every handler flush
-succeeds; it fails when the queue stays full until the deadline, when the
-worker has already exited, when the acknowledgement deadline expires, or when
-any handler flush returns `false`.
+moving from snapshotting the handler list, to enqueueing its marker, awaiting
+the worker's acknowledgement, flushing the snapshot, and reacquiring the
+interpreter. It succeeds only when the worker and every deadline-aware handler
+confirm in time and interpreter reacquisition completes before the deadline. It
+fails if the snapshot lock, marker enqueue, acknowledgement, handler flush, or
+interpreter reacquisition is not confirmed by the shared deadline, if the
+worker has exited, or if a handler reports failure or does not implement the
+deadline-aware contract.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> EnqueueMarker
+    [*] --> SnapshotHandlers
+    SnapshotHandlers --> EnqueueMarker: read lock acquired before deadline
+    SnapshotHandlers --> Failed: lock unavailable at deadline
     EnqueueMarker --> AwaitAcknowledgement: marker enqueued
     EnqueueMarker --> Failed: queue full until deadline or worker exited
     AwaitAcknowledgement --> FlushHandlers: marker acknowledged
     AwaitAcknowledgement --> Failed: acknowledgement deadline expires
-    FlushHandlers --> Succeeded: every handler flush succeeds
-    FlushHandlers --> Failed: handler flush returns false
+    FlushHandlers --> ReacquireInterpreter: every opted-in handler confirms in time
+    FlushHandlers --> Failed: unsupported, failed, or late handler flush
+    ReacquireInterpreter --> Succeeded: interpreter reacquired before deadline
+    ReacquireInterpreter --> Failed: interpreter reacquired after deadline
     Succeeded --> [*]
     Failed --> [*]
 ```
 
-_Figure 1: States of a `flush_handlers()` barrier, from enqueueing the marker
-through acknowledging it to flushing each handler, with the transitions on
-which it fails._
+_Figure 1: States of a `flush_handlers()` barrier, from snapshotting the
+handlers through enqueueing and acknowledging the marker to flushing each
+handler and reacquiring the interpreter, with the transitions on which it
+fails._
 
-A single absolute deadline covers the whole barrier, so the states above cannot
-each spend the advertised budget: everything from `EnqueueMarker` through
-`FlushHandlers` shares one timeout. The deadline reaches the handler flushes as
-well as the two wait states, because `FemtoHandlerTrait::flush_until()` takes
-it as an argument; each handler caps that at its own configured timeout, so the
-deadline can shorten a handler's wait but not lengthen the barrier.
+One absolute deadline begins when the barrier starts. Handler-list lock
+acquisition, marker enqueue, worker acknowledgement, and every handler flush
+consume that same budget. Built-in handlers also cap their waits at their
+shorter configured timeout. The handler list is cloned while holding a
+deadline-bounded read lock; the lock is released before marker waiting and
+handler callbacks. A removal after the snapshot does not cancel this barrier:
+the snapshot keeps the handler alive until its flush returns. Additions after
+the snapshot participate in the next barrier. Concurrent calls each use their
+own deadline and bounded queue marker; the logger creates no helper threads or
+unbounded task queue. Once the worker exits, marker insertion fails and the
+barrier returns `false`.
 
-`EnqueueMarker` and `AwaitAcknowledgement` release the Python GIL while they
-block, so a worker that needs the GIL to reach the marker can still run. The
-`FlushHandlers` state releases nothing, because no handler's flush needs the
-GIL: a Python handler is reached through a wrapper that takes the default no-op
-flush rather than calling back into Python.
+`flush_handlers()` releases the Python GIL across snapshot acquisition,
+enqueueing and waiting for the marker, and handler flushing. This lets a worker
+that needs the interpreter reach the marker. PyO3 must reacquire the
+interpreter before returning to Python. CPython controls that handoff, so
+interpreter contention can delay the Python return beyond the Rust barrier
+deadline. If the handoff completes late, the result is `false`, although the
+Python return itself cannot be bounded by this deadline.
 
-The deadline is advisory for a handler outside this crate. The barrier calls
-the deadline-aware hook synchronously, so it cannot preempt an implementation
-that ignores the instant it is handed. The default hook preserves existing
-implementations by calling `flush()`; a custom handler with a blocking flush
-should override it. Every handler shipped here honours the deadline, and
-nothing the logger itself waits on can overshoot it.
+Synchronous warning callbacks that are part of built-in handler flushes run on
+the handler worker after its flush acknowledgement, rather than extending the
+caller's wait.
+
+The `FemtoHandlerTrait::flush_until()` default fails closed: it returns `false`
+without calling legacy synchronous `flush()`. Existing custom handlers that
+implement only `flush()` therefore never block the `flush_handlers()` caller;
+they must explicitly opt in by overriding `flush_until()`. An opted-in handler
+is required to honour the supplied deadline and return `false` if completion is
+not confirmed. Synchronous arbitrary code cannot be preempted, so this is an
+explicit capability contract rather than a claim that the logger can stop a
+misbehaving override. The logger does not isolate such code on helper threads;
+repeated timeouts do not create detached work. Python-backed handlers use a
+no-op Rust flush and are not called back into Python by this barrier.
 
 ### 3.3 `FemtoLogRecord` Structure
 

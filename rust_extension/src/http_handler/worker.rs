@@ -11,9 +11,7 @@ use log::warn;
 use ureq::{Agent, AgentBuilder};
 
 use crate::{
-    handler::{HandlerError, remaining},
-    log_record::FemtoLogRecord,
-    rate_limited_warner::RateLimitedWarner,
+    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
     socket_handler::backoff::BackoffState,
 };
 
@@ -31,8 +29,8 @@ use super::{
 pub enum HTTPCommand {
     /// Record to serialise and deliver in queue order.
     Record(FemtoLogRecord),
-    /// Request an immediate acknowledgement after previously queued records.
-    Flush(Sender<()>),
+    /// Request an acknowledgement and deferred drop warning after queued records.
+    Flush(Sender<()>, Option<u64>),
     /// Drain queued records, acknowledge, and terminate the worker.
     Shutdown(Sender<()>),
 }
@@ -260,9 +258,12 @@ impl Worker {
     /// immediately without blocking until those retries complete. Callers
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
+    fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
         // Ignore send error: if the receiver has dropped, there's nothing to do.
         let _ = ack.send(());
+        if let Some(count) = pending_drops {
+            warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+        }
     }
 
     /// Drains queued commands after shutdown is observed, preserving FIFO delivery.
@@ -270,7 +271,9 @@ impl Worker {
         loop {
             match rx.try_recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(HTTPCommand::Shutdown(ack)) => {
                     let _ = ack.send(());
                 }
@@ -284,10 +287,12 @@ impl Worker {
         loop {
             match rx.recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(HTTPCommand::Shutdown(ack)) => {
                     self.drain_pending(&rx);
-                    self.handle_flush_command(ack);
+                    self.handle_flush_command(ack, None);
                     break;
                 }
                 Err(_) => {
@@ -364,31 +369,6 @@ pub fn enqueue_record(
             Err(HandlerError::Closed)
         }
     }
-}
-
-/// Sends a flush command to the HTTP worker and waits for acknowledgment.
-///
-/// Uses the caller's absolute deadline for both sending and receiving, so time
-/// spent waiting to send also comes out of the acknowledgement wait.
-///
-/// # Arguments
-///
-/// * `tx` - Sender channel to the HTTP worker thread
-/// * `deadline` - The instant by which both sending and receiving the ack must
-///   finish
-///
-/// # Returns
-///
-/// `true` if the flush was acknowledged by the deadline, `false` otherwise.
-pub fn flush_queue(tx: &Sender<HTTPCommand>, deadline: Instant) -> bool {
-    let (ack_tx, ack_rx) = bounded(1);
-    if tx
-        .send_timeout(HTTPCommand::Flush(ack_tx), remaining(deadline))
-        .is_err()
-    {
-        return false;
-    }
-    ack_rx.recv_timeout(remaining(deadline)).is_ok()
 }
 
 #[cfg(test)]

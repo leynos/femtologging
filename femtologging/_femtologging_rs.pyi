@@ -102,16 +102,33 @@ class FemtoLogger:
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Queues a marker behind every record already accepted, waits for the
-        worker to reach it, then calls ``flush()`` on every handler.  One
-        2 s deadline covers the whole barrier -- enqueueing the marker,
-        waiting for its acknowledgement, and flushing each handler -- and
-        the wait releases the interpreter so a worker blocked on a Python
-        handler can still make progress.  Each handler caps its share at its
-        own configured timeout, so the deadline can shorten a handler's wait
-        but not lengthen the barrier.  Returns ``False`` when the marker
-        cannot be enqueued in time, when the worker does not acknowledge it
-        in time, when the worker has exited, or when any handler flush fails.
+        Snapshots the handlers, queues a marker behind every accepted record,
+        waits for acknowledgement, then flushes that snapshot. One absolute
+        2 s deadline covers the handler-list lock, marker enqueue, worker
+        acknowledgement, and all handler flushes. Built-in handlers retain
+        their shorter configured timeouts. The interpreter is released across
+        the barrier so a worker blocked on a Python handler can make progress;
+        PyO3 must reacquire it before returning to Python; CPython controls
+        that handoff, so interpreter contention can delay the Python return
+        beyond the Rust barrier deadline. If the handoff completes late, the
+        result is ``False`` even though the Python return itself cannot be
+        bounded by this deadline.
+
+        A custom Rust handler must override ``flush_until()`` and honour its
+        deadline. The default returns ``False`` without calling legacy
+        synchronous ``flush()``, because arbitrary synchronous code cannot be
+        preempted. Handler callbacks run without the handler-list lock. A
+        handler removed after the snapshot stays alive until this call ends;
+        additions after the snapshot are included by the next call.
+        Concurrent flush calls use independent deadlines and the existing
+        bounded queue. The barrier starts no helper threads or tasks, so
+        repeated failures do not leave detached work. Shutdown that closes
+        the queue before acknowledgement returns ``False``.
+
+        Returns ``False`` when the snapshot, marker enqueue, acknowledgement,
+        or any handler flush is not confirmed by the shared deadline; when
+        the worker has exited; or when a handler reports failure or does not
+        implement the deadline-aware contract.
 
         """
         ...

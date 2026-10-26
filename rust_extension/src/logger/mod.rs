@@ -16,7 +16,6 @@ mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
 mod flush;
-mod flush;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
