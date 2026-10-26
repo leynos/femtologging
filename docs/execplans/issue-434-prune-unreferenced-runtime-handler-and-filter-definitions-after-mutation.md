@@ -386,6 +386,14 @@ configured filter IDs.
     `femtologging/_femtologging_rs*.so` from before this change silently
     exercised the old ordering, so `make build` is required before trusting a
     Python-level regression result here.
+- [x] (2026-10-26) Cleared CodeRabbit's follow-up finding on the acquisition
+  loop: a `yield_now` waiter spins at full CPU and re-takes the GIL on every
+  iteration, competing with the guard holder exactly while the holder needs the
+  GIL to make progress. `lock_runtime_transaction` now detaches a capped
+  exponential sleep instead — 50 µs doubling to a 5 ms ceiling. The bound is
+  deliberately small so a waiter still notices a released guard promptly, and
+  the backoff constants are named next to the loop rather than inlined. Re-ran
+  the transaction and concurrency suites: 16 tests passed.
 
 ## Surprises & Discoveries
 
@@ -1127,8 +1135,15 @@ No new external dependencies are introduced.
   guard is now acquired by polling `try_lock` while detaching only a
   `yield_now` backoff, because `pyo3::detach` cannot carry a
   `parking_lot::MutexGuard` (it is not `Send`). Owners displaced by a commit
-  are returned rather than dropped and released through a `DeferredDrop`
-  bundle declared before the guard, so a re-entering Python finalizer can no
-  longer deadlock on the non-reentrant transaction mutex. Added five Rust
-  tests and one Python test; the two re-entrancy tests were confirmed to fail
-  by timeout against the old ordering.
+  are returned rather than dropped and released through a `DeferredDrop` bundle
+  declared before the guard, so a re-entering Python finalizer can no longer
+  deadlock on the non-reentrant transaction mutex. Added five Rust tests and
+  one Python test; the two re-entrancy tests were confirmed to fail by timeout
+  against the old ordering.
+- 2026-10-26: CodeRabbit then flagged the acquisition loop as a busy spin. The
+  waiter released and re-took the GIL on every iteration, which slowed the
+  guard holder that needed the GIL to finish. The backoff is now a capped
+  exponential `sleep`, detached as before. Enabling `parking_lot`'s
+  `send_guard` feature to block inside `py.detach` was rejected again: it would
+  change a shared dependency feature for a polling concern the sleep already
+  solves.
