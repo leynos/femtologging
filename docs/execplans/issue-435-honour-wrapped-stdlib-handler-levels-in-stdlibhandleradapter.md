@@ -275,11 +275,16 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-26) Committed and published the validated six-path correction
   as `483d14e`. CodeScene result `8124167` passed. The candidate-bound response
   `6407177509` confirmed the synchronous-context correction and prior
-  publication finding, and identified this stale publication wording. Hosted run
-  `40261257870` was still in progress on the assessed head.
-- [ ] (2026-10-26) Refresh hosted CI and obtain candidate-bound confirmation
-  after this checklist correction. Then reconcile formal review and merge PR
-  #546.
+  publication finding, and identified this stale publication wording. At that
+  time, hosted run `40261257870` was still in progress on the assessed head.
+- [x] (2026-10-26) On published head `5a3825e`, `make check-fmt`, `make lint`,
+  `make typecheck`, and `make test` passed
+  (`797 passed, 5 skipped; 66 snapshots`). Hosted CI run `40261703860` and
+  CodeScene result `8124222` passed. CodeRabbit's focused confirmation
+  `6407235083` confirmed the publication wording and found no other stale
+  status entry.
+- [ ] (2026-10-26) Mark PR #546 ready, reconcile formal review and any findings,
+  obtain the applicable approval, and merge.
 
 ## Surprises & discoveries
 
@@ -430,9 +435,11 @@ cache rationale was wrong; the filter-rejected record is `CRITICAL`. Both are
 corrected in the current worktree. The assessment could not independently
 verify the historical authorization recorded for the scope expansion; it did
 not identify this as a runtime defect. The proof-specific assessment was
-received on `fb5a5df` and identified precision corrections recorded below.
-Confirmation on the revised candidate and formal review remain pending; the PR
-is still a draft.
+received on `fb5a5df` and identified precision corrections recorded below. The
+later candidate-bound assessment accepted the manual argument within its stated
+scope; no machine proof is claimed. Focused outcome confirmation on published
+head `5a3825e` is recorded above. Formal PR review remains pending while the PR
+is a draft.
 
 ## Context and orientation
 
@@ -939,7 +946,9 @@ confirmed the prior findings resolved and identified two remaining
 inaccuracies in the dynamic-level sequence and filter-rejection example. This
 worktree corrects them. A proof-specific assessment of `fb5a5df` accepted the
 core manual argument and identified precision corrections applied in this
-revision; new candidate-bound confirmation is pending.
+revision. The later candidate-bound assessment accepted the manual argument
+within its stated scope; focused outcome confirmation for published head
+`5a3825e` is recorded above.
 
 ## Interfaces and dependencies
 
@@ -1004,5 +1013,8 @@ target. The final ExecPlan evidence wording then passed the formatting,
 Markdown, and diagram gates. One earlier Python-feature doctest attempt linked
 against an `extension-module` PyO3 artefact and failed to resolve Python
 symbols. The isolated doctest rebuild and the complete test target then passed
-without source changes. Fresh candidate-bound assessments, CodeScene, hosted
-checks, formal review and merge remain.
+without source changes. On 2026-10-26, published head `5a3825e` passed
+`make check-fmt`, `make lint`, `make typecheck`, and `make test` (797 passed, 5
+skipped, 66 snapshots); hosted run `40261703860` and CodeScene result `8124222`
+passed. Focused outcome confirmation `6407235083` found no remaining stale
+status entry. Formal PR review and the guarded merge remain.
