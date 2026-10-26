@@ -240,9 +240,22 @@ Known uncertainties identified upfront, with mitigations.
   prior findings resolved and found no runtime defect. It identified two more
   plan inaccuracies: the dynamic test's four dispatches and cached-level
   rationale, plus the filter-rejected `CRITICAL` record. Corrected below.
-- [ ] (2026-10-25) Apply the proof-specific precision corrections, validate the
-  revised plan and obtain candidate-bound confirmation, then mark PR #546 ready
-  and finish formal review and merge.
+- [x] (2026-10-25) Applied the proof-specific precision corrections on
+  `8fd2cdf`. The six-gate candidate run completed; `make lint`'s captured log
+  has no findings and ends with successful Whitaker Cargo output, but its shell
+  exit status was not retained. Hosted run `40233382614` and CodeScene result
+  `8121472` passed. The proof assessment and completeness follow-up confirmed
+  the plan and proof corrections, while both identified remaining user-guide
+  wording that overstates base-handler filter and lock behaviour.
+- [x] (2026-10-26) Qualified the user-guide handler and context claims. The
+  exact two-document worktree diff on `8fd2cdf` passed all six sequential local
+  gates: `check-fmt`, `test` (797 passed, 5 skipped; 66 snapshots), `typecheck`,
+  `lint`, `markdownlint` and `nixie`. CodeScene found no applicable code
+  changes. The plan and guide are the only changed paths; candidate-bound
+  assessments and hosted validation remain before formal review and merge.
+- [ ] (2026-10-26) Commit and publish the validated guide correction, obtain
+  candidate-bound completeness and proof confirmation, then bring PR #546 to
+  review equilibrium and merge it.
 
 ## Surprises & discoveries
 
@@ -955,5 +968,9 @@ the handler-behaviour assumptions to subclasses retaining base
 `Handler.handle()` semantics, clarified observed-level and sequential-update
 claims, qualified normal filter/lock/emission ordering, and corrected the
 lock-instrumentation rationale. These changes refine the manual argument; the
-implementation and tests are unchanged. Candidate-bound confirmation and formal
-review remain.
+implementation and tests are unchanged. The assessments of `8fd2cdf` confirmed
+those proof and plan corrections, and identified a remaining user-guide
+overstatement about handler subclasses. The guide now receives the same
+base-handler qualification. All six local gates passed on the exact
+two-document candidate; candidate-bound reassessments, hosted checks, formal
+review and merge remain.
