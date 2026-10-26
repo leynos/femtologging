@@ -6,13 +6,15 @@
 use std::{io, thread, time::Instant};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 use ureq::{Agent, AgentBuilder};
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
+    handler::HandlerError,
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
     socket_handler::backoff::BackoffState,
+    sync::{JoinHandle, Receiver, Sender, TryRecvError, TrySendError, bounded, spawn},
 };
 
 use super::{
@@ -21,7 +23,6 @@ use super::{
 };
 
 /// Commands processed by the worker thread.
-#[derive(Debug)]
 #[expect(
     clippy::large_enum_variant,
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
@@ -60,9 +61,9 @@ pub enum ResponseClass {
 /// A tuple containing:
 /// * A sender for submitting [`HTTPCommand`]s to the worker
 /// * A join handle for the spawned thread
-pub fn spawn_worker(config: HTTPHandlerConfig) -> (Sender<HTTPCommand>, thread::JoinHandle<()>) {
+pub fn spawn_worker(config: HTTPHandlerConfig) -> (Sender<HTTPCommand>, JoinHandle<()>) {
     let (tx, rx) = bounded(config.capacity);
-    let handle = thread::spawn(move || worker_loop(rx, config));
+    let handle = spawn(move || worker_loop(rx, config));
     (tx, handle)
 }
 

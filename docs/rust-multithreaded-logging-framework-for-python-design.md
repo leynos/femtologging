@@ -198,7 +198,7 @@ The logging process will follow these steps:
 8. **Output:** The formatted string is written to the target destination (e.g.,
    file, socket, console) by the consumer thread.
 
-#### Flush Barrier States
+#### Flush barrier states
 
 `FemtoLogger.flush_handlers()` is a barrier over the same queue. It snapshots
 the attached handlers, queues a marker record behind every record the logger

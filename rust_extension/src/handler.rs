@@ -37,6 +37,8 @@ pub(crate) fn remaining(deadline: Instant) -> Duration {
 ///
 /// A handler flush uses this to preserve the caller's absolute deadline while
 /// capping its own wait at the timeout that handler documents.
+/// If the local timeout cannot be represented by [`Instant`], the caller's
+/// deadline remains the effective bound.
 ///
 /// # Examples
 ///
@@ -46,7 +48,9 @@ pub(crate) fn remaining(deadline: Instant) -> Duration {
 /// assert!(capped_deadline(deadline, budget) <= deadline);
 /// ```
 pub(crate) fn capped_deadline(deadline: Instant, budget: Duration) -> Instant {
-    deadline.min(Instant::now() + budget)
+    Instant::now()
+        .checked_add(budget)
+        .map_or(deadline, |local_deadline| deadline.min(local_deadline))
 }
 
 /// Errors reported by handler implementations when dispatching a log record.

@@ -1,20 +1,15 @@
 //! Public handler type exported by the crate.
 
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
-
-use parking_lot::Mutex;
 
 use crate::{
     handler::{FemtoHandlerTrait, HandlerError, capped_deadline, remaining},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
-    sync::{Sender, bounded},
+    sync::{JoinHandle, Mutex, RecvTimeoutError, SendTimeoutError, Sender, bounded},
 };
 
 use super::{
@@ -70,9 +65,9 @@ fn flush_queue(
 /// and drops records on permanent failures (4xx except 429).
 pub struct FemtoHTTPHandler {
     /// Sender for records and flush/shutdown commands; taking it closes new delivery.
-    tx: Option<crossbeam_channel::Sender<HTTPCommand>>,
+    tx: Option<Sender<HTTPCommand>>,
     /// Join handle retained behind a mutex so close and drop can consume it once.
-    handle: Mutex<Option<thread::JoinHandle<()>>>,
+    handle: Mutex<Option<JoinHandle<()>>>,
     /// Counts records rejected after shutdown or queue failure for rate-limited warnings.
     warner: RateLimitedWarner,
     /// Timeout for flush and shutdown operations.
@@ -149,7 +144,7 @@ impl FemtoHTTPHandler {
     }
 
     /// Clones the live queue sender, or returns `None` once shutdown has taken it.
-    fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
+    fn sender(&self) -> Option<Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
 
@@ -171,26 +166,26 @@ impl FemtoHTTPHandler {
             return ShutdownOutcome::Finished;
         };
         let deadline = Instant::now() + self.flush_timeout;
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-        match tx.send_deadline(HTTPCommand::Shutdown(ack_tx), deadline) {
+        let (ack_tx, ack_rx) = bounded(1);
+        match tx.send_timeout(HTTPCommand::Shutdown(ack_tx), remaining(deadline)) {
             Ok(()) => {}
             // The worker has dropped its receiver, so it has already left the
             // loop; joining it returns at once and may report a panic.
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
+            Err(SendTimeoutError::Disconnected(_)) => {
                 return ShutdownOutcome::Finished;
             }
             // The queue stayed full for the whole budget: the worker is not
             // reading commands, so it could not have acknowledged either.
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
+            Err(SendTimeoutError::Timeout(_)) => {
                 return ShutdownOutcome::TimedOut;
             }
         }
-        match ack_rx.recv_deadline(deadline) {
+        match ack_rx.recv_timeout(remaining(deadline)) {
             Ok(()) => ShutdownOutcome::Finished,
             // The worker dropped the acknowledgement channel without using it,
             // which it can only do on its way out.
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
+            Err(RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
+            Err(RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
         }
     }
 
@@ -207,9 +202,10 @@ impl FemtoHTTPHandler {
     /// Detach the worker after it failed to acknowledge shutdown.
     ///
     /// The handle is taken so nothing joins it later, in particular the `Drop`
-    /// that may follow this call. The thread itself ends on its own once its
-    /// in-flight request and backoff finish, because its command channel is
-    /// already disconnected.
+    /// that may follow this call. Once its command channel is disconnected,
+    /// the worker drains the bounded commands it finds queued before exiting.
+    /// Those commands can include records whose requests retry with backoff,
+    /// so the worker may outlive this handler and its caller.
     fn abandon_worker(&mut self) {
         log::warn!(
             "FemtoHTTPHandler: worker did not acknowledge shutdown within {:?}; \

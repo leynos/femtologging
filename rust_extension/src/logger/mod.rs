@@ -54,7 +54,7 @@ pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
-#[cfg(all(feature = "python", test))]
+#[cfg(all(feature = "python", test, not(loom)))]
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
@@ -395,5 +395,5 @@ impl Drop for FemtoLogger {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod test_modules;
