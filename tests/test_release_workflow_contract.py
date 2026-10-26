@@ -117,6 +117,58 @@ def test_every_checkout_disables_persisted_credentials() -> None:
             ), "Release and build checkouts never keep their repository token on disk."
 
 
+def test_linux_wheel_builds_prepare_openssl_perl_and_target_compilers() -> None:
+    """Linux wheel containers provide Perl modules and target C compilers."""
+    x86_build = sole_workflow_step(
+        BUILD_WORKFLOW, "build-linux", "Build Linux x86_64 wheels"
+    )
+    x86_script = mapping(x86_build.get("with"), subject="x86_64 maturin inputs").get(
+        "before-script-linux"
+    )
+    assert isinstance(x86_script, str), "The x86_64 build uses a shell script."
+    assert (
+        re.search(
+            r"dnf -y install perl-IPC-Cmd\s+fi\s+perl -MIPC::Cmd -MFindBin",
+            x86_script,
+        )
+        is not None
+    ), "The minimal manylinux image installs OpenSSL's missing Perl module."
+
+    arm_build = sole_workflow_step(
+        BUILD_WORKFLOW, "build-linux", "Build Linux aarch64 wheels"
+    )
+    arm_script = mapping(arm_build.get("with"), subject="aarch64 maturin inputs").get(
+        "before-script-linux"
+    )
+    assert isinstance(arm_script, str), "The aarch64 build uses a shell script."
+    assert (
+        re.search(
+            r"command -v aarch64-unknown-linux-gnu-gcc\s+case.*?"
+            r"aarch64-unknown-linux-gnu\*",
+            arm_script,
+            re.DOTALL,
+        )
+        is not None
+    ), "The aarch64 container checks its target C compiler."
+
+
+def test_windows_wheel_build_uses_the_complete_runner_perl() -> None:
+    """The Windows wheel build prioritizes the runner's full Perl install."""
+    step = sole_workflow_step(
+        BUILD_WORKFLOW, "build-other", "Verify vendored OpenSSL build tools"
+    )
+    script = step.get("run")
+    assert isinstance(script, str), "The Windows toolchain check has a shell script."
+    assert (
+        re.search(
+            r"echo 'C:.perl.bin' >> \"\$\{GITHUB_PATH\}\"\s+"
+            r"export PATH=\"/c/perl/bin:\$\{PATH\}\"",
+            script,
+        )
+        is not None
+    ), "The Windows wheel build prioritizes the runner's full Perl install."
+
+
 def test_version_checks_gate_every_publishing_job() -> None:
     """Both manifests match the same tag before assets can be published."""
     cargo = sole_workflow_step(
@@ -142,7 +194,13 @@ def test_version_checks_gate_every_publishing_job() -> None:
     ), "Both manifests match the same tag before assets can be published."
 
     jobs = mapping(_workflow(RELEASE_WORKFLOW).get("jobs"), subject="release jobs")
-    for job_name in ("attest", "draft-release", "publish-pypi", "publish-release"):
+    for job_name in (
+        "build",
+        "attest",
+        "draft-release",
+        "publish-pypi",
+        "publish-release",
+    ):
         needs = mapping(jobs.get(job_name), subject=job_name).get("needs")
         parents = (
             {needs}

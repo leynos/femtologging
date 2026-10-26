@@ -44,6 +44,8 @@ jobs:
           python3 scripts/release_version.py
 
   build:
+    needs:
+      - check-version
     permissions:
       contents: read
     uses: ./.github/workflows/build-wheels.yml
