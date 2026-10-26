@@ -14,25 +14,41 @@ use crate::handler::{FemtoHandlerTrait, remaining};
 
 use super::{FemtoLogger, HandlerAttachment, LOGGER_FLUSH_TIMEOUT_MS};
 
+/// Barrier result that retains its deadline across interpreter reattachment.
+pub(super) struct FlushOutcome {
+    /// Whether the shard and all opted-in handlers confirmed the barrier.
+    completed: bool,
+    /// The one deadline consumed by every stage of this barrier.
+    deadline: Instant,
+}
+
+impl FlushOutcome {
+    /// Confirm success only when the Rust barrier and interpreter handoff fit.
+    pub(super) fn is_confirmed(&self) -> bool {
+        self.completed && Instant::now() <= self.deadline
+    }
+}
+
 impl FemtoLogger {
     /// Flush every attached handler against one absolute deadline.
-    pub(super) fn flush_handlers_blocking(&self) -> bool {
+    pub(super) fn flush_handlers_blocking(&self) -> FlushOutcome {
         let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
-        self.flush_barrier(deadline) && Instant::now() <= deadline
+        FlushOutcome {
+            completed: self.flush_barrier(deadline) && Instant::now() <= deadline,
+            deadline,
+        }
     }
 
     /// Release Python while the shard and handlers consume the flush deadline.
     pub(crate) fn flush_handlers_detached(&self, py: Python<'_>) -> bool {
-        let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
         #[cfg(not(loom))]
         {
-            let flushed = py.detach(|| self.flush_barrier(deadline));
-            flushed && Instant::now() <= deadline
+            py.detach(|| self.flush_handlers_blocking()).is_confirmed()
         }
         #[cfg(loom)]
         {
             let _ = py;
-            self.flush_barrier(deadline) && Instant::now() <= deadline
+            self.flush_handlers_blocking().is_confirmed()
         }
     }
 

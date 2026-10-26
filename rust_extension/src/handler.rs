@@ -154,9 +154,13 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// method to opt into the deadline-aware flush contract; the logger cannot
     /// preempt an implementation that violates that contract.
     ///
-    /// The logger calls this method without holding its handler-list lock. A
-    /// handler may be removed while a flush is in progress; the snapshot held
-    /// by that barrier keeps it alive until the synchronous call returns.
+    /// The logger calls this method on its worker without holding the
+    /// handler-list lock. A handler may be removed while a flush is in
+    /// progress; the queued marker keeps it alive until the worker releases
+    /// the snapshot. The `flush_handlers()` caller waits only until its shared
+    /// deadline, but logger shutdown joins the worker and therefore waits for
+    /// this callback to return. Synchronous arbitrary code cannot be
+    /// preempted.
     ///
     /// # Examples
     ///

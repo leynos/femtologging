@@ -33,3 +33,6 @@ mod logger_tests_flush_deadline;
 #[cfg(not(loom))]
 #[path = "logger_tests_flush_legacy.rs"]
 mod logger_tests_flush_legacy;
+#[cfg(not(loom))]
+#[path = "logger_tests_flush_worker.rs"]
+mod logger_tests_flush_worker;

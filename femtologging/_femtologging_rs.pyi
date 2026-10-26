@@ -102,24 +102,27 @@ class FemtoLogger:
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Snapshots the handlers, queues a marker behind every accepted record,
-        waits for acknowledgement, then flushes that snapshot. One absolute
-        2 s deadline covers the handler-list lock, marker enqueue, worker
-        acknowledgement, and all handler flushes. Built-in handlers retain
-        their shorter configured timeouts. The interpreter is released across
-        the barrier so a worker blocked on a Python handler can make progress;
-        PyO3 must reacquire it before returning to Python; CPython controls
-        that handoff, so interpreter contention can delay the Python return
-        beyond the Rust barrier deadline. If the handoff completes late, the
-        result is ``False`` even though the Python return itself cannot be
-        bounded by this deadline.
+        Snapshots the handlers and queues a marker behind every accepted
+        record. The logger worker flushes that snapshot before acknowledging
+        the marker. One absolute 2 s deadline covers the handler-list lock,
+        marker enqueue, worker acknowledgement, and all handler flushes.
+        Built-in handlers retain their shorter configured timeouts. The
+        interpreter is released across the barrier so a worker blocked on a
+        Python handler can make progress. PyO3 reacquires it before returning
+        to Python. CPython controls that handoff, so interpreter contention
+        can delay the Python return beyond the Rust barrier deadline. If the
+        handoff completes late, the result is ``False`` even though the Python
+        call cannot return until CPython makes the interpreter available.
 
         A custom Rust handler must override ``flush_until()`` and honour its
         deadline. The default returns ``False`` without calling legacy
         synchronous ``flush()``, because arbitrary synchronous code cannot be
-        preempted. Handler callbacks run without the handler-list lock. A
-        handler removed after the snapshot stays alive until this call ends;
-        additions after the snapshot are included by the next call.
+        preempted. Flush callbacks run on the logger worker without the
+        handler-list lock. A handler removed after the snapshot stays alive in
+        the queued marker until the worker releases it; its destructor does
+        not run on the flush caller. Additions after the snapshot are included
+        by the next call. Shutdown joins the worker and waits for a callback
+        already in progress, which cannot be preempted.
         Concurrent flush calls use independent deadlines and the existing
         bounded queue. The barrier starts no helper threads or tasks, so
         repeated failures do not leave detached work. Shutdown that closes

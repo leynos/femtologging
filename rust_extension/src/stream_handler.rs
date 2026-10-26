@@ -223,6 +223,9 @@ impl FemtoStreamHandler {
     }
 
     /// Close the handler and wait for the worker thread to finish.
+    ///
+    /// The Python-facing method releases the interpreter while waiting so a
+    /// worker running a Python formatter can drain its queue and exit.
     #[pyo3(name = "close")]
     fn py_close(&mut self, py: Python<'_>) {
         py.detach(|| self.close());
@@ -307,6 +310,9 @@ impl FemtoStreamHandler {
     }
 
     /// Flush any pending log records.
+    ///
+    /// Python callers release the interpreter while waiting for the handler's
+    /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
         self.flush_by(Instant::now() + self.flush_timeout)
     }

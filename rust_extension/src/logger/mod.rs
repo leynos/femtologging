@@ -59,7 +59,7 @@ pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
 
-/// Maximum time a logger flush spends across its complete barrier.
+/// Maximum time one flush barrier receives for its Rust-side work, in milliseconds.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
@@ -287,7 +287,7 @@ impl FemtoLogger {
     /// let _ = logger.flush_handlers();
     /// ```
     pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
+        self.flush_handlers_blocking().is_confirmed()
     }
 
     /// Attach a handler.
