@@ -128,7 +128,7 @@ def test_linux_wheel_builds_prepare_openssl_perl_and_target_compilers() -> None:
     assert isinstance(x86_script, str), "The x86_64 build uses a shell script."
     assert (
         re.search(
-            r"dnf -y install perl-IPC-Cmd\s+fi\s+perl -MIPC::Cmd -MFindBin",
+            r"yum -y install perl-IPC-Cmd\s+fi\s+perl -MIPC::Cmd -MFindBin",
             x86_script,
         )
         is not None
@@ -161,8 +161,10 @@ def test_windows_wheel_build_uses_the_complete_runner_perl() -> None:
     assert isinstance(script, str), "The Windows toolchain check has a shell script."
     assert (
         re.search(
-            r"echo 'C:.perl.bin' >> \"\$\{GITHUB_PATH\}\"\s+"
-            r"export PATH=\"/c/perl/bin:\$\{PATH\}\"",
+            r"echo 'C:.Strawberry.perl.site.bin' >> \"\$\{GITHUB_PATH\}\"\s+"
+            r"echo 'C:.Strawberry.perl.bin' >> \"\$\{GITHUB_PATH\}\"\s+"
+            r"export PATH=\"/c/Strawberry/perl/site/bin:"
+            r"/c/Strawberry/perl/bin:\$\{PATH\}\"",
             script,
         )
         is not None
@@ -248,6 +250,23 @@ def test_attestation_and_idempotent_pypi_upload_use_the_required_actions() -> No
         "packages-dir": "dist/publish/",
         "skip-existing": True,
     }, "The attested files are handed forward and existing PyPI names are safe."
+    refresh = sole_workflow_step(
+        RELEASE_WORKFLOW,
+        "publish-pypi",
+        "Fetch the PyPI index for GitHub reconciliation",
+    )
+    assert (
+        mapping(refresh.get("env"), subject="PyPI index refresh environment").get(
+            "PYPI_EXPECTED_DIRECTORY"
+        )
+        == "dist/publish"
+    ), "The attested files are handed forward and existing PyPI names are safe."
+    assert (
+        mapping(refresh.get("env"), subject="PyPI index refresh environment").get(
+            "PYPI_ALLOW_MISSING"
+        )
+        == "true"
+    ), "The attested files are handed forward and existing PyPI names are safe."
     for job_name in ("publish-pypi", "draft-release", "publish-release"):
         artifacts = [
             step.get("with")

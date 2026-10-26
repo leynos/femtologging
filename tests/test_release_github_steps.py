@@ -52,6 +52,19 @@ def _install_fake_gh(directory: Path) -> Path:
         "    'a', encoding='utf-8'\n"
         ") as out:\n"
         "    out.write(json.dumps(args) + '\\n')\n"
+        "if args[:1] == ['api']:\n"
+        "    status = int(os.environ.get('GH_RELEASE_LIST_STATUS', '0'))\n"
+        "    if status:\n"
+        "        raise SystemExit(status)\n"
+        "    state = os.environ.get('RELEASE_STATE', 'missing')\n"
+        "    count = int(os.environ.get('RELEASE_COUNT', '1'))\n"
+        "    releases = (\n"
+        "        [{'tag_name': os.environ['TAG_NAME'],\n"
+        "          'draft': state == 'draft'}] * count\n"
+        "        if state != 'missing' else []\n"
+        "    )\n"
+        "    print(json.dumps([releases]))\n"
+        "    raise SystemExit(0)\n"
         "if args[:2] == ['release', 'view']:\n"
         "    if '--json' in args:\n"
         "        print(\n"
@@ -74,7 +87,6 @@ def _run_gh_step(
     tmp_path: Path,
     step: tuple[str, str, str],
     *,
-    view_status: int = 0,
     overrides: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """Run one workflow step with fake gh and return its recorded arguments."""
@@ -94,7 +106,8 @@ def _run_gh_step(
             "GH_CALLS": str(calls),
             "GH_ASSETS_JSON": str(assets_json),
             "GH_ASSET_FILES": str(asset_files),
-            "GH_VIEW_STATUS": str(view_status),
+            "GITHUB_REPOSITORY": "leynos/femtologging",
+            "RUNNER_TEMP": str(tmp_path),
             "GH_TOKEN": "test-token",
             "TAG_NAME": _TAG,
             "IS_PRERELEASE": "true",
@@ -118,13 +131,17 @@ def test_an_existing_draft_or_published_release_is_reused(
     completed, calls = _run_gh_step(
         tmp_path,
         _DRAFT_STEP,
-        view_status=0,
         overrides={"RELEASE_STATE": release_state, "IS_PRERELEASE": "true"},
     )
     assert completed.returncode == 0, completed.stderr
-    assert calls == [["release", "view", _TAG]], (
-        "A re-run accepts either release state and creates nothing new."
-    )
+    assert calls == [
+        [
+            "api",
+            "--paginate",
+            "--slurp",
+            "repos/leynos/femtologging/releases",
+        ]
+    ], "A re-run accepts either release state and creates nothing new."
 
 
 @pytest.mark.parametrize(
@@ -137,7 +154,6 @@ def test_a_missing_release_is_created_as_a_draft(
     completed, calls = _run_gh_step(
         tmp_path,
         _DRAFT_STEP,
-        view_status=1,
         overrides={"IS_PRERELEASE": prerelease},
     )
     assert completed.returncode == 0, completed.stderr
@@ -154,6 +170,43 @@ def test_a_missing_release_is_created_as_a_draft(
     assert ("--prerelease" in create) is has_prerelease_flag, (
         "A new release starts as a verified draft with the correct prerelease bit."
     )
+
+
+def test_duplicate_release_tags_fail_without_creating_another_draft(
+    tmp_path: Path,
+) -> None:
+    """Duplicate matching releases stop the workflow before creation."""
+    completed, calls = _run_gh_step(
+        tmp_path,
+        _DRAFT_STEP,
+        overrides={"RELEASE_STATE": "draft", "RELEASE_COUNT": "2"},
+    )
+
+    assert completed.returncode != 0, (
+        "Duplicate releases for the tag must stop draft creation."
+    )
+    assert "Multiple GitHub Releases use tag" in completed.stderr, (
+        "Duplicate releases for the tag must explain how to recover."
+    )
+    assert len(calls) == 1, "Duplicate releases must not trigger a create call."
+    assert calls[0][0] == "api", "The release list must detect duplicate tags."
+
+
+def test_release_list_errors_fail_without_creating_a_draft(
+    tmp_path: Path,
+) -> None:
+    """A failed GitHub lookup cannot be mistaken for an absent release."""
+    completed, calls = _run_gh_step(
+        tmp_path,
+        _DRAFT_STEP,
+        overrides={"GH_RELEASE_LIST_STATUS": "1"},
+    )
+
+    assert completed.returncode != 0, (
+        "A failed release lookup must stop the draft step."
+    )
+    assert len(calls) == 1, "A failed lookup must not trigger release creation."
+    assert calls[0][0] == "api", "The release list request must fail safely."
 
 
 def test_snapshot_downloads_only_assets_needed_for_pypi_carryover(
