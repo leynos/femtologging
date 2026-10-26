@@ -42,6 +42,7 @@ def blocked_handler(
     release_formatter = threading.Event()
 
     def pause_formatter(_record: cabc.Mapping[str, object]) -> str:
+        """Signal that the worker entered Python, then wait for release."""
         formatter_entered.set()
         if not release_formatter.wait(timeout=5):
             raise TimeoutError
@@ -77,6 +78,7 @@ def test_python_flush_releases_gil_while_worker_waits(
     progress_thread: threading.Thread | None = None
 
     def flush() -> None:
+        """Flush from a worker thread while the formatter is blocked."""
         flush_started.set()
         try:
             flush_results.append(blocked_handler.handler.flush())
@@ -116,13 +118,16 @@ def test_python_flush_releases_gil_while_worker_waits(
 def test_python_close_releases_pyclass_borrow_while_worker_waits(
     blocked_handler: BlockedHandler,
 ) -> None:
-    """Another Python thread can borrow the handler while ``close`` waits."""
+    """Other Python threads can progress and borrow while ``close`` waits."""
     close_started = threading.Event()
     close_finished = threading.Event()
+    python_thread_ran = threading.Event()
     close_thread_errors: list[str] = []
     handler_errors: list[str] = []
+    progress_thread: threading.Thread | None = None
 
     def close() -> None:
+        """Close from a worker thread while the formatter is blocked."""
         close_started.set()
         try:
             blocked_handler.handler.close()
@@ -132,6 +137,7 @@ def test_python_close_releases_pyclass_borrow_while_worker_waits(
             close_finished.set()
 
     worker = threading.Thread(target=close)
+    close_call_started_at = time.monotonic()
     worker.start()
     try:
         assert close_started.wait(timeout=1), "close thread did not start"
@@ -152,11 +158,23 @@ def test_python_close_releases_pyclass_borrow_while_worker_waits(
         assert not close_finished.is_set(), (
             "close finished while the worker remained blocked"
         )
+        assert time.monotonic() - close_call_started_at < 0.75, (
+            "close held the GIL until its worker wait timed out"
+        )
+        progress_thread = threading.Thread(target=python_thread_ran.set)
+        progress_thread.start()
+        assert python_thread_ran.wait(timeout=0.2), (
+            "another Python thread could not run while close waited"
+        )
     finally:
         blocked_handler.release_formatter.set()
         worker.join(timeout=2)
+        if progress_thread is not None:
+            progress_thread.join(timeout=1)
 
     assert not worker.is_alive(), "close thread did not finish"
+    assert progress_thread is not None, "Python progress thread was not started"
+    assert not progress_thread.is_alive(), "Python progress thread did not finish"
     assert not close_thread_errors, f"close raised: {close_thread_errors!r}"
     assert len(handler_errors) == 1, "handler did not report its closed state"
     assert "already borrowed" not in handler_errors[0], (

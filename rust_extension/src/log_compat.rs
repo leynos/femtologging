@@ -273,6 +273,17 @@ impl log::Log for FemtoLogAdapter {
             )
     }
 
+    /// Dispatch an accepted record through its resolved femtologging logger.
+    ///
+    /// The target logger's threshold is checked again after resolution because
+    /// configuration may change between the facade's enablement check and
+    /// dispatch.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// log::Log::log(&FemtoLogAdapter, &record);
+    /// ```
     fn log(&self, record: &Record<'_>) {
         if !self.enabled(record.metadata()) {
             return;

@@ -75,10 +75,10 @@ fn set_logger_level(py: Python<'_>, name: &str, level: FemtoLevel) -> PyResult<(
     Ok(())
 }
 
-/// Consume a benchmark setup result at Criterion's non-fallible boundary.
+/// Turn a setup failure into one contextual error at Criterion's non-fallible boundary.
 ///
-/// Criterion benchmark callbacks cannot return errors, so this helper turns a
-/// setup failure into one contextual benchmark failure.
+/// Criterion's benchmark callbacks cannot return setup errors, so this named
+/// helper is the single panic boundary for an invalid benchmark environment.
 ///
 /// # Examples
 ///

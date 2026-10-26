@@ -73,7 +73,7 @@ proptest = "1.0.0"
 loom = "0.7.2"
 itertools = "0.15"
 serial_test = "4"
-_femtologging_rs = { path = ".", package = "femtologging_rs", default-features = false, features = ["test-util"] }
+_femtologging_rs = { path = ".", package = "femtologging_rs", default-features = false, features = ["test-util", "log-compat"] }
 static_assertions = "1"
 filetime = "0.2"
 trybuild = { version = "1", features = ["diff"] }
@@ -93,4 +93,9 @@ camino = "1.2.0"
 [[bench]]
 name = "log_bridge"
 harness = false
+required-features = ["log-compat"]
+
+[[test]]
+name = "log_compat_max_level"
+path = "tests/log_compat_max_level.rs"
 required-features = ["log-compat"]
