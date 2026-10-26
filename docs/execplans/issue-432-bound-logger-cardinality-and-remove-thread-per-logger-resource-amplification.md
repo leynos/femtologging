@@ -1,13 +1,8 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: REVIEW IN PROGRESS — PR #544 is open. The latest verified
-implementation head is `6dd6b14`: its source commit `3663edc` passed the full
-local gate sequence, and hosted CI, CodeScene, and Gecko passed on `6dd6b14`.
-The PR description is current at that verified head. This status-only plan
-update passed the local gate set; its new published head needs fresh hosted
-checks and a candidate-bound completeness assessment. CodeRabbit was paused on
-`6dd6b14`, and the aggregate review decision still reflects an earlier change
-request.
+Status: IMPLEMENTATION COMPLETE — The accepted scope and current review fixes
+are implemented. PR #544 is the delivery record for validation, review, and
+merge state.
 
 ## Purpose and big picture
 
@@ -1250,3 +1245,16 @@ passed on `3663edc`; `6dd6b14` changed only this plan's publication record. The
 candidate-bound completeness assessment and formal review remain open, with
 CodeRabbit's current-head status paused and the aggregate review decision still
 carrying an earlier change request.
+
+2026-10-26 review follow-up: The current-head review found that configuration
+capacity preflight is not a reservation under concurrent writers, the injected
+startup test did not move the production reservation guard, and internal
+warnings were discarded by the `log` bridge. The comment and ADR now describe
+the preflight window; the startup seam now owns the test guard; the producer
+rejection test captures its rate-limited warning; and ignored internal warning
+records are mirrored to stderr. The developer guide now distinguishes the Loom
+logger-owned shard from the process-wide dispatcher. A compile-pass UI fixture
+pins the fallible public constructor results and `DispatcherError` re-export.
+The diagnostic helpers and their regression test are split into focused modules
+so each stays below the repository's 400-line limit. At the time of this note,
+candidate gates and publication of these repairs remained outstanding.

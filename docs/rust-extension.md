@@ -470,6 +470,10 @@ This installs a global logger for the entire Rust process. If another global
 logger is already installed, `setup_rust_logging()` raises `RuntimeError` and
 does not replace it. The call is idempotent after a successful install.
 
+Warnings from femtologging's own Rust targets are written to stderr when this
+bridge is installed. They are kept out of the handler pipeline to prevent a
+warning from recursively entering the logger that emitted it.
+
 Users building the extension from source may disable the bridge with
 `cargo build --no-default-features`, or re-enable it explicitly with
 `--features log-compat`.

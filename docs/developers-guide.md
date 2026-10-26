@@ -196,8 +196,11 @@ invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 Six Loom models in `rust_extension/tests/heavy/` check the handler and logger
 workers: delivery through the stream handler's queue, routing through the
 logger to every attached handler exactly once, concurrent handler attachment,
-and concurrent writes and flushes through the file handler. They run the
-production workers. Every worker spawns, queues and locks through the private
+and concurrent writes and flushes through the file handler. Handler models run
+the handler worker code with Loom's synchronization primitives. Logger models
+use a Loom-specific logger-owned shard rather than the process-wide production
+`Dispatcher`; dropping the logger sends `Job::Stop` and joins that worker
+during model cleanup. Every worker spawns, queues and locks through the private
 seam in `rust_extension/src/sync.rs`, which is `std::thread`,
 `crossbeam_channel` and `parking_lot` in an ordinary build and Loom's thread,
 locks and a small bounded channel under `--cfg loom`. Loom arrives only as a

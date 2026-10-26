@@ -24,14 +24,23 @@ impl Dispatcher {
     /// Start and publish a pool while keeping the reservation alive.
     fn start_reserved_pool(
         process_id: u32,
+        start_guard: PidReservation<'_>,
+    ) -> Result<(), DispatcherError> {
+        Self::start_reserved_pool_with(process_id, start_guard, Self::start)
+    }
+
+    /// Start and publish a pool produced by `start_pool` while holding its reservation.
+    pub(super) fn start_reserved_pool_with(
+        process_id: u32,
         _start_guard: PidReservation<'_>,
+        start_pool: impl FnOnce() -> Result<Self, DispatcherError>,
     ) -> Result<(), DispatcherError> {
         // Recheck after reserving startup: another caller may have finished
         // between the shared lookup and this reservation.
         if Self::pool_for_process(process_id).is_none() {
             // Only the reservation holder starts workers, so concurrent first
             // use cannot exceed the fixed pool's thread bound.
-            let candidate = Box::into_raw(Box::new(Self::start()?));
+            let candidate = Box::into_raw(Box::new(start_pool()?));
             POOL.store(candidate, Ordering::Release);
         }
         Ok(())

@@ -6,9 +6,13 @@
 //! Bounding memory therefore means refusing new names once [`MAX_LOGGERS`] is
 //! reached, not recycling old ones.
 //!
-//! Every insertion path — `get_logger`, configuration staging, and the
-//! staging commit — checks the bound before it mutates anything, so a refused
-//! request leaves the registry exactly as it was.
+//! Direct `get_logger` insertion plans the full ancestor chain and checks the
+//! bound under the write lock. Configuration staging also checks the complete
+//! set before the staging commit rechecks and inserts it under that lock.
+//! Runtime configuration instead preflights its impacted set before resolving
+//! logger objects through separate `get_logger` calls. A concurrent writer can
+//! consume capacity between those calls, so a late refusal may leave earlier
+//! names registered even though the runtime changes were not applied.
 //!
 //! The cap counts *named* loggers. `"root"` is exempt and is created on demand:
 //! it is the fallback destination both Rust bridges resolve to, so the registry

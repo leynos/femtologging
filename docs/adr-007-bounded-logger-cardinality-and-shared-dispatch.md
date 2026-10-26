@@ -109,9 +109,13 @@ rather than later, when memory runs out.
 both Rust bridges resolve to, so the registry must always be able to hold it
 whatever a caller has already registered.
 
-Every insertion path checks the bound before it mutates anything. A refused
-configuration therefore leaves the registry exactly as it was, rather than
-holding part of a logger set that was not accepted.
+Direct and staged logger insertions check capacity under the registry write
+lock before they mutate it. Runtime configuration also preflights the complete
+impacted set before resolving logger objects, but those lookups acquire the
+write lock separately. A concurrent writer can use the remaining capacity
+between the preflight and a later lookup, so a refused configuration can leave
+earlier logger objects registered even though its runtime changes were not
+applied.
 
 ### Bounded dispatch
 
@@ -148,6 +152,9 @@ Both refusals are returned to the caller, which counts the drop and warns about
 it through the existing rate-limited warner. **The logging call itself never
 waits**, which preserves the existing contract that a slow handler degrades
 delivery rather than blocking application threads.
+
+When the global `log` bridge filters one of its own warning targets, it mirrors
+the warning to stderr instead of sending it back through the dispatcher.
 
 ### Bounded resource failure
 

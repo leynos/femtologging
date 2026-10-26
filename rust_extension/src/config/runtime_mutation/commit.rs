@@ -67,9 +67,10 @@ impl RuntimeConfigBuilder {
         self.apply_logger_mutations(&mut logger_states, &handler_registry, &filter_registry)?;
 
         // A mutation may name a logger that does not exist yet, and
-        // `get_logger` registers it. Check the whole set before fetching any
-        // of them: refusing part-way would leave the registry holding loggers
-        // belonging to a transaction that never applied.
+        // `get_logger` registers it. This preflight narrows the chance of a
+        // partial registration, but each lookup takes the registry lock
+        // separately, so a concurrent writer can consume the capacity first.
+        // A late refusal can therefore leave earlier fetched loggers present.
         let requested = impacted.iter().cloned().collect::<HashSet<_>>();
         manager::ensure_registry_capacity(&requested)
             .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;

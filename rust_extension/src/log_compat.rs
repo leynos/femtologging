@@ -20,6 +20,9 @@ use crate::log_record::RecordMetadata;
 use crate::manager;
 use crate::rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner};
 
+mod diagnostics;
+use diagnostics::{mirror_ignored_warning, should_ignore_target};
+
 /// Adapter implementing the Rust `log::Log` trait.
 ///
 /// The adapter resolves a femtologging logger based on each record's target,
@@ -70,40 +73,6 @@ fn normalize_target(target: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(target)
     }
-}
-
-/// Return whether a target belongs to femtologging itself.
-///
-/// The adapter is the global Rust logger, so a record it logs about its own
-/// work would be routed straight back into the adapter. The lookup-failure
-/// diagnostic is the concrete case: it reports a target the registry refused,
-/// which means the diagnostic describes a high-cardinality stream — and an
-/// unguarded warning would add one more record per refusal to it. The tracing
-/// bridge ignores its own targets for the same reason.
-///
-/// Two families are covered. The `femtologging` names are the ones this crate
-/// uses when it names a logger for itself. The crate's own `log` targets are
-/// the wider family and the more important one here: every `warn!` in this
-/// crate records a module path such as
-/// `_femtologging_rs::logger::dispatcher::shard::worker`, and those warnings
-/// fire exactly when the process is short of a resource. Forwarding one back
-/// through the adapter would add a record per warning to the stream being
-/// diagnosed — which is a loop the bridge itself has no way to stop.
-///
-/// The check runs on every record and does not allocate. `log` targets arrive
-/// either dot-separated (an explicit target) or `::`-separated (the default
-/// module path), and both spellings of a family count, so the raw target is
-/// compared against each family root instead of normalizing it first. A
-/// `::`-containing target would otherwise be copied into a `String` here and
-/// again in [`resolve_logger`], which is one wasted allocation per record for
-/// the module-path targets that are the common case.
-fn should_ignore_target(target: &str) -> bool {
-    let is_in_family = |root: &str| {
-        target
-            .strip_prefix(root)
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.') || rest.starts_with("::"))
-    };
-    is_in_family("femtologging") || is_in_family(env!("CARGO_CRATE_NAME"))
 }
 
 /// Identify the `KeyError` used when a requested logger name is absent.
@@ -261,6 +230,7 @@ impl log::Log for FemtoLogAdapter {
             return;
         }
         if should_ignore_target(record.target()) {
+            mirror_ignored_warning(record, |message| eprintln!("{message}"));
             return;
         }
 
@@ -392,6 +362,10 @@ mod context_tests;
 #[cfg(test)]
 #[path = "log_compat_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "log_compat/diagnostics_tests.rs"]
+mod diagnostics_tests;
 
 #[cfg(all(test, not(loom), feature = "python"))]
 #[path = "log_compat/cardinality_tests.rs"]

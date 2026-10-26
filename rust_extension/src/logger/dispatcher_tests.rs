@@ -96,16 +96,19 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
     use super::{Dispatcher, shard::Shard};
 
     let process_id = std::process::id();
+    let unused_process_id = process_id.wrapping_add(1);
     let reservation = AtomicU32::new(0);
     let failed_start = {
-        let _guard = PidReservation::try_reserve(&reservation, process_id)
+        let start_guard = PidReservation::try_reserve(&reservation, process_id)
             .expect("the initial test reservation should be free");
-        Dispatcher::start_with(process_id, 2, |index, depth| {
-            if index == 1 {
-                Err(Error::other("injected worker-start refusal"))
-            } else {
-                Shard::start(index, depth)
-            }
+        Dispatcher::start_reserved_pool_with(unused_process_id, start_guard, || {
+            Dispatcher::start_with(unused_process_id, 2, |index, depth| {
+                if index == 1 {
+                    Err(Error::other("injected worker-start refusal"))
+                } else {
+                    Shard::start(index, depth)
+                }
+            })
         })
     };
 
@@ -132,16 +135,12 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
         );
     });
 
-    let retry = {
-        let _guard = PidReservation::try_reserve(&reservation, process_id)
-            .expect("the released reservation should permit a retry");
-        Dispatcher::start_with(process_id, 1, Shard::start)
-    };
-    let dispatcher = retry.expect("a later worker start should succeed");
-    assert_eq!(dispatcher.shards.len(), 1);
+    let retry_guard = PidReservation::try_reserve(&reservation, process_id)
+        .expect("the failed pool start must leave its reservation free for retry");
+    drop(retry_guard);
     assert_eq!(
         reservation.load(Ordering::Acquire),
         0,
-        "a successful startup must release its reservation too"
+        "releasing a retry reservation must leave the word free"
     );
 }

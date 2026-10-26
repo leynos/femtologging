@@ -6,11 +6,13 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use rstest::rstest;
+use serial_test::serial;
 
 use super::logger_tests_helpers::CollectingHandler;
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::HandlerError;
+use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::logger::dispatcher::Shard;
 
 /// Filter fixture that rejects every record without enriching it.
@@ -104,9 +106,11 @@ fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
     );
 }
 
-/// A shard refusal reaches the logger's producer-side drop counter.
+/// A shard refusal increments the logger counter and emits its bounded warning.
 #[test]
-fn refused_shard_admission_increments_the_logger_drop_count() {
+#[serial]
+fn refused_shard_admission_counts_and_warns_about_the_drop() {
+    install_test_logger();
     let shard: &'static Shard = Box::leak(Box::new(
         Shard::start(0, 1).expect("a one-record test shard should start"),
     ));
@@ -138,6 +142,18 @@ fn refused_shard_admission_increments_the_logger_drop_count() {
         logger.get_dropped(),
         1,
         "a shard refusal must reach the logger's producer drop counter",
+    );
+    let warnings = take_logged_messages();
+    let capacity_warnings = warnings
+        .iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 1 records; dispatch capacity exhausted"
+        })
+        .count();
+    assert_eq!(
+        capacity_warnings, 1,
+        "the refused record must produce one rate-limited capacity warning: {warnings:?}",
     );
 
     release_tx
