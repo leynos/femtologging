@@ -272,10 +272,14 @@ Known uncertainties identified upfront, with mitigations.
   test passed without source changes. After the final ExecPlan evidence update,
   `make fmt`, `make check-fmt`, `make markdownlint` (0 errors), and
   `make nixie` passed on the exact documentation worktree.
-- [ ] (2026-10-26) Commit and publish the validated six-path correction. Run
-  CodeScene and obtain fresh candidate-bound completeness and proof assessments
-  on the pushed head, refresh hosted CI, then reconcile formal review and merge
-  PR #546.
+- [x] (2026-10-26) Committed and published the validated six-path correction
+  as `483d14e`. CodeScene result `8124167` passed. The candidate-bound response
+  `6407177509` confirmed the synchronous-context correction and prior
+  publication finding, and identified this stale publication wording. Hosted run
+  `40261257870` was still in progress on the assessed head.
+- [ ] (2026-10-26) Refresh hosted CI and obtain candidate-bound confirmation
+  after this checklist correction. Then reconcile formal review and merge PR
+  #546.
 
 ## Surprises & discoveries
 
