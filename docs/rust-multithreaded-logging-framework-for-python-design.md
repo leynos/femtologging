@@ -276,6 +276,12 @@ callbacks takes the interpreter, PyO3 may wait to reacquire it before returning
 to Python; a late handoff changes the result to `false`, though CPython does
 not bound the Python return itself.
 
+Each logger also keeps fixed-cardinality counters for flush attempts,
+confirmations, terminal failure stages and five elapsed-time buckets. Recording
+uses relaxed atomics and does not invoke a logging or warning callback on the
+caller path. A metrics exporter for these counters belongs to the existing
+[#551 telemetry work](https://github.com/leynos/femtologging/issues/551).
+
 The `FemtoHandlerTrait::flush_until()` default fails closed: it returns `false`
 without calling legacy synchronous `flush()`. Existing custom handlers that
 implement only `flush()` therefore never block the `flush_handlers()` caller;

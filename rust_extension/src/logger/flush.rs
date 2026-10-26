@@ -1,109 +1,154 @@
 //! Deadline-aware handler snapshots and shard barriers for [`FemtoLogger`].
 //!
 //! The flush promise spans the handler snapshot, the dispatch shard's marker
-//! and acknowledgement, and each handler's own deadline-aware flush. Keeping
-//! this path here makes it harder to give one stage a fresh timeout or retain
-//! the handler registry lock while user code runs.
+//! and acknowledgement, and each handler's deadline-aware flush. This module
+//! records a fixed-cardinality result after the barrier and, for Python calls,
+//! after the interpreter has been reacquired.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pyo3::Python;
 
-use crate::handler::{FemtoHandlerTrait, remaining};
+use crate::handler::{FemtoHandlerTrait, deadline_after, remaining};
 
+use super::flush_diagnostics::FlushDiagnostics;
+pub(super) use super::flush_diagnostics::FlushFailureStage;
 use super::{FemtoLogger, HandlerAttachment, LOGGER_FLUSH_TIMEOUT_MS};
+
+/// Confirm a successful operation only when the supplied time is within its
+/// absolute deadline.
+fn confirm_by_deadline(
+    result: Result<(), FlushFailureStage>,
+    deadline: Instant,
+    now: Instant,
+    late_stage: FlushFailureStage,
+) -> Result<(), FlushFailureStage> {
+    result.and_then(|()| {
+        if now <= deadline {
+            Ok(())
+        } else {
+            Err(late_stage)
+        }
+    })
+}
 
 /// Barrier result that retains its deadline across interpreter reattachment.
 pub(super) struct FlushOutcome {
-    /// Whether the shard and all opted-in handlers confirmed the barrier.
-    completed: bool,
-    /// The one deadline consumed by every stage of this barrier.
-    deadline: Instant,
+    /// The result of marker insertion, worker acknowledgement, and handler flushes.
+    result: Result<(), FlushFailureStage>,
+    /// The one deadline consumed by every stage of this barrier, if representable.
+    deadline: Option<Instant>,
+    /// Time at which this call created its shared deadline.
+    started_at: Instant,
+    /// Time at which Rust-side barrier work returned.
+    barrier_completed_at: Instant,
 }
 
 impl FlushOutcome {
-    /// Confirm success only when the Rust barrier and interpreter handoff fit.
-    pub(super) fn is_confirmed(&self) -> bool {
-        self.completed && Instant::now() <= self.deadline
+    /// Record the final result after any required interpreter handoff.
+    pub(super) fn finish(
+        self,
+        now: Instant,
+        diagnostics: &FlushDiagnostics,
+        late_stage: FlushFailureStage,
+    ) -> bool {
+        let result = match self.deadline {
+            Some(deadline) => confirm_by_deadline(
+                confirm_by_deadline(
+                    self.result,
+                    deadline,
+                    self.barrier_completed_at,
+                    FlushFailureStage::BarrierDeadlineExceeded,
+                ),
+                deadline,
+                now,
+                late_stage,
+            ),
+            None => Err(FlushFailureStage::DeadlineUnrepresentable),
+        };
+        diagnostics.record(result, now.saturating_duration_since(self.started_at));
+        result.is_ok()
     }
 }
 
 impl FemtoLogger {
     /// Flush every attached handler against one absolute deadline.
     pub(super) fn flush_handlers_blocking(&self) -> FlushOutcome {
-        let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
+        let started_at = Instant::now();
+        let deadline = deadline_after(
+            started_at,
+            Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS),
+        );
+        let result = deadline.map_or(
+            Err(FlushFailureStage::DeadlineUnrepresentable),
+            |deadline| self.flush_barrier(deadline),
+        );
         FlushOutcome {
-            completed: self.flush_barrier(deadline) && Instant::now() <= deadline,
+            result,
             deadline,
+            started_at,
+            barrier_completed_at: Instant::now(),
         }
     }
 
     /// Release Python while the shard and handlers consume the flush deadline.
     pub(crate) fn flush_handlers_detached(&self, py: Python<'_>) -> bool {
         #[cfg(not(loom))]
-        {
-            py.detach(|| self.flush_handlers_blocking()).is_confirmed()
-        }
+        let outcome = py.detach(|| self.flush_handlers_blocking());
         #[cfg(loom)]
-        {
+        let outcome = {
             let _ = py;
-            self.flush_handlers_blocking().is_confirmed()
-        }
+            self.flush_handlers_blocking()
+        };
+        outcome.finish(
+            Instant::now(),
+            &self.flush_diagnostics,
+            FlushFailureStage::CallerReturnDeadlineExceeded,
+        )
     }
 
     /// Snapshot handlers and enqueue their flush after accepted dispatch work.
-    fn flush_barrier(&self, deadline: Instant) -> bool {
+    fn flush_barrier(&self, deadline: Instant) -> Result<(), FlushFailureStage> {
         #[cfg(not(loom))]
-        let (shard, budget) = match self.dispatch_state() {
-            Ok(dispatch) => dispatch,
-            Err(_) => return false,
+        let (shard, budget) = match self.dispatch_state_until(deadline) {
+            Ok(Some(dispatch)) => dispatch,
+            Ok(None) => return Err(FlushFailureStage::DispatchStateTimedOut),
+            Err(_) => return Err(FlushFailureStage::WorkerUnavailable),
         };
+        #[cfg(loom)]
+        let (shard, budget) = (&*self.shard, &self.budget);
+
         #[cfg(not(loom))]
-        let handler_guard = match self.handlers.try_read_for(remaining(deadline)) {
+        let handler_guard = match self.handlers.try_read_for(remaining(deadline, Instant::now())) {
             Some(guard) => guard,
-            None => return false,
+            None => return Err(FlushFailureStage::HandlerSnapshotTimedOut),
         };
         #[cfg(loom)]
         let handler_guard = self.handlers.read();
 
         let handlers = clone_handler_snapshot(&handler_guard);
-        if remaining(deadline).is_zero() {
+        if remaining(deadline, Instant::now()).is_zero() {
             // Keep the registry's Arcs alive while discarding the clones. A
             // concurrent removal must not run a slow final destructor here.
             drop(handlers);
             drop(handler_guard);
-            return false;
+            return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
 
         if handlers.is_empty() {
             drop(handler_guard);
-            if Instant::now() > deadline {
-                return false;
+            if remaining(deadline, Instant::now()).is_zero() {
+                return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
             }
-            #[cfg(not(loom))]
-            let has_in_flight_work = budget.in_flight() > 0;
-            #[cfg(loom)]
-            let has_in_flight_work = self.budget.in_flight() > 0;
-            return if has_in_flight_work {
-                #[cfg(not(loom))]
-                {
-                    shard.wait_for_drain_until(deadline)
-                }
-                #[cfg(loom)]
-                {
-                    self.shard.wait_for_drain_until(deadline)
-                }
+            return if budget.in_flight() > 0 {
+                shard.wait_for_drain_until(deadline)
             } else {
-                true
+                Ok(())
             };
         }
 
-        #[cfg(not(loom))]
-        return shard.flush_handlers_until(deadline, handlers, handler_guard);
-        #[cfg(loom)]
-        self.shard
-            .flush_handlers_until(deadline, handlers, handler_guard)
+        shard.flush_handlers_until(deadline, handlers, handler_guard)
     }
 }
 
@@ -114,3 +159,44 @@ fn clone_handler_snapshot(handlers: &[HandlerAttachment]) -> Vec<Arc<dyn FemtoHa
         .map(|attachment| Arc::clone(&attachment.handler))
         .collect()
 }
+
+/// Flush a barrier's handler snapshot using the same timing logic in runtime
+/// and generated-time tests.
+pub(super) fn flush_handler_snapshot_at(
+    handlers: &[Arc<dyn FemtoHandlerTrait>],
+    deadline: Instant,
+    now: impl FnMut() -> Instant,
+) -> Result<(), FlushFailureStage> {
+    flush_handler_sequence(handlers, deadline, now)
+}
+
+/// Visit handlers in snapshot order and stop at the first unconfirmed flush.
+fn flush_handler_sequence(
+    handlers: &[Arc<dyn FemtoHandlerTrait>],
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+) -> Result<(), FlushFailureStage> {
+    for handler in handlers {
+        if remaining(deadline, now()).is_zero() {
+            return Err(FlushFailureStage::HandlerFlushDeadlineExceeded);
+        }
+        let confirmed = handler.flush_until(deadline);
+        let completed_at = now();
+        if !confirmed {
+            return Err(FlushFailureStage::HandlerFlushUnconfirmed);
+        }
+        if completed_at > deadline {
+            return Err(FlushFailureStage::HandlerFlushDeadlineExceeded);
+        }
+    }
+    confirm_by_deadline(
+        Ok(()),
+        deadline,
+        now(),
+        FlushFailureStage::HandlerFlushDeadlineExceeded,
+    )
+}
+
+#[cfg(all(test, not(loom)))]
+#[path = "flush_tests.rs"]
+mod tests;

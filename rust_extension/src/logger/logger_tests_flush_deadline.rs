@@ -26,7 +26,7 @@ fn capped_deadline_preserves_the_caller_deadline_when_the_budget_overflows() {
     let deadline = Instant::now() + Duration::from_secs(1);
 
     assert_eq!(
-        capped_deadline(deadline, Duration::MAX),
+        capped_deadline(deadline, Instant::now(), Duration::MAX),
         deadline,
         "an unrepresentable local timeout must preserve the caller's bound"
     );
@@ -39,7 +39,7 @@ fn built_in_flushes_fail_closed_when_the_timeout_cannot_be_represented() {
     use crate::socket_handler::{FemtoSocketHandler, SocketHandlerConfig};
     use crate::stream_handler::FemtoStreamHandler;
 
-    assert!(deadline_after(Duration::MAX).is_none());
+    assert!(deadline_after(Instant::now(), Duration::MAX).is_none());
 
     let http = FemtoHTTPHandler::with_config(HTTPHandlerConfig {
         write_timeout: Duration::MAX,
@@ -125,7 +125,10 @@ impl FemtoHandlerTrait for WaitingFlushHandler {
     }
 
     fn flush_until(&self, deadline: Instant) -> bool {
-        let wait = remaining(capped_deadline(deadline, self.budget));
+        let wait = remaining(
+            capped_deadline(deadline, Instant::now(), self.budget),
+            Instant::now(),
+        );
         self.waited.lock().push(wait);
 
         let Some(spend) = self.spend else {

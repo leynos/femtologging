@@ -16,7 +16,7 @@ use thiserror::Error;
 /// handlers each hold a configured timeout of their own.
 pub(crate) const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Time left before `deadline`, or zero when it has already passed.
+/// Time left before `deadline` at `now`, or zero when it has already passed.
 ///
 /// A flush gives each of its waits what remains of one deadline rather than
 /// the whole budget afresh, so a deadline in the past yields zero. The timed
@@ -25,15 +25,16 @@ pub(crate) const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 /// # Examples
 ///
 /// ```ignore
-/// let deadline = Instant::now() + Duration::from_millis(50);
-/// assert!(remaining(deadline) <= Duration::from_millis(50));
-/// assert_eq!(remaining(Instant::now()), Duration::ZERO);
+/// let now = Instant::now();
+/// let deadline = now + Duration::from_millis(50);
+/// assert_eq!(remaining(deadline, now), Duration::from_millis(50));
+/// assert_eq!(remaining(now, deadline), Duration::ZERO);
 /// ```
-pub(crate) fn remaining(deadline: Instant) -> Duration {
-    deadline.saturating_duration_since(Instant::now())
+pub(crate) fn remaining(deadline: Instant, now: Instant) -> Duration {
+    deadline.saturating_duration_since(now)
 }
 
-/// Build a deadline from `timeout`, or return `None` when it cannot be represented.
+/// Build a deadline from an explicit start time and timeout.
 ///
 /// Callers must fail closed on `None`; falling back to an untimed wait would
 /// turn an unrepresentable timeout into an unbounded operation.
@@ -41,15 +42,16 @@ pub(crate) fn remaining(deadline: Instant) -> Duration {
 /// # Examples
 ///
 /// ```ignore
-/// let deadline = deadline_after(Duration::from_millis(50));
+/// let start = Instant::now();
+/// let deadline = deadline_after(start, Duration::from_millis(50));
 /// assert!(deadline.is_some());
-/// assert!(deadline_after(Duration::MAX).is_none());
+/// assert!(deadline_after(start, Duration::MAX).is_none());
 /// ```
-pub(crate) fn deadline_after(timeout: Duration) -> Option<Instant> {
-    Instant::now().checked_add(timeout)
+pub(crate) fn deadline_after(start: Instant, timeout: Duration) -> Option<Instant> {
+    start.checked_add(timeout)
 }
 
-/// Return the earlier of a caller's deadline and a local timeout measured now.
+/// Return the earlier of a caller's deadline and a local timeout from `now`.
 ///
 /// A handler flush uses this to preserve the caller's absolute deadline while
 /// capping its own wait at the timeout that handler documents.
@@ -59,12 +61,13 @@ pub(crate) fn deadline_after(timeout: Duration) -> Option<Instant> {
 /// # Examples
 ///
 /// ```ignore
+/// let now = Instant::now();
 /// let budget = Duration::from_millis(10);
-/// let deadline = Instant::now() + Duration::from_secs(1);
-/// assert!(capped_deadline(deadline, budget) <= deadline);
+/// let deadline = now + Duration::from_secs(1);
+/// assert!(capped_deadline(deadline, now, budget) <= deadline);
 /// ```
-pub(crate) fn capped_deadline(deadline: Instant, budget: Duration) -> Instant {
-    deadline_after(budget).map_or(deadline, |local_deadline| deadline.min(local_deadline))
+pub(crate) fn capped_deadline(deadline: Instant, now: Instant, budget: Duration) -> Instant {
+    deadline_after(now, budget).map_or(deadline, |local_deadline| deadline.min(local_deadline))
 }
 
 /// Errors reported by handler implementations when dispatching a log record.

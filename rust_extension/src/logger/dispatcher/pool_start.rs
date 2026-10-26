@@ -5,6 +5,7 @@
 //! split keeps the parent dispatcher module within the repository's line limit.
 
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use super::{Dispatcher, DispatcherError, POOL, POOL_STARTING_PROCESS};
 use crate::logger::pid_reservation::PidReservation;
@@ -12,6 +13,23 @@ use crate::logger::pid_reservation::PidReservation;
 impl Dispatcher {
     /// Start the pool when this thread reserves it, or let the next loop try.
     pub(super) fn start_or_wait(process_id: u32) -> Result<(), DispatcherError> {
+        match PidReservation::try_reserve(&POOL_STARTING_PROCESS, process_id) {
+            Ok(start_guard) => Self::start_reserved_pool(process_id, start_guard),
+            Err(owner) => {
+                PidReservation::wait_or_clear_stale(&POOL_STARTING_PROCESS, process_id, owner);
+                Ok(())
+            }
+        }
+    }
+
+    /// Start the pool or yield to its owner only while `deadline` remains.
+    pub(super) fn start_or_wait_until(
+        process_id: u32,
+        deadline: Instant,
+    ) -> Result<(), DispatcherError> {
+        if Instant::now() > deadline {
+            return Ok(());
+        }
         match PidReservation::try_reserve(&POOL_STARTING_PROCESS, process_id) {
             Ok(start_guard) => Self::start_reserved_pool(process_id, start_guard),
             Err(owner) => {

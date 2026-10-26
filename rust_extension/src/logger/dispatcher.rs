@@ -52,6 +52,8 @@ mod dispatcher_tests;
 use std::ptr::NonNull;
 #[cfg(not(loom))]
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
+#[cfg(not(loom))]
+use std::time::Instant;
 
 pub(crate) use shard::{LoggerBudget, Shard};
 
@@ -228,6 +230,24 @@ impl Dispatcher {
             }
 
             Self::start_or_wait(process_id)?;
+        }
+    }
+
+    /// Resolve the process pool without waiting past a caller's deadline.
+    #[cfg(not(loom))]
+    pub(crate) fn shared_until(
+        deadline: Instant,
+    ) -> Result<Option<&'static Self>, DispatcherError> {
+        let process_id = std::process::id();
+        loop {
+            if Instant::now() > deadline {
+                return Ok(None);
+            }
+            if let Some(dispatcher) = Self::pool_for_process(process_id) {
+                return Ok((Instant::now() <= deadline).then_some(dispatcher));
+            }
+
+            Self::start_or_wait_until(process_id, deadline)?;
         }
     }
 

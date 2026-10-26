@@ -11,10 +11,12 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use log::warn;
 
-use crate::handler::{FemtoHandlerTrait, remaining};
+use crate::handler::remaining;
+use crate::logger::flush::flush_handler_snapshot_at;
+use crate::logger::flush_diagnostics::FlushFailureStage;
 use super::Job;
 use crate::logger::QueuedRecord;
-use crate::sync::Receiver;
+use crate::sync::{Receiver, RecvTimeoutError};
 
 /// Drain a shard's queue, handling each job.
 ///
@@ -38,7 +40,6 @@ pub(super) fn run_worker(jobs: Receiver<Job>) {
         }
     }
 }
-
 /// Perform one job.
 fn handle_job(job: Job) {
     match job {
@@ -106,26 +107,16 @@ fn handle_job(job: Job) {
             start,
             ack,
         } => {
-            let result = start
-                .recv_timeout(remaining(deadline))
-                .is_ok()
-                && flush_handlers(&handlers, deadline);
+            let result = match start.recv_timeout(remaining(deadline, std::time::Instant::now())) {
+                Ok(()) => flush_handler_snapshot_at(&handlers, deadline, std::time::Instant::now),
+                Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::WorkerStartTimedOut),
+                Err(RecvTimeoutError::Disconnected) => {
+                    Err(FlushFailureStage::WorkerStartDisconnected)
+                }
+            };
             let _ = ack.try_send(result);
         }
         #[cfg(loom)]
         Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
-}
-
-/// Flush each captured handler while the caller's deadline remains live.
-fn flush_handlers(handlers: &[std::sync::Arc<dyn FemtoHandlerTrait>], deadline: std::time::Instant) -> bool {
-    for handler in handlers {
-        if remaining(deadline).is_zero() || !handler.flush_until(deadline) {
-            return false;
-        }
-        if std::time::Instant::now() > deadline {
-            return false;
-        }
-    }
-    std::time::Instant::now() <= deadline
 }

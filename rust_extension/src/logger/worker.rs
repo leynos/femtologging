@@ -18,6 +18,7 @@ use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvid
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::RwLock;
+use std::time::Instant;
 
 use super::DEFAULT_LOGGER_LEVEL;
 use super::FemtoLogger;
@@ -116,6 +117,50 @@ impl FemtoLogger {
         }
     }
 
+    /// Resolve dispatch state without spending longer than a flush deadline.
+    ///
+    /// A logger inherited across `fork` can contend with another caller that
+    /// is starting the child process's dispatcher. The ordinary producer path
+    /// waits for that reservation; a flush gives up when its shared deadline
+    /// expires instead.
+    #[cfg(not(loom))]
+    pub(super) fn dispatch_state_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
+        let process_id = std::process::id();
+        loop {
+            if Instant::now() > deadline {
+                return Ok(None);
+            }
+            if self
+                .dispatch
+                .process_id
+                .load(std::sync::atomic::Ordering::Acquire)
+                == process_id
+            {
+                return Ok(Some(self.dispatch.handles()));
+            }
+
+            match PidReservation::try_reserve(&self.dispatch.starting_process, process_id) {
+                Ok(_reservation) => {
+                    let Some(dispatcher) = Dispatcher::shared_until(deadline)? else {
+                        return Ok(None);
+                    };
+                    let handles = self.publish_dispatch_state(process_id, dispatcher);
+                    return Ok((Instant::now() <= deadline).then_some(handles));
+                }
+                Err(owner) => {
+                    PidReservation::wait_or_clear_stale(
+                        &self.dispatch.starting_process,
+                        process_id,
+                        owner,
+                    );
+                }
+            }
+        }
+    }
+
     /// Reserve and rebind this logger, or wait for its current process owner.
     #[cfg(not(loom))]
     fn try_rebind_dispatch_state(
@@ -154,6 +199,16 @@ impl FemtoLogger {
         }
 
         let dispatcher = Dispatcher::shared()?;
+        Ok(self.publish_dispatch_state(process_id, dispatcher))
+    }
+
+    /// Publish a replacement shard while this process owns the logger reservation.
+    #[cfg(not(loom))]
+    fn publish_dispatch_state(
+        &self,
+        process_id: u32,
+        dispatcher: &'static Dispatcher,
+    ) -> (&Shard, &std::sync::Arc<LoggerBudget>) {
         let shard = dispatcher.assign_shard();
         self.dispatch.budget.reset_after_fork();
         self.dispatch.shard.store(
@@ -163,7 +218,7 @@ impl FemtoLogger {
         self.dispatch
             .process_id
             .store(process_id, std::sync::atomic::Ordering::Release);
-        Ok((shard, &self.dispatch.budget))
+        (shard, &self.dispatch.budget)
     }
 
     /// Drain work this logger sent to its current dispatch state.
@@ -306,6 +361,7 @@ impl FemtoLogger {
             dropped_records: std::sync::atomic::AtomicU64::new(0),
             context_dropped_records: std::sync::atomic::AtomicU64::new(0),
             disabled_dropped_records: std::sync::atomic::AtomicU64::new(0),
+            flush_diagnostics: super::flush_diagnostics::FlushDiagnostics::default(),
             drop_warner: RateLimitedWarner::default(),
             #[cfg(feature = "python")]
             context_snapshot_provider,

@@ -56,7 +56,7 @@ impl FemtoSocketHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        let Some(deadline) = deadline_after(self.flush_timeout) else {
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
             return false;
         };
         self.flush_by(deadline)
@@ -72,7 +72,7 @@ impl FemtoSocketHandler {
             return false;
         };
         let pending_drops = self.warner.take_due();
-        let handler_deadline = capped_deadline(deadline, self.flush_timeout);
+        let handler_deadline = capped_deadline(deadline, Instant::now(), self.flush_timeout);
         match flush_queue(&tx, handler_deadline, pending_drops) {
             Ok(()) => true,
             Err(FlushFailure::Enqueue) => {
