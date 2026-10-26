@@ -309,14 +309,18 @@ pub(crate) fn replace_runtime_state(
 /// `reset_manager` also drops loggers outside the lock.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
-    let loggers: Vec<Py<FemtoLogger>> = MANAGER
-        .read()
-        .loggers
-        .values()
-        .map(|logger| logger.clone_ref(py))
-        .collect();
+    let loggers: Vec<Py<FemtoLogger>> = {
+        let manager = MANAGER.read();
+        manager
+            .loggers
+            .values()
+            .map(|logger| logger.clone_ref(py))
+            .collect()
+    };
     for logger in loggers {
-        let _ = logger.borrow(py).flush_handlers();
+        let borrowed_logger = logger.borrow(py);
+        let logger_ref: &FemtoLogger = &borrowed_logger;
+        let _ = py.detach(|| logger_ref.flush_handlers());
     }
 }
 
