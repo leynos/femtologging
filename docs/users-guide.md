@@ -336,13 +336,13 @@ shutdown work, and every call waits for the worker to stop. Prefer calling
 
 #### Concurrency and the GIL for file handlers
 
-`handle()`, `flush()`, and `close()` release the interpreter lock (`GIL`) for
-the whole of any wait on the channel, on the worker's flush acknowledgement, or
-on the worker's shutdown. Another Python thread therefore keeps running while
-one thread is parked on back pressure, and slow file IO can no longer stall
-every thread in the interpreter. The rotating and timed-rotating handlers are
-built on the same worker and inherit this contract; see
-[FemtoRotatingFileHandler](#femtorotatingfilehandler) and
+Explicit Python calls to `handle()`, `flush()`, and `close()` release the
+interpreter lock (`GIL`) for the whole of any wait on the channel, on the
+worker's flush acknowledgement, or on the worker's shutdown. Another Python
+thread therefore keeps running while one thread is parked on back pressure, and
+slow file IO can no longer stall every thread in the interpreter. The rotating
+and timed-rotating handlers are built on the same worker and inherit this
+contract; see [FemtoRotatingFileHandler](#femtorotatingfilehandler) and
 [FemtoTimedRotatingFileHandler](#femtotimedrotatingfilehandler).
 
 Two consequences follow from that release, and both concern `"block"`:
