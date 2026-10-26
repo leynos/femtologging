@@ -37,6 +37,7 @@ class FilterFixture(typ.TypedDict, total=False):
     payload: StackPayload | ExceptionPayload
     filtered: StackPayload | ExceptionPayload
     patterns: list[str]
+    error: BaseException | None
 
 
 def _parse_filenames(filenames_str: str) -> list[str]:

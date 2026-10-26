@@ -27,6 +27,11 @@ Feature: Frame filtering for stack traces
     And the filtered cause has 1 frame
     And the filtered cause frame filename is "cause.py"
 
+  Scenario: Cyclic exception payload is rejected
+    Given an exception payload with a self-referential cause
+    When I filter the exception payload
+    Then filtering rejects the cycle with a ValueError
+
   Scenario: Combined filters
     Given a stack_info payload with frames from "outer.py", ".venv/lib/foo.py", "inner.py", "femtologging/__init__.py"
     When I filter with exclude_logging=True, exclude_filenames=[".venv/"], max_depth=1
