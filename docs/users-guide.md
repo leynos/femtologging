@@ -8,12 +8,16 @@ building production systems on top of femtologging.
 
 ## Quick start
 
-Install the package (a local editable installation is shown here) and emit your
-first record:
+After the first release is published, install the package from PyPI and emit
+your first record:
 
 ```bash
-pip install .
+pip install femtologging
 ```
+
+The first release has not yet been published. Until then, install from the
+repository with `pip install .`; this source build uses the production feature
+set and excludes the test-only `test-util` feature.
 
 ```python
 from femtologging import FemtoStreamHandler, get_logger

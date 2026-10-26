@@ -26,15 +26,22 @@ and [`dependency-analysis.md`](docs/dependency-analysis.md).
 
 ## Installation
 
-Ensure the [Rust toolchain](https://www.rust-lang.org/tools/install) is
-available, then run:
+After the first release is published, install femtologging from PyPI:
+
+```bash
+pip install femtologging
+```
+
+The first release has not yet been published. Until then, install from a local
+checkout with [maturin](https://maturin.rs/):
 
 ```bash
 pip install .
 ```
 
-This compiles the extension with [maturin](https://maturin.rs/). Alternatively,
-running `make build` yields the same result.
+This source installation uses the production feature set: the Python bindings
+are enabled and the test-only `test-util` feature is excluded. `make build` is
+for development and explicitly enables `test-util` for the test hooks.
 
 ## Quick example
 
