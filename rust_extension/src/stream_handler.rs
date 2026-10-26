@@ -314,7 +314,7 @@ impl FemtoStreamHandler {
     /// Python callers release the interpreter while waiting for the handler's
     /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
-        let Some(deadline) = deadline_after(self.flush_timeout) else {
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
             return false;
         };
         self.flush_by(deadline)
@@ -329,7 +329,7 @@ impl FemtoStreamHandler {
         // Whichever comes first — the caller's deadline or this handler's own
         // budget — bounds the flush as a whole. Giving each wait the budget
         // afresh let one flush spend it twice over.
-        let effective = capped_deadline(deadline, self.flush_timeout);
+        let effective = capped_deadline(deadline, Instant::now(), self.flush_timeout);
         match &self.tx {
             Some(tx) => {
                 let pending_drops = self.warner.take_due();
@@ -337,7 +337,7 @@ impl FemtoStreamHandler {
                 if tx
                     .send_timeout(
                         StreamCommand::Flush(ack_tx, pending_drops),
-                        remaining(effective),
+                        remaining(effective, Instant::now()),
                     )
                     .is_err()
                 {
@@ -346,7 +346,10 @@ impl FemtoStreamHandler {
                     }
                     return false;
                 }
-                matches!(ack_rx.recv_timeout(remaining(effective)), Ok(Ok(())))
+                matches!(
+                    ack_rx.recv_timeout(remaining(effective, Instant::now())),
+                    Ok(Ok(()))
+                )
             }
             None => false,
         }

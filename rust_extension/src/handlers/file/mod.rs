@@ -231,7 +231,7 @@ impl FemtoFileHandler {
     pub(super) fn flush_by(&self, deadline: Instant) -> bool {
         // Whichever comes first — the caller's deadline or this handler's own
         // budget — is the one instant both waits below share.
-        let effective = capped_deadline(deadline, DEFAULT_FLUSH_TIMEOUT);
+        let effective = capped_deadline(deadline, Instant::now(), DEFAULT_FLUSH_TIMEOUT);
         match &self.tx {
             Some(tx) => self.perform_flush(tx, effective),
             None => false,
@@ -243,7 +243,10 @@ impl FemtoFileHandler {
     fn perform_flush(&self, tx: &Sender<FileCommand>, deadline: Instant) -> bool {
         let (ack_tx, ack_rx) = bounded(1);
         if tx
-            .send_timeout(FileCommand::Flush(ack_tx), remaining(deadline))
+            .send_timeout(
+                FileCommand::Flush(ack_tx),
+                remaining(deadline, Instant::now()),
+            )
             .is_err()
         {
             return false;
@@ -258,7 +261,10 @@ impl FemtoFileHandler {
         ack_rx: &Receiver<io::Result<()>>,
         deadline: Instant,
     ) -> bool {
-        matches!(ack_rx.recv_timeout(remaining(deadline)), Ok(Ok(())))
+        matches!(
+            ack_rx.recv_timeout(remaining(deadline, Instant::now())),
+            Ok(Ok(()))
+        )
     }
 
     /// Close the handler and wait for the worker to stop.

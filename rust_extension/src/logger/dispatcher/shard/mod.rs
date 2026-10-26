@@ -26,11 +26,14 @@ mod worker;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, deadline_after, remaining};
+use crate::logger::flush_diagnostics::FlushFailureStage;
 use crate::logger::QueuedRecord;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
-use crate::sync::{Receiver, Sender, bounded, recv_timeout};
+use crate::sync::{
+    Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout,
+};
 
 pub(crate) use budget::LoggerBudget;
 use budget::{Permit, Permits};
@@ -69,8 +72,8 @@ enum Job {
         deadline: Instant,
         /// Gate opened after the logger registry lock has been released.
         start: Receiver<()>,
-        /// The result is true only when every handler confirms before deadline.
-        ack: Sender<bool>,
+        /// Reports handler success or its first unconfirmed deadline stage.
+        ack: Sender<Result<(), FlushFailureStage>>,
     },
     /// Finish the jobs already queued and stop the worker.
     ///
@@ -229,25 +232,38 @@ impl Shard {
     /// caller that was promised a two-second drain would otherwise block for
     /// four when the queue is full and the worker is slow.
     pub(crate) fn wait_for_drain(&self) -> bool {
-        let deadline = Instant::now() + BARRIER_TIMEOUT;
-        self.wait_for_drain_until(deadline)
+        let Some(deadline) = deadline_after(Instant::now(), BARRIER_TIMEOUT) else {
+            return false;
+        };
+        self.wait_for_drain_until(deadline).is_ok()
     }
 
     /// Wait for a drain barrier using a deadline created by the caller.
-    pub(crate) fn wait_for_drain_until(&self, deadline: Instant) -> bool {
+    pub(crate) fn wait_for_drain_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<(), FlushFailureStage> {
         let (ack, acked) = bounded::<()>(1);
-        if self
-            .queue
-            .send_timeout(
-                Job::Barrier { ack },
-                deadline.saturating_duration_since(Instant::now()),
-            )
-            .is_err()
-        {
-            return false;
+        if remaining(deadline, Instant::now()).is_zero() {
+            return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        recv_timeout(&acked, remaining).is_ok()
+        match self
+            .queue
+            .send_timeout(Job::Barrier { ack }, remaining(deadline, Instant::now()))
+        {
+            Ok(()) => {}
+            Err(SendTimeoutError::Timeout(_)) => {
+                return Err(FlushFailureStage::MarkerEnqueueTimedOut);
+            }
+            Err(SendTimeoutError::Disconnected(_)) => {
+                return Err(FlushFailureStage::MarkerEnqueueDisconnected);
+            }
+        }
+        match recv_timeout(&acked, remaining(deadline, Instant::now())) {
+            Ok(()) => Ok(()),
+            Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::AcknowledgementTimedOut),
+            Err(RecvTimeoutError::Disconnected) => Err(FlushFailureStage::WorkerExited),
+        }
     }
 
     /// Enqueue handler flushing behind prior work and wait only until `deadline`.
@@ -263,7 +279,7 @@ impl Shard {
         deadline: Instant,
         handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
         handler_guard: G,
-    ) -> bool {
+    ) -> Result<(), FlushFailureStage> {
         let (start_tx, start_rx) = bounded(1);
         let (ack_tx, ack_rx) = bounded(1);
         let job = Job::Flush {
@@ -273,25 +289,39 @@ impl Shard {
             ack: ack_tx,
         };
 
-        if let Err(error) = self
-            .queue
-            .send_timeout(job, deadline.saturating_duration_since(Instant::now()))
-        {
-            drop(error.into_inner());
+        if remaining(deadline, Instant::now()).is_zero() {
+            drop(job);
             drop(handler_guard);
-            return false;
+            return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
+        }
+        match self
+            .queue
+            .send_timeout(job, remaining(deadline, Instant::now()))
+        {
+            Ok(()) => {}
+            Err(SendTimeoutError::Timeout(error)) => {
+                drop(error.into_inner());
+                drop(handler_guard);
+                return Err(FlushFailureStage::MarkerEnqueueTimedOut);
+            }
+            Err(SendTimeoutError::Disconnected(error)) => {
+                drop(error.into_inner());
+                drop(handler_guard);
+                return Err(FlushFailureStage::MarkerEnqueueDisconnected);
+            }
         }
 
         drop(handler_guard);
         if start_tx.try_send(()).is_err() {
-            return false;
+            return Err(FlushFailureStage::WorkerStartDisconnected);
         }
         match recv_timeout(
             &ack_rx,
-            deadline.saturating_duration_since(Instant::now()),
+            remaining(deadline, Instant::now()),
         ) {
-            Ok(confirmed) => confirmed && Instant::now() <= deadline,
-            Err(_) => false,
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::AcknowledgementTimedOut),
+            Err(RecvTimeoutError::Disconnected) => Err(FlushFailureStage::WorkerExited),
         }
     }
 

@@ -300,14 +300,14 @@ pub fn flush_queue(
     if tx
         .send_timeout(
             SocketCommand::Flush(ack_tx, pending_drops),
-            remaining(deadline),
+            remaining(deadline, Instant::now()),
         )
         .is_err()
     {
         return Err(FlushFailure::Enqueue);
     }
     ack_rx
-        .recv_timeout(remaining(deadline))
+        .recv_timeout(remaining(deadline, Instant::now()))
         .map(|_| ())
         .map_err(|_| FlushFailure::Acknowledgement)
 }

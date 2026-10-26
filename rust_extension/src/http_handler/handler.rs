@@ -45,14 +45,14 @@ fn flush_queue(
     if tx
         .send_timeout(
             HTTPCommand::Flush(ack_tx, pending_drops),
-            remaining(deadline),
+            remaining(deadline, Instant::now()),
         )
         .is_err()
     {
         return Err(FlushFailure::Enqueue);
     }
     ack_rx
-        .recv_timeout(remaining(deadline))
+        .recv_timeout(remaining(deadline, Instant::now()))
         .map(|_| ())
         .map_err(|_| FlushFailure::Acknowledgement)
 }
@@ -94,7 +94,7 @@ impl FemtoHTTPHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        let Some(deadline) = deadline_after(self.flush_timeout) else {
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
             return false;
         };
         self.flush_by(deadline)
@@ -110,7 +110,7 @@ impl FemtoHTTPHandler {
             return false;
         };
         let pending_drops = self.warner.take_due();
-        let handler_deadline = capped_deadline(deadline, self.flush_timeout);
+        let handler_deadline = capped_deadline(deadline, Instant::now(), self.flush_timeout);
         match flush_queue(&tx, handler_deadline, pending_drops) {
             Ok(()) => true,
             Err(FlushFailure::Enqueue) => {
@@ -168,11 +168,14 @@ impl FemtoHTTPHandler {
             // Already closed. There is no worker left to wait for.
             return ShutdownOutcome::Finished;
         };
-        let Some(deadline) = deadline_after(self.flush_timeout) else {
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
             return ShutdownOutcome::TimedOut;
         };
         let (ack_tx, ack_rx) = bounded(1);
-        match tx.send_timeout(HTTPCommand::Shutdown(ack_tx), remaining(deadline)) {
+        match tx.send_timeout(
+            HTTPCommand::Shutdown(ack_tx),
+            remaining(deadline, Instant::now()),
+        ) {
             Ok(()) => {}
             // The worker has dropped its receiver, so it has already left the
             // loop; joining it returns at once and may report a panic.
@@ -185,7 +188,7 @@ impl FemtoHTTPHandler {
                 return ShutdownOutcome::TimedOut;
             }
         }
-        match ack_rx.recv_timeout(remaining(deadline)) {
+        match ack_rx.recv_timeout(remaining(deadline, Instant::now())) {
             Ok(()) => ShutdownOutcome::Finished,
             // The worker dropped the acknowledgement channel without using it,
             // which it can only do on its way out.

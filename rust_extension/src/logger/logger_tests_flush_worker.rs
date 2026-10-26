@@ -67,7 +67,9 @@ impl FemtoHandlerTrait for BlockingDropFlushHandler {
 
     fn flush_until(&self, deadline: Instant) -> bool {
         let _ = self.flush_started.try_send(());
-        let _ = self.flush_release.recv_timeout(remaining(deadline));
+        let _ = self
+            .flush_release
+            .recv_timeout(remaining(deadline, Instant::now()));
         false
     }
 

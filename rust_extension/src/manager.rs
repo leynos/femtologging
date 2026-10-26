@@ -76,3 +76,6 @@ mod manager_tests;
 #[cfg(all(test, feature = "python"))]
 #[path = "manager/manager_tests_capacity.rs"]
 mod manager_tests_capacity;
+#[cfg(all(test, feature = "python", feature = "log-compat", not(loom)))]
+#[path = "manager/manager_tests_flush.rs"]
+mod manager_tests_flush;
