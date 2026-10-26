@@ -219,9 +219,10 @@ class TestDynamicHandlerLevel:
         """``setLevel()`` between records should change the next verdict.
 
         The adapter is constructed while the handler is at ``NOTSET``, so a
-        level cached at construction time would appear correct until the
-        handler is tightened and then relaxed again. Each transition below
-        exercises one direction of that mistake.
+        level cached at construction time would wrongly admit the ``INFO``
+        record after the handler is tightened to ``ERROR``. After relaxing
+        back to ``NOTSET``, the ``TRACE`` dispatch checks that the current
+        threshold is read again.
         """
         capturing = CapturingHandler()
         adapter = StdlibHandlerAdapter(capturing)
