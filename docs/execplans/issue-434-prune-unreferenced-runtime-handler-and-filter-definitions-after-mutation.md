@@ -394,6 +394,20 @@ configured filter IDs.
   deliberately small so a waiter still notices a released guard promptly, and
   the backoff constants are named next to the loop rather than inlined. Re-ran
   the transaction and concurrency suites: 16 tests passed.
+- [x] (2026-10-26) Repaired the CodeScene advisory violation that commit
+  `d1ecab1` introduced, caught by the PR check on the new head. CodeScene
+  flagged `ConfigBuilder::build_and_init` for Large Method and Excess Number of
+  Function Arguments (10.00 → 9.29). The `DeferredDrop` threading had added a
+  fifth parameter to two helpers and inflated the method body. `build.rs` is
+  now split by stage: `build_and_init` validates, builds components, and
+  delegates to `commit_components`, which owns the transaction and defers to
+  `stage_commit_and_attach`, `plan_loggers`, `keep_names_for_disabling`, and
+  `publish_reachable_registries`. `ConfiguredLoggerPlan::apply` replaces the old
+  `apply_logger_plan`, so the attachment step no longer takes a `&self` it
+  never read. Behaviour is unchanged and the file is exactly 400 lines, the
+  project's limit. Gates on the repair: check-fmt, lint, typecheck,
+  markdownlint, and nixie all passed; the test gate ran 789 pytest tests, 5
+  skipped, 66 snapshots, and all four Rust feature lanes.
 
 ## Surprises & Discoveries
 
@@ -1147,3 +1161,11 @@ No new external dependencies are introduced.
   `send_guard` feature to block inside `py.detach` was rejected again: it would
   change a shared dependency feature for a polling concern the sleep already
   solves.
+- 2026-10-26: CodeScene failed the PR on the new head, flagging
+  `ConfigBuilder::build_and_init` for Large Method and Excess Number of
+  Function Arguments. The drop-deferral work had threaded a `DeferredDrop`
+  through two helpers and grown the method past CodeScene's threshold.
+  Splitting it by transaction stage — validate, build, commit, attach, publish
+  — restores the advisory rules without changing behaviour, and
+  `ConfiguredLoggerPlan::apply` absorbs the attachment step so no helper keeps
+  an unused receiver.
