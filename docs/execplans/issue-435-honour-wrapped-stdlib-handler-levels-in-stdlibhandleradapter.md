@@ -334,11 +334,20 @@ Known uncertainties identified upfront, with mitigations.
   existing pytest warning), `make typecheck`, `make lint`, `make markdownlint`
   (61 files, zero errors), and `make nixie`. CodeScene delta found no issues.
   Hosted CI `40276091980` and CodeScene `8125549` are green on `fa210fb`; the
-  current uncommitted changes still need exact-head hosted validation.
-- [ ] (2026-10-26) Commit and publish the gated timeout revert, migration note,
-  and plan update. Await exact-head hosted CI and CodeScene, candidate-bound
-  assessments and a current-head formal review; obtain the observability scope
-  disposition before merge.
+  final plan-only correction passed formatting, format-check, Markdown lint,
+  Mermaid validation and CodeScene before publication.
+- [x] (2026-10-26) Committed and published the timeout revert and migration note
+  as `a1ae687`, then corrected this plan's warning count and published
+  `858c846`. The branch, remote-tracking ref and remote head match. On current
+  head `858c846`, Actions run `40281846688` and CodeScene result `8126065` are
+  queued. CodeRabbit's summary says review is paused: approval `5648087668`
+  covers `fa210fb`, and `858c846` is not yet reviewed. The previous review's
+  three warnings have two corrections in this candidate; the observability
+  counter still needs a maintainer disposition.
+- [ ] (2026-10-26) Await green exact-head hosted checks, then obtain the
+  candidate-bound completeness and property-coverage assessments. Resolve the
+  observability scope disposition, request a current-head formal review through
+  the managed queue, reconcile its findings and approval, and merge.
 
 ## Surprises & discoveries
 
