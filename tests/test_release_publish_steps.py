@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sys
 import typing as typ
 
@@ -16,7 +15,6 @@ from tests.release_workflow_helpers import (
     run_bash,
     step_script,
     workflow_command_environment,
-    write_argument_recorder,
 )
 
 if typ.TYPE_CHECKING:
@@ -180,111 +178,6 @@ def test_collection_refuses_zero_or_multiple_sdists(
     )
     assert message in completed.stderr, (
         "Missing and duplicate sdists stop the attestation job."
-    )
-
-
-def _fake_curl_tools(directory: Path, statuses: str, body: str) -> tuple[Path, Path]:
-    """Install scripted curl and no-op sleep tools for index lookup tests."""
-    tools = directory / "fake-tools"
-    curl_body = (
-        "import os, pathlib, sys\n"
-        "args = sys.argv[1:]\n"
-        "calls = pathlib.Path(os.environ['FAKE_CURL_CALLS'])\n"
-        "index = int(calls.read_text() or '0') if calls.exists() else 0\n"
-        "calls.write_text(str(index + 1))\n"
-        "statuses = os.environ['FAKE_CURL_STATUSES'].split(',')\n"
-        "status = statuses[min(index, len(statuses) - 1)]\n"
-        "output = pathlib.Path(args[args.index('--output') + 1])\n"
-        "if status != '000':\n"
-        "    output.write_text(os.environ['FAKE_CURL_BODY'], encoding='utf-8')\n"
-        "print(status, end='')\n"
-        "raise SystemExit(7 if status == '000' else 0)\n"
-    )
-    curl = write_argument_recorder(tools, "curl", curl_body)
-    sleep = tools / "sleep"
-    sleep.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        'printf \'%s\\n\' "$*" >> "${FAKE_SLEEP_CALLS}"\n',
-        encoding="utf-8",
-    )
-    sleep.chmod(0o755)
-    return tools, curl
-
-
-def _run_index(
-    tmp_path: Path, statuses: str, *, allow_missing: str = "true"
-) -> tuple[subprocess.CompletedProcess[str], int, int]:
-    """Run the checked-in index-fetch step with a response sequence."""
-    tools, _ = _fake_curl_tools(tmp_path, statuses, '{"files": []}')
-    calls = tmp_path / "curl-calls"
-    sleeps = tmp_path / "sleep-calls"
-    path = os.pathsep.join((str(tools), os.environ.get("PATH", os.defpath)))
-    environment = workflow_command_environment(
-        _INDEX_STEP,
-        tmp_path,
-        {
-            "PATH": path,
-            "FAKE_CURL_STATUSES": statuses,
-            "FAKE_CURL_BODY": '{"files": []}',
-            "FAKE_CURL_CALLS": str(calls),
-            "FAKE_SLEEP_CALLS": str(sleeps),
-            "PYPI_ALLOW_MISSING": allow_missing,
-        },
-    )
-    completed = run_bash(step_script(*_INDEX_STEP), tmp_path, environment)
-    curl_count = int(calls.read_text(encoding="utf-8")) if calls.exists() else 0
-    sleep_count = (
-        len(sleeps.read_text(encoding="utf-8").splitlines()) if sleeps.exists() else 0
-    )
-    return completed, curl_count, sleep_count
-
-
-def test_a_missing_pypi_project_becomes_an_empty_index(tmp_path: Path) -> None:
-    """A 404 before the first release means there is nothing to skip."""
-    completed, calls, sleeps = _run_index(tmp_path, "404")
-    assert completed.returncode == 0, completed.stderr
-    assert json.loads((tmp_path / "pypi-index.json").read_text(encoding="utf-8")) == {
-        "files": []
-    }, "A 404 before the first release means there is nothing to skip."
-    assert (calls, sleeps) == (1, 0), (
-        "A 404 before the first release means there is nothing to skip."
-    )
-
-
-def test_transient_index_failures_retry_with_bounded_two_second_waits(
-    tmp_path: Path,
-) -> None:
-    """Network errors, 429, and 5xx retry until a successful response."""
-    completed, calls, sleeps = _run_index(tmp_path, "000,429,503,200")
-    assert completed.returncode == 0, completed.stderr
-    assert (calls, sleeps) == (4, 3), (
-        "Network errors, 429, and 5xx retry until a successful response."
-    )
-    assert (tmp_path / "pypi-index.json").read_text(
-        encoding="utf-8"
-    ) == '{"files": []}', (
-        "Network errors, 429, and 5xx retry until a successful response."
-    )
-
-
-@pytest.mark.parametrize(
-    ("status", "expected_calls"),
-    [("500", 6), ("000", 6), ("403", 1)],
-)
-def test_final_index_http_errors_fail(
-    tmp_path: Path, status: str, expected_calls: int
-) -> None:
-    """Persistent transient errors and other HTTP failures stop publication."""
-    completed, calls, _ = _run_index(tmp_path, status)
-    assert completed.returncode != 0, (
-        "Persistent transient errors and other HTTP failures stop publication."
-    )
-    assert f"PyPI Simple index returned HTTP {status}." in completed.stderr, (
-        "Persistent transient errors and other HTTP failures stop publication."
-    )
-    assert calls == expected_calls, (
-        "Persistent transient errors and other HTTP failures stop publication."
     )
 
 

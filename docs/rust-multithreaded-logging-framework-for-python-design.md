@@ -1960,7 +1960,7 @@ scope for more advanced structured logging features:
   etc. The `tracing-opentelemetry` crate provides a good example of integrating
   with such ecosystems.
 
-### 8.5. Packaging and Release Process
+### 8.5. Packaging and release process
 
 The Python package is built with maturin from the repository root and the Rust
 extension in `rust_extension/`. The extension crate is `publish = false` and is
