@@ -338,12 +338,19 @@ Known uncertainties identified upfront, with mitigations.
   Mermaid validation and CodeScene before publication.
 - [x] (2026-10-26) Committed and published the timeout revert and migration note
   as `a1ae687`, then corrected this plan's warning count and published
-  `858c846`. The branch, remote-tracking ref and remote head match. On current
-  head `858c846`, Actions run `40281846688` and CodeScene result `8126065` are
-  queued. CodeRabbit's summary says review is paused: approval `5648087668`
-  covers `fa210fb`, and `858c846` is not yet reviewed. The previous review's
-  three warnings have two corrections in this candidate; the observability
-  counter still needs a maintainer disposition.
+  `858c846`. The branch, remote-tracking ref and remote head matched at
+  publication. At that point, Actions run `40281846688` and CodeScene result
+  `8126065` were queued. CodeRabbit's summary said review was paused: approval
+  `5648087668` covered `fa210fb`, and `858c846` had not been reviewed. The
+  previous review's three warnings had two corrections in this candidate; the
+  observability counter still needed a maintainer disposition.
+- [x] (2026-10-26) Published plan-only delivery-state correction `cd7c216`.
+  The branch, remote-tracking ref and remote head matched. Its final plan text
+  passed `make fmt`, `make check-fmt`, `make markdownlint` (61 files, zero
+  errors), and `make nixie`. Exact-head Actions run `40282286220` and CodeScene
+  result `8126106` were queued at publication. CodeRabbit's summary marked
+  `cd7c216` paused and unreviewed; the last formal approval still covered
+  `fa210fb`. The PR body was refreshed for `cd7c216` and links to these checks.
 - [ ] (2026-10-26) Await green exact-head hosted checks, then obtain the
   candidate-bound completeness and property-coverage assessments. Resolve the
   observability scope disposition, request a current-head formal review through
@@ -507,12 +514,13 @@ warnings. The current work addresses the documentation findings and adds
 generated threshold and `setLevel()` coverage. The incremental review of
 `fa210fb` completed with approval and no actionable inline comments; its
 walkthrough retained three pre-merge warnings for the private-docs timeout, the
-missing v0.2.0 migration note, and a rejected-record counter. This worktree
-reverts the unrelated timeout change, restoring the original 600-second child
-and 620-second pytest limits, and adds the migration note. The counter request
-still needs a maintainer disposition. The formatted candidate passed all seven
-sequential local gates and CodeScene delta; exact-head hosted validation is
-pending publication.
+missing v0.2.0 migration note, and a rejected-record counter. Candidate
+`a1ae687` reverts the unrelated timeout change, restoring the original
+600-second child and 620-second pytest limits, and adds the migration note. It
+passed all seven sequential local gates. Hosted run `40281574197` was still
+running when this status update was recorded. The remaining counter request
+needs a maintainer disposition. Subsequent plan-only publication and validation
+states are recorded in Progress above.
 
 ## Context and orientation
 
