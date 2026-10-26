@@ -358,11 +358,17 @@ Known uncertainties identified upfront, with mitigations.
   now addressed in the worktree. At that head, property-coverage assessment and
   current-head formal review were still pending; CodeRabbit's status was
   paused, and the rejected-record counter still awaited maintainer disposition.
-- [ ] (2026-10-26) Revalidate and publish the three assessment corrections,
-  obtain a candidate-bound completeness follow-up and property-coverage
-  assessment, resolve the observability scope disposition, request a current-
-  head formal review through the managed queue, reconcile findings and
-  approval, and merge.
+- [x] (2026-10-26) On published head `a2513a8`, all seven local gates passed
+  sequentially: `make fmt`, `make check-fmt`, `make test` (804 passed, 5
+  skipped; 66 snapshots), `make typecheck`, `make lint`, `make markdownlint`,
+  and `make nixie`. Hosted CI run `40290417321` passed all four Python jobs;
+  CodeScene `8127201` and Gecko passed. This candidate contains the three
+  assessment-accuracy corrections and releases the GIL during worker-backed
+  handler `flush()` and `close()` waits, with formatter coverage for both.
+- [ ] (2026-10-26) Obtain a candidate-bound completeness follow-up and separate
+  property-coverage assessment on the final published head. Obtain maintainer
+  disposition on the rejected-record counter warning, then request a current-
+  head formal CodeRabbit review, reconcile findings and approval, and merge.
 
 ## Surprises & discoveries
 
