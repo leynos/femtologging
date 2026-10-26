@@ -17,24 +17,12 @@ import pytest
 
 import femtologging
 from femtologging import FemtoLogger, StdlibHandlerAdapter
+from tests.stdlib_adapter_support import CapturingHandler, emitted_messages
 
 if typ.TYPE_CHECKING:
     from femtologging.adapter import FemtoRecord
 
 OVERRIDDEN_TIMESTAMP = 1700000000.456
-
-
-class CapturingHandler(logging.Handler):
-    """Handler that captures emitted LogRecords for test inspection."""
-
-    def __init__(self) -> None:
-        """Initialise with an empty records list."""
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    @typ.override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
 
 
 def _sole_emitted_record(capturing: CapturingHandler) -> logging.LogRecord:
@@ -220,6 +208,52 @@ class TestLogRecordAttributes:
         assert record.relativeCreated == pytest.approx(expected), (
             f"relativeCreated mismatch: got {record.relativeCreated}, "
             f"expected {expected}"
+        )
+
+
+class TestDynamicHandlerLevel:
+    """Verify the wrapped handler's level is read at dispatch time."""
+
+    @staticmethod
+    def test_set_level_after_construction_applies() -> None:
+        """``setLevel()`` between records should change the next verdict.
+
+        The adapter is constructed while the handler is at ``NOTSET``, so a
+        level cached at construction time would wrongly admit the ``INFO``
+        record after the handler is tightened to ``ERROR``. After relaxing
+        back to ``NOTSET``, the ``TRACE`` dispatch checks that the current
+        threshold is read again.
+        """
+        capturing = CapturingHandler()
+        adapter = StdlibHandlerAdapter(capturing)
+
+        adapter.handle_record({"level": "INFO", "message": "before"})
+        assert emitted_messages(capturing) == ["before"], (
+            f"a NOTSET handler should accept INFO: {emitted_messages(capturing)!r}"
+        )
+
+        capturing.setLevel(logging.ERROR)
+        adapter.handle_record({"level": "INFO", "message": "tightened-out"})
+        assert emitted_messages(capturing) == ["before"], (
+            "raising the handler level to ERROR should discard the INFO record: "
+            f"{emitted_messages(capturing)!r}"
+        )
+
+        adapter.handle_record({"level": "ERROR", "message": "tightened-in"})
+        assert emitted_messages(capturing) == ["before", "tightened-in"], (
+            "an ERROR record should pass the raised handler level: "
+            f"{emitted_messages(capturing)!r}"
+        )
+
+        capturing.setLevel(logging.NOTSET)
+        adapter.handle_record({"level": "TRACE", "message": "relaxed"})
+
+        assert emitted_messages(capturing) == ["before", "tightened-in", "relaxed"], (
+            "returning the handler level to NOTSET should re-admit TRACE: "
+            f"{emitted_messages(capturing)!r}"
+        )
+        assert capturing.records[-1].levelno == 5, (
+            f"TRACE should map to stdlib level 5: {capturing.records[-1].levelno!r}"
         )
 
 

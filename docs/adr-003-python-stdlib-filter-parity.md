@@ -224,3 +224,16 @@ retaining Python objects: only the captured `contextvars.Context` is retained
 for queued records that need Python-backed dispatch. Python callback filters
 still run on the producer thread, and arbitrary Python record objects are not
 retained across the queue.
+
+## Addendum: synchronous stdlib handler context (2026-10-26)
+
+This clarification does not change the accepted producer-path filter decision
+or the 2026-10-14 handler-filter addendum. For a Python-backed handler, the
+worker invokes `StdlibHandlerAdapter.handle_record()` through `Context.run()`
+before the adapter calls the wrapped handler. A direct call to
+`handle_record()` does not establish that context. With the base
+`logging.Handler.handle()` behaviour, its filter chain and `emit()` invocation
+run synchronously in the captured producer context, as does formatting done
+during that call. A handler that defers formatting or emission to another
+thread or process needs separate context propagation. Handler subclasses that
+override `handle()` define their own internal behaviour.

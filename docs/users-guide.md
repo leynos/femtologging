@@ -445,8 +445,12 @@ incompatible with femtologging's `handle_record(dict)` protocol.
 
 `StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
 subclass, translates femtologging record dicts into `logging.LogRecord`
-instances, and delegates to the wrapped handler's `handle()` method so that
-attached filters and I/O locking apply.
+instances, and delegates to the wrapped handler's `handle()` method, preserving
+that handler's own dispatch path. For handlers retaining the base
+`logging.Handler.handle()` behaviour, normal execution evaluates the filter
+chain once, then acquires the I/O lock and invokes `emit()` if the chain
+accepts the record. A subclass overriding `handle()` controls its own internal
+filtering, locking and emission behaviour.
 
 ```python
 import logging
@@ -465,10 +469,63 @@ logger.add_handler(adapter)
 logger.log("INFO", "Application started")
 ```
 
+Two independent thresholds govern whether a record is written, and the adapter
+honours both.  The femtologging logger's own level decides whether the record
+is dispatched at all.  The adapter then compares the record's mapped stdlib
+level with the wrapped handler's `level`, exactly as the standard library's
+`Logger.callHandlers()` does, and discards the record when it falls below that
+threshold.  The adapter reads the wrapped handler's current level when it
+processes each record.  A `logging.Handler.setLevel()` call therefore affects
+records processed after the call, including records already queued but not yet
+handled; records already handled are unaffected.  There is no need to rebuild
+the adapter.
+
+```python
+import logging
+import logging.handlers
+from femtologging import FemtoLogger, StdlibHandlerAdapter
+
+# Email is expensive and sensitive; only send it the serious records.
+email_handler = logging.handlers.SMTPHandler(
+    mailhost="mail.example.com",
+    fromaddr="logging@example.com",
+    toaddrs=["oncall@example.com"],
+    subject="Application alert",
+)
+email_handler.setLevel(logging.ERROR)
+
+logger = FemtoLogger("myapp")
+logger.set_level("TRACE")
+logger.add_handler(StdlibHandlerAdapter(email_handler))
+
+logger.log("INFO", "Request completed")  # discarded: below handler level
+logger.log("ERROR", "Payment failed")  # reaches the email handler
+```
+
+In this example the `"TRACE"` femtologging logger accepts every record, but only
+`ERROR` and `CRITICAL` reach the handler.  `logging.NOTSET` is the default and
+accepts every level.
+
 The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
 level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50). A
 custom `TRACE` level name is registered with stdlib's `logging` module so that
 formatters render it as `TRACE` rather than `Level 5`.
+
+A record that passes the level comparison is passed through the wrapped
+handler's `handle()` once. For a handler retaining the base
+`logging.Handler.handle()` behaviour, normal execution evaluates its filter
+chain once. If the chain accepts the record, the handler acquires its I/O lock
+and invokes `emit()`. A filter can reject a level-accepted record before lock
+acquisition or the `emit()` invocation. Subclasses overriding `handle()` define
+their own internal path. Records discarded by the level comparison never enter
+`handle()`, so the handler's filter path is not entered.
+
+The restrictions on setting a handler's `level` in the
+[dictConfig](#dictconfig-restricted-compatibility-layer) and
+[fileConfig](#fileconfig-ini-compatibility) schemas apply only to those
+configuration formats. They do not limit a standard-library handler wrapped in
+`StdlibHandlerAdapter`; the adapter honours that handler's own `level` as
+described above.
 
 Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
 and `timestamp` are forwarded to the `LogRecord` where matching attributes
@@ -477,10 +534,14 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 `%(request_id)s`) and filters.
 
 The adapter runs on femtologging's dedicated worker thread. Before a record is
-queued, femtologging captures the producer's `contextvars` context and runs the
-wrapped handler's entire `handle()` call inside it, including its filters,
-formatters, and `emit()`. A `contextvars.ContextVar` therefore observes the
-value set by the log caller, even though the handler dispatch itself is
+queued, femtologging captures the producer's `contextvars` context and invokes
+the wrapped handler's `handle()` call inside it. For handlers retaining the base
+`logging.Handler.handle()` behaviour, this includes the filter chain and, when
+the chain accepts, the I/O lock and `emit()` invocation. Formatting performed
+synchronously within that call also uses the captured context. Work deferred to
+another thread or process needs separate context propagation. A
+`contextvars.ContextVar` read by an inline handler callback therefore observes
+the value set by the log caller, even though the initial handler dispatch is
 asynchronous on the worker thread.
 
 **Limitations:**
