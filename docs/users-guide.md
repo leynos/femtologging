@@ -504,9 +504,12 @@ incompatible with femtologging's `handle_record(dict)` protocol.
 
 `StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
 subclass, translates femtologging record dicts into `logging.LogRecord`
-instances, and delegates to the wrapped handler's `handle()` method so that
-attached filters apply. The handler acquires its I/O lock only when those
-filters accept a record.
+instances, and delegates to the wrapped handler's `handle()` method, preserving
+that handler's own dispatch path. For handlers retaining the base
+`logging.Handler.handle()` behaviour, normal execution evaluates the filter
+chain once, then acquires the I/O lock and invokes `emit()` if the chain
+accepts the record. A subclass overriding `handle()` controls its own internal
+filtering, locking and emission behaviour.
 
 ```python
 import logging
@@ -568,11 +571,13 @@ custom `TRACE` level name is registered with stdlib's `logging` module so that
 formatters render it as `TRACE` rather than `Level 5`.
 
 A record that passes the level comparison is passed through the wrapped
-handler's `handle()` once, which applies its filters once. If the filters
-accept the record, the handler acquires its I/O lock and emits it. A filter can
-reject a level-accepted record before emission or lock acquisition. Records
-discarded by the level comparison never enter `handle()`, so their filters do
-not run.
+handler's `handle()` once. For a handler retaining the base
+`logging.Handler.handle()` behaviour, normal execution evaluates its filter
+chain once. If the chain accepts the record, the handler acquires its I/O lock
+and invokes `emit()`. A filter can reject a level-accepted record before lock
+acquisition or the `emit()` invocation. Subclasses overriding `handle()` define
+their own internal path. Records discarded by the level comparison never enter
+`handle()`, so the handler's filter path is not entered.
 
 The restrictions on setting a handler's `level` in the
 [dictConfig](#dictconfig-restricted-compatibility-layer) and
@@ -590,7 +595,10 @@ the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 The adapter runs on the worker for the logger's dispatch shard, which may also
 serve other loggers. Before a record is queued, femtologging captures the
 producer's `contextvars` context and runs the wrapped handler's entire
-`handle()` call inside it, including its filters, formatters, and `emit()`. A
+`handle()` call inside it. For handlers retaining the base
+`logging.Handler.handle()` behaviour, this includes the filter chain and, when
+the chain accepts, the I/O lock and `emit()` invocation. Any formatting
+performed by the concrete handler also runs in this context. A
 `contextvars.ContextVar` therefore observes the value set by the log caller,
 even though the handler dispatch itself is asynchronous on a shared worker.
 
