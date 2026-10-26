@@ -128,40 +128,6 @@ static POOL: AtomicPtr<Dispatcher> = AtomicPtr::new(std::ptr::null_mut());
 #[cfg(not(loom))]
 static POOL_STARTING_PROCESS: AtomicU32 = AtomicU32::new(0);
 
-/// Release the process-local pool-start reservation after success or failure.
-#[cfg(not(loom))]
-struct PoolStartGuard<'a> {
-    /// Reservation word this guard releases.
-    reservation: &'a AtomicU32,
-    /// PID that claimed the reservation.
-    process_id: u32,
-}
-
-#[cfg(not(loom))]
-impl<'a> PoolStartGuard<'a> {
-    /// Claim a free pool-start reservation for `process_id`.
-    fn reserve(reservation: &'a AtomicU32, process_id: u32) -> Result<Self, u32> {
-        reservation
-            .compare_exchange(0, process_id, Ordering::AcqRel, Ordering::Acquire)
-            .map(|_| Self {
-                reservation,
-                process_id,
-            })
-    }
-}
-
-#[cfg(not(loom))]
-impl Drop for PoolStartGuard<'_> {
-    fn drop(&mut self) {
-        let _ = self.reservation.compare_exchange(
-            self.process_id,
-            0,
-            Ordering::Release,
-            Ordering::Relaxed,
-        );
-    }
-}
-
 /// Why the dispatch pool could not be started.
 ///
 /// Returned by the logger constructors rather than panicking: a process at its

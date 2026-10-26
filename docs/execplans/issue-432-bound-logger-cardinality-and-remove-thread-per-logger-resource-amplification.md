@@ -1,7 +1,8 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: REVIEW IN PROGRESS — PR #544 is open; final12 local gates are green.
-The follow-up still needs publication and current-head review closure.
+Status: REVIEW IN PROGRESS — PR #544 is open at `a399685`; five distinct
+follow-up issues are fixed, and the full local gate sequence is green. The
+review fixes still need publication and current-head review closure.
 
 ## Purpose and big picture
 
@@ -208,8 +209,30 @@ Milestone 2 detail:
       models.
 - [x] Final12 reran the complete sequential gate set after recording final11;
       every gate passed with the same test and Loom counts.
-- [ ] Commit and push the follow-up, update the PR description, and obtain the
-      candidate-bound assessment and review follow-up.
+- [x] Published the CodeScene follow-up as `a399685`, replaced the stale PR
+      description, and obtained a candidate-bound assessment. CodeScene passed
+      on that exact head (result 8127306); the assessment found no code issue
+      and identified the stale progress item corrected here.
+- [x] CodeRabbit's review of `a399685` produced eight findings across five
+      distinct issues. The working tree fixes the cross-platform `OsString`
+      import, shares PID reservation handling, corrects ADR-006's loader-path
+      exception, documents every dispatch-admission drop cause, and uses budget
+      generations so inherited permits cannot release a child's charge.
+- [x] A metadata-only microbenchmark over 2,000,000 iterations and seven
+      samples measured three `std::process::id()` calls at 559.23 ns per record;
+      one such call plus two atomic generation loads took 188.21 ns (66.3% lower
+      for this check sequence, not an end-to-end logger throughput result).
+- [x] Final13 formatting and `check-fmt` passed. Lint then required field-level
+      documentation for the new reservation guard; both private fields now
+      explain their role.
+- [x] Final14 formatting and `check-fmt` passed. Whitaker then required inner
+      documentation on both new test modules; each now states its test purpose.
+- [x] Final16 passed the full sequential gate set after moving the documented
+      test modules into `#[path]` siblings: formatting, lint, typecheck, tests,
+      Markdown, Mermaid, Loom Clippy, and all six Loom models. Pytest reported
+      806 passed, 5 skipped, and 66 snapshots.
+- [ ] Commit and push these fixes, refresh the PR description, then reconcile
+      current-head CI and reviews before merging the exact approved head.
 
 Re-gated at `467f406`:
 
@@ -1183,3 +1206,23 @@ cannot — because it is an integration test, not a unit test build.
 evidence to the test-local reservation and injected seam, and left publication
 and current-head review closure as the remaining work. The implementation scope
 is unchanged.
+
+2026-10-26 follow-up: Recorded publication of `a399685`, its passing CodeScene
+result and candidate-bound assessment, and the five distinct CodeRabbit issues.
+The current working tree addresses those issues; the new full gate run and
+current-head CI and review closure remain outstanding.
+
+2026-10-26 gate note: Final13 stopped at lint because the new reservation guard
+fields lacked private-item documentation. Added field docs before restarting
+the complete sequential gate set; no later gate ran on the failed attempt.
+
+2026-10-26 gate follow-up: The next lint output still reported the two new
+inline test modules, so their tests now live in documented `#[path]` sibling
+modules. This puts each module's `//!` comment in its own source file, which
+Whitaker's source-span check can inspect directly. No full gate ran after this
+structural change; restart the complete sequential gate set.
+
+2026-10-26 final16: All local gates passed on the CodeRabbit follow-up tree.
+The test suite reported 806 passed, 5 skipped, and 66 snapshots; all six Loom
+models passed. Commit, publication, hosted checks, and current-head reviews
+remain outstanding.

@@ -15,6 +15,8 @@
 mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
+#[cfg(not(loom))]
+mod pid_reservation;
 mod producer;
 mod py_handler;
 mod python_helpers;
@@ -211,7 +213,11 @@ impl FemtoLogger {
         self.clear_filters();
     }
 
-    /// Return the number of records dropped due to a full queue.
+    /// Return the number of records refused at dispatch admission.
+    ///
+    /// Counts exhausted logger allowance or shard permits, a full or
+    /// disconnected shard queue, and a failed replacement-pool start after
+    /// `fork`.
     ///
     /// Useful for tests and monitoring dashboards.
     #[pyo3(text_signature = "(self)")]

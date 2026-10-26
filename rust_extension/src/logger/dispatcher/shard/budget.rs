@@ -15,7 +15,7 @@
 //! ADR 007 promises.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::sync::{Receiver, Sender, bounded};
 
@@ -46,10 +46,9 @@ pub(super) struct Permit {
     permits: Arc<Permits>,
     /// The logger whose record this permit authorizes.
     logger: Arc<LoggerBudget>,
-    /// Process that charged the logger budget, so an inherited permit cannot
-    /// release a charge after the child resets that budget.
-    #[cfg(not(loom))]
-    process_id: u32,
+    /// Budget generation that this permit charged, so an inherited permit
+    /// cannot release a charge after a child resets the budget.
+    budget_generation: u64,
 }
 
 /// One logger's share of a shard's in-flight capacity.
@@ -70,6 +69,8 @@ pub(crate) struct LoggerBudget {
     limit: usize,
     /// Records logged through this logger that the shard has not finished.
     in_flight: AtomicUsize,
+    /// Changes when a child resets inherited in-flight charges after `fork`.
+    generation: AtomicU64,
 }
 
 impl Permits {
@@ -106,6 +107,7 @@ impl LoggerBudget {
         Self {
             limit,
             in_flight: AtomicUsize::new(0),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -117,6 +119,7 @@ impl LoggerBudget {
     #[cfg(not(loom))]
     pub(crate) fn reset_after_fork(&self) {
         self.in_flight.store(0, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Return the number of unhandled records this logger may hold.
@@ -152,7 +155,8 @@ impl LoggerBudget {
     /// Takes no lock and never waits. A logger at its budget is already holding
     /// as much unhandled work as it is allowed, so refusing here is what stops
     /// one logger's slow handler becoming every other logger's outage.
-    fn try_charge(&self) -> bool {
+    fn try_charge(&self) -> Option<u64> {
+        let generation = self.generation.load(Ordering::Acquire);
         // A CAS loop rather than `fetch_add` then a rollback, so a refusal
         // never temporarily inflates the count another thread reads. Released
         // with `AcqRel` for the same reason: `in_flight` is read by `Drop` to
@@ -163,13 +167,18 @@ impl LoggerBudget {
                 (held < self.limit()).then_some(held + 1)
             })
             .is_ok()
+            .then_some(generation)
     }
 
-    /// Return one charge to the budget.
+    /// Return one charge from the generation that acquired it.
     ///
     /// Called from [`Permit`]'s drop, so a handler panic unwinds through it and
     /// the charge is still returned.
-    fn release(&self) {
+    fn release(&self, generation: u64) {
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+
         // Saturating, because a release without a matching charge would
         // otherwise underflow to a figure no bound can compare against.
         let _ = self
@@ -190,22 +199,19 @@ impl Permit {
     /// as much work as it will, so the caller counts a dropped record rather
     /// than blocking the logging call.
     pub(super) fn take(permits: &Arc<Permits>, logger: &Arc<LoggerBudget>) -> Option<Self> {
-        if !logger.try_charge() {
-            return None;
-        }
+        let budget_generation = logger.try_charge()?;
         match permits.available.try_recv() {
             Ok(()) => Some(Self {
                 permits: Arc::clone(permits),
                 logger: Arc::clone(logger),
-                #[cfg(not(loom))]
-                process_id: std::process::id(),
+                budget_generation,
             }),
             // The shard is full, so nothing was queued. Undo the budget charge
             // here rather than letting it leak: a charge with no permit would
             // shrink the logger's budget a little more with every refused
             // record, and the logger would eventually refuse every record.
             Err(_) => {
-                logger.release();
+                logger.release(budget_generation);
                 None
             }
         }
@@ -222,10 +228,10 @@ impl Drop for Permit {
         // A failed send can only mean the pool is already full, which would be
         // a double release; ignoring it keeps the count from inflating.
         let _ = self.permits.returned.try_send(());
-        #[cfg(not(loom))]
-        if self.process_id != std::process::id() {
-            return;
-        }
-        self.logger.release();
+        self.logger.release(self.budget_generation);
     }
 }
+
+#[cfg(all(test, not(loom)))]
+#[path = "budget_tests.rs"]
+mod tests;

@@ -3,7 +3,6 @@
 use std::io;
 use std::process::{Command, Output};
 
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use std::ffi::OsString;
 
 /// Run one ignored test in a fresh copy of the current test executable.

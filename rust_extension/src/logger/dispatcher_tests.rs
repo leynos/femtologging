@@ -5,6 +5,7 @@
 //! worker-start failure to verify error mapping, reservation release and retry
 //! without exhausting the process's real thread resources.
 
+use super::super::pid_reservation::PidReservation;
 use super::shards_for;
 
 /// The default the pool falls back to when the machine reports no limit.
@@ -92,12 +93,12 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
 
     use pyo3::{Python, exceptions::PyRuntimeError};
 
-    use super::{Dispatcher, PoolStartGuard, shard::Shard};
+    use super::{Dispatcher, shard::Shard};
 
     let process_id = std::process::id();
     let reservation = AtomicU32::new(0);
     let failed_start = {
-        let _guard = PoolStartGuard::reserve(&reservation, process_id)
+        let _guard = PidReservation::try_reserve(&reservation, process_id)
             .expect("the initial test reservation should be free");
         Dispatcher::start_with(process_id, 2, |index, depth| {
             if index == 1 {
@@ -132,7 +133,7 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
     });
 
     let retry = {
-        let _guard = PoolStartGuard::reserve(&reservation, process_id)
+        let _guard = PidReservation::try_reserve(&reservation, process_id)
             .expect("the released reservation should permit a retry");
         Dispatcher::start_with(process_id, 1, Shard::start)
     };

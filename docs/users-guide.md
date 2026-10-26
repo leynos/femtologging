@@ -253,11 +253,13 @@ fields with safe defaults does not require a version bump.
   `logger.clear_handlers()` to detach them. Removals only affect records that
   are enqueued after the call because previously queued items already captured
   their handler list.
-- Use `logger.get_dropped()` to inspect how many records have been discarded
-  because the logger queue was full or shutting down.
+- Use `logger.get_dropped()` to inspect records refused at dispatch admission:
+  the logger's allowance or shard permits were exhausted, the shard queue was
+  full or gone, or an inherited logger could not start the process-local pool
+  after `fork`.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
-  records rejected because the queue was full or shutting down.
+  dispatch-admission refusals.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.

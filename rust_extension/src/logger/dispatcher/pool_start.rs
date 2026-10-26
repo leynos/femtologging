@@ -6,15 +6,16 @@
 
 use std::sync::atomic::Ordering;
 
-use super::{Dispatcher, DispatcherError, POOL, POOL_STARTING_PROCESS, PoolStartGuard};
+use super::{Dispatcher, DispatcherError, POOL, POOL_STARTING_PROCESS};
+use crate::logger::pid_reservation::PidReservation;
 
 impl Dispatcher {
     /// Start the pool when this thread reserves it, or let the next loop try.
     pub(super) fn start_or_wait(process_id: u32) -> Result<(), DispatcherError> {
-        match PoolStartGuard::reserve(&POOL_STARTING_PROCESS, process_id) {
+        match PidReservation::try_reserve(&POOL_STARTING_PROCESS, process_id) {
             Ok(start_guard) => Self::start_reserved_pool(process_id, start_guard),
             Err(owner) => {
-                Self::handle_start_reservation(process_id, owner);
+                PidReservation::wait_or_clear_stale(&POOL_STARTING_PROCESS, process_id, owner);
                 Ok(())
             }
         }
@@ -23,7 +24,7 @@ impl Dispatcher {
     /// Start and publish a pool while keeping the reservation alive.
     fn start_reserved_pool(
         process_id: u32,
-        _start_guard: PoolStartGuard<'_>,
+        _start_guard: PidReservation<'_>,
     ) -> Result<(), DispatcherError> {
         // Recheck after reserving startup: another caller may have finished
         // between the shared lookup and this reservation.
@@ -34,22 +35,5 @@ impl Dispatcher {
             POOL.store(candidate, Ordering::Release);
         }
         Ok(())
-    }
-
-    /// Wait for a local starter or clear a reservation inherited across fork.
-    fn handle_start_reservation(process_id: u32, owner: u32) {
-        if owner == process_id {
-            std::thread::yield_now();
-        } else {
-            // A different PID can only be the parent reservation copied by
-            // fork. The child is the sole survivor there, so it may safely
-            // clear that stale reservation and retry.
-            let _ = POOL_STARTING_PROCESS.compare_exchange(
-                owner,
-                0,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-        }
     }
 }

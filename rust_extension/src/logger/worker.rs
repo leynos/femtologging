@@ -30,6 +30,8 @@ use super::dispatcher::Dispatcher;
 use super::dispatcher::DispatcherError;
 #[cfg(loom)]
 use super::dispatcher::LOOM_RECORDS_PER_LOGGER;
+#[cfg(not(loom))]
+use super::pid_reservation::PidReservation;
 
 /// How a logger refers to the shard its records are dispatched on.
 ///
@@ -58,27 +60,6 @@ pub(super) struct DispatchState {
     shard: std::sync::atomic::AtomicPtr<Shard>,
     /// This logger's admission budget on `shard`.
     budget: std::sync::Arc<LoggerBudget>,
-}
-
-/// Release a logger's process-local rebind reservation after success or error.
-#[cfg(not(loom))]
-struct DispatchRebindGuard<'a> {
-    /// Atomic reservation owned by the logger.
-    starting_process: &'a std::sync::atomic::AtomicU32,
-    /// PID that claimed the reservation.
-    process_id: u32,
-}
-
-#[cfg(not(loom))]
-impl Drop for DispatchRebindGuard<'_> {
-    fn drop(&mut self) {
-        let _ = self.starting_process.compare_exchange(
-            self.process_id,
-            0,
-            std::sync::atomic::Ordering::Release,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-    }
 }
 
 #[cfg(not(loom))]
@@ -128,51 +109,60 @@ impl FemtoLogger {
                 return Ok(self.dispatch.handles());
             }
 
-            match self.dispatch.starting_process.compare_exchange(
-                0,
-                process_id,
-                std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    let _guard = DispatchRebindGuard {
-                        starting_process: &self.dispatch.starting_process,
-                        process_id,
-                    };
-                    if self
-                        .dispatch
-                        .process_id
-                        .load(std::sync::atomic::Ordering::Acquire)
-                        == process_id
-                    {
-                        return Ok(self.dispatch.handles());
-                    }
-
-                    let dispatcher = Dispatcher::shared()?;
-                    let shard = dispatcher.assign_shard();
-                    self.dispatch.budget.reset_after_fork();
-                    self.dispatch.shard.store(
-                        shard as *const Shard as *mut Shard,
-                        std::sync::atomic::Ordering::Release,
-                    );
-                    self.dispatch
-                        .process_id
-                        .store(process_id, std::sync::atomic::Ordering::Release);
-                    return Ok((shard, &self.dispatch.budget));
-                }
-                Err(owner) if owner == process_id => std::thread::yield_now(),
-                Err(owner) => {
-                    // A different PID can only be the parent's reservation
-                    // copied by fork. The child may clear it and retry.
-                    let _ = self.dispatch.starting_process.compare_exchange(
-                        owner,
-                        0,
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Acquire,
-                    );
-                }
+            if let Some(handles) = self.try_rebind_dispatch_state(process_id)? {
+                return Ok(handles);
             }
         }
+    }
+
+    /// Reserve and rebind this logger, or wait for its current process owner.
+    #[cfg(not(loom))]
+    fn try_rebind_dispatch_state(
+        &self,
+        process_id: u32,
+    ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
+        match PidReservation::try_reserve(&self.dispatch.starting_process, process_id) {
+            Ok(reservation) => self
+                .rebind_reserved_dispatch_state(process_id, reservation)
+                .map(Some),
+            Err(owner) => {
+                PidReservation::wait_or_clear_stale(
+                    &self.dispatch.starting_process,
+                    process_id,
+                    owner,
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    /// Rebind while holding the logger's process-local reservation.
+    #[cfg(not(loom))]
+    fn rebind_reserved_dispatch_state(
+        &self,
+        process_id: u32,
+        _reservation: PidReservation<'_>,
+    ) -> Result<(&Shard, &std::sync::Arc<LoggerBudget>), DispatcherError> {
+        if self
+            .dispatch
+            .process_id
+            .load(std::sync::atomic::Ordering::Acquire)
+            == process_id
+        {
+            return Ok(self.dispatch.handles());
+        }
+
+        let dispatcher = Dispatcher::shared()?;
+        let shard = dispatcher.assign_shard();
+        self.dispatch.budget.reset_after_fork();
+        self.dispatch.shard.store(
+            shard as *const Shard as *mut Shard,
+            std::sync::atomic::Ordering::Release,
+        );
+        self.dispatch
+            .process_id
+            .store(process_id, std::sync::atomic::Ordering::Release);
+        Ok((shard, &self.dispatch.budget))
     }
 
     /// Drain work this logger sent to its current dispatch state.
