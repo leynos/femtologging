@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError, capped_deadline},
+    handler::{FemtoHandlerTrait, HandlerError, capped_deadline, deadline_after},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
 };
@@ -56,7 +56,10 @@ impl FemtoSocketHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        self.flush_by(Instant::now() + self.flush_timeout)
+        let Some(deadline) = deadline_after(self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(deadline)
     }
 
     /// Flush any pending log records, waiting no longer than `deadline`.

@@ -234,25 +234,19 @@ fn native_flush_does_not_attach_to_the_gil() {
     let logger = Arc::new(FemtoLogger::new("flush-gil".to_string()));
     let (result_tx, result_rx) = bounded(1);
 
-    let (early_result, caller) = Python::attach(|_py| {
+    let (result, caller) = Python::attach(|_py| {
         let logger = Arc::clone(&logger);
         let caller = std::thread::spawn(move || {
             let _ = result_tx.send(logger.flush_handlers());
         });
-        (result_rx.recv_timeout(Duration::from_millis(250)), caller)
+        (result_rx.recv_timeout(flush_bound()), caller)
     });
 
-    let late_result = early_result
-        .is_err()
-        .then(|| result_rx.recv_timeout(Duration::from_secs(5)));
     caller
         .join()
         .expect("native flush thread should finish after interpreter release");
     assert!(
-        early_result.is_ok_and(|flushed| flushed),
+        result.is_ok_and(|flushed| flushed),
         "native Rust flush must not wait to attach while another thread owns the GIL"
     );
-    if let Some(result) = late_result {
-        assert!(result.is_ok_and(|flushed| flushed));
-    }
 }

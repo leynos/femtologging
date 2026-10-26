@@ -7,6 +7,19 @@
 //! records are written.
 mod shutdown;
 
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
+use crate::handler::{FemtoHandlerTrait, capped_deadline, deadline_after, remaining};
+use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
+use crate::{
+    formatter::{DefaultFormatter, FemtoFormatter},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
+};
+use log::warn;
+use pyo3::prelude::*;
 mod trait_impl;
 
 use std::{
@@ -167,6 +180,7 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
+
 #[pymethods]
 impl FemtoStreamHandler {
     /// Constructs the Python-facing default handler, which writes to stderr.
@@ -242,6 +256,7 @@ impl FemtoStreamHandler {
         py.detach(move || shutdown.wait());
     }
 }
+
 
 
 impl FemtoStreamHandler {
@@ -329,7 +344,10 @@ impl FemtoStreamHandler {
     /// Python callers release the interpreter while waiting for the handler's
     /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
-        self.flush_by(Instant::now() + self.flush_timeout)
+        let Some(deadline) = deadline_after(self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(deadline)
     }
 
     /// Flush any pending log records, waiting no longer than `deadline`.

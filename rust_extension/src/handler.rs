@@ -33,6 +33,22 @@ pub(crate) fn remaining(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now())
 }
 
+/// Build a deadline from `timeout`, or return `None` when it cannot be represented.
+///
+/// Callers must fail closed on `None`; falling back to an untimed wait would
+/// turn an unrepresentable timeout into an unbounded operation.
+///
+/// # Examples
+///
+/// ```ignore
+/// let deadline = deadline_after(Duration::from_millis(50));
+/// assert!(deadline.is_some());
+/// assert!(deadline_after(Duration::MAX).is_none());
+/// ```
+pub(crate) fn deadline_after(timeout: Duration) -> Option<Instant> {
+    Instant::now().checked_add(timeout)
+}
+
 /// Return the earlier of a caller's deadline and a local timeout measured now.
 ///
 /// A handler flush uses this to preserve the caller's absolute deadline while
@@ -48,9 +64,7 @@ pub(crate) fn remaining(deadline: Instant) -> Duration {
 /// assert!(capped_deadline(deadline, budget) <= deadline);
 /// ```
 pub(crate) fn capped_deadline(deadline: Instant, budget: Duration) -> Instant {
-    Instant::now()
-        .checked_add(budget)
-        .map_or(deadline, |local_deadline| deadline.min(local_deadline))
+    deadline_after(budget).map_or(deadline, |local_deadline| deadline.min(local_deadline))
 }
 
 /// Errors reported by handler implementations when dispatching a log record.
