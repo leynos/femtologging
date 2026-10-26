@@ -323,10 +323,11 @@ Known uncertainties identified upfront, with mitigations.
   remain open.
 - [x] (2026-10-26) The queued incremental CodeRabbit review `e8d2e60c` completed
   as review `5648087668` on `fa210fb` with an approval and no actionable inline
-  comments. Its pre-merge checks retained two warnings: the unrelated
-  private-docs timeout and a rejected-record observability counter. This
-  worktree reverts the timeout change and adds a v0.2.0 migration note; the
-  counter still needs a maintainer disposition.
+  comments. Its walkthrough, updated at 06:45Z, retained three pre-merge
+  warnings: the unrelated private-docs timeout, a missing v0.2.0 migration
+  note, and a rejected-record observability counter. This worktree reverts the
+  timeout change and adds the migration note; the counter still needs a
+  maintainer disposition.
 - [x] (2026-10-26) The formatted worktree candidate at diff hash
   `ecdfab8c` passed all seven sequential local gates: `make fmt`,
   `make check-fmt`, `make test` (799 passed, 5 skipped, 66 snapshots, one
@@ -496,12 +497,13 @@ returned `CHANGES_REQUESTED` with four documentation threads and four pre-merge
 warnings. The current work addresses the documentation findings and adds
 generated threshold and `setLevel()` coverage. The incremental review of
 `fa210fb` completed with approval and no actionable inline comments; its
-pre-merge checks retained two warnings for the private-docs timeout and a
-rejected-record counter. This worktree reverts the unrelated timeout change,
-restoring the original 600-second child and 620-second pytest limits, and adds
-a v0.2.0 migration note. The counter request still needs a maintainer
-disposition. The formatted candidate passed all seven sequential local gates
-and CodeScene delta; exact-head hosted validation is pending publication.
+walkthrough retained three pre-merge warnings for the private-docs timeout, the
+missing v0.2.0 migration note, and a rejected-record counter. This worktree
+reverts the unrelated timeout change, restoring the original 600-second child
+and 620-second pytest limits, and adds the migration note. The counter request
+still needs a maintainer disposition. The formatted candidate passed all seven
+sequential local gates and CodeScene delta; exact-head hosted validation is
+pending publication.
 
 ## Context and orientation
 
