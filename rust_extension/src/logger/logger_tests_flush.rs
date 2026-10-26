@@ -66,51 +66,33 @@ impl FemtoHandlerTrait for FailingFlushHandler {
     }
 }
 
-/// A legacy handler whose synchronous `flush` blocks until the test releases it.
-struct BlockingLegacyFlushHandler {
-    /// Signals if the compatibility default calls the legacy method.
-    started: Sender<()>,
-    /// Keeps the legacy flush blocked until cleanup sends or drops the sender.
-    release: Receiver<()>,
-}
-
-impl FemtoHandlerTrait for BlockingLegacyFlushHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Ok(())
-    }
-
-    fn flush(&self) -> bool {
-        let _ = self.started.try_send(());
-        let _ = self.release.recv();
-        true
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 /// Releases a stalled worker during normal cleanup or after a broken wait.
-struct StallGuard {
+pub(super) struct StallGuard {
     /// Wakes the watchdog when the test ends.
     done: Sender<()>,
     /// Makes the stalled worker continue.
     release: Sender<()>,
+    /// Joins the watchdog so it cannot outlive the test.
+    watchdog: Option<std::thread::JoinHandle<()>>,
 }
 
 impl StallGuard {
     /// Take ownership of the release sender and arm a finite watchdog.
-    fn new(release: Sender<()>) -> Self {
+    pub(super) fn new(release: Sender<()>) -> Self {
         let (done_tx, done_rx) = bounded(1);
         let watchdog_release = release.clone();
-        std::thread::spawn(move || {
-            if done_rx.recv_timeout(3 * flush_bound()).is_err() {
-                let _ = watchdog_release.send(());
+        let watchdog = std::thread::spawn(move || {
+            if done_rx
+                .recv_timeout(flush_bound() + Duration::from_millis(250))
+                .is_err()
+            {
+                let _ = watchdog_release.try_send(());
             }
         });
         Self {
             done: done_tx,
             release,
+            watchdog: Some(watchdog),
         }
     }
 }
@@ -119,6 +101,11 @@ impl Drop for StallGuard {
     fn drop(&mut self) {
         let _ = self.done.try_send(());
         let _ = self.release.try_send(());
+        if let Some(watchdog) = self.watchdog.take() {
+            watchdog
+                .join()
+                .expect("stall watchdog should exit when the test guard drops");
+        }
     }
 }
 
@@ -226,40 +213,6 @@ fn flush_handlers_gives_up_on_a_stalled_handler_within_the_deadline() {
         "flush waited {elapsed:?} on a stalled handler; the bound is {:?}",
         flush_bound()
     );
-    drop(guard);
-}
-
-#[test]
-fn a_legacy_blocking_flush_cannot_hold_the_caller_open() {
-    let shard = Box::leak(Box::new(
-        Shard::start(0, 2).expect("a test shard should start"),
-    ));
-    let logger = FemtoLogger::assembled_for_test("legacy-flush".to_string(), shard);
-    let (started_tx, started_rx) = bounded(1);
-    let (release_tx, release_rx) = bounded(1);
-    logger
-        .add_handler(Arc::new(BlockingLegacyFlushHandler {
-            started: started_tx,
-            release: release_rx,
-        }))
-        .expect("the legacy handler should register");
-    let guard = StallGuard::new(release_tx);
-
-    let started_at = Instant::now();
-    let flushed = logger.flush_handlers();
-    let elapsed = started_at.elapsed();
-
-    assert!(!flushed, "a legacy handler cannot confirm a bounded flush");
-    assert!(
-        elapsed < flush_bound(),
-        "flush waited {elapsed:?} for legacy synchronous code; the bound is {:?}",
-        flush_bound()
-    );
-    assert!(
-        started_rx.recv_timeout(Duration::from_millis(50)).is_err(),
-        "the fail-closed compatibility default must not call legacy flush()"
-    );
-
     drop(guard);
 }
 

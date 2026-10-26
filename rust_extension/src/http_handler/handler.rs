@@ -11,15 +11,56 @@ use pyo3::prelude::*;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError, capped_deadline},
+    handler::{FemtoHandlerTrait, HandlerError, capped_deadline, remaining},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
+    sync::{Sender, bounded},
 };
 
 use super::{
     config::HTTPHandlerConfig,
-    worker::{HTTPCommand, enqueue_record, flush_queue, spawn_worker},
+    worker::{HTTPCommand, enqueue_record, spawn_worker},
 };
+
+/// Why a flush command could not be confirmed by the HTTP worker.
+enum FlushFailure {
+    /// The bounded command queue did not accept the flush before its deadline.
+    Enqueue,
+    /// The worker accepted the command but did not acknowledge it in time.
+    Acknowledgement,
+}
+
+/// Sends a flush command to the HTTP worker and waits for acknowledgement.
+///
+/// Both queue waits use the caller's deadline. The worker emits `pending_drops`
+/// after it sends the acknowledgement, keeping synchronous warning callbacks
+/// off the waiting thread.
+///
+/// # Errors
+///
+/// Returns [`FlushFailure::Enqueue`] if the bounded queue rejects the command,
+/// or [`FlushFailure::Acknowledgement`] if the worker does not acknowledge it
+/// by `deadline`.
+fn flush_queue(
+    tx: &Sender<HTTPCommand>,
+    deadline: Instant,
+    pending_drops: Option<u64>,
+) -> Result<(), FlushFailure> {
+    let (ack_tx, ack_rx) = bounded(1);
+    if tx
+        .send_timeout(
+            HTTPCommand::Flush(ack_tx, pending_drops),
+            remaining(deadline),
+        )
+        .is_err()
+    {
+        return Err(FlushFailure::Enqueue);
+    }
+    ack_rx
+        .recv_timeout(remaining(deadline))
+        .map(|_| ())
+        .map_err(|_| FlushFailure::Acknowledgement)
+}
 
 #[cfg_attr(feature = "python", pyclass)]
 /// Handler forwarding records to an HTTP endpoint.
@@ -70,11 +111,18 @@ impl FemtoHTTPHandler {
         let Some(tx) = self.sender() else {
             return false;
         };
-        self.warner.flush(|count| {
-            log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-        });
+        let pending_drops = self.warner.take_due();
         let handler_deadline = capped_deadline(deadline, self.flush_timeout);
-        flush_queue(&tx, handler_deadline)
+        match flush_queue(&tx, handler_deadline, pending_drops) {
+            Ok(()) => true,
+            Err(FlushFailure::Enqueue) => {
+                if let Some(count) = pending_drops {
+                    self.warner.restore_drops(count);
+                }
+                false
+            }
+            Err(FlushFailure::Acknowledgement) => false,
+        }
     }
 
     /// Close the handler, waiting for the worker only while it is answering.
