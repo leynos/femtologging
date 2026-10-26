@@ -11,6 +11,8 @@ import contextvars
 import threading
 import typing as typ
 
+import pytest
+
 from femtologging import FemtoLogger
 from tests.logger_support import (
     CollectingHandler,
@@ -109,6 +111,43 @@ def test_handle_record_fallback_to_handle() -> None:
     assert handler.records == [("core", "INFO", "test")], (
         f"legacy handle() fallback captured {handler.records!r}"
     )
+
+
+@pytest.mark.parametrize(
+    "handler_type",
+    [RecordCollectingHandler, CollectingHandler],
+    ids=["handle_record", "legacy_handle"],
+)
+def test_flush_handlers_releases_gil_for_python_handlers(
+    handler_type: type[RecordCollectingHandler] | type[CollectingHandler],
+) -> None:
+    """Flush immediately delivers records to either Python handler protocol."""
+    logger_name = "python.handlers"
+    logger = FemtoLogger(logger_name)
+    handler = handler_type()
+    logger.add_handler(handler)
+    messages = ["first", "second", "third"]
+    expected_payloads = [(logger_name, "INFO", message) for message in messages]
+
+    try:
+        for message in messages:
+            logger.info(message)
+
+        # Enqueue, flush, then inspect: polling first would mask a GIL deadlock.
+        assert logger.flush_handlers(), "logger worker did not flush"
+
+        if isinstance(handler, RecordCollectingHandler):
+            payloads = [
+                (record["logger"], record["level"], record["message"])
+                for record in handler.records
+            ]
+        else:
+            payloads = handler.records
+        assert payloads == expected_payloads, (
+            f"Python handler captured unexpected payloads: {payloads!r}"
+        )
+    finally:
+        logger.remove_handler(handler)
 
 
 type _ContextHandlerPairFactory = cabc.Callable[

@@ -38,7 +38,6 @@ from tests.steps.logging_macros_support import (
     normalize_source_location,
     parse_pairs,
     split_nested_contexts,
-    wait_for_record,
 )
 
 if typ.TYPE_CHECKING:
@@ -190,7 +189,8 @@ def _capture_key_values(
     logger = get_logger(logger_name)
     with capture_records(logger) as collector:
         emit()
-        wait_for_record(collector)
+        assert logger.flush_handlers(), "logger worker did not flush"
+        assert collector.records, "logger worker did not deliver a record"
         latest = latest_key_values(collector)
     return {str(key): str(value) for key, value in latest.items()}
 
