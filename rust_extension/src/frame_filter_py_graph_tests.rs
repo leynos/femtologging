@@ -3,22 +3,46 @@
 use super::*;
 use pyo3::exceptions::PyValueError;
 
+/// Frame and exception-graph bounds used by the exception traversal tests.
+#[derive(Clone, Copy)]
+struct GraphFilterLimits {
+    /// Maximum frames retained for each payload.
+    frame_max_depth: Option<usize>,
+    /// Maximum edge depth permitted below the root payload.
+    exception_max_depth: usize,
+    /// Maximum number of payload occurrences allowed, including the root.
+    exception_max_nodes: usize,
+}
+
+impl GraphFilterLimits {
+    /// Create a complete set of frame and graph bounds for one test.
+    const fn new(
+        frame_max_depth: Option<usize>,
+        exception_max_depth: usize,
+        exception_max_nodes: usize,
+    ) -> Self {
+        Self {
+            frame_max_depth,
+            exception_max_depth,
+            exception_max_nodes,
+        }
+    }
+}
+
 fn filter_with_limits<'py>(
     py: Python<'py>,
     payload: &Bound<'py, PyDict>,
-    frame_max_depth: Option<usize>,
-    exception_max_depth: usize,
-    exception_max_nodes: usize,
+    limits: GraphFilterLimits,
 ) -> PyResult<Bound<'py, PyDict>> {
     let filtered = filter_frames(
         py,
         payload,
         None,
         None,
-        frame_max_depth,
+        limits.frame_max_depth,
         false,
-        exception_max_depth,
-        exception_max_nodes,
+        limits.exception_max_depth,
+        limits.exception_max_nodes,
     )?;
     let filtered_dict = filtered.cast_bound::<PyDict>(py)?;
     Ok(filtered_dict.clone())
@@ -58,7 +82,7 @@ fn filter_exception_graph_rejects_self_cycles(#[case] edge: &str, #[case] path: 
                 .expect("self-reference should attach"),
         }
 
-        let error = filter_with_limits(py, &payload, None, 1, 10)
+        let error = filter_with_limits(py, &payload, GraphFilterLimits::new(None, 1, 10))
             .expect_err("a self-cycle must be rejected");
         assert_value_error(
             py,
@@ -81,7 +105,7 @@ fn filter_exception_graph_rejects_two_node_cycle() {
             .set_item("context", first.clone())
             .expect("context should attach");
 
-        let error = filter_with_limits(py, &first, None, 2, 10)
+        let error = filter_with_limits(py, &first, GraphFilterLimits::new(None, 2, 10))
             .expect_err("a two-node cycle must be rejected");
         assert_value_error(
             py,
@@ -108,7 +132,7 @@ fn filter_exception_graph_reports_cycle_below_valid_prefix() {
         leaf.set_item("context", root.clone())
             .expect("context should attach");
 
-        let error = filter_with_limits(py, &root, None, 3, 10)
+        let error = filter_with_limits(py, &root, GraphFilterLimits::new(None, 3, 10))
             .expect_err("a cycle below a valid prefix must be rejected");
         assert_value_error(
             py,
@@ -130,7 +154,7 @@ fn filter_exception_graph_copies_shared_cause_and_context_per_occurrence() {
         root.set_item("context", shared)
             .expect("context should attach");
 
-        let filtered = filter_with_limits(py, &root, None, 1, 3)
+        let filtered = filter_with_limits(py, &root, GraphFilterLimits::new(None, 1, 3))
             .expect("shared acyclic payloads should be accepted");
         let cause_value = filtered
             .get_item("cause")
@@ -180,7 +204,7 @@ fn filter_exception_graph_copies_shared_group_member_per_occurrence() {
         root.set_item("exceptions", exceptions)
             .expect("group should attach");
 
-        let filtered = filter_with_limits(py, &root, None, 1, 3)
+        let filtered = filter_with_limits(py, &root, GraphFilterLimits::new(None, 1, 3))
             .expect("shared group members should be accepted");
         let exceptions_value = filtered
             .get_item("exceptions")
@@ -213,8 +237,8 @@ fn filter_exception_graph_enforces_depth_and_node_boundaries() {
         let child = make_exception_payload_dict(py, &["child.py"]).expect("child should build");
         root.set_item("cause", child).expect("cause should attach");
 
-        let exact_depth =
-            filter_with_limits(py, &root, Some(1), 1, 2).expect("depth-one graph should pass");
+        let exact_depth = filter_with_limits(py, &root, GraphFilterLimits::new(Some(1), 1, 2))
+            .expect("depth-one graph should pass");
         assert_eq!(
             exact_depth
                 .get_item("frames")
@@ -226,19 +250,21 @@ fn filter_exception_graph_enforces_depth_and_node_boundaries() {
             1
         );
 
-        let depth_error = filter_with_limits(py, &root, None, 0, 2)
+        let depth_error = filter_with_limits(py, &root, GraphFilterLimits::new(None, 0, 2))
             .expect_err("a cause exceeds a zero-depth budget");
         assert_value_error(py, &depth_error, "max_exception_depth=0");
 
         let root_only = make_exception_payload_dict(py, &[]).expect("root should build");
-        filter_with_limits(py, &root_only, None, 0, 1).expect("a root at depth zero should pass");
+        filter_with_limits(py, &root_only, GraphFilterLimits::new(None, 0, 1))
+            .expect("a root at depth zero should pass");
 
-        let node_error = filter_with_limits(py, &root, None, 1, 1)
+        let node_error = filter_with_limits(py, &root, GraphFilterLimits::new(None, 1, 1))
             .expect_err("the cause exceeds a one-node budget");
         assert_value_error(py, &node_error, "max_exception_nodes=1");
 
-        let zero_node_error = filter_with_limits(py, &root_only, None, 0, 0)
-            .expect_err("zero nodes are not a valid exception budget");
+        let zero_node_error =
+            filter_with_limits(py, &root_only, GraphFilterLimits::new(None, 0, 0))
+                .expect_err("zero nodes are not a valid exception budget");
         assert_value_error(py, &zero_node_error, "max_exception_nodes=0");
     });
 }
@@ -255,7 +281,7 @@ fn filter_exception_graph_depth_limit_is_independent_of_frame_depth() {
         )
         .expect("cause should attach");
 
-        let filtered = filter_with_limits(py, &root, Some(1), 1, 2)
+        let filtered = filter_with_limits(py, &root, GraphFilterLimits::new(Some(1), 1, 2))
             .expect("both payloads should fit their independent limits");
         let frames_value = filtered
             .get_item("frames")

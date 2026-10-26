@@ -6,15 +6,19 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use super::super::{ExceptionGraphLimits, FilterOptions, filter_exception_payload_node};
+use super::super::filter_exception_payload_node;
 use super::{
-    ActiveNode, AttachTarget, Edge, EnterNode, ExceptionGraphTraversal, Work,
-    attach_filtered_payload, cycle_path, depth_limit_error, node_limit_error,
+    ActiveNode, AttachTarget, ChildOccurrence, DictEdgeWork, Edge, EnterNode,
+    ExceptionGraphTraversal, GroupWork, TraversalContext, Work, attach_filtered_payload,
+    cycle_path, depth_limit_error, node_limit_error,
 };
 
-impl<'py> ExceptionGraphTraversal<'py> {
+impl<'py, 'filters> ExceptionGraphTraversal<'py, 'filters> {
     /// Start a walk at the root payload, whose graph depth is zero.
-    pub(super) fn new(payload: &Bound<'py, PyDict>) -> Self {
+    pub(super) fn new(
+        payload: &Bound<'py, PyDict>,
+        context: TraversalContext<'py, 'filters>,
+    ) -> Self {
         let root = EnterNode {
             payload: payload.as_any().clone(),
             depth: 0,
@@ -22,6 +26,7 @@ impl<'py> ExceptionGraphTraversal<'py> {
             target: AttachTarget::Root,
         };
         Self {
+            context,
             work: vec![Work::Enter(root)],
             pending_enters: 1,
             active_identities: HashSet::new(),
@@ -32,14 +37,9 @@ impl<'py> ExceptionGraphTraversal<'py> {
     }
 
     /// Process pending work until every reachable exception payload is copied.
-    pub(super) fn run(
-        mut self,
-        py: Python<'py>,
-        opts: &FilterOptions<'_>,
-        limits: ExceptionGraphLimits,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    pub(super) fn run(mut self) -> PyResult<Bound<'py, PyDict>> {
         while let Some(task) = self.work.pop() {
-            self.process_task(py, task, opts, limits)?;
+            self.process_task(task)?;
         }
 
         self.filtered_root.take().ok_or_else(|| {
@@ -48,35 +48,19 @@ impl<'py> ExceptionGraphTraversal<'py> {
     }
 
     /// Dispatch one work item without nesting it inside the traversal loop.
-    fn process_task(
-        &mut self,
-        py: Python<'py>,
-        task: Work<'py>,
-        opts: &FilterOptions<'_>,
-        limits: ExceptionGraphLimits,
-    ) -> PyResult<()> {
+    fn process_task(&mut self, task: Work<'py>) -> PyResult<()> {
         match task {
             Work::Enter(enter) => {
                 self.consume_pending_enter()?;
-                self.enter_node(py, enter, opts, limits)
+                self.enter_node(enter)
             }
-            Work::FilterGroup {
-                payload,
-                result,
-                depth,
-            } => self.filter_group(py, &payload, &result, depth, limits),
+            Work::FilterGroup(group) => self.filter_group(group),
             Work::Leave { identity, .. } => self.leave_node(identity),
         }
     }
 
     /// Filter and attach one payload, then schedule its cause and context.
-    fn enter_node(
-        &mut self,
-        py: Python<'py>,
-        enter: EnterNode<'py>,
-        opts: &FilterOptions<'_>,
-        limits: ExceptionGraphLimits,
-    ) -> PyResult<()> {
+    fn enter_node(&mut self, enter: EnterNode<'py>) -> PyResult<()> {
         let EnterNode {
             payload,
             depth,
@@ -89,11 +73,12 @@ impl<'py> ExceptionGraphTraversal<'py> {
             .clone();
         let identity = node.as_ptr() as usize;
         self.check_cycle(identity, edge)?;
-        self.check_depth(depth, limits.max_depth)?;
-        self.check_node_budget(limits.max_nodes)?;
+        self.check_depth(depth)?;
+        self.check_node_budget()?;
         self.visited_nodes += 1;
 
-        let filtered = filter_exception_payload_node(py, &node, opts)?;
+        let filtered =
+            filter_exception_payload_node(self.context.py, &node, &self.context.filter_options)?;
         attach_filtered_payload(target, filtered.clone(), &mut self.filtered_root)?;
         self.active_identities.insert(identity);
         self.active_path.push(ActiveNode { identity, edge });
@@ -101,13 +86,12 @@ impl<'py> ExceptionGraphTraversal<'py> {
             identity,
             _payload: node.clone(),
         });
-        self.work.push(Work::FilterGroup {
+        self.work.push(Work::FilterGroup(GroupWork {
             payload: node.clone(),
             result: filtered.clone(),
             depth,
-        });
-        self.schedule_context(&node, &filtered, depth)?;
-        self.schedule_cause(&node, &filtered, depth)?;
+        }));
+        self.schedule_exception_edges(&node, &filtered, depth)?;
         Ok(())
     }
 
@@ -123,17 +107,17 @@ impl<'py> ExceptionGraphTraversal<'py> {
     }
 
     /// Enforce the independent exception-graph depth limit.
-    fn check_depth(&self, depth: usize, limit: usize) -> PyResult<()> {
-        if depth > limit {
-            return Err(depth_limit_error(limit));
+    fn check_depth(&self, depth: usize) -> PyResult<()> {
+        if depth > self.context.limits.max_depth {
+            return Err(depth_limit_error(self.context.limits.max_depth));
         }
         Ok(())
     }
 
     /// Enforce the root-inclusive count of entered payload occurrences.
-    fn check_node_budget(&self, limit: usize) -> PyResult<()> {
-        if self.visited_nodes >= limit {
-            return Err(node_limit_error(limit));
+    fn check_node_budget(&self) -> PyResult<()> {
+        if self.visited_nodes >= self.context.limits.max_nodes {
+            return Err(node_limit_error(self.context.limits.max_nodes));
         }
         Ok(())
     }
@@ -152,82 +136,87 @@ impl<'py> ExceptionGraphTraversal<'py> {
         self.pending_enters += 1;
     }
 
-    /// Schedule a present context edge after the cause edge is processed.
-    fn schedule_context(
+    /// Schedule cause and context in reverse stack order for established traversal.
+    fn schedule_exception_edges(
         &mut self,
         node: &Bound<'py, PyDict>,
         filtered: &Bound<'py, PyDict>,
         depth: usize,
     ) -> PyResult<()> {
-        if let Some(context) = node.get_item("context")? {
-            self.schedule_enter(EnterNode {
-                payload: context,
-                depth: depth.saturating_add(1),
-                edge: Edge::Context,
+        self.schedule_dict_edge(DictEdgeWork {
+            payload: node.clone(),
+            result: filtered.clone(),
+            depth,
+            edge: Edge::Context,
+        })?;
+        self.schedule_dict_edge(DictEdgeWork {
+            payload: node.clone(),
+            result: filtered.clone(),
+            depth,
+            edge: Edge::Cause,
+        })
+    }
+
+    /// Inspect a cause or context edge and schedule its child occurrence.
+    fn schedule_dict_edge(&mut self, work: DictEdgeWork<'py>) -> PyResult<()> {
+        let key = work.edge.dictionary_key().ok_or_else(|| {
+            PyRuntimeError::new_err("exception traversal expected a dictionary edge")
+        })?;
+        if let Some(payload) = work.payload.get_item(key)? {
+            self.schedule_child(ChildOccurrence {
+                payload,
+                parent_depth: work.depth,
+                edge: work.edge,
                 target: AttachTarget::DictItem {
-                    parent: filtered.clone(),
-                    key: "context",
+                    parent: work.result,
+                    key,
                 },
             });
         }
         Ok(())
     }
 
-    /// Schedule a present cause edge so it is visited before context.
-    fn schedule_cause(
-        &mut self,
-        node: &Bound<'py, PyDict>,
-        filtered: &Bound<'py, PyDict>,
-        depth: usize,
-    ) -> PyResult<()> {
-        if let Some(cause) = node.get_item("cause")? {
-            self.schedule_enter(EnterNode {
-                payload: cause,
-                depth: depth.saturating_add(1),
-                edge: Edge::Cause,
-                target: AttachTarget::DictItem {
-                    parent: filtered.clone(),
-                    key: "cause",
-                },
-            });
-        }
-        Ok(())
+    /// Convert a child occurrence into the work-stack entry used by the walk.
+    fn schedule_child(&mut self, child: ChildOccurrence<'py>) {
+        self.schedule_enter(EnterNode {
+            payload: child.payload,
+            depth: child.parent_depth.saturating_add(1),
+            edge: child.edge,
+            target: child.target,
+        });
     }
 
     /// Validate and schedule the members of an exception group.
-    fn filter_group(
-        &mut self,
-        py: Python<'py>,
-        payload: &Bound<'py, PyDict>,
-        result: &Bound<'py, PyDict>,
-        depth: usize,
-        limits: ExceptionGraphLimits,
-    ) -> PyResult<()> {
-        let Some(exceptions) = payload.get_item("exceptions")? else {
+    fn filter_group(&mut self, group: GroupWork<'py>) -> PyResult<()> {
+        let Some(exceptions) = group.payload.get_item("exceptions")? else {
             return Ok(());
         };
         let exceptions = exceptions
             .cast::<PyList>()
             .map_err(|_| PyTypeError::new_err("'exceptions' must be a list"))?;
         let exception_count = exceptions.len();
-        self.check_group_width(exception_count, limits.max_nodes)?;
+        self.check_group_width(exception_count)?;
 
         // The list is bounded before allocating its placeholder slots.
-        let filtered_exceptions = PyList::empty(py);
+        let filtered_exceptions = PyList::empty(self.context.py);
         for _ in 0..exception_count {
-            filtered_exceptions.append(py.None())?;
+            filtered_exceptions.append(self.context.py.None())?;
         }
-        result.set_item("exceptions", &filtered_exceptions)?;
-        self.schedule_group_members(exceptions, &filtered_exceptions, depth)?;
+        group.result.set_item("exceptions", &filtered_exceptions)?;
+        self.schedule_group_members(exceptions, &filtered_exceptions, group.depth)?;
         Ok(())
     }
 
     /// Ensure all group members fit the remaining occurrence budget.
-    fn check_group_width(&self, exception_count: usize, limit: usize) -> PyResult<()> {
+    fn check_group_width(&self, exception_count: usize) -> PyResult<()> {
         let accounted_nodes = self.visited_nodes.saturating_add(self.pending_enters);
-        let remaining_nodes = limit.saturating_sub(accounted_nodes);
+        let remaining_nodes = self
+            .context
+            .limits
+            .max_nodes
+            .saturating_sub(accounted_nodes);
         if exception_count > remaining_nodes {
-            return Err(node_limit_error(limit));
+            return Err(node_limit_error(self.context.limits.max_nodes));
         }
         Ok(())
     }
@@ -240,9 +229,9 @@ impl<'py> ExceptionGraphTraversal<'py> {
         depth: usize,
     ) -> PyResult<()> {
         for index in (0..exceptions.len()).rev() {
-            self.schedule_enter(EnterNode {
+            self.schedule_child(ChildOccurrence {
                 payload: exceptions.get_item(index)?,
-                depth: depth.saturating_add(1),
+                parent_depth: depth,
                 edge: Edge::Exception(index),
                 target: AttachTarget::ListItem {
                     parent: filtered.clone(),

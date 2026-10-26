@@ -21,7 +21,26 @@ pub(super) fn filter_exception_payload<'py>(
     opts: &FilterOptions<'_>,
     limits: ExceptionGraphLimits,
 ) -> PyResult<Bound<'py, PyDict>> {
-    ExceptionGraphTraversal::new(payload).run(py, opts, limits)
+    ExceptionGraphTraversal::new(
+        payload,
+        TraversalContext {
+            py,
+            filter_options: *opts,
+            limits,
+        },
+    )
+    .run()
+}
+
+/// Runtime inputs shared by every work item in one traversal.
+#[derive(Clone, Copy)]
+struct TraversalContext<'py, 'filters> {
+    /// Python interpreter token used to construct filtered objects.
+    py: Python<'py>,
+    /// Frame filters applied independently to each payload occurrence.
+    filter_options: FilterOptions<'filters>,
+    /// Independent limits for exception-graph traversal.
+    limits: ExceptionGraphLimits,
 }
 
 /// Attaches a filtered node to its root, parent dictionary, or group slot.
@@ -79,14 +98,7 @@ enum Work<'py> {
     /// Filters one payload and schedules its nested exception edges.
     Enter(EnterNode<'py>),
     /// Validates and schedules the members of an exception group.
-    FilterGroup {
-        /// Source payload whose group members are being processed.
-        payload: Bound<'py, PyDict>,
-        /// Filtered copy receiving the group members.
-        result: Bound<'py, PyDict>,
-        /// Graph depth of the group payload.
-        depth: usize,
-    },
+    FilterGroup(GroupWork<'py>),
     /// Removes a completed payload from the active ancestor path.
     Leave {
         /// Python object identity of the completed payload.
@@ -94,6 +106,40 @@ enum Work<'py> {
         /// Keeps the Python dictionary alive until its identity is removed.
         _payload: Bound<'py, PyDict>,
     },
+}
+
+/// Data needed to validate and schedule one exception group's members.
+struct GroupWork<'py> {
+    /// Source payload whose group members are being processed.
+    payload: Bound<'py, PyDict>,
+    /// Filtered copy receiving the group members.
+    result: Bound<'py, PyDict>,
+    /// Graph depth of the group payload.
+    depth: usize,
+}
+
+/// Describes one nested payload before it is added to the work stack.
+struct ChildOccurrence<'py> {
+    /// Input payload to filter when the occurrence is entered.
+    payload: Bound<'py, PyAny>,
+    /// Depth of the parent payload.
+    parent_depth: usize,
+    /// Edge from the parent payload to this occurrence.
+    edge: Edge,
+    /// Destination that receives this occurrence's filtered copy.
+    target: AttachTarget<'py>,
+}
+
+/// One dictionary edge to inspect and, when present, schedule.
+struct DictEdgeWork<'py> {
+    /// Source payload containing the edge.
+    payload: Bound<'py, PyDict>,
+    /// Filtered parent that receives the child copy.
+    result: Bound<'py, PyDict>,
+    /// Parent graph depth.
+    depth: usize,
+    /// Exception field to inspect.
+    edge: Edge,
 }
 
 /// Destination to which a filtered payload copy is attached.
@@ -149,6 +195,15 @@ impl Edge {
             Self::Exception(_) => "each exception must be a dict",
         }
     }
+
+    /// Returns the dictionary key for cause or context edges.
+    fn dictionary_key(self) -> Option<&'static str> {
+        match self {
+            Self::Cause => Some("cause"),
+            Self::Context => Some("context"),
+            Self::Root | Self::Exception(_) => None,
+        }
+    }
 }
 
 /// Identity and incoming edge for one ancestor of the current traversal node.
@@ -160,7 +215,9 @@ struct ActiveNode {
 }
 
 /// Holds the mutable state of one iterative exception-graph walk.
-struct ExceptionGraphTraversal<'py> {
+struct ExceptionGraphTraversal<'py, 'filters> {
+    /// Runtime inputs shared across every work item in this traversal.
+    context: TraversalContext<'py, 'filters>,
     /// Pending work items, ordered so the next item preserves edge order.
     work: Vec<Work<'py>>,
     /// Scheduled `Enter` items that still reserve node-budget capacity.

@@ -9,6 +9,10 @@ use serial_test::serial;
 mod compatibility;
 #[path = "frame_filter_py_graph_tests.rs"]
 mod exception_graph;
+#[path = "frame_filter_py_test_helpers.rs"]
+mod test_helpers;
+
+use self::test_helpers::{TestFilterOptions, filter_frames_with_defaults};
 
 fn make_stack_payload_dict<'py>(
     py: Python<'py>,
@@ -38,26 +42,6 @@ fn make_exception_payload_dict<'py>(
     Ok(payload)
 }
 
-fn filter_frames_with_defaults<'py>(
-    py: Python<'py>,
-    payload: &Bound<'py, PyDict>,
-    exclude_filenames: Option<Vec<String>>,
-    exclude_functions: Option<Vec<String>>,
-    max_depth: Option<usize>,
-    exclude_logging: bool,
-) -> PyResult<Py<PyAny>> {
-    filter_frames(
-        py,
-        payload,
-        exclude_filenames,
-        exclude_functions,
-        max_depth,
-        exclude_logging,
-        DEFAULT_MAX_EXCEPTION_DEPTH,
-        DEFAULT_MAX_EXCEPTION_NODES,
-    )
-}
-
 /// Helper to call filter_frames and extract the resulting frames list.
 fn filter_and_extract_frames<'py>(
     py: Python<'py>,
@@ -70,10 +54,12 @@ fn filter_and_extract_frames<'py>(
     let result = filter_frames_with_defaults(
         py,
         payload,
-        exclude_filenames,
-        exclude_functions,
-        max_depth,
-        exclude_logging,
+        TestFilterOptions {
+            exclude_filenames,
+            exclude_functions,
+            max_depth,
+            exclude_logging,
+        },
     )?;
     let result_dict = result.cast_bound::<PyDict>(py)?;
     let frames = result_dict
@@ -185,8 +171,15 @@ fn filter_exception_payload_detects_type() {
 
         assert!(is_exception_payload(&payload).expect("is_exception_payload failed"));
 
-        let result = filter_frames_with_defaults(py, &payload, None, None, None, true)
-            .expect("filter_frames failed");
+        let result = filter_frames_with_defaults(
+            py,
+            &payload,
+            TestFilterOptions {
+                exclude_logging: true,
+                ..TestFilterOptions::default()
+            },
+        )
+        .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");
@@ -223,8 +216,15 @@ fn filter_exception_payload_with_cause() {
             .set_item("cause", cause)
             .expect("failed to set cause");
 
-        let result = filter_frames_with_defaults(py, &payload, None, None, None, true)
-            .expect("filter_frames failed");
+        let result = filter_frames_with_defaults(
+            py,
+            &payload,
+            TestFilterOptions {
+                exclude_logging: true,
+                ..TestFilterOptions::default()
+            },
+        )
+        .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");
@@ -309,10 +309,10 @@ fn filter_exception_payload_exclude_functions() {
         let result = filter_frames_with_defaults(
             py,
             &payload,
-            None,
-            Some(vec!["_internal".to_string()]),
-            None,
-            false,
+            TestFilterOptions {
+                exclude_functions: Some(vec!["_internal".to_string()]),
+                ..TestFilterOptions::default()
+            },
         )
         .expect("filter_frames failed");
         let result_dict = result
@@ -363,7 +363,7 @@ fn filter_malformed_payload_raises_type_error(
             _ => panic!("Unknown scenario"),
         }
 
-        let result = filter_frames_with_defaults(py, &payload, None, None, None, false);
+        let result = filter_frames_with_defaults(py, &payload, TestFilterOptions::default());
         let err = result.expect_err(&format!(
             "scenario '{}' should fail with error containing '{}'",
             scenario, expected_error_fragment
