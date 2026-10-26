@@ -195,7 +195,8 @@ fn flush_diagnostics_use_fixed_stage_and_elapsed_buckets() {
 
 #[test]
 fn logger_flush_records_the_handler_failure_stage() {
-    let logger = FemtoLogger::new("flush-diagnostics".to_owned());
+    let logger = FemtoLogger::new("flush-diagnostics".to_owned())
+        .expect("diagnostic test logger should be constructible");
     logger
         .add_handler(Arc::new(ResultHandler { confirmed: false }))
         .expect("diagnostic test handler should be accepted");

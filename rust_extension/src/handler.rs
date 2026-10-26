@@ -176,12 +176,15 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// preempt an implementation that violates that contract.
     ///
     /// The logger calls this method on its worker without holding the
-    /// handler-list lock. A handler may be removed while a flush is in
-    /// progress; the queued marker keeps it alive until the worker releases
-    /// the snapshot. The `flush_handlers()` caller waits only until its shared
-    /// deadline, but logger shutdown joins the worker and therefore waits for
-    /// this callback to return. Synchronous arbitrary code cannot be
-    /// preempted.
+    /// handler-list lock. A handler removed during a flush stays alive in the
+    /// queued snapshot until the worker releases it. In a normal build, the
+    /// worker belongs to a process-wide pool and logger drop waits at most the
+    /// bounded drain timeout for that logger's in-flight records; it does not
+    /// join the shared worker. A callback that violates this deadline contract
+    /// can keep that worker occupied after the caller returns `false` and after
+    /// the logger is dropped. The snapshot keeps the handler alive until the
+    /// callback returns. Loom models instead join their logger-owned worker.
+    /// Synchronous arbitrary code cannot be preempted.
     ///
     /// # Examples
     ///

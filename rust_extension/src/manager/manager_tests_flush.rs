@@ -7,9 +7,9 @@ use pyo3::types::{PyAnyMethods, PyModule};
 use pyo3::{Py, PyAny, Python};
 use serial_test::serial;
 
+use crate::level::FemtoLevel;
 use crate::manager::{flush_all_handlers, get_logger, reset_manager};
 use crate::sync::{JoinHandle, spawn};
-use crate::level::FemtoLevel;
 
 /// Releases Python callbacks and clears manager-owned workers on unwind.
 struct ManagerFlushCleanup<'py> {

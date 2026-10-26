@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::logger::{FemtoLogger, Shard};
 use crate::log_record::FemtoLogRecord;
+use crate::logger::{FemtoLogger, Shard};
 use crate::sync::{Receiver, Sender, bounded};
 
 use super::logger_tests_flush::{StallGuard, flush_bound};

@@ -10,10 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::logger::{FemtoLogger, Shard};
 use crate::log_record::FemtoLogRecord;
+use crate::logger::{FemtoLogger, Shard};
 use crate::sync::{Receiver, Sender, bounded};
-
 
 /// The bound a flush is given, as a multiple of its own timeout.
 pub(super) fn flush_bound() -> Duration {

@@ -27,13 +27,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::handler::{FemtoHandlerTrait, deadline_after, remaining};
-use crate::logger::flush_diagnostics::FlushFailureStage;
 use crate::logger::QueuedRecord;
+use crate::logger::flush_diagnostics::FlushFailureStage;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
-use crate::sync::{
-    Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout,
-};
+use crate::sync::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout};
 
 pub(crate) use budget::LoggerBudget;
 use budget::{Permit, Permits};
@@ -239,10 +237,7 @@ impl Shard {
     }
 
     /// Wait for a drain barrier using a deadline created by the caller.
-    pub(crate) fn wait_for_drain_until(
-        &self,
-        deadline: Instant,
-    ) -> Result<(), FlushFailureStage> {
+    pub(crate) fn wait_for_drain_until(&self, deadline: Instant) -> Result<(), FlushFailureStage> {
         let (ack, acked) = bounded::<()>(1);
         if remaining(deadline, Instant::now()).is_zero() {
             return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
@@ -300,12 +295,12 @@ impl Shard {
         {
             Ok(()) => {}
             Err(SendTimeoutError::Timeout(error)) => {
-                drop(error.into_inner());
+                drop(error);
                 drop(handler_guard);
                 return Err(FlushFailureStage::MarkerEnqueueTimedOut);
             }
             Err(SendTimeoutError::Disconnected(error)) => {
-                drop(error.into_inner());
+                drop(error);
                 drop(handler_guard);
                 return Err(FlushFailureStage::MarkerEnqueueDisconnected);
             }
@@ -315,10 +310,7 @@ impl Shard {
         if start_tx.try_send(()).is_err() {
             return Err(FlushFailureStage::WorkerStartDisconnected);
         }
-        match recv_timeout(
-            &ack_rx,
-            remaining(deadline, Instant::now()),
-        ) {
+        match recv_timeout(&ack_rx, remaining(deadline, Instant::now())) {
             Ok(result) => result,
             Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::AcknowledgementTimedOut),
             Err(RecvTimeoutError::Disconnected) => Err(FlushFailureStage::WorkerExited),

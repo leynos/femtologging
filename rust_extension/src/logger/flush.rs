@@ -76,10 +76,7 @@ impl FemtoLogger {
     /// Flush every attached handler against one absolute deadline.
     pub(super) fn flush_handlers_blocking(&self) -> FlushOutcome {
         let started_at = Instant::now();
-        let deadline = deadline_after(
-            started_at,
-            Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS),
-        );
+        let deadline = deadline_after(started_at, Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS));
         let result = deadline.map_or(
             Err(FlushFailureStage::DeadlineUnrepresentable),
             |deadline| self.flush_barrier(deadline),
@@ -120,7 +117,10 @@ impl FemtoLogger {
         let (shard, budget) = (&*self.shard, &self.budget);
 
         #[cfg(not(loom))]
-        let handler_guard = match self.handlers.try_read_for(remaining(deadline, Instant::now())) {
+        let handler_guard = match self
+            .handlers
+            .try_read_for(remaining(deadline, Instant::now()))
+        {
             Some(guard) => guard,
             None => return Err(FlushFailureStage::HandlerSnapshotTimedOut),
         };

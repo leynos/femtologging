@@ -130,8 +130,10 @@ pub struct FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// Shares one deadline across the snapshot, shard marker, and handler
-    /// flushes. Python entry points release the GIL; native callers do not.
+    /// One deadline spans dispatch resolution, snapshot, marker, acknowledgement
+    /// and handler flushes; built-ins keep shorter timeouts. Legacy handlers
+    /// fail closed; overrides must honour the deadline. Python calls release
+    /// the GIL, native callers do not. Failure returns `false`.
     ///
     /// # Examples
     ///

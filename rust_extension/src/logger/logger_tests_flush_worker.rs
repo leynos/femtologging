@@ -119,7 +119,8 @@ fn flush_handler_destruction_does_not_extend_the_caller_wait() {
         drop_started: drop_started_tx,
         drop_release: drop_release_rx,
     });
-    let logger = FemtoLogger::new("flush-drop".to_string());
+    let logger = FemtoLogger::new("flush-drop".to_string())
+        .expect("flush-drop test logger should be constructible");
     logger
         .add_handler(handler)
         .expect("test handler should be accepted");
@@ -181,7 +182,8 @@ fn concurrent_stalled_flushes_keep_work_on_the_single_bounded_worker() {
         release: release_rx,
         calls: Arc::clone(&calls),
     });
-    let logger = FemtoLogger::new("flush-concurrent-timeouts".to_string());
+    let logger = FemtoLogger::new("flush-concurrent-timeouts".to_string())
+        .expect("concurrent flush test logger should be constructible");
     logger
         .add_handler(handler)
         .expect("test handler should be accepted");
@@ -233,7 +235,10 @@ fn concurrent_stalled_flushes_keep_work_on_the_single_bounded_worker() {
 fn native_flush_does_not_attach_to_the_gil() {
     use pyo3::Python;
 
-    let logger = Arc::new(FemtoLogger::new("flush-gil".to_string()));
+    let logger = Arc::new(
+        FemtoLogger::new("flush-gil".to_string())
+            .expect("GIL flush test logger should be constructible"),
+    );
     let (result_tx, result_rx) = bounded(1);
 
     let (result, caller) = Python::attach(|_py| {
