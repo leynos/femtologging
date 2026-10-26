@@ -216,8 +216,9 @@ fields with safe defaults does not require a version bump.
   buffered writes and returns `True` only when the worker acknowledges
   `Ok(())`. It returns `False` if the underlying I/O flush fails, the handler
   has already been closed, the worker channel has been dropped, or the timeout
-  expires. `handler.close()` shuts down the worker thread and should be called
-  before process exit.
+  expires. Python `flush()` and `close()` release the GIL while waiting, so the
+  worker can run Python formatters before acknowledging. `handler.close()`
+  shuts down the worker thread and should be called before process exit.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling

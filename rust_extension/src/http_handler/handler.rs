@@ -336,12 +336,10 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
 
 /// Drop the handler, closing it with the GIL released.
 ///
-/// A handler whose worker has already gone has nothing to close, and attaching
-/// would initialize an interpreter to do nothing with it; the check keeps that
-/// case out of the GIL's way entirely. The close itself is the same one
-/// [`FemtoHTTPHandler::close`] performs, so a handler dropped without an
-/// explicit close is bounded by the same budget, and the join it may perform
-/// happens with the interpreter available to a worker that wants it.
+/// A handler whose worker has already gone has nothing to close, so the check
+/// keeps that case out of the GIL's way entirely. When Python can be attached,
+/// the close runs detached; during interpreter shutdown, the Rust-only close
+/// runs without attaching and remains bounded by the same budget.
 ///
 /// Under `--cfg loom` there is no interpreter to attach to: no model builds one
 /// of these handlers, and attaching would initialize Python on a Loom
@@ -352,7 +350,9 @@ impl Drop for FemtoHTTPHandler {
         if self.handle.lock().is_none() {
             return;
         }
-        Python::attach(|py| py.detach(|| self.close()));
+        if Python::try_attach(|py| py.detach(|| self.close())).is_none() {
+            self.close();
+        }
     }
 }
 

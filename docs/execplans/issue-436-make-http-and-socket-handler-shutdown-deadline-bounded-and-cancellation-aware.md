@@ -17,7 +17,14 @@ snapshots passed. CodeRabbit found two paths that silently dropped the
 in-flight record when its shutdown budget expired. Both are fixed and covered
 by worker tests. The follow-up ExecPlan update also passed its documentation
 gates. Two later CodeRabbit requests were rate-limited and returned no review
-findings; their cooldowns and retry history are recorded below.
+findings; their cooldowns and retry history are recorded below. CodeRabbit then
+completed a review on `cb8a81e` and identified five findings. The current
+follow-up serializes two log-capture tests, flushes shutdown drops immediately,
+and uses `Python::try_attach` in both destructors. The full formatting, lint,
+typecheck and test gates have since passed; pytest reported 791 passed, 5
+skipped and 1 warning, with 66 snapshots passed. A Markdown spelling error was
+fixed, and the final formatting, Markdown lint and Mermaid gates passed. The
+draft PR awaits a fresh CodeRabbit review of the follow-up.
 
 Related: [Issue #436](https://github.com/leynos/femtologging/issues/436).
 
@@ -746,6 +753,27 @@ Trace links, from issue #436 to milestone:
   `PytestAssertRewriteWarning`. That change was unrelated to #436 and is
   preserved outside this branch, so its warning-free result is not candidate
   evidence. The #436 candidate's full test result remains retry 19 above.
+- 2026-10-25: CodeRabbit completed on `cb8a81e` after the required cooldown and
+  found five issues. The two queued-shutdown worker tests needed serialization
+  because they share process-wide log capture. Shutdown drops needed to use
+  `record_drop` followed by `flush`, preserving the general rate-limit reset
+  behaviour while reporting drops during close. PyO3 0.30.1 documents that
+  `Python::attach` may panic during interpreter shutdown, so both destructors
+  now use `Python::try_attach` and fall back to the Rust-only bounded close.
+  Targeted regression tests cover the warning interval; rerun the complete
+  deterministic gate sequence before requesting another review.
+- 2026-10-26: The full Rust suites passed, but pytest exposed a GIL wait in the
+  stream handler's Python `close()` and `flush()` methods when its worker runs
+  a Python formatter. The close timeout let the formatter write after
+  `capfd.readouterr()`. Both methods now detach while waiting, and `Drop` uses
+  `Python::try_attach` before detaching, matching the HTTP and socket handler
+  pattern. The users' guide documents the GIL behaviour. Rerun the full
+  deterministic sequence after this fix.
+- 2026-10-26: The follow-up passed formatting, lint, typecheck and the complete
+  test suite. Pytest reported 791 passed, 5 skipped and 1 warning, with 66
+  snapshots passed. The first Markdown lint run caught `behavior` in this
+  history entry; it was corrected to `behaviour`. Formatting, Markdown lint and
+  Mermaid validation then passed. A fresh CodeRabbit review remains.
 
 ## Outcomes & retrospective
 

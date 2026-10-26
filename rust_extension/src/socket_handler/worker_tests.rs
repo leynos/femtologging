@@ -17,6 +17,7 @@ use crate::{
 };
 
 #[test]
+#[serial_test::serial]
 fn queued_shutdown_ack_waits_for_records_after_it() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind TLS test listener");
     let address = listener.local_addr().expect("listener has address");
@@ -122,6 +123,27 @@ fn expired_write_budget_counts_the_current_record_as_a_shutdown_drop() {
     worker.connection = Some(ActiveConnection::PlainTcp(stream));
 
     worker.send_frame_to_connection(b"frame", Instant::now());
+
+    let messages = crate::handlers::file::test_support::take_logged_messages();
+    assert!(messages.iter().any(|entry| {
+        entry
+            .message
+            .contains("FemtoSocketHandler dropped 1 records during shutdown")
+    }));
+}
+
+#[test]
+#[serial_test::serial]
+fn shutdown_drop_is_logged_inside_the_warning_interval() {
+    crate::handlers::file::test_support::install_test_logger();
+    let worker = Worker::new(
+        SocketHandlerConfig::default(),
+        Arc::new(ShutdownSignal::new()),
+    );
+    worker.warner.record_drop();
+    worker.warner.warn_if_due(|_| {});
+
+    worker.warn_shutdown_drops();
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
     assert!(messages.iter().any(|entry| {
