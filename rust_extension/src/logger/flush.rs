@@ -18,19 +18,21 @@ impl FemtoLogger {
     /// Flush every attached handler against one absolute deadline.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
         let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
-        self.flush_barrier(deadline)
+        self.flush_barrier(deadline) && Instant::now() <= deadline
     }
 
     /// Release Python while the shard and handlers consume the flush deadline.
     pub(crate) fn flush_handlers_detached(&self, py: Python<'_>) -> bool {
+        let deadline = Instant::now() + Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS);
         #[cfg(not(loom))]
         {
-            py.detach(|| self.flush_handlers_blocking())
+            let flushed = py.detach(|| self.flush_barrier(deadline));
+            flushed && Instant::now() <= deadline
         }
         #[cfg(loom)]
         {
             let _ = py;
-            self.flush_handlers_blocking()
+            self.flush_barrier(deadline) && Instant::now() <= deadline
         }
     }
 
