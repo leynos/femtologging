@@ -32,7 +32,7 @@ Feature: Rust log crate compatibility
     Given a stream handler attached to logger "rust.module.path"
     When I set logger "rust.module.path" level to "WARN"
     And I set up rust logging bridge
-    Then the Rust log levels "DEBUG" are disabled for target "rust::module::path"
+    Then the Rust log levels "INFO" are disabled for target "rust::module::path"
 
   Scenario: Rust log_enabled follows dynamic level changes
     Given a stream handler attached to logger "rust.enabled.dynamic"

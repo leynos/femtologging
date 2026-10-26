@@ -303,7 +303,7 @@ fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
     });
 
     let normalized_metadata = Metadata::builder()
-        .level(log::Level::Debug)
+        .level(log::Level::Info)
         .target(&rust_target)
         .build();
     assert!(!adapter.enabled(&normalized_metadata));

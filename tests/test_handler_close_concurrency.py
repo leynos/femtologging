@@ -115,6 +115,65 @@ def test_python_flush_releases_gil_while_worker_waits(
     assert not progress_thread.is_alive(), "Python progress thread did not finish"
 
 
+def test_python_close_can_run_while_flush_waits(
+    blocked_handler: BlockedHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Close can borrow the handler while a detached flush waits."""
+    flush_started = threading.Event()
+    flush_finished = threading.Event()
+    close_started = threading.Event()
+    close_finished = threading.Event()
+    flush_results: list[bool] = []
+    thread_errors: list[str] = []
+    close_thread: threading.Thread | None = None
+
+    def record_thread_error(args: threading.ExceptHookArgs) -> None:
+        """Capture uncaught thread exceptions, including PyO3 panic errors."""
+        thread_errors.append(f"{args.exc_type.__name__}: {args.exc_value}")
+
+    monkeypatch.setattr(threading, "excepthook", record_thread_error)
+
+    def flush() -> None:
+        """Flush from a thread while the handler worker is blocked."""
+        flush_started.set()
+        try:
+            flush_results.append(blocked_handler.handler.flush())
+        finally:
+            flush_finished.set()
+
+    def close() -> None:
+        """Close from another thread while the flush is still waiting."""
+        close_started.set()
+        try:
+            blocked_handler.handler.close()
+        finally:
+            close_finished.set()
+
+    flush_thread = threading.Thread(target=flush)
+    flush_thread.start()
+    try:
+        assert flush_started.wait(timeout=1), "flush thread did not start"
+        assert not flush_finished.wait(timeout=0.1), "flush did not wait for the worker"
+        close_thread = threading.Thread(target=close)
+        close_thread.start()
+        assert close_started.wait(timeout=1), "close thread did not start"
+        assert not close_finished.wait(timeout=0.1), (
+            "close failed while flush held a shared PyO3 borrow"
+        )
+    finally:
+        blocked_handler.release_formatter.set()
+        flush_thread.join(timeout=2)
+        if close_thread is not None:
+            close_thread.join(timeout=2)
+
+    assert not flush_thread.is_alive(), "flush thread did not finish"
+    assert close_thread is not None, "close thread was not started"
+    assert not close_thread.is_alive(), "close thread did not finish"
+    assert not thread_errors, f"handler calls raised: {thread_errors!r}"
+    assert flush_results == [True], "flush did not receive the worker acknowledgement"
+
+
 def test_python_close_releases_pyclass_borrow_while_worker_waits(
     blocked_handler: BlockedHandler,
 ) -> None:
