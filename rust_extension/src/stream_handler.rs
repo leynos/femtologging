@@ -27,6 +27,9 @@ use crate::{
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
 
+mod close;
+use close::close_stream_worker;
+
 /// Default queue capacity used when a stream builder does not provide one.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
@@ -213,9 +216,24 @@ impl FemtoStreamHandler {
     }
 
     /// Close the handler and wait for the worker thread to finish.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handler.close();
+    /// ```
     #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        py.detach(|| self.close());
+    fn py_close(slf: Py<Self>, py: Python<'_>) {
+        let (tx, handle, done_rx, timeout) = {
+            let mut handler = slf.borrow_mut(py);
+            (
+                handler.tx.take(),
+                handler.handle.lock().take(),
+                handler.done_rx.lock().clone(),
+                handler.flush_timeout,
+            )
+        };
+        py.detach(move || close_stream_worker(tx, handle, done_rx, timeout));
     }
 }
 
@@ -303,21 +321,12 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
-        self.tx.take();
-        let handle = { self.handle.lock().take() };
-        if let Some(handle) = handle {
-            let done_rx = self.done_rx.lock().clone();
-            if done_rx.recv_timeout(self.flush_timeout).is_err() {
-                warn!(
-                    "FemtoStreamHandler: worker thread did not shut down within {:?}",
-                    self.flush_timeout
-                );
-                return;
-            }
-            if handle.join().is_err() {
-                warn!("FemtoStreamHandler: worker thread panicked");
-            }
-        }
+        close_stream_worker(
+            self.tx.take(),
+            self.handle.lock().take(),
+            self.done_rx.lock().clone(),
+            self.flush_timeout,
+        );
     }
 }
 

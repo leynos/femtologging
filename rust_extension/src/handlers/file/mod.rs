@@ -151,9 +151,23 @@ impl FemtoFileHandler {
 
     /// Closes the handler, signals worker shutdown, and waits briefly for
     /// completion before joining the worker when it reports that it has exited.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handler.close();
+    /// ```
     #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        py.detach(|| self.close());
+    fn py_close(slf: Py<Self>, py: Python<'_>) {
+        let (tx, handle, done_rx) = {
+            let mut handler = slf.borrow_mut(py);
+            (
+                handler.tx.take(),
+                handler.handle.take(),
+                handler.done_rx.clone(),
+            )
+        };
+        py.detach(move || close_file_worker(tx, handle, done_rx));
     }
 }
 
@@ -263,16 +277,7 @@ impl FemtoFileHandler {
     /// when invoking it. Concurrent calls from multiple threads must be
     /// synchronized externally (for example, with a `Mutex`).
     pub fn close(&mut self) {
-        self.tx.take();
-        if let Some(handle) = self.handle.take() {
-            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-                return;
-            }
-            if handle.join().is_err() {
-                log::warn!("FemtoFileHandler: worker thread panicked");
-            }
-        }
+        close_file_worker(self.tx.take(), self.handle.take(), self.done_rx.clone());
     }
 
     /// Builds a handler from an existing worker writer and publishes its
@@ -325,6 +330,30 @@ impl FemtoFileHandler {
         };
         let options = BuilderOptions::<W>::new(NoRotation, start_barrier);
         Self::build_from_worker(writer, formatter, handler_config, options)
+    }
+}
+
+/// Drops the queue sender, then waits for and joins the worker without a Python borrow.
+///
+/// # Examples
+///
+/// ```ignore
+/// close_file_worker(sender, handle, worker_done_receiver);
+/// ```
+fn close_file_worker(
+    tx: Option<Sender<FileCommand>>,
+    handle: Option<JoinHandle<()>>,
+    done_rx: Receiver<()>,
+) {
+    drop(tx);
+    if let Some(handle) = handle {
+        if done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
+            log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
+            return;
+        }
+        if handle.join().is_err() {
+            log::warn!("FemtoFileHandler: worker thread panicked");
+        }
     }
 }
 
