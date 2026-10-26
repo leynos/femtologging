@@ -1,9 +1,9 @@
-//! Tests for the dispatch pool's pure bound arithmetic.
+//! Tests for dispatch-pool sizing and fallible initialization.
 //!
-//! The pool's behaviour is asserted where it is observable — through a logger
-//! in `logger_tests.rs` and `logger_tests_shutdown.rs` — so what is left here
-//! is the one decision that needs no threads to test: how many shards a machine
-//! reporting a given parallelism gets.
+//! Logger behaviour is asserted through the logger lifecycle and shutdown
+//! tests. This module covers the machine-derived shard bound and injects a
+//! worker-start failure to verify error mapping, reservation release and retry
+//! without exhausting the process's real thread resources.
 
 use super::shards_for;
 
@@ -83,4 +83,64 @@ fn a_loggers_budget_leaves_another_logger_a_slot() {
             "the test shard's worker must stop cleanly"
         );
     }
+}
+
+#[test]
+fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
+    use std::io::{Error, ErrorKind};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use pyo3::{Python, exceptions::PyRuntimeError};
+
+    use super::{Dispatcher, PoolStartGuard, shard::Shard};
+
+    let process_id = std::process::id();
+    let reservation = AtomicU32::new(0);
+    let failed_start = {
+        let _guard = PoolStartGuard::reserve(&reservation, process_id)
+            .expect("the initial test reservation should be free");
+        Dispatcher::start_with(process_id, 2, |index, depth| {
+            if index == 1 {
+                Err(Error::other("injected worker-start refusal"))
+            } else {
+                Shard::start(index, depth)
+            }
+        })
+    };
+
+    let Err(error) = failed_start else {
+        panic!("the injected second worker start must fail");
+    };
+    assert_eq!(error.started, 1, "the error should report a partial start");
+    assert_eq!(
+        error.total, 2,
+        "the error should report the requested pool size"
+    );
+    assert_eq!(error.source.kind(), ErrorKind::Other);
+    assert_eq!(
+        reservation.load(Ordering::Acquire),
+        0,
+        "a failed startup must release its reservation"
+    );
+
+    let python_error = pyo3::PyErr::from(error);
+    Python::attach(|py| {
+        assert!(
+            python_error.is_instance_of::<PyRuntimeError>(py),
+            "resource refusal should map to Python RuntimeError"
+        );
+    });
+
+    let retry = {
+        let _guard = PoolStartGuard::reserve(&reservation, process_id)
+            .expect("the released reservation should permit a retry");
+        Dispatcher::start_with(process_id, 1, Shard::start)
+    };
+    let dispatcher = retry.expect("a later worker start should succeed");
+    assert_eq!(dispatcher.shards.len(), 1);
+    assert_eq!(
+        reservation.load(Ordering::Acquire),
+        0,
+        "a successful startup must release its reservation too"
+    );
 }

@@ -227,7 +227,7 @@ impl FemtoLogger {
     #[cfg(loom)]
     pub fn with_parent(name: String, parent: Option<String>) -> Result<Self, DispatcherError> {
         let shard = Shard::start(0, LOOM_RECORDS_PER_LOGGER)
-            .map_err(|source| DispatcherError::new(0, source))?;
+            .map_err(|source| DispatcherError::new(0, 1, source))?;
         Ok(Self::from_shard(name, parent, std::sync::Arc::new(shard)))
     }
 

@@ -88,10 +88,26 @@ Obligations and their evidence:
    `rust_extension/src/logger/dispatcher_tests.rs`.
 5. A panicking handler does not silence later records. Artefact:
    `catch_unwind` test in the dispatcher tests.
+6. Pool-start refusal reports a Python `RuntimeError`, releases its startup
+   reservation after a partial start, and permits a later retry. Artefact: the
+   injected worker-start failure test in `dispatcher_tests.rs`.
+7. Fork rebinding is exercised with the dispatcher worker already running.
+   CPython may emit a `DeprecationWarning` when multiple Python-managed threads
+   are active. The test captures this optional warning and validates it when
+   present; Rust dispatcher threads do not reliably satisfy CPython's warning
+   condition.
+
+The injected startup test uses a test-local `AtomicU32` with the same
+`PoolStartGuard::reserve` implementation used for `POOL_STARTING_PROCESS`. It
+does not replace the process-global pool or call `Dispatcher::shared`, which
+may already be initialized by another parallel test. The test exercises the real
+`start_with` seam, error conversion, reservation guard release, and a
+successful retry without mutating global pool state.
 
 Non-vacuity: each test asserts an observable difference (an exception, a
-registry count, a thread count, or a delivered message) that must change if the
-corresponding implementation is reverted.
+registry count, a thread count, a delivered message, or a released reservation
+followed by a successful retry) that must change if the corresponding
+implementation is reverted.
 
 ## Plan of work
 
@@ -120,8 +136,9 @@ Milestone 2 detail:
 
 - [x] `dispatcher/shard.rs`: the job queue, the permit pool, the worker loop,
       `Admit`/`wait_for_drain`, and `catch_unwind` around each job.
-- [x] `dispatcher.rs`: the pool, round-robin assignment, `DispatcherError`,
-      `shards_for` clamp, and the `POOL` `Lazy<OnceCell<..>>`.
+- [x] `dispatcher.rs`: the process-aware `AtomicPtr` pool, PID startup
+      reservation, round-robin assignment, `DispatcherError`, and `shards_for`
+      clamp.
 - [x] `worker.rs`: construction resolves the pool (fallible) and stores the
       shard; `assembled` is shared by both `#[cfg]` arms.
 - [x] `producer.rs`: `send_to_local_handlers` admits to the shard and counts a
@@ -146,7 +163,7 @@ Milestone 2 detail:
 - [x] Milestone 3: dropped as speculative (see discoveries).
 - [x] Milestone 4: bridges aligned, stress tests added, guides and ADR 007
       written.
-- [x] Delivered: gates green, commits pushed, draft PR #544 open.
+- [x] Delivered: gates green, commits pushed, PR #544 ready for review.
 - [x] CodeRabbit review returned nine findings; all nine fixed and
       re-gated.
 - [x] Second review round returned eight findings; all eight fixed and
@@ -160,9 +177,27 @@ Milestone 2 detail:
 - [x] Seventh review round returned four findings; all fixed, including a test
       that asserted nothing and was rebuilt and mutation-tested.
 - [x] Eighth review round returned five findings (four distinct); all fixed.
-- [ ] Ninth review round: verify and repair the current fork-safety,
-      configuration-staging capacity, test-oracle, and diagnostic findings;
-      re-run the full gates on the published candidate.
+- [x] Ninth review round: repaired fork rebinding, staged-capacity preflight,
+      tracing-test wiring, admission-test coverage and diagnostics; full local
+      gates, Loom checks and hosted checks passed on the published candidate.
+- [x] ExecPlan assessment findings repaired in the working tree: split the
+      404-line integration test, add injected partial-start failure/retry
+      coverage, and reconcile publication and stream-handler notes.
+- [x] Final-gate corrections in the working tree: gate the test-only budget
+      accessor to non-Loom builds and validate CPython's optional fork warning
+      without requiring Python-managed threads to be active.
+- [x] Diagnosed the later `E0460` doctest failure as stale `pyo3_ffi` variants
+      from the `--cfg loom` build sharing this worktree's Cargo target. A
+      targeted `cargo clean -p pyo3-ffi` removed 145 generated files (82.5 MiB),
+      after which the full test gate passed; no shared Cargo cache was cleared.
+- [x] Re-ran the complete local gate sequence on the corrected working tree
+      based on `60fe431`: format, format check, lint, typecheck, tests (806
+      passed, 5 skipped, 66 snapshots), Markdown, Mermaid, Loom Clippy, and all
+      six Loom models passed. The final test run followed a second targeted
+      `cargo clean -p pyo3-ffi` (72 files, 41.2 MiB) and the fork test's change
+      to validate CPython's warning only when it is emitted.
+- [ ] Commit and push this validated candidate, update the PR description, and
+      obtain the candidate-bound assessment and review follow-up.
 
 Re-gated at `467f406`:
 
@@ -677,13 +712,14 @@ Milestone 1 detail:
 ## Decision log
 
 - 2026-10-23: `test_stream_builder_applies_callable_formatter` was diagnosed
-  and deferred because it exercised a stream-handler GIL interaction outside
-  the dispatcher change. At that point the stream handler and Python formatter
-  were untouched. `close()` waited for a done signal while the worker needed
-  `Python::attach` to run a Python callable; the test usually passed because
-  the worker wrote after the timeout, but under load `capfd` could read before
-  the write landed. This scope decision was superseded by the final test gate
-  on 2026-10-25, recorded below.
+  while the stream handler and Python formatter were untouched. Its original
+  `close()` wait held the GIL while the worker needed `Python::attach` to run a
+  Python callable. Commit `be3cb89` later changed `FemtoStreamHandler.py_flush`
+  and `py_close` to detach during those waits. The formatter test remains a
+  separately scoped, load-sensitive test; it passed in the final full test run
+  and constructs no `FemtoLogger`. This plan records the stream-handler change
+  and the remaining test limitation rather than describing the published diff
+  as untouched.
 
 - 2026-10-14: reuse the existing `HandlerError::Capacity` path rather than
   exporting a new exception type. Rationale: the project already maps handler
@@ -1073,9 +1109,11 @@ parent helper module. The seventh full sequential pass then passed
 `129dcd8`. Pytest reported 806 passed, 5 skipped, and 66 snapshots; every Rust
 feature lane, trybuild suite, and doc-test passed. The shared build admission
 controller stayed healthy throughout; its queueing extended the test run but
-did not produce a gate failure. `git diff --check` was clean. Hosted CI,
-CodeScene, and review-thread reconciliation remain pending publication of this
-candidate.
+did not produce a gate failure. `git diff --check` was clean. The published
+`60fe431` candidate then passed hosted CI run 40262678979, CodeScene check
+8124385, Loom Clippy with `-D warnings`, and all six Loom models. The twelve
+inline findings were individually reconciled; all review threads are now
+resolved after CodeRabbit confirmed the fixes.
 
 2026-10-26: CodeScene review on the published `1b0b0fa` head found duplicated
 assembly in the normal and Loom `FemtoLogger::with_parent` implementations.
@@ -1093,9 +1131,9 @@ pass passed `make check-fmt`, `make lint`, `make typecheck`, `make test`,
 and 66 snapshots. Loom Clippy passed with `-D warnings`, and all six Loom
 models passed. The first model-run attempt compiled but could not load
 `libpython3.14.so.1.0`; rerunning with `LD_LIBRARY_PATH` set to the matching uv
-Python library directory passed all six models in 45.72 seconds. Hosted CI,
-CodeScene delta on the new commit, and review-thread reconciliation remain
-pending publication.
+Python library directory passed all six models in 45.72 seconds. Hosted CI
+passed at `60fe431` in run 40262678979, CodeScene passed in result 8124385, and
+all twelve inline findings have been reconciled and resolved.
 
 ## Outcomes & retrospective
 
@@ -1111,8 +1149,8 @@ All eight acceptance criteria in the issue are met and evidenced:
 4. **Thread multiplier removed** — a fixed pool sized from available
    parallelism, measured flat against logger count in
    `test_thread_count_does_not_track_logger_count`.
-5. **Exhaustion without panic** — `DispatcherError` to `RuntimeError`, with a
-   later retry.
+5. **Exhaustion without panic** — `DispatcherError` to `RuntimeError`, with an
+   injected partial-start failure proving reservation release and later retry.
 6. **One policy for every entry point** — convenience functions and both Rust
    bridges resolve through the same registry.
 7. **Stress tests** — many unique names, over-long names, and

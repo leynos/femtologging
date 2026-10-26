@@ -129,7 +129,7 @@ impl LoggerBudget {
     /// The invariant that matters — a budget is always *below* its shard's
     /// depth — is arithmetic, so it is asserted directly rather than by
     /// building a shard deep enough to reach a production-sized limit.
-    #[cfg(test)]
+    #[cfg(all(test, not(loom)))]
     pub(crate) fn limit_for_test(&self) -> usize {
         self.limit()
     }

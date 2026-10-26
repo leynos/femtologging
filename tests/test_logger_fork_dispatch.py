@@ -12,6 +12,7 @@ from __future__ import annotations
 import gc
 import os
 import typing as typ
+import warnings
 
 import pytest
 
@@ -82,7 +83,19 @@ def test_a_child_process_rebinds_inherited_and_new_loggers() -> None:
     read_fd, write_fd = os.pipe()
     handler = _PipeHandler(write_fd)
     parent_logger.add_handler(handler)
-    child_pid = os.fork()
+    # CPython warns only when multiple Python-managed threads are active; its
+    # warning condition does not reliably count the dispatcher's Rust workers.
+    # Capture the optional warning so a Python-threaded test runner stays quiet,
+    # while checking any warning is the expected consequence of this fork.
+    with warnings.catch_warnings(record=True) as fork_warnings:
+        warnings.simplefilter("always", DeprecationWarning)
+        child_pid = os.fork()
+    assert all(
+        warning.category is DeprecationWarning
+        and "multi-threaded, use of fork() may lead to deadlocks"
+        in str(warning.message)
+        for warning in fork_warnings
+    ), "any fork warning must be CPython's multi-threaded fork warning"
 
     if child_pid == 0:
         try:

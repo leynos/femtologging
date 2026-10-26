@@ -42,7 +42,7 @@ mod shard;
 
 use pyo3::{PyErr, exceptions::PyRuntimeError};
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 #[path = "dispatcher_tests.rs"]
 mod dispatcher_tests;
 
@@ -58,9 +58,11 @@ pub(crate) use shard::{LoggerBudget, Shard};
 /// Four shards are enough that one logger with a slow handler does not hold up
 /// every other logger in the process, and few enough that the threads are not
 /// themselves the problem.
+#[cfg(not(loom))]
 const DEFAULT_SHARD_COUNT: usize = 4;
 
 /// Shallowest pool a machine's available parallelism may produce.
+#[cfg(not(loom))]
 const MIN_SHARD_COUNT: usize = 1;
 
 /// Records one shard will hold in flight per point of shard count.
@@ -126,15 +128,30 @@ static POOL_STARTING_PROCESS: AtomicU32 = AtomicU32::new(0);
 
 /// Release the process-local pool-start reservation after success or failure.
 #[cfg(not(loom))]
-struct PoolStartGuard {
+struct PoolStartGuard<'a> {
+    /// Reservation word this guard releases.
+    reservation: &'a AtomicU32,
     /// PID that claimed the reservation.
     process_id: u32,
 }
 
 #[cfg(not(loom))]
-impl Drop for PoolStartGuard {
+impl<'a> PoolStartGuard<'a> {
+    /// Claim a free pool-start reservation for `process_id`.
+    fn reserve(reservation: &'a AtomicU32, process_id: u32) -> Result<Self, u32> {
+        reservation
+            .compare_exchange(0, process_id, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| Self {
+                reservation,
+                process_id,
+            })
+    }
+}
+
+#[cfg(not(loom))]
+impl Drop for PoolStartGuard<'_> {
     fn drop(&mut self) {
-        let _ = POOL_STARTING_PROCESS.compare_exchange(
+        let _ = self.reservation.compare_exchange(
             self.process_id,
             0,
             Ordering::Release,
@@ -152,6 +169,8 @@ impl Drop for PoolStartGuard {
 pub struct DispatcherError {
     /// How many shards were started before the refusal.
     started: usize,
+    /// How many shards the pool was trying to start.
+    total: usize,
     /// The operating system's refusal to start the next thread.
     source: std::io::Error,
 }
@@ -175,8 +194,12 @@ impl DispatcherError {
     /// refusal this way, so the two paths present one error type to callers.
     /// `started` counts the shards already running: zero for the Loom arm,
     /// which has no pool to have started any.
-    pub(super) fn new(started: usize, source: std::io::Error) -> Self {
-        Self { started, source }
+    pub(super) fn new(started: usize, total: usize, source: std::io::Error) -> Self {
+        Self {
+            started,
+            total,
+            source,
+        }
     }
 }
 
@@ -186,9 +209,7 @@ impl std::fmt::Display for DispatcherError {
             f,
             "could not start the log dispatch pool: {} of {} shards started before the system \
              refused another thread: {}",
-            self.started,
-            shard_count(),
-            self.source,
+            self.started, self.total, self.source,
         )
     }
 }
@@ -238,14 +259,8 @@ impl Dispatcher {
                 return Ok(dispatcher);
             }
 
-            match POOL_STARTING_PROCESS.compare_exchange(
-                0,
-                process_id,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    let _start_guard = PoolStartGuard { process_id };
+            match PoolStartGuard::reserve(&POOL_STARTING_PROCESS, process_id) {
+                Ok(_start_guard) => {
                     // Recheck after reserving startup: another caller may have
                     // finished between our first load and this reservation.
                     if let Some(dispatcher) = Self::pool_for_process(process_id) {
@@ -287,15 +302,26 @@ impl Dispatcher {
 
     /// Start one shard per thread the machine can usefully run.
     fn start() -> Result<Self, DispatcherError> {
-        let count = shard_count();
+        Self::start_with(std::process::id(), shard_count(), Shard::start)
+    }
+
+    /// Start a fixed shard count through an injectable worker-start seam.
+    ///
+    /// Production supplies [`Shard::start`]. Tests can refuse a chosen start
+    /// deterministically without exhausting the process's thread resources.
+    fn start_with(
+        process_id: u32,
+        count: usize,
+        mut start_shard: impl FnMut(usize, usize) -> Result<Shard, std::io::Error>,
+    ) -> Result<Self, DispatcherError> {
         let mut shards = Vec::with_capacity(count);
         for index in 0..count {
-            let shard = Shard::start(index, RECORDS_PER_LOGGER * count)
-                .map_err(|source| DispatcherError::new(index, source))?;
+            let shard = start_shard(index, RECORDS_PER_LOGGER * count)
+                .map_err(|source| DispatcherError::new(index, count, source))?;
             shards.push(shard);
         }
         Ok(Self {
-            process_id: std::process::id(),
+            process_id,
             shards,
             next_shard: AtomicUsize::new(0),
         })
@@ -307,6 +333,7 @@ impl Dispatcher {
 /// Pure and separate from the spawn so the clamp can be asserted without
 /// starting threads, which is what keeps the pool's threads a function of the
 /// machine rather than of how many loggers exist.
+#[cfg(not(loom))]
 pub(crate) fn shards_for(available_parallelism: Option<usize>) -> usize {
     available_parallelism
         .unwrap_or(DEFAULT_SHARD_COUNT)
@@ -314,6 +341,7 @@ pub(crate) fn shards_for(available_parallelism: Option<usize>) -> usize {
 }
 
 /// Number of shards this process should run.
+#[cfg(not(loom))]
 pub(crate) fn shard_count() -> usize {
     shards_for(std::thread::available_parallelism().ok().map(|n| n.get()))
 }
