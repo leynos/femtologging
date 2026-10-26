@@ -46,9 +46,9 @@ jobs:
           before-script-linux: |
             set -euo pipefail
             command -v perl
-            # AlmaLinux's minimal manylinux image omits OpenSSL's Perl module.
+            # The CentOS 7 image omits OpenSSL's Perl module.
             if ! perl -MIPC::Cmd -MFindBin -e '1' >/dev/null 2>&1; then
-              dnf -y install perl-IPC-Cmd
+              yum -y install perl-IPC-Cmd
             fi
             perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
             command -v make
@@ -152,8 +152,9 @@ jobs:
           set -euo pipefail
           case "${RUNNER_OS}" in
             Windows)
-              echo 'C:\perl\bin' >> "${GITHUB_PATH}"
-              export PATH="/c/perl/bin:${PATH}"
+              echo 'C:\Strawberry\perl\site\bin' >> "${GITHUB_PATH}"
+              echo 'C:\Strawberry\perl\bin' >> "${GITHUB_PATH}"
+              export PATH="/c/Strawberry/perl/site/bin:/c/Strawberry/perl/bin:${PATH}"
               ;;
           esac
           command -v perl
