@@ -1,12 +1,17 @@
 //! Public handler type exported by the crate.
 
 use std::{
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+// The interpreter is reachable in every lane that is not modelling it, so the
+// drop guard attaches under the same condition `FemtoLogger`'s join does.
+#[cfg(not(loom))]
+use pyo3::Python;
 
 use parking_lot::Mutex;
 
@@ -14,11 +19,13 @@ use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
+    shutdown_signal::ShutdownSignal,
 };
 
 use super::{
     config::HTTPHandlerConfig,
-    worker::{HTTPCommand, enqueue_record, flush_queue, spawn_worker},
+    queue::{HTTPCommand, enqueue_record, flush_queue},
+    worker::spawn_worker,
 };
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -28,12 +35,17 @@ use super::{
 /// Uses exponential backoff for transient failures (5xx, 429, network errors)
 /// and drops records on permanent failures (4xx except 429).
 pub struct FemtoHTTPHandler {
-    /// Sender for records and flush/shutdown commands; taking it closes new delivery.
+    /// Sends records and lifecycle commands to the worker.
     tx: Option<crossbeam_channel::Sender<HTTPCommand>>,
-    /// Join handle retained behind a mutex so close and drop can consume it once.
+    /// Owns the worker until it finishes or is detached after a timeout.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
-    /// Counts records rejected after shutdown or queue failure for rate-limited warnings.
+    /// Counts dropped records and limits warning frequency.
     warner: RateLimitedWarner,
+    /// The shutdown signal shared with the worker.
+    ///
+    /// `Some` for as long as the handler is open. `None` once `close` has
+    /// given up on the worker, or after a close that had nothing to do.
+    signal: Option<Arc<ShutdownSignal>>,
     /// Timeout for flush and shutdown operations.
     ///
     /// Derived from `write_timeout` in the configuration: a flush or graceful
@@ -47,11 +59,13 @@ impl FemtoHTTPHandler {
     pub fn with_config(config: HTTPHandlerConfig) -> Self {
         let flush_timeout = config.write_timeout;
         let warner = RateLimitedWarner::new(config.warn_interval);
-        let (tx, handle) = spawn_worker(config);
+        let signal = Arc::new(ShutdownSignal::new());
+        let (tx, handle) = spawn_worker(config, Arc::clone(&signal));
         Self {
             tx: Some(tx),
             handle: Mutex::new(Some(handle)),
             warner,
+            signal: Some(signal),
             flush_timeout,
         }
     }
@@ -63,13 +77,21 @@ impl FemtoHTTPHandler {
 
     /// Close the handler, waiting for the worker only while it is answering.
     ///
-    /// The shutdown request is bounded by `flush_timeout`, and so is the whole
-    /// of `close`: a worker that does not acknowledge within that budget is
-    /// abandoned rather than joined. Joining it would wait for however long it
-    /// had left to run, which for this handler is the backoff deadline, a
-    /// figure `flush_timeout` does not describe and the caller did not ask
-    /// for. `close` runs from `Drop`, so that wait would fall on whatever was
-    /// tearing the handler down.
+    /// One deadline covers the whole operation: the shutdown signal, the
+    /// command that carries the acknowledgement request, the acknowledgement
+    /// itself, and the join. A worker that does not acknowledge within that
+    /// budget is abandoned rather than joined. Joining it would wait for
+    /// however long it had left to run, which for this handler is the backoff
+    /// deadline, a figure `flush_timeout` does not describe and the caller did
+    /// not ask for. `close` runs from `Drop`, so that wait would fall on
+    /// whatever was tearing the handler down.
+    ///
+    /// The signal is what makes the budget apply to the work and not only to
+    /// the waiting. Until it is raised the worker is free to retry a
+    /// poorly-answered record for as long as its backoff allows; once it is,
+    /// no new attempt begins after the deadline, each queued record gets one
+    /// attempt, and whatever is still queued at the deadline is discarded with
+    /// a warning rather than sent.
     ///
     /// This is the contract [`FemtoStreamHandler::close`] already documents
     /// and implements: acknowledge or be abandoned, with the timeout warned
@@ -84,7 +106,9 @@ impl FemtoHTTPHandler {
         }
     }
 
-    /// Clones the live queue sender, or returns `None` once shutdown has taken it.
+    /// Clone the live worker sender, if the handler has not closed.
+    ///
+    /// Example: a missing sender makes `handle` return `HandlerError::Closed`.
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
@@ -101,12 +125,21 @@ impl FemtoHTTPHandler {
     /// when it is full the send itself blocks until the worker next reads it,
     /// which a worker stuck mid-request does not do; a send outside the budget
     /// would put that whole wait back in front of the bounded receive.
+    ///
+    /// The signal is raised before the send, so it is the signal that wakes
+    /// the worker that may be sleeping rather than the command that queues
+    /// behind a full channel. A send that times out is not, on its own,
+    /// evidence of anything the worker needs telling: the signal has already
+    /// told it to wind down.
     fn request_shutdown(&mut self) -> ShutdownOutcome {
         let Some(tx) = self.tx.take() else {
             // Already closed. There is no worker left to wait for.
             return ShutdownOutcome::Finished;
         };
         let deadline = Instant::now() + self.flush_timeout;
+        if let Some(signal) = self.signal.as_ref() {
+            signal.begin_shutdown(deadline);
+        }
         let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
         match tx.send_deadline(HTTPCommand::Shutdown(ack_tx), deadline) {
             Ok(()) => {}
@@ -130,8 +163,48 @@ impl FemtoHTTPHandler {
         }
     }
 
-    /// Takes and joins the worker handle, warning if the worker panicked.
+    /// Pause the worker at its next backoff wait until the test resumes it.
+    ///
+    /// This keeps the worker inside the wait until the test has requested
+    /// shutdown, making the interruption check independent of scheduling.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (backoffs, resume) = handler.pause_next_wait();
+    /// handler.handle(record).expect("queue the record");
+    /// backoffs.recv_timeout(one_second).expect("the worker reached the wait");
+    /// resume.send(()).expect("resume the worker");
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn pause_next_wait(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        self.signal
+            .as_ref()
+            .expect("an open handler has a signal")
+            .pause_next_wait()
+    }
+
+    /// Clone the worker signal so tests can observe shutdown before resuming
+    /// a worker paused at the backoff boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let signal = handler.signal_for_test();
+    /// assert!(!signal.is_shutting_down());
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn signal_for_test(&self) -> Arc<ShutdownSignal> {
+        Arc::clone(self.signal.as_ref().expect("an open handler has a signal"))
+    }
+
+    /// Join the worker after its acknowledgement or channel disconnection.
+    ///
+    /// Example: an acknowledged shutdown takes and joins the worker handle.
     fn join_worker(&mut self) {
+        self.signal.take();
         let Some(handle) = self.handle.lock().take() else {
             return;
         };
@@ -144,9 +217,18 @@ impl FemtoHTTPHandler {
     ///
     /// The handle is taken so nothing joins it later, in particular the `Drop`
     /// that may follow this call. The thread itself ends on its own once its
-    /// in-flight request and backoff finish, because its command channel is
-    /// already disconnected.
+    /// in-flight request finishes, because the signal now says nothing further
+    /// may be started and its command channel is already disconnected.
+    ///
+    /// The signal is aborted rather than simply dropped, and that is the one
+    /// thing this call cannot leave to the thread's own good sense: the worker
+    /// is the only holder of the other reference, so a signal that stayed in
+    /// the draining phase would keep telling it there was budget left until
+    /// the drain deadline it was already past.
     fn abandon_worker(&mut self) {
+        if let Some(signal) = self.signal.take() {
+            signal.abort();
+        }
         log::warn!(
             "FemtoHTTPHandler: worker did not acknowledge shutdown within {:?}; \
              abandoning it rather than blocking the caller",
@@ -171,7 +253,9 @@ enum ShutdownOutcome {
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoHTTPHandler {
-    /// Parses the Python level, queues one record, and maps handler failures to `PyRuntimeError`.
+    /// Convert Python arguments to a record and enqueue it for delivery.
+    ///
+    /// Example: `handler.handle("app", "INFO", "started")` queues one record.
     #[pyo3(name = "handle")]
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
@@ -208,14 +292,18 @@ impl FemtoHTTPHandler {
     /// Close the handler, waiting for the worker at most ``write_timeout``.
     ///
     /// A worker that acknowledges the shutdown within ``write_timeout`` is
-    /// joined. One that does not, typically because it is still retrying a
-    /// request against an unresponsive endpoint, is abandoned with a warning
-    /// rather than waited for. It keeps working through the records already
-    /// queued and then exits on its own, so those records are delivered only
-    /// if the process outlives it.
+    /// joined. One that does not, typically because a request already in
+    /// flight is waiting on an unresponsive endpoint, is abandoned with a warning
+    /// rather than waited for. Once abandoned it stops rather than draining:
+    /// the records still queued are discarded with a warning, because sending
+    /// them is what would have taken the time ``write_timeout`` just ran out
+    /// of.
+    ///
+    /// The wait runs with the GIL released, so a close that spends its budget
+    /// waiting does not hold the interpreter while it does.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.close());
     }
 }
 
@@ -246,6 +334,29 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
     }
 }
 
+/// Drop the handler, closing it with the GIL released.
+///
+/// A handler whose worker has already gone has nothing to close, so the check
+/// keeps that case out of the GIL's way entirely. When Python can be attached,
+/// the close runs detached; during interpreter shutdown, the Rust-only close
+/// runs without attaching and remains bounded by the same budget.
+///
+/// Under `--cfg loom` there is no interpreter to attach to: no model builds one
+/// of these handlers, and attaching would initialize Python on a Loom
+/// coroutine's small stack.
+#[cfg(not(loom))]
+impl Drop for FemtoHTTPHandler {
+    fn drop(&mut self) {
+        if self.handle.lock().is_none() {
+            return;
+        }
+        if Python::try_attach(|py| py.detach(|| self.close())).is_none() {
+            self.close();
+        }
+    }
+}
+
+#[cfg(loom)]
 impl Drop for FemtoHTTPHandler {
     fn drop(&mut self) {
         self.close();

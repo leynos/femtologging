@@ -10,6 +10,8 @@ use super::*;
 mod ordinary {
     //! The seam's ordinary arm: `crossbeam_channel` and its `select!`.
 
+    use std::time::Duration;
+
     use rstest::rstest;
 
     use super::*;
@@ -49,6 +51,43 @@ mod ordinary {
         assert_eq!(
             recv_either(&first_rx, &second_rx),
             Either::First(Err(RecvError))
+        );
+    }
+
+    /// The condition variable admits a waiter whose lock it re-releases.
+    ///
+    /// A wait that returned without the lock acquired would let the waiter read
+    /// freed state, and one that returned with it held would deadlock the
+    /// waiter that has to re-lock. The timeout is long enough that only a lost
+    /// notification exhausts it.
+    #[test]
+    fn condvar_wakes_a_waiter_and_returns_the_lock() {
+        use std::sync::Arc;
+
+        let state = Arc::new(Mutex::new(false));
+        let changed = Arc::new(Condvar::new());
+        let waiter = {
+            let state = Arc::clone(&state);
+            let changed = Arc::clone(&changed);
+            spawn(move || {
+                let mut guard = state.lock();
+                while !*guard {
+                    changed.wait_timeout(guard, Duration::from_secs(10));
+                    guard = state.lock();
+                }
+                *guard
+            })
+        };
+
+        {
+            let mut guard = state.lock();
+            *guard = true;
+            changed.notify_all();
+        }
+
+        assert!(
+            waiter.join().expect("the waiter should not panic"),
+            "the waiter woke without observing the change it was notified about"
         );
     }
 }

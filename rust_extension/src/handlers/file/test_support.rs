@@ -3,7 +3,10 @@
 //! Provides a simple capturing logger so multiple tests can assert emitted log
 //! messages without conflicting with the global logger state.
 
-use std::sync::{Mutex, Once, OnceLock};
+use std::{
+    sync::{Condvar, Mutex, Once, OnceLock},
+    time::{Duration, Instant},
+};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
@@ -20,8 +23,10 @@ pub(crate) struct CapturedLog {
 struct TestLogger;
 
 static LOGGER: TestLogger = TestLogger;
+
 static INIT: Once = Once::new();
-static LOGS: OnceLock<Mutex<Vec<CapturedLog>>> = OnceLock::new();
+
+static LOGS: OnceLock<(Mutex<Vec<CapturedLog>>, Condvar)> = OnceLock::new();
 
 impl Log for TestLogger {
     fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
@@ -30,7 +35,7 @@ impl Log for TestLogger {
 
     fn log(&self, record: &Record<'_>) {
         if self.enabled(record.metadata()) {
-            let logs = LOGS.get_or_init(|| Mutex::new(Vec::new()));
+            let (logs, changed) = LOGS.get_or_init(|| (Mutex::new(Vec::new()), Condvar::new()));
             // Recover from poisoning: captured logs remain valid data.
             let mut guard = logs
                 .lock()
@@ -39,6 +44,7 @@ impl Log for TestLogger {
                 level: record.level(),
                 message: record.args().to_string(),
             });
+            changed.notify_all();
         }
     }
 
@@ -59,7 +65,7 @@ pub(crate) fn install_test_logger() {
 }
 
 pub(crate) fn take_logged_messages() -> Vec<CapturedLog> {
-    let logs = LOGS.get_or_init(|| Mutex::new(Vec::new()));
+    let (logs, _) = LOGS.get_or_init(|| (Mutex::new(Vec::new()), Condvar::new()));
     // Recover from poisoning: captured logs remain valid data.
     let mut guard = logs
         .lock()
@@ -67,8 +73,41 @@ pub(crate) fn take_logged_messages() -> Vec<CapturedLog> {
     guard.drain(..).collect()
 }
 
+/// Wait for a captured log message, returning all messages seen before it.
+///
+/// This lets tests wait for a detached worker to finish its last in-flight
+/// operation and report discarded records without guessing how long that takes.
+///
+/// # Examples
+///
+/// ```ignore
+/// let logs = wait_for_message("discarded 3 queued records", Duration::from_secs(2));
+/// assert!(logs.iter().any(|entry| entry.message.contains("discarded 3")));
+/// ```
+pub(crate) fn wait_for_message(marker: &str, timeout: Duration) -> Vec<CapturedLog> {
+    let deadline = Instant::now() + timeout;
+    let (logs, changed) = LOGS.get_or_init(|| (Mutex::new(Vec::new()), Condvar::new()));
+    let mut guard = logs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    loop {
+        let found = guard.iter().any(|entry| entry.message.contains(marker));
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            return guard.drain(..).collect();
+        };
+        if found {
+            return guard.drain(..).collect();
+        }
+        let (next_guard, _) = changed
+            .wait_timeout(guard, left)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard = next_guard;
+    }
+}
+
 pub(crate) fn clear_logs() {
-    if let Some(logs) = LOGS.get() {
+    if let Some((logs, _)) = LOGS.get() {
         logs.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();

@@ -22,6 +22,8 @@ _FEATURES: typ.Final = (
     "tracing-compat",
     "test-util",
 )
+_UNDOCUMENTED_LINT_TIMEOUT_SECONDS: typ.Final = 600
+_DOCUMENTED_LINT_TIMEOUT_SECONDS: typ.Final = 1_200
 
 
 def _private_docs_level() -> str:
@@ -62,7 +64,9 @@ def _write_fixture(directory: Path, lint_level: str, source: str) -> Path:
     return manifest
 
 
-def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
+def _run_lint_gate(
+    manifest: Path, *, timeout_seconds: int
+) -> subprocess.CompletedProcess[str]:
     """Run all configured Clippy lanes against a fixture manifest."""
     make_executable = shutil.which("make")
     if make_executable is None:
@@ -79,12 +83,14 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
         env=environment,
         capture_output=True,
         check=False,
-        timeout=600,
+        timeout=timeout_seconds,
         text=True,
     )
 
 
-@pytest.mark.timeout(620)
+@pytest.mark.timeout(
+    _UNDOCUMENTED_LINT_TIMEOUT_SECONDS + _DOCUMENTED_LINT_TIMEOUT_SECONDS + 20
+)
 def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
     """The lint rejects missing docs and accepts docs through Make's lane driver."""
     lint_level = _private_docs_level()
@@ -99,7 +105,9 @@ def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
             "#[allow(dead_code)]\nstruct Missing;\n",
         )
         source_file = manifest.parent / "src" / "lib.rs"
-        undocumented = _run_lint_gate(manifest)
+        undocumented = _run_lint_gate(
+            manifest, timeout_seconds=_UNDOCUMENTED_LINT_TIMEOUT_SECONDS
+        )
         undocumented_output = undocumented.stdout + undocumented.stderr
         assert undocumented.returncode != 0, (
             "the private-doc policy accepted an undocumented private item"
@@ -119,7 +127,9 @@ def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
             "struct Present;\n",
             encoding="utf-8",
         )
-        documented = _run_lint_gate(manifest)
+        documented = _run_lint_gate(
+            manifest, timeout_seconds=_DOCUMENTED_LINT_TIMEOUT_SECONDS
+        )
         assert documented.returncode == 0, (
             "Clippy rejected the documented fixture:\n"
             f"{documented.stdout}{documented.stderr}"

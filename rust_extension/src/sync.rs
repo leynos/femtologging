@@ -41,13 +41,18 @@ pub(crate) use std::thread::{JoinHandle, spawn};
 mod loom_channel;
 #[cfg(loom)]
 mod loom_lock;
+#[cfg(not(loom))]
+mod parking_condvar;
+
+#[cfg(not(loom))]
+pub(crate) use parking_condvar::Condvar;
 
 #[cfg(loom)]
 pub(crate) use loom::thread::JoinHandle;
 #[cfg(loom)]
 pub(crate) use loom_channel::{Receiver, Sender, bounded};
 #[cfg(loom)]
-pub(crate) use loom_lock::{Mutex, RwLock};
+pub(crate) use loom_lock::{Condvar, Mutex, RwLock};
 
 /// Stack size, in machine words, for a worker spawned inside a Loom model.
 ///

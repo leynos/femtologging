@@ -91,9 +91,14 @@ impl RateLimitedWarner {
         }
     }
 
-    /// Immediately warn about any dropped records.
-    pub fn flush(&self, warn: impl FnMut(u64)) {
-        self.warn_if_due(warn);
+    /// Immediately warn about pending drops and restart the rate limit interval.
+    pub fn flush(&self, mut warn: impl FnMut(u64)) {
+        let count = self.dropped.swap(0, Ordering::Relaxed);
+        if count > 0 {
+            self.last_warn
+                .store(self.clock.now_millis(), Ordering::Relaxed);
+            warn(count);
+        }
     }
 }
 
@@ -173,7 +178,7 @@ mod tests {
     }
 
     #[rstest]
-    fn rate_limits_subsequent_warnings(
+    fn rate_limits_warnings_and_flushes_pending_drops(
         mut warnings: Vec<u64>,
         warner: (RateLimitedWarner, Arc<FakeClock>),
     ) {
@@ -187,17 +192,19 @@ mod tests {
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1, 1]);
-    }
-
-    #[rstest]
-    fn flush_emits_pending_warning(
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-        mut warnings: Vec<u64>,
-    ) {
-        let (warner, _) = warner;
         warner.record_drop();
         warner.flush(|c| warnings.push(c));
-        assert_eq!(warnings, vec![1]);
+        assert_eq!(warnings, vec![1, 1, 1]);
+
+        clock.advance(500);
+        warner.record_drop();
+        warner.warn_if_due(|count| warnings.push(count));
+        assert_eq!(warnings, vec![1, 1, 1]);
+
+        clock.advance(500);
+        warner.record_drop();
+        warner.warn_if_due(|count| warnings.push(count));
+        assert_eq!(warnings, vec![1, 1, 1, 1]);
     }
 
     #[rstest]
