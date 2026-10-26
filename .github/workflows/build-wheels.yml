@@ -46,6 +46,10 @@ jobs:
           before-script-linux: |
             set -euo pipefail
             command -v perl
+            # AlmaLinux's minimal manylinux image omits OpenSSL's Perl module.
+            if ! perl -MIPC::Cmd -MFindBin -e '1' >/dev/null 2>&1; then
+              dnf -y install perl-IPC-Cmd
+            fi
             perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
             command -v make
             command -v cc
@@ -66,7 +70,11 @@ jobs:
             command -v perl
             perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
             command -v make
-            command -v aarch64-linux-gnu-gcc
+            command -v aarch64-unknown-linux-gnu-gcc
+            case "$(aarch64-unknown-linux-gnu-gcc -dumpmachine)" in
+              aarch64-unknown-linux-gnu*) ;;
+              *) echo "Expected an aarch64 C compiler, got $(aarch64-unknown-linux-gnu-gcc -dumpmachine)" >&2; exit 1 ;;
+            esac
           command: build
           args: >-
             --release --out dist --manifest-path rust_extension/Cargo.toml
@@ -142,6 +150,12 @@ jobs:
           RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
+          case "${RUNNER_OS}" in
+            Windows)
+              echo 'C:\perl\bin' >> "${GITHUB_PATH}"
+              export PATH="/c/perl/bin:${PATH}"
+              ;;
+          esac
           command -v perl
           perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
           case "${RUNNER_OS}" in

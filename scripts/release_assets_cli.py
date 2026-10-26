@@ -96,6 +96,7 @@ _COMMANDS: dict[str, cabc.Callable[[State, argparse.Namespace], None]] = {
     "check-fetched": _check_fetched,
     "verify": _verify,
 }
+_INDEX_COMMANDS = frozenset({"stage-pypi", "stage-github", "check-fetched", "verify"})
 
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:
@@ -118,7 +119,8 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
     """
     args = _parser().parse_args(argv)
     try:
-        state = State.load(args.publish, args.index, args.assets)
+        index = _path(args, "index") if args.command in _INDEX_COMMANDS else None
+        state = State.load(args.publish, index, args.assets)
         _COMMANDS[args.command](state, args)
     except (ReleaseAssetError, OSError, KeyError, ValueError, TypeError) as error:
         print(f"::error title=release-assets::{error}", file=sys.stderr)
