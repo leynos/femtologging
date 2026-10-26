@@ -123,9 +123,27 @@ pub struct FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// This call blocks until the worker acknowledges a flush marker and each
+    /// attached handler has flushed. Enqueueing the flush marker and waiting
+    /// for its acknowledgement share a two-second timeout. Flushing attached
+    /// handlers can take additional time.
+    ///
+    /// When Python handlers can be attached, callers that currently hold
+    /// Python access must detach before calling this method. Otherwise the
+    /// worker cannot acquire the GIL to run a Python handler.
+    ///
+    /// # Examples
+    ///
+    /// A Rust caller holding Python access detaches during the blocking flush:
+    ///
+    /// ```no_run
+    /// use _femtologging_rs::FemtoLogger;
+    /// use pyo3::Python;
+    ///
+    /// let logger = FemtoLogger::new(String::from("example"));
+    /// let flushed = Python::attach(|py| py.detach(|| logger.flush_handlers()));
+    /// assert!(flushed);
+    /// ```
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
