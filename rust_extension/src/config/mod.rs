@@ -1,6 +1,9 @@
 //! Configuration builders for femtologging.
 
 #[cfg(feature = "python")]
+use std::time::Duration;
+
+#[cfg(feature = "python")]
 use once_cell::sync::Lazy;
 #[cfg(feature = "python")]
 use parking_lot::{Mutex, MutexGuard};
@@ -39,19 +42,40 @@ pub(crate) fn try_lock_runtime_transaction() -> Option<MutexGuard<'static, ()>> 
     RUNTIME_TRANSACTION.try_lock()
 }
 
+/// First backoff delay for [`lock_runtime_transaction`].
+///
+/// Starts short because the common case is a transaction that is already
+/// finishing, so the waiter usually retries successfully almost immediately.
+#[cfg(feature = "python")]
+const TRANSACTION_BACKOFF_MIN: Duration = Duration::from_micros(50);
+
+/// Ceiling for the backoff in [`lock_runtime_transaction`].
+///
+/// Small enough that a waiter still notices a released guard promptly, which
+/// keeps the serialization latency between concurrent transactions bounded.
+#[cfg(feature = "python")]
+const TRANSACTION_BACKOFF_MAX: Duration = Duration::from_millis(5);
+
 /// Take the runtime transaction guard, releasing the GIL while backing off.
 ///
 /// The guard must stay in scope for the whole transaction. Polling with
 /// [`Mutex::try_lock`] rather than blocking in [`Mutex::lock`] matters because
 /// every caller holds the GIL: a blocking acquisition could park a GIL-holding
 /// thread behind a transaction that needs the GIL to finish.
+///
+/// The wait between polls sleeps rather than spins. A spinning waiter re-takes
+/// the GIL on every iteration and so competes with the guard holder, which
+/// often needs the GIL itself to build handlers or join workers; the holder
+/// would then make slower progress precisely while it is being waited on.
 #[cfg(feature = "python")]
 pub(crate) fn lock_runtime_transaction(py: Python<'_>) -> MutexGuard<'static, ()> {
+    let mut backoff = TRANSACTION_BACKOFF_MIN;
     loop {
         if let Some(transaction) = try_lock_runtime_transaction() {
             return transaction;
         }
-        py.detach(std::thread::yield_now);
+        py.detach(|| std::thread::sleep(backoff));
+        backoff = (backoff * 2).min(TRANSACTION_BACKOFF_MAX);
     }
 }
 
