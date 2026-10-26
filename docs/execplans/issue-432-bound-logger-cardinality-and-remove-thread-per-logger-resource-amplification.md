@@ -1,8 +1,8 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: REVIEW IN PROGRESS — PR #544 is open at `a399685`; five distinct
-follow-up issues are fixed, and the full local gate sequence is green. The
-review fixes still need publication and current-head review closure.
+Status: REVIEW IN PROGRESS — PR #544 is open at `3663edc`; five distinct
+follow-up issues are fixed and pushed, and the full local gate sequence is
+green. The PR description and current-head review closure remain outstanding.
 
 ## Purpose and big picture
 
@@ -231,8 +231,11 @@ Milestone 2 detail:
       test modules into `#[path]` siblings: formatting, lint, typecheck, tests,
       Markdown, Mermaid, Loom Clippy, and all six Loom models. Pytest reported
       806 passed, 5 skipped, and 66 snapshots.
-- [ ] Commit and push these fixes, refresh the PR description, then reconcile
-      current-head CI and reviews before merging the exact approved head.
+- [x] Committed the fixes as `3663edc` and pushed over SSH. The authenticated
+      identity was `leynos`, and the refreshed remote-tracking ref and `ls-remote`
+      both matched the local commit.
+- [ ] Refresh the PR description, then reconcile current-head CI and reviews
+      before merging the exact approved head.
 
 Re-gated at `467f406`:
 
@@ -1224,5 +1227,9 @@ structural change; restart the complete sequential gate set.
 
 2026-10-26 final16: All local gates passed on the CodeRabbit follow-up tree.
 The test suite reported 806 passed, 5 skipped, and 66 snapshots; all six Loom
-models passed. Commit, publication, hosted checks, and current-head reviews
-remain outstanding.
+models passed. At that point, commit, publication, hosted checks, and
+current-head reviews remained outstanding.
+
+2026-10-26 publication: The review fixes were committed as `3663edc` and pushed
+over SSH. The remote branch head matches the local commit; PR description and
+current-head checks and reviews remain to be reconciled.
