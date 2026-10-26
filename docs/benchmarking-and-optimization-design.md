@@ -503,6 +503,22 @@ benchmarks the direct builder `build_and_init`, Python `basicConfig`, and the
 path, but services configure logging during start-up, command-line invocation,
 tests, and subprocess creation, so start-up cost affects adoption.
 
+### 9.8. Rust log bridge enablement
+
+The `log_bridge` Criterion bench measures the Rust `log` facade's enabled hot
+path. Cases cover an accepted and a rejected registered target, a target
+normalized from `module::path`, an unknown valid target, and
+`log::log_enabled!()` through the installed adapter. It also measures a disabled
+`log::debug!()` call with an expensive argument to verify that the macro
+prefilter skips argument construction. Before that case, the benchmark lowers
+the last `TRACE` logger to `WARN` and asserts that the global maximum is
+`INFO`, so the `DEBUG` macro is rejected before evaluating its arguments. Run
+the bench with:
+
+```sh
+cargo bench --manifest-path rust_extension/Cargo.toml --no-default-features --features log-compat --bench log_bridge
+```
+
 ## 10. Benchmark-guided optimization
 
 ### 10.1. The loop

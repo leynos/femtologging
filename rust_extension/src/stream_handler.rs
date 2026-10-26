@@ -27,6 +27,8 @@ use crate::{
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
 
+mod close;
+
 /// Default queue capacity used when a stream builder does not provide one.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
@@ -137,8 +139,9 @@ fn run_stream_worker<W, F>(
 
 #[pyclass]
 pub struct FemtoStreamHandler {
-    /// Queue sender taken during close so no records can be submitted afterwards.
-    tx: Option<Sender<StreamCommand>>,
+    /// Synchronizes Python methods that send to the worker with shutdown;
+    /// `None` means the handler no longer accepts new commands.
+    tx: Mutex<Option<Sender<StreamCommand>>>,
     /// Worker join handle protected so close and drop cannot join twice.
     handle: Mutex<Option<JoinHandle<()>>>,
     /// Worker-completion receiver used to bound shutdown acknowledgement waits.
@@ -208,14 +211,21 @@ impl FemtoStreamHandler {
     /// >>> handler.flush()
     /// False
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.flush())
     }
 
     /// Close the handler and wait for the worker thread to finish.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handler.close();
+    /// ```
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&self, py: Python<'_>) {
+        let shutdown = self.take_shutdown_state();
+        py.detach(move || shutdown.close());
     }
 }
 
@@ -288,7 +298,7 @@ impl FemtoStreamHandler {
         let handle = spawn(move || run_stream_worker(rx, writer, formatter, done_tx));
 
         Self {
-            tx: Some(tx),
+            tx: Mutex::new(Some(tx)),
             handle: Mutex::new(Some(handle)),
             done_rx: Mutex::new(done_rx),
             warner: config.warner,
@@ -303,27 +313,14 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
-        self.tx.take();
-        let handle = { self.handle.lock().take() };
-        if let Some(handle) = handle {
-            let done_rx = self.done_rx.lock().clone();
-            if done_rx.recv_timeout(self.flush_timeout).is_err() {
-                warn!(
-                    "FemtoStreamHandler: worker thread did not shut down within {:?}",
-                    self.flush_timeout
-                );
-                return;
-            }
-            if handle.join().is_err() {
-                warn!("FemtoStreamHandler: worker thread panicked");
-            }
-        }
+        self.take_shutdown_state().close();
     }
 }
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let Some(tx) = &self.tx else {
+        let tx = self.tx.lock().clone();
+        let Some(tx) = tx else {
             self.warner.record_drop();
             self.warner.warn_if_due(|count| {
                 warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
@@ -350,7 +347,8 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
-        match &self.tx {
+        let tx = self.tx.lock().clone();
+        match tx {
             Some(tx) => {
                 self.warner.flush(|count| {
                     warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
