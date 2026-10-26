@@ -5,7 +5,7 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN REVIEW (draft PR #546)
+Status: IN REVIEW (PR #546; ready for review)
 
 ## Purpose / big picture
 
@@ -288,8 +288,21 @@ Known uncertainties identified upfront, with mitigations.
   was `Review rate limited`; its summary said the next included review would be
   available in 11 minutes. No PR #546 request appeared in `comenq list` at that
   observation.
+- [x] (2026-10-26) On published head `9e6aedf`, hosted run `40268201847`
+  passed for Python 3.12, 3.13, 3.14 and the allowed-failure 3.15 lane; exact-
+  head CodeScene result `8124868` passed all six quality gates. The source
+  candidate immediately before the plan-only status updates passed all six
+  sequential local gates (797 passed, 5 skipped; 66 snapshots); the later
+  plan-only candidates passed format, format-check, Markdown and Mermaid gates.
+  CodeRabbit's current-head status is rate limited; queued request `e8d2e60c`
+  is pending and formal review remains outstanding.
+- [x] (2026-10-26) Focused status assessment `6408366475` on head `9e6aedf`
+  accepted the historical readiness and queue observations and identified the
+  stale draft label, pending-review action and missing exact-head validation
+  record. Those corrections are made here; confirmation on this updated plan
+  candidate remains pending.
 - [ ] (2026-10-26) Obtain candidate-bound confirmation of the current plan
-  status, request formal review through `comenq-coderabbit` when eligible,
+  corrections, await the existing queued formal-review request `e8d2e60c`,
   reconcile all findings, obtain the applicable approval, and merge.
 
 ## Surprises & discoveries
@@ -444,9 +457,11 @@ not identify this as a runtime defect. The proof-specific assessment was
 received on `fb5a5df` and identified precision corrections recorded below. The
 later candidate-bound assessment accepted the manual argument within its stated
 scope; no machine proof is claimed. Focused outcome confirmation on published
-head `5a3825e` is recorded above. PR #546 is now ready for review; the outcome
-confirmation for the current head and formal review remain pending. The
-CodeRabbit status at the readiness transition was rate limited.
+head `5a3825e` is recorded above. The status assessment on `9e6aedf` accepted
+the dated historical observations and requested the three corrections recorded
+in Progress. Confirmation that those corrections are sufficient on the updated
+plan candidate remains pending, as does formal CodeRabbit review; the existing
+queue request is `e8d2e60c`.
 
 ## Context and orientation
 
