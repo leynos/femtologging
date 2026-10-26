@@ -57,12 +57,13 @@ class StdlibHandlerAdapter:
     its filter chain before ``emit()`` is invoked.
 
     Femtologging dispatches asynchronously on a dedicated worker thread. It
-    captures the producer's ``contextvars`` context before queueing and runs the
-    wrapped handler's entire ``handle()`` call inside it. For handlers
-    retaining base ``Handler.handle()`` behaviour, this includes the filter
-    chain and, when that chain accepts, the I/O lock and ``emit()`` invocation.
-    Any formatting performed by the concrete handler also runs in this
-    context. Other thread-local state, such as ``threading.local``, remains
+    captures the producer's ``contextvars`` context before queueing and invokes
+    the wrapped handler's ``handle()`` method inside it. For handlers retaining
+    base ``Handler.handle()`` behaviour, this includes the filter chain and,
+    when that chain accepts, the I/O lock and ``emit()`` invocation. Formatting
+    performed synchronously within that call also uses the captured context.
+    Work deferred to another thread or process requires separate context
+    propagation. Other thread-local state, such as ``threading.local``, remains
     worker-local.
 
     Parameters
