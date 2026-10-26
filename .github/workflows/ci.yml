@@ -172,3 +172,8 @@ jobs:
           # the stack-info snapshot records pytest's own call stack, and
           # an xdist worker replaces it with execnet frames.
           pytest-workers: ''
+
+  build-wheels:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-wheels.yml
