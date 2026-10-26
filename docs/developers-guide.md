@@ -59,10 +59,13 @@ Write an example so it runs on its own. Bind every name it uses, and show a
 value rather than an assertion, so a wrong answer is a failure and not a silent
 pass.
 
-Skip an example only with a written reason beside it. `capture_records` is the
-one skipped here: running it would need a live logger, an emission through the
-process-wide macros, and a bounded wait on the worker that delivers the record,
-and an example that waits on a race is the shape
+Skip an example only with a written reason beside it. `capture_records` used to
+be skipped because its process-wide macro emission needed a bounded wait for a
+Python handler, and `flush_handlers()` held the GIL during that wait
+([issue 451](https://github.com/leynos/femtologging/issues/451)). The flush
+barrier now releases the GIL, so the example exercises enqueue, flush, and
+inspection directly without waiting on a delivery race. An example that waits
+on a race is the shape
 [issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
 skipped example is inert text, never compiled, so it cannot be trusted the way
 an executed one can.

@@ -10,7 +10,6 @@ the step module stays focused on step definitions.
 from __future__ import annotations
 
 import re
-import time
 import typing as typ
 from contextlib import contextmanager
 from types import MappingProxyType
@@ -197,16 +196,15 @@ def capture_records(logger: FlushableLogger) -> cabc.Iterator[RecordCollector]:
 
     Examples
     --------
-    The example is skipped rather than executed. Running it would need a live
-    logger, an emission through the process-wide macros, and then a bounded
-    wait on the worker that delivers the record, because `flush_handlers`
-    cannot synchronize here (issue #451). An example that waits on a race is
-    the shape issue #476 is about. The step module that owns this helper does
-    all three inside a scenario, where the waiting is named.
-
-    >>> logger = get_logger("app")  # doctest: +SKIP
-    >>> with capture_records(logger) as collector:  # doctest: +SKIP
-    ...     info("hello", name="app")
+    >>> from femtologging import get_logger
+    >>> logger = get_logger("doctest.capture_records")
+    >>> with capture_records(logger) as collector:
+    ...     _ = info("hello", name="doctest.capture_records")
+    ...     flush_succeeded = logger.flush_handlers()
+    >>> flush_succeeded
+    True
+    >>> collector.records[0]["message"]
+    'hello'
 
     """
     logger.clear_handlers()
@@ -220,35 +218,12 @@ def capture_records(logger: FlushableLogger) -> cabc.Iterator[RecordCollector]:
         logger.remove_handler(collector)
 
 
-# Bounded wait for the worker to deliver a record. `flush_handlers()` cannot be
-# used to synchronize here: it blocks while holding the GIL, so a Python handler
-# can never run during the wait and the flush always times out
-# (https://github.com/leynos/femtologging/issues/451). Until that is fixed, the
-# only available synchronization is to observe the collector itself.
-_DELIVERY_TIMEOUT_S: typ.Final = 2.0
-_DELIVERY_POLL_S: typ.Final = 0.01
-
-
-def wait_for_record(collector: RecordCollector) -> None:
-    """Block until the collector holds a record, or the timeout expires.
-
-    This is the command half of the pair: it performs the waiting and returns
-    nothing, leaving `latest_key_values` a pure query over captured state.
-    """
-    deadline = time.monotonic() + _DELIVERY_TIMEOUT_S
-    while not collector.records and time.monotonic() < deadline:
-        time.sleep(_DELIVERY_POLL_S)
-    assert collector.records, (
-        f"no record delivered within {_DELIVERY_TIMEOUT_S}s of emitting"
-    )
-
-
 def latest_key_values(collector: RecordCollector) -> dict[str, object]:
     """Return the most recently captured record's key-values payload.
 
     This is a pure query over already-captured state: it neither waits nor
-    flushes. Callers run `wait_for_record` first, as a named command, to
-    ensure the worker has delivered the record.
+    flushes. Callers flush the logger before querying to ensure the worker has
+    delivered the record.
 
     Returns
     -------
