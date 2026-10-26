@@ -148,14 +148,12 @@ dispatch and ancestor propagation. Chains run in configured attachment order
 against an evolving record. Each accepted handler receives a snapshot after its
 own chain, so later handlers see enrichment from earlier chains while later
 enrichment cannot mutate snapshots already captured for earlier handlers. These
-configured filter callbacks remain producer-side. Python-backed handlers may
-also invoke Python synchronously in their workers under the captured context,
-including for stdlib filters, formatters and emission called inline by the
-handler. Work deferred to another thread or process requires separate context
-propagation. Configured handler filters are femtologging's supported
-application-wide enrichment attachment point, distinct from full stdlib
-`Handler.addFilter` worker semantics. For migration guidance, see the
-[0.2.0 migration guide](../v0-2-0-migration-guide.md).
+configured filter callbacks remain producer-side; Python-backed handlers may
+still invoke Python in their workers under the captured context, including for
+their own stdlib filters, formatters, and emission. Configured handler filters
+are femtologging's supported application-wide enrichment attachment point,
+distinct from full stdlib `Handler.addFilter` worker semantics. For migration
+guidance, see the [0.2.0 migration guide](../v0-2-0-migration-guide.md).
 
 ## Migration plan
 
@@ -216,14 +214,26 @@ Python-backed handler that does not declare this capability. The default
 `handle_with_context()` fails closed for Python-backed handlers, preventing
 context from being silently discarded. `PyHandler` copies the captured context
 immediately before each callback and invokes both its structured and legacy
-handler paths through `Context.run()`. Python calls made synchronously from
-those callbacks, including inline stdlib filters, formatters and emission, run
-inside the producer's context. Work deferred to another thread or process
-requires separate context propagation. Copying the context for each callback
-also prevents one handler from mutating the context observed by the next.
+handler paths through `Context.run()`. This keeps the entire Python handler
+call, including stdlib filters, formatters, and emission, inside the producer's
+context while preventing one handler from mutating the context observed by the
+next.
 
 This is a narrow exception to the original queue-boundary constraint against
 retaining Python objects: only the captured `contextvars.Context` is retained
 for queued records that need Python-backed dispatch. Python callback filters
 still run on the producer thread, and arbitrary Python record objects are not
 retained across the queue.
+
+## Addendum: synchronous stdlib handler context (2026-10-26)
+
+This clarification does not change the accepted producer-path filter decision
+or the 2026-10-14 handler-filter addendum. For a Python-backed handler, the
+worker invokes `StdlibHandlerAdapter.handle_record()` through `Context.run()`
+before the adapter calls the wrapped handler. A direct call to
+`handle_record()` does not establish that context. With the base
+`logging.Handler.handle()` behaviour, its filter chain and `emit()` invocation
+run synchronously in the captured producer context, as does formatting done
+during that call. A handler that defers formatting or emission to another
+thread or process needs separate context propagation. Handler subclasses that
+override `handle()` define their own internal behaviour.

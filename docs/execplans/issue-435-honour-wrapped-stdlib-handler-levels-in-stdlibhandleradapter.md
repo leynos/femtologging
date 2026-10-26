@@ -299,10 +299,33 @@ Known uncertainties identified upfront, with mitigations.
 - [x] (2026-10-26) Focused status assessment `6408366475` on head `9e6aedf`
   accepted the historical readiness and queue observations and identified the
   stale draft label, pending-review action and missing exact-head validation
-  record. Those corrections are made here; confirmation on this updated plan
-  candidate remains pending.
-- [ ] (2026-10-26) Obtain candidate-bound confirmation of the current plan
-  corrections, await the existing queued formal-review request `e8d2e60c`,
+  record. Those corrections were published in `3333255`.
+- [x] (2026-10-26) Formal CodeRabbit review `5647538903` assessed base
+  `d234990` and head `3333255`, then returned `CHANGES_REQUESTED`. It left four
+  current documentation threads: clarify the worker `Context.run()` boundary,
+  remove an unsupported red-stage matrix claim, attribute the logger-level gate
+  to `FemtoLogger`, and describe values from the producer's captured context.
+  Its pre-merge warnings also request developer documentation and ADR-history
+  corrections, broader level tests, and a disposition on a rejected-record
+  counter. The private-docs test retains 1,800-second limits for each of its
+  two sequential Clippy invocations and a 3,620-second outer pytest timeout;
+  the outer limit allows both child limits plus 20 seconds of cleanup margin.
+  This keeps pytest from terminating the contract test before its own nested
+  lint limits, particularly while shared compiler admission queues work. The
+  scope disposition for this test-reliability correction remains open. The
+  observability request also needs a maintainer disposition because it adds an
+  API outside the issue's stated parity change.
+- [x] (2026-10-26) Formatted review-correction candidate with worktree diff
+  `7dfa083d` passed `make check-fmt`, `make test` (799 passed, 5 skipped, 66
+  snapshots), `make typecheck`, `make lint`, `make markdownlint`, and
+  `make nixie`. CodeScene delta found no issues. Logs are under `/tmp` with the
+  `issue-435-honour-wrapped-stdlib-handler-levels-in-stdlibhandleradapter-2`
+  suffix. The earlier lint on the unformatted `3fabde56` candidate has no
+  recoverable exit status and is not counted. This candidate is not yet
+  committed or published; the timeout-scope and observability dispositions
+  remain open.
+- [ ] (2026-10-26) Finish the review corrections, reconcile the observability
+  disposition, await the existing queued formal-review request `e8d2e60c`,
   reconcile all findings, obtain the applicable approval, and merge.
 
 ## Surprises & discoveries
@@ -332,19 +355,17 @@ Known uncertainties identified upfront, with mitigations.
 
 ## Decision log
 
-- Decision: Perform the red stage by adding the new tests first and confirming
-  they fail against the unmodified adapter, rather than writing a throwaway
-  reproducer script. Rationale: the tests are deliverables anyway, so the red
-  stage doubles as the regression evidence required by the issue's acceptance
-  criteria, and it avoids leaving scratch artefacts in the tree. Date/Author:
-  2026-10-14, implementing agent.
+- Decision: Add the regression tests before changing the adapter. The retained
+  baseline evidence is the single `INFO` manual reproduction in
+  `Artefacts and notes`; isolated red-stage test transcripts were not retained.
+  Date/Author: 2026-10-14, implementing agent.
 - Decision: Do not add a `@pytest.mark.xfail(strict=True)` marker to force the
   red stage. Rationale: the tests are added in the same commit series as the
   fix; a strict expected-failure marker would have to be added and then removed
   in the green step, and it would falsely imply an unresolved defect to a later
-  reader. Running the new tests before the production edit demonstrates the
-  failure directly, and the failing output is captured in this plan's
-  `Artefacts and notes`. Date/Author: 2026-10-14, implementing agent.
+  reader. The retained baseline evidence is only the single `INFO` manual
+  reproduction; isolated failing-test output was not retained, so no red-stage
+  matrix is claimed. Date/Author: 2026-10-14, implementing agent.
 - Decision: Read `handler.level` on every `handle_record()` call rather than
   caching it at construction. Rationale: a cached copy would break the
   documented stdlib pattern of calling `setLevel()` after the handler is
@@ -459,9 +480,14 @@ later candidate-bound assessment accepted the manual argument within its stated
 scope; no machine proof is claimed. Focused outcome confirmation on published
 head `5a3825e` is recorded above. The status assessment on `9e6aedf` accepted
 the dated historical observations and requested the three corrections recorded
-in Progress. Confirmation that those corrections are sufficient on the updated
-plan candidate remains pending, as does formal CodeRabbit review; the existing
-queue request is `e8d2e60c`.
+in Progress. Formal review `5647538903` then assessed head `3333255` and
+returned `CHANGES_REQUESTED` with four documentation threads and four pre-merge
+warnings. The current work addresses the documentation findings and adds
+generated threshold and `setLevel()` coverage. It retains the private-docs
+timeout because that test runs two Clippy invocations sequentially, each with a
+1,800-second limit; its 3,620-second outer timeout accommodates both plus
+cleanup. The out-of-scope disposition for that test-reliability change and the
+counter request both remain open; the existing queue request is `e8d2e60c`.
 
 ## Context and orientation
 
@@ -556,173 +582,84 @@ Trace links:
 
 ```plaintext
 Issue#435-AC1 (reject below handler level)     -> EP-M1 -> TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold
+                                                        -> test_handler_level_gate_matches_numeric_boundary_for_all_mapped_levels
 Issue#435-AC2 (preserve NOTSET semantics)      -> EP-M1 -> TestHandlerLevelThreshold::test_notset_handler_accepts_low_severity_levels
 Issue#435-AC3 (single handle/filter path)      -> EP-M1 -> TestHandleRecordFilterAndLockContract::test_handle_and_filter_counts_by_level
 Issue#435-AC4 (ERROR handler level matrix)     -> EP-M1 -> TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold
 Issue#435-AC5 (dynamic setLevel)               -> EP-M1 -> TestDynamicHandlerLevel::test_set_level_after_construction_applies
+                                                        -> test_generated_set_level_dispatch_sequences_use_live_threshold
 Issue#435-AC6 (document both thresholds)       -> EP-M2 -> docs/users-guide.md, docs/v0-1-0-migration-guide.md
 ```
 
 ## Verification plan
 
-The behaviour under change is a single guard in one method. It introduces one
-invariant and one ordering lemma, and it depends on one non-trivial axiom about
-the standard library. No formal prover is used: the guard is a direct numeric
-comparison, and the tests provide finite behavioural evidence. They exhaust all
-six femtologging levels against an `ERROR` handler, and separately exercise
-`NOTSET`, dynamic `setLevel()`, and filter behaviour. This test matrix does not
-enumerate every possible numeric handler threshold and is not an unbounded
-proof.
+This change is validated by behavioural tests. No formal proof or model checker
+is used.
 
-Axiom A1: in CPython's `logging`, the base `Handler.handle()` implementation
-evaluates the handler's filter chain, does *not* consult `self.level`, and
-acquires `self.lock` only when that chain accepts the record. This axiom
-applies to handlers that retain that base dispatch, filtering and locking
-behaviour; subclasses may override `handle()`, filtering or locking. The
-adapter's own gate still controls whether it calls the wrapped handler's
-`handle()` once, but makes no claim about an overriding subclass's internal
-path. Project behaviour depends on the base-handler interaction. Tests
-corroborate dispatch and filter behaviour through real stdlib handler types,
-but they do not establish the base method's implementation. The lock ordering
-is a trusted standard-library assumption; current tests exercise but do not
-directly count lock acquisitions. An instrumented lock wrapper could observe
-acquisition through the real base `Handler.handle()` path, providing bounded
-behavioural evidence rather than proof of the stdlib implementation. The
-argument is scoped to CPython's unmodified `logging` module. The CI matrix
-covers Python 3.12 through 3.15; it does not establish behaviour for other
-implementations or versions.
+### External behaviour relied on
 
-Invariant I1 (level gate): for each dispatch whose record translation and level
-comparison complete normally, let `L` be the constructed `LogRecord`'s numeric
-level and `H` the wrapped handler's `level` value observed at the gate. The
-adapter calls `handle()` exactly once if and only if `L >= H`. When `L < H`, it
-does not call `handle()`, so the handler's filter, lock and emit path is not
-entered. What a level-accepted handler call does, including whether it emits,
-depends on that handler's implementation and filtering.
+CPython's `logging.Logger.callHandlers()` dispatches a record to a handler only
+when `record.levelno >= handler.level`. The adapter mirrors that ordering for
+one wrapped handler: it builds a `LogRecord`, reads the handler's current
+`level`, skips `handle()` below the threshold, and calls `handle()` once when
+the comparison accepts the record.
 
-Lemma L1 (ordering): record translation precedes the handler-level test. The
-test then runs before the adapter calls the wrapped handler. For `L < H`, no
-`handle()` call occurs and the handler's filter, lock and emit path is not
-entered. For `L >= H`, the adapter calls `handle()` exactly once. For a handler
-retaining the base `Handler.handle()` behaviour, normal execution evaluates the
-filter chain once; if the chain accepts, the handler acquires its I/O lock and
-invokes `emit()`, while a rejection prevents lock acquisition and the `emit()`
-invocation. A filter exception does not establish acceptance or emission, and an
-`emit()` invocation does not guarantee successful output. The chain may
-short-circuit, so this does not claim that every attached filter runs.
+For a handler retaining the base `logging.Handler.handle()` implementation, the
+stdlib evaluates its filter chain and acquires the I/O lock only when the chain
+accepts. A subclass that overrides `handle()` controls its own path. This
+CPython behaviour is the external contract used here; the repository tests
+exercise the adapter boundary but do not prove the stdlib implementation, lock
+internals, or behaviour on other Python implementations. Hosted CI covers
+CPython 3.12 through 3.15.
 
-Invariant I2 (live configuration): the gate reads `handler.level` at dispatch
-time; define `H` as the value observed by that read. For a fixed adapter, a
-sequential `setLevel()` call between two `handle_record()` calls makes the
-second call use the updated level without reconstructing the adapter. It need
-not change that record's acceptance verdict. The four-dispatch test
-demonstrates selected acceptance changes only. Concurrent updates are not
-atomic with the comparison or later handler work, because the gate runs before
-the handler's I/O lock.
+### Regression tests
 
-- Obligation: I1 for a handler fixed at `logging.ERROR`.
-  Method: parameterized test over the finite partition of all six femtologging
-  levels. Rationale: the partition is total over the adapter's level vocabulary
-  and each row has distinct semantic meaning (four rejects, one accept at the
-  boundary, plus `CRITICAL` above it), so enumeration is exhaustive rather than
-  a sample. Domain: handler level `logging.ERROR`; logger level `"TRACE"`;
-  record levels `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
-  Artefact: `tests/test_stdlib_adapter_levels.py`,
-  `TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold`.
-  Evidence: before the change, every row emits and the four reject rows fail;
-  after the change, all six rows pass. Discharge condition: the four
-  below-`ERROR` rows produce empty captured output and the two at-or-above rows
-  produce exactly the expected formatted line. Non-vacuity: the logger
-  threshold is `"TRACE"`, the most permissive setting, so no row is
-  pre-filtered by the logger and every rejection is attributable to the new
-  handler-level gate. The `WARNING` row is the nearest miss immediately below
-  the boundary and the `ERROR` row is the boundary itself, so both sides of the
-  comparison are exercised. The negative control is the `red` run recorded in
-  `Artefacts and notes`, where the identical test body succeeds only for rows
-  whose expected outcome the broken code happens to match.
+- `TestHandlerLevelThreshold::test_error_handler_rejects_below_threshold`
+  checks all six mapped femtologging levels against an `ERROR` handler while
+  the logger threshold is `TRACE`.
+- `test_handler_level_gate_matches_numeric_boundary_for_all_mapped_levels`
+  uses Hypothesis to generate numeric handler levels and checks every mapped
+  femtologging level, including handler thresholds immediately below, at, and
+  above each mapped level.
+- `test_generated_set_level_dispatch_sequences_use_live_threshold` generates
+  sequences of `setLevel()` calls and record levels, then compares handler
+  calls and emitted messages with the numeric threshold rule.
+- `TestHandlerLevelThreshold::test_notset_handler_accepts_low_severity_levels`
+  and `TestDynamicHandlerLevel::test_set_level_after_construction_applies` cover
+  `NOTSET` and named level changes.
+- `TestHandleRecordFilterAndLockContract` observes handle and filter counts for
+  accepted, below-threshold, and filter-rejected records. It exercises the real
+  base-handler path but does not count lock acquisitions.
 
-- Obligation: I1 at the `NOTSET` boundary, where the handler accepts mapped
-  records beginning at `TRACE`. Method: a named parameterized test for `TRACE`,
-  `DEBUG` and `INFO`, plus a second named test asserting the pre-existing
-  default-handler case in the sibling module. Rationale: `NOTSET` is numeric
-  zero and means that the handler imposes no level threshold. The test pins
-  this observable contract without requiring a particular implementation of the
-  zero threshold. Domain: handler level `logging.NOTSET`; records at `TRACE`
-  (stdlib level 5, the lowest mapped level), `DEBUG` and `INFO`; logger
-  threshold `"TRACE"`. Artefact: `tests/test_stdlib_adapter_levels.py`,
-  `TestHandlerLevelThreshold::test_notset_handler_accepts_low_severity_levels`,
-  and `tests/test_stdlib_adapter_records.py`,
-  `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
-  Evidence: the tested records appear with stdlib level numbers 5, 10 and 20;
-  the dynamic test also captures `TRACE` after resetting the handler to
-  `NOTSET`. Non-vacuity: `TRACE` is the lowest mapped level, so its acceptance
-  verifies that `NOTSET` does not discard the least severe femtologging record.
-
-- Obligation: L1, covering one `handle()` call after a passing level gate and
-  no handler path after a rejected level gate. Method: named tests spying on
-  `handler.handle` with `mock.patch.object()` and counting filter consultations
-  with `CountingFilter`. Rationale: this is a side-effect-ordering claim, not
-  an input/output claim, so counting observed invocations through the real
-  stdlib objects is a direct and stronger observation than inspecting output
-  text. Domain: handler level `logging.ERROR`; one accepted record (`ERROR`),
-  one rejected record (`DEBUG`), and one `CRITICAL` record that passes the
-  level gate but is rejected by a filter. Artefact:
-  `tests/test_stdlib_adapter_levels.py`,
-  `TestHandleRecordFilterAndLockContract`. Evidence: after the folded-in
-  rejection, a `DEBUG` record leaves the `handle()` count and the filter-call
-  count unchanged and emits nothing; an `ERROR` record increments both by
-  exactly one and emits exactly one record; the filter-rejected `CRITICAL`
-  record increments `handle()` once, increments the installed filter's count
-  once, and emits nothing. Non-vacuity: the test asserts counts rather than
-  "not zero", so an implementation that calls `handle()` twice or that skips
-  filters entirely fails. The filter-rejected row proves the installed filter
-  is reached through `Handler.handle()`, so "the gate ran but the filter never
-  did" cannot pass unnoticed. Residual gap: the handler's I/O lock is exercised
-  implicitly by the real `Handler.handle()` implementation rather than counted
-  by the current tests. An instrumented lock wrapper could observe acquisition
-  through that real path, but that would remain bounded test evidence rather
-  than proof of the stdlib lock implementation. No lock-count test is included
-  because the current source-based argument does not require one.
-
-- Obligation: I2 for a live `setLevel()` sequence.
-  Method: named test over four dispatches across three handler-level states,
-  with two `setLevel()` calls. Rationale: this is an ordering property over a
-  short operation sequence rather than a property over generated inputs;
-  enumerating the operations explicitly is clearer than generating them, and
-  the sequence is short enough to be read as a specification. Domain: adapter
-  constructed with a `NOTSET` handler; initial `INFO` dispatch;
-  `setLevel(logging.ERROR)` then `INFO` and `ERROR` dispatches;
-  `setLevel(logging.NOTSET)` then a `TRACE` dispatch. Artefact:
-  `tests/test_stdlib_adapter_records.py`,
-  `TestDynamicHandlerLevel::test_set_level_after_construction_applies`.
-  Evidence: the initial `INFO` is emitted; the `INFO` after tightening to
-  `ERROR` is rejected; the `ERROR` record is emitted; and the `TRACE` record
-  after restoring `NOTSET` is emitted with `levelno == 5`. Non-vacuity: the
-  sequence covers the initial, tightened, and restored handler-level states. A
-  construction-time cache of the initial `NOTSET` level fails the second
-  dispatch by accepting the `INFO` record; the `ERROR` boundary and restored
-  `NOTSET` state are also checked explicitly.
+The Hypothesis properties sample generated levels, thresholds, and operation
+sequences; they are bounded behavioural checks, not exhaustive numeric
+enumeration. The explicit `ERROR` table remains the complete regression record
+for the six mapped record levels at that handler threshold.
 
 ## Plan of work
 
-The change is small enough to be a single behavioural unit, so there are two
-implementation milestones with a documentation milestone alongside.
+The handler-level gate is one behavioural change. The review corrections add
+property coverage, update context documentation, restore ADR history, and
+retain the private-docs test timeout needed to cover its two sequential Clippy
+invocations, each of which has an independent 1,800-second limit.
 
 Stage A (understanding) is complete: the defect, the three adapter test
 modules, and the two documentation sections have been read, and the CPython
 reference behaviour (`Logger.callHandlers()`) has been identified as the
 specification to match.
 
-Stage B (red) adds the threshold matrix and filter-contract tests to
-`tests/test_stdlib_adapter_levels.py`, and the dynamic `setLevel()` test to
-`tests/test_stdlib_adapter_records.py`. Run them against the unmodified adapter
-to confirm they fail for the intended reason.
+Stage B (regression coverage) adds the threshold matrix and filter-contract
+tests to `tests/test_stdlib_adapter_levels.py`, and the dynamic `setLevel()`
+test to `tests/test_stdlib_adapter_records.py`. The retained baseline evidence
+is the `INFO` manual reproduction recorded in `Artefacts and notes`; no per-row
+red-stage transcript is claimed.
 
 Stage C (green) makes the smallest production change that satisfies the tests:
 one guard in `StdlibHandlerAdapter.handle_record()`.
 
-Stage D (documentation and wider validation) updates the two documentation
-files and runs the full commit gates.
+Stage D (documentation and wider validation) updates the developer guide, ADR
+addendum, migration guide, architecture design and this plan, then runs the
+full commit gates and Markdown checks.
 
 ### Milestone EP-M1: the level gate is enforced and tested
 
@@ -758,17 +695,18 @@ Changes:
 - `tests/test_stdlib_adapter_levels.py`: keep the filter/`handle()` call-count
   contract test beside the level threshold cases.
 
-Acceptance evidence: the two focused test modules pass, and the red run for the
-same tests before the production change is recorded in `Artefacts and notes`.
+Acceptance evidence: the focused test modules pass. The baseline evidence is
+the single `INFO` manual reproduction recorded in `Artefacts and notes`; the
+red-stage transcripts for the full matrix were not retained.
 
 Conformance check:
 
 - Requirements satisfied: Issue#435 acceptance criteria 1 through 5.
 - Design still followed: the adapter keeps its single `handle_record` dispatch
   path and still delegates to `Handler.handle()`.
-- Upstream assumptions still valid for handlers retaining base dispatch,
-  filtering and locking behaviour: CPython `Handler.handle()` semantics per
-  Axiom A1.
+- External behaviour relied on: CPython's `logging.Logger.callHandlers()`
+  level comparison and the base `logging.Handler.handle()` filter-and-lock
+  path, as described in the verification plan.
 - No unapproved public interface or dependency change: `handle_record()`
   signature and the package's public exports are unchanged.
 - No unapproved trust boundary or persisted-format change: none introduced.
@@ -880,18 +818,21 @@ ERROR e
 CRITICAL c
 ```
 
-Before the change the same program produces six lines. The corresponding
-automated check is the parameterized test named in the verification plan.
+The retained baseline reproduction emits one `INFO` record through an `ERROR`
+handler, as recorded in `Artefacts and notes`. A six-level pre-change
+transcript was not retained; the post-change six-row behaviour is checked by
+the parameterized test named in the verification plan.
 
 Quality criteria:
 
-- Tests: `make test` passes, including the new tests. The new tests fail before
-  the production change and pass after.
-- Verification: finite tests corroborate selected cases of I1, I2 and L1. The
-  source branch supports the scoped I1 statement; A1 remains a trusted
-  base-handler assumption, with filter behaviour exercised and lock ordering
-  based on the stdlib implementation rather than direct instrumentation. No
-  machine-checked proof discharge is claimed.
+- Tests: `make test` passes, including the new tests. The retained baseline
+  reproduction is the single `INFO` case recorded above; no broader red-stage
+  result is claimed.
+- Verification: deterministic and Hypothesis tests check mapped levels,
+  numeric boundaries, handler dispatch, filters, and sequential `setLevel()`
+  changes. CPython's stdlib level and base-handler behaviour are explicit
+  external assumptions; the tests do not prove stdlib internals or lock
+  acquisition.
 - Lint/typecheck: `make check-fmt`, `make lint` and `make typecheck` all pass
   with no warnings.
 - Performance: the guard adds one integer comparison and one attribute read
@@ -1039,4 +980,7 @@ without source changes. On 2026-10-26, published head `5a3825e` passed
 `make check-fmt`, `make lint`, `make typecheck`, and `make test` (797 passed, 5
 skipped, 66 snapshots); hosted run `40261703860` and CodeScene result `8124222`
 passed. Focused outcome confirmation `6407235083` found no remaining stale
-status entry. Formal PR review and the guarded merge remain.
+status entry. Formal review `5647538903` of head `3333255` returned
+`CHANGES_REQUESTED`; its documentation threads and pre-merge warnings must be
+reconciled before the guarded merge. The existing review queue request is
+`e8d2e60c`.
