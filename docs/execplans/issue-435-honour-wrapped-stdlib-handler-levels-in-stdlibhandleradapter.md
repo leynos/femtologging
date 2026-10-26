@@ -307,14 +307,11 @@ Known uncertainties identified upfront, with mitigations.
   to `FemtoLogger`, and describe values from the producer's captured context.
   Its pre-merge warnings also request developer documentation and ADR-history
   corrections, broader level tests, and a disposition on a rejected-record
-  counter. The private-docs test retains 1,800-second limits for each of its
-  two sequential Clippy invocations and a 3,620-second outer pytest timeout;
-  the outer limit allows both child limits plus 20 seconds of cleanup margin.
-  This keeps pytest from terminating the contract test before its own nested
-  lint limits, particularly while shared compiler admission queues work. The
-  scope disposition for this test-reliability correction remains open. The
-  observability request also needs a maintainer disposition because it adds an
-  API outside the issue's stated parity change.
+  counter. At that reviewed head, the private-docs test still had 1,800-second
+  limits for each sequential Clippy invocation and a 3,620-second outer pytest
+  timeout. The timeout change was later reverted after review identified it as
+  out of scope. The observability request still needs a maintainer disposition
+  because it adds an API outside the issue's stated parity change.
 - [x] (2026-10-26) Formatted review-correction candidate with worktree diff
   `7dfa083d` passed `make check-fmt`, `make test` (799 passed, 5 skipped, 66
   snapshots), `make typecheck`, `make lint`, `make markdownlint`, and
@@ -324,9 +321,23 @@ Known uncertainties identified upfront, with mitigations.
   recoverable exit status and is not counted. This candidate is not yet
   committed or published; the timeout-scope and observability dispositions
   remain open.
-- [ ] (2026-10-26) Finish the review corrections, reconcile the observability
-  disposition, await the existing queued formal-review request `e8d2e60c`,
-  reconcile all findings, obtain the applicable approval, and merge.
+- [x] (2026-10-26) The queued incremental CodeRabbit review `e8d2e60c` completed
+  as review `5648087668` on `fa210fb` with an approval and no actionable inline
+  comments. Its pre-merge checks retained two warnings: the unrelated
+  private-docs timeout and a rejected-record observability counter. This
+  worktree reverts the timeout change and adds a v0.2.0 migration note; the
+  counter still needs a maintainer disposition.
+- [x] (2026-10-26) The formatted worktree candidate at diff hash
+  `ecdfab8c` passed all seven sequential local gates: `make fmt`,
+  `make check-fmt`, `make test` (799 passed, 5 skipped, 66 snapshots, one
+  existing pytest warning), `make typecheck`, `make lint`, `make markdownlint`
+  (61 files, zero errors), and `make nixie`. CodeScene delta found no issues.
+  Hosted CI `40276091980` and CodeScene `8125549` are green on `fa210fb`; the
+  current uncommitted changes still need exact-head hosted validation.
+- [ ] (2026-10-26) Commit and publish the gated timeout revert, migration note,
+  and plan update. Await exact-head hosted CI and CodeScene, candidate-bound
+  assessments and a current-head formal review; obtain the observability scope
+  disposition before merge.
 
 ## Surprises & discoveries
 
@@ -483,11 +494,14 @@ the dated historical observations and requested the three corrections recorded
 in Progress. Formal review `5647538903` then assessed head `3333255` and
 returned `CHANGES_REQUESTED` with four documentation threads and four pre-merge
 warnings. The current work addresses the documentation findings and adds
-generated threshold and `setLevel()` coverage. It retains the private-docs
-timeout because that test runs two Clippy invocations sequentially, each with a
-1,800-second limit; its 3,620-second outer timeout accommodates both plus
-cleanup. The out-of-scope disposition for that test-reliability change and the
-counter request both remain open; the existing queue request is `e8d2e60c`.
+generated threshold and `setLevel()` coverage. The incremental review of
+`fa210fb` completed with approval and no actionable inline comments; its
+pre-merge checks retained two warnings for the private-docs timeout and a
+rejected-record counter. This worktree reverts the unrelated timeout change,
+restoring the original 600-second child and 620-second pytest limits, and adds
+a v0.2.0 migration note. The counter request still needs a maintainer
+disposition. The formatted candidate passed all seven sequential local gates
+and CodeScene delta; exact-head hosted validation is pending publication.
 
 ## Context and orientation
 
@@ -639,9 +653,9 @@ for the six mapped record levels at that handler threshold.
 ## Plan of work
 
 The handler-level gate is one behavioural change. The review corrections add
-property coverage, update context documentation, restore ADR history, and
-retain the private-docs test timeout needed to cover its two sequential Clippy
-invocations, each of which has an independent 1,800-second limit.
+property coverage, update context documentation, restore ADR history, and add
+the required v0.2.0 migration note. The private-docs timeout adjustment was
+reverted to keep this change within the issue's scope.
 
 Stage A (understanding) is complete: the defect, the three adapter test
 modules, and the two documentation sections have been read, and the CPython
