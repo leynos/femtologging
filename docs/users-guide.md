@@ -29,9 +29,23 @@ your process exits.
 
 ## Architectural overview
 
-- Each `FemtoLogger` owns a bounded queue (capacity 1 024) and a worker thread
-  that drains records and invokes handlers. Calls to `logger.log()` simply
-  enqueue a record and return immediately.
+- Loggers share a small, fixed pool of dispatch shards, one worker thread
+  each, sized from the machine's available parallelism (one to four). A logger
+  is assigned a shard rather than owning a thread, so the threads a process
+  spends on logging follow the machine rather than the number of loggers it has
+  created. Calls to `logger.log()` enqueue a record on the logger's shard and
+  return immediately.
+- Each shard's queue holds 1,024 records multiplied by the number of shards in
+  the pool, so a four-shard pool gives each shard a depth of 4,096. Each logger
+  may hold at most half of its shard's depth, never more than 1,024, so the
+  pool grows with the machine while any one logger's share does not. The
+  per-logger limit stops one logger from consuming every permit, so an
+  over-active logger cannot crowd the loggers sharing its shard out of the
+  queue. It does not stop a handler that never returns from blocking the
+  shard's single worker while holding its permits: the other loggers on that
+  shard can then exhaust their own allowances and drop records even though the
+  shard has permits left. Separate shards, and the machine-derived shard count,
+  are what keep one stuck handler from stopping the whole process.
 - Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
   `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
   queues and worker threads so file IO, stdout/stderr writes, and socket
@@ -52,12 +66,52 @@ your process exits.
 
 - Use `get_logger(name)` to obtain a singleton `FemtoLogger`. Names must not be
   empty, start or end with `.`, or contain consecutive dots.
+- Names are limited to 255 bytes and 32 dot-separated segments, and may not
+  contain control characters. That covers the ASCII controls (`0x00`–`0x1F` and
+  `0x7F`), the C1 controls (`U+0080`–`U+009F`), and `U+2028`/`U+2029`, the
+  Unicode line and paragraph separators. A name that breaks any of these is
+  rejected with `ValueError`. The rule matters even though a logger never
+  writes its own name: the name is rendered into every formatted record, and
+  Python's `str.splitlines()` splits on all of these characters, not only on
+  `\n`, so a name carrying any of them could split one record into two lines of
+  output.
+- Name loggers after stable components — a module, subsystem, or service — not
+  after the data flowing through them. A registry that maps one logger per
+  request, tenant, user, or plug-in identifier grows for the life of the
+  process, which is a memory leak a caller controls by accident:
+
+  ```python
+  # Do not do this: one logger per request, retained forever.
+  logger = get_logger(f"requests.{request_id}")
+  logger.info("handled")
+
+  # Do this instead: a fixed name, with the identifier as a field.
+  logger = get_logger("requests")
+  logger.info("handled", extra={"request_id": request_id})
+  ```
+
+- The registry holds at most 10,000 named loggers and never evicts one, so a
+  logger keeps its handlers, level, and drop counters for the life of the
+  process. Once the cap is reached, a request for a name that does not yet
+  exist is refused with `RuntimeError`. Names already registered keep working,
+  and the `"root"` logger is always available and does not count against the
+  cap.
 - Logger parents are derived from dotted names. `get_logger("api.v1")` creates
   a parent `api` logger that ultimately propagates to `root`.
 - Call `logger.set_propagate(False)` to stop parent propagation. The default is
   to bubble records to ancestors, just like the stdlib.
 - `reset_manager()` clears all registered loggers. It is intended for tests and
   is not thread-safe.
+
+Loggers share a small fixed pool of dispatch threads rather than each owning
+one, so the number of threads the logging system uses depends on the machine
+rather than on how many loggers exist. A record is dropped instead of blocking
+the caller when either bound is reached: when the logger has spent its own
+in-flight allowance, or when its shard has no free slot. Either condition is
+enough on its own, so a logger at its allowance drops records while its shard
+still has room, and a shard with every permit taken drops records from loggers
+that are below theirs. The drop is counted, and `logger.get_dropped()` reports
+it.
 
 ### Emitting records
 
@@ -188,19 +242,24 @@ fields with safe defaults does not require a version bump.
 - The built-in handlers implement the Rust-side `FemtoHandlerTrait`. Python
   handlers can be attached by supplying any object that exposes a callable
   `handle(logger_name: str, level: str, message: str)` method.
-- Python handlers run inside the logger’s worker thread. Ensure they are
-  thread-safe and fast; slow handlers block the logger worker and can cause
-  additional record drops.
+- Python handlers run inside a shared dispatch worker, not the calling thread.
+  Ensure they are thread-safe and fast: a slow handler delays every logger
+  assigned to the same shard, not only the logger it is attached to. (Loggers
+  are spread across the shards, so the blast radius is the shard rather than
+  the process.) Records that arrive while a shard is at its bound are dropped
+  and counted.
 - `logger.add_handler(handler)` accepts either a Rust-backed handler or a Python
   handler as described above. Use `logger.remove_handler(handler)` or
   `logger.clear_handlers()` to detach them. Removals only affect records that
   are enqueued after the call because previously queued items already captured
   their handler list.
-- Use `logger.get_dropped()` to inspect how many records have been discarded
-  because the logger queue was full or shutting down.
+- Use `logger.get_dropped()` to inspect records refused at dispatch admission:
+  the logger's allowance or shard permits were exhausted, the shard queue was
+  full or gone, or an inherited logger could not start the process-local pool
+  after `fork`.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
-  records rejected because the queue was full or shutting down.
+  dispatch-admission refusals.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
@@ -227,7 +286,7 @@ fields with safe defaults does not require a version bump.
 
 - Constructor signature:
   `FemtoFileHandler(path, capacity=1024, flush_interval=1, policy="drop")`. The
-  flush interval counts _records_, not seconds.
+  flush interval counts *records*, not seconds.
 - `policy` controls queue overflow handling:
   - `"drop"` (default) discards records and raises `RuntimeError`.
   - `"block"` blocks the caller until the worker makes room.
@@ -250,7 +309,7 @@ fields with safe defaults does not require a version bump.
   `FemtoRotatingFileHandler(path, options=HandlerOptions(…))`.
 - `HandlerOptions` fields:
   - `capacity`, `flush_interval`, and `policy` mirror `FemtoFileHandler`.
-  - `rotation=(max_bytes, backup_count)` enables rollover when _both_ values
+  - `rotation=(max_bytes, backup_count)` enables rollover when *both* values
     are greater than zero. Set `(0, 0)` to disable rotation entirely.
 - Rotation renames the active log file to `.1`, shifts older backups up to
   `backup_count`, and truncates the live file. If opening a fresh file fails
@@ -346,7 +405,7 @@ class Collector:
         self.records: list[tuple[str, str, str]] = []
 
     def handle(self, logger: str, level: str, message: str) -> None:
-        # Runs inside the FemtoLogger worker thread
+        # Runs on the worker for this logger's shared dispatch shard.
         self.records.append((logger, level, message))
 
 
@@ -403,8 +462,8 @@ sequenceDiagram
     end
 ```
 
-_Figure 1: Capability detection at registration and dispatch based on cached
-result._
+*Figure 1: Capability detection at registration and dispatch based on cached
+result.*
 
 This next diagram illustrates why mutating the handler after registration has
 no effect—the capability was already cached:
@@ -433,8 +492,8 @@ sequenceDiagram
     Note over PyHandler,PythonHandlerObject: New handle_record is not used because capability was cached at registration
 ```
 
-_Figure 2: Mutating the handler after registration does not change dispatch
-behaviour._
+*Figure 2: Mutating the handler after registration does not change dispatch
+behaviour.*
 
 ### Using standard library (stdlib) `logging.Handler` subclasses
 
@@ -476,12 +535,12 @@ exist.  Custom key-value pairs from `metadata.key_values` are propagated into
 the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
 `%(request_id)s`) and filters.
 
-The adapter runs on femtologging's dedicated worker thread. Before a record is
-queued, femtologging captures the producer's `contextvars` context and runs the
-wrapped handler's entire `handle()` call inside it, including its filters,
-formatters, and `emit()`. A `contextvars.ContextVar` therefore observes the
-value set by the log caller, even though the handler dispatch itself is
-asynchronous on the worker thread.
+The adapter runs on the worker for the logger's dispatch shard, which may also
+serve other loggers. Before a record is queued, femtologging captures the
+producer's `contextvars` context and runs the wrapped handler's entire
+`handle()` call inside it, including its filters, formatters, and `emit()`. A
+`contextvars.ContextVar` therefore observes the value set by the log caller,
+even though the handler dispatch itself is asynchronous on a shared worker.
 
 **Limitations:**
 
@@ -492,7 +551,8 @@ asynchronous on the worker thread.
   capture these values.  `relativeCreated` is recomputed from
   `metadata.timestamp` when present, so elapsed-time values can be accurate.
 - Only `contextvars` are propagated. Other thread-local state, including
-  `threading.local`, remains the dedicated worker thread's state.
+  `threading.local`, belongs to the shared shard worker and may be observed by
+  handlers serving different loggers on that shard.
 
 ## Configuration options
 
@@ -706,17 +766,20 @@ For upgrade steps covering handler filters and formatter builders, see the
   `stack_info` are supported as keyword-only arguments to `log()` and the
   convenience methods.
 - Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
-  and run on dedicated worker threads.  Existing stdlib `logging.Handler`
-  subclasses can be reused via
+  and run on the fixed pool of dispatch workers. Loggers assigned to the same
+  shard share its worker. Existing stdlib `logging.Handler` subclasses can be
+  reused via
   [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
   which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
-- The `dictConfig` schema lacks incremental updates and handler levels. It
-  supports registered formatter attachment; `fileConfig` is still cut down and
-  does not support formatter declarations.
-- Queue capacity is capped (1 024 per logger/handler). The stdlib blocks the
-  emitting thread; femtologging drops records and emits warnings instead.
-- Only percent-style formatting is implemented. Brace and template styles are
-  not available; supply a callable formatter for more complex output.
+- The `dictConfig` schema supports registered handler filters and formatter
+  attachment, but lacks incremental updates and handler levels. `fileConfig` is
+  cut down and does not support formatter declarations.
+- Dispatch capacity is bounded. Each logger may hold at most half of its
+  shard's depth in flight, capped at 1,024 records, and each handler queue
+  holds 1,024 records by default. The stdlib blocks the emitting thread;
+  femtologging drops records and emits warnings instead.
+- Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
+  string, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
 
@@ -730,7 +793,7 @@ For upgrade steps covering handler filters and formatter builders, see the
   reduce Rust context fields and explicit metadata that contributes to
   validation. For queue-full/back-pressure drops, increase handler capacities
   or switch to blocking/timeout policies when drops are unacceptable.
-- File-based handlers count `flush_interval` in _records_. If you need
+- File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use
   them only when you are comfortable with logging back pressure slowing the

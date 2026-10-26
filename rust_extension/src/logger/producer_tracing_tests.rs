@@ -17,7 +17,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::prelude::*;
 
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
-use super::{FemtoLogger, HandlerAttachment, QueuedRecord};
+use super::{FemtoLogger, HandlerAttachment};
 use crate::filters::python_callback::PythonCallbackFilter;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::{FemtoHandlerTrait, HandlerError};

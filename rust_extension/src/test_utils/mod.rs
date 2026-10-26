@@ -9,5 +9,10 @@ pub mod collecting_handler;
 #[cfg(feature = "python")]
 pub mod frame_assertion_helpers;
 pub mod frame_test_helpers;
+#[cfg(any(
+    all(feature = "python", feature = "log-compat"),
+    all(feature = "python", feature = "tracing-compat")
+))]
+pub(crate) mod isolated_child;
 #[cfg(feature = "python")]
 pub mod traceback_test_helpers;

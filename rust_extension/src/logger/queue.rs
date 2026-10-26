@@ -2,7 +2,6 @@
 
 use std::{any::Any, sync::Arc};
 
-use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 #[cfg(feature = "python")]
 use pyo3::{Py, PyAny};
@@ -12,30 +11,6 @@ use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
 };
-
-/// Handler used internally to acknowledge logger flush operations.
-pub(crate) struct FlushAckHandler {
-    /// Signals that the worker has reached the flush barrier.
-    ack: Sender<()>,
-}
-
-impl FlushAckHandler {
-    /// Create an internal handler that acknowledges its next queued record.
-    pub(crate) fn new(ack: Sender<()>) -> Self {
-        Self { ack }
-    }
-}
-
-impl FemtoHandlerTrait for FlushAckHandler {
-    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.ack.send(());
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 /// Deliver one handler's producer-filter snapshot through the existing queue
 /// payload without changing the public [`QueuedRecord`] shape.
@@ -97,7 +72,7 @@ impl FemtoHandlerTrait for HandlerRecordSnapshot {
     }
 }
 
-/// Record queued for processing by the worker thread.
+/// Record queued for dispatch with the handlers captured when it was logged.
 pub struct QueuedRecord {
     pub record: FemtoLogRecord,
     pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,

@@ -1,7 +1,11 @@
 //! Core logger implementation for the FemtoLogger system.
 //!
-//! This module provides the [`FemtoLogger`] struct which handles log message
-//! filtering, formatting, and asynchronous output via a background thread.
+//! This module provides the [`FemtoLogger`] struct, which handles log message
+//! filtering, formatting, and asynchronous output through the process-wide
+//! dispatch pool. A logger uses one shard of that pool rather than owning a
+//! thread, so the threads a process spends on logging follow the machine rather
+//! than the number of loggers it has created. If a logger crosses a `fork`, it
+//! rebinds to the child process's pool before its next dispatch.
 #![allow(
     clippy::too_many_arguments,
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
@@ -10,6 +14,9 @@
 #[cfg(feature = "python")]
 mod context_snapshot;
 mod convenience_methods;
+mod dispatcher;
+#[cfg(not(loom))]
+mod pid_reservation;
 mod producer;
 mod py_handler;
 mod python_helpers;
@@ -24,28 +31,32 @@ use std::sync::Arc;
 
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-#[cfg(all(test, not(loom)))]
-use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
 
+#[cfg(all(test, not(loom)))]
+use crate::log_record::FemtoLogRecord;
 use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
-use crate::sync::{JoinHandle, Mutex, RwLock, Sender};
+use crate::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+
+pub use dispatcher::DispatcherError;
+#[cfg(all(
+    test,
+    not(loom),
+    any(feature = "log-compat", feature = "tracing-compat")
+))]
+pub(crate) use dispatcher::worker_count_for_test;
+pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test))]
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
-pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot};
-
-/// Maximum number of records held before producers report a dropped record.
-const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
-/// Maximum time a flush waits for the worker's acknowledgement, in milliseconds.
-const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
+pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -55,37 +66,43 @@ pub struct FemtoLogger {
     /// Parent logger name for dotted hierarchy.
     #[pyo3(get)]
     parent: Option<String>,
-    /// Shared formatter used by producer threads before records enter the queue.
+    /// Formatter shared by records emitted through this logger.
     formatter: SharedFormatter,
-    /// Atomically readable level threshold updated by logger configuration calls.
+    /// Current severity threshold, stored atomically for concurrent logging.
     level: AtomicU8,
-    /// Whether records are copied to the dotted-name parent after local dispatch.
+    /// Whether accepted records are also sent to the parent logger.
     propagate: AtomicBool,
     /// Lock-protected live handlers; each queued record owns the snapshot it captured.
     handlers: Arc<RwLock<Vec<HandlerAttachment>>>,
     /// Filters applied only to calls made through this logger before dispatch.
     filters: Arc<RwLock<Vec<Arc<dyn FemtoFilter>>>>,
-    /// Number of records rejected because the worker queue could not accept them.
+    /// Number of records refused because the dispatch budget was exhausted.
     dropped_records: AtomicU64,
-    /// Number of records dropped because Python context capture failed.
+    /// Number of records dropped because Rust context payload validation failed.
     context_dropped_records: AtomicU64,
-    /// Rate-limits warnings emitted for queue drops across concurrent producers.
+    /// Rate limiter for warnings about refused dispatch records.
     drop_warner: RateLimitedWarner,
-    /// Producer-owned provider used to snapshot Python context for queued handlers.
+    /// Captures Python context for queued handlers when they need it.
     #[cfg(feature = "python")]
     context_snapshot_provider: Arc<dyn ContextSnapshotProvider>,
-    /// Counts records rejected when capturing producer Python context fails.
+    /// Number of attempts that failed while capturing Python context.
     #[cfg(feature = "python")]
     context_capture_failures: AtomicU64,
-    /// Rate-limits warnings for context-capture failures independently of queue drops.
+    /// Rate limiter for warnings about failed context captures.
     #[cfg(feature = "python")]
     context_capture_warner: RateLimitedWarner,
-    /// Producer endpoint for records; taking it during drop prevents new sends.
-    tx: Option<Sender<QueuedRecord>>,
-    /// Worker shutdown signal sent before the worker join during logger drop.
-    shutdown_tx: Option<Sender<()>>,
-    /// Mutex-protected worker handle so dropping the logger can join without a lock held.
-    handle: Mutex<Option<JoinHandle<()>>>,
+    #[cfg(not(loom))]
+    /// Inline process-specific shard state, refreshed after a fork.
+    dispatch: worker::DispatchState,
+    #[cfg(loom)]
+    /// A Loom model's shard is owned by the logger and shut down on drop.
+    shard: Arc<Shard>,
+    /// In-flight allowance used by this logger in its Loom model.
+    ///
+    /// Ordinary builds keep the budget with the shard in [`DispatchState`],
+    /// so the two can be replaced together after a fork.
+    #[cfg(loom)]
+    budget: Arc<LoggerBudget>,
 }
 
 #[allow(
@@ -95,10 +112,29 @@ pub struct FemtoLogger {
 #[pymethods]
 impl FemtoLogger {
     /// Create a new logger with the given name.
+    ///
+    /// Names must satisfy the same rules as
+    /// [`crate::manager::get_logger`]: at most
+    /// [`MAX_LOGGER_NAME_BYTES`](crate::manager::MAX_LOGGER_NAME_BYTES) bytes,
+    /// at most
+    /// [`MAX_LOGGER_NAME_SEGMENTS`](crate::manager::MAX_LOGGER_NAME_SEGMENTS)
+    /// dot-separated segments, no leading or trailing dot, no empty segment,
+    /// and no line-breaking character: any control character (C0, DEL or C1),
+    /// or the Unicode line and paragraph separators. A logger built this way
+    /// is not registered in the global manager, so it does not count against
+    /// the registry limit.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the name breaks the rules above.
+    /// RuntimeError
+    ///     If the process cannot start the shared dispatch pool.
     #[new]
     #[pyo3(text_signature = "(name)")]
-    pub fn new(name: String) -> Self {
-        Self::with_parent(name, None)
+    pub fn new(name: String) -> PyResult<Self> {
+        crate::manager::validate_logger_name(&name)?;
+        Ok(Self::with_parent(name, None)?)
     }
 
     /// Update the logger's minimum level.
@@ -177,7 +213,11 @@ impl FemtoLogger {
         self.clear_filters();
     }
 
-    /// Return the number of records dropped due to a full or shutting-down queue.
+    /// Return the number of records refused at dispatch admission.
+    ///
+    /// Counts exhausted logger allowance or shard permits, a full or
+    /// disconnected shard queue, and a failed replacement-pool start after
+    /// `fork`.
     ///
     /// Useful for tests and monitoring dashboards.
     #[pyo3(text_signature = "(self)")]
@@ -185,7 +225,7 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Return how many records were dropped because producer context capture failed.
+    /// Return how many records were dropped because Python context capture failed.
     #[cfg(feature = "python")]
     #[pyo3(text_signature = "(self)")]
     pub fn get_context_capture_failures(&self) -> u64 {
@@ -194,18 +234,17 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// First waits up to 2 seconds for the logger's dispatch shard to drain
+    /// the records already queued for it, then calls ``flush()`` on every
+    /// attached handler (each handler applies its own timeout).
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the worker drains in time and every handler flush
-    ///     succeeds.
-    ///     ``False`` when the worker queue cannot be drained (channel
-    ///     closed or timeout exceeded) or any handler flush returns
-    ///     ``False``.
+    ///     ``True`` when the dispatcher drains the queue in time and every
+    ///     handler flush succeeds. ``False`` when the queued work cannot be
+    ///     drained (the shard is gone or the wait times out) or any handler
+    ///     flush returns ``False``.
     ///
     /// Examples
     /// --------
@@ -216,7 +255,7 @@ impl FemtoLogger {
         py.detach(|| self.flush_handlers())
     }
 
-    /// Capture handler addresses for tests that verify attachment replacement.
+    /// Return handler identities so tests can detect replacement or reordering.
     fn handler_ptrs_for_test(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -240,8 +279,8 @@ impl FemtoLogger {
     ///
     /// # Errors
     ///
-    /// Returns [`HandlerError::MissingContextDispatch`] when a Python-backed
-    /// handler does not declare contextual dispatch support.
+    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] if a Python-backed
+    /// handler does not provide contextual dispatch support.
     pub fn add_handler(
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,
@@ -320,49 +359,26 @@ impl FemtoLogger {
             .map(|attachment| attachment.handler.clone())
             .collect()
     }
-
-    /// Clone the internal sender for use in tests.
-    ///
-    /// # Warning
-    /// Any cloned sender must be dropped before the logger can shut down.
-    /// Holding a clone alive after dropping the logger will prevent the worker
-    /// thread from exiting.
-    #[cfg(feature = "test-util")]
-    pub fn clone_sender_for_test(&self) -> Option<Sender<QueuedRecord>> {
-        self.tx.as_ref().cloned()
-    }
 }
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
-        }
-        self.tx.take();
-        // Drop the lock before joining the worker thread.
-        let handle = { self.handle.lock().take() };
-        if let Some(handle) = handle {
-            worker::join_worker(handle);
-        }
+        // A model's shard is the logger's own, so the drop is what ends the
+        // model thread and, by joining it, what guarantees the queued records
+        // were handled.
+        #[cfg(loom)]
+        self.shard.shut_down();
+        // A pool shard's worker is shared and stays, so the drop waits for what
+        // *this* logger queued — and only then. Waiting unconditionally would
+        // make every logger's drop wait on the whole shard's backlog, including
+        // other loggers' work: dropping ten thousand loggers at once would pay
+        // the barrier timeout ten thousand times over, each while holding the
+        // registry lock that is dropping them. A logger with nothing in flight
+        // has nothing of its own to drain.
+        #[cfg(not(loom))]
+        self.finish_dispatch_state();
     }
 }
-// These real-thread tests use crossbeam outside Loom; the heavy lane uses models.
-#[cfg(all(test, not(loom)))]
-#[path = "logger_tests.rs"]
-mod logger_tests;
-#[cfg(all(test, not(loom)))]
-#[path = "logger_tests_helpers.rs"]
-mod logger_tests_helpers;
-#[cfg(all(test, not(loom)))]
-#[path = "producer_rejection_tests.rs"]
-mod producer_rejection_tests;
-#[cfg(all(test, not(loom)))]
-#[path = "producer_tests.rs"]
-mod producer_tests;
-#[cfg(all(test, not(loom), feature = "tracing-compat"))]
-#[path = "producer_tracing_tests.rs"]
-mod producer_tracing_tests;
-#[cfg(all(test, not(loom)))]
-#[path = "worker_tests.rs"]
-mod worker_tests;
-// weave: run 'weave explain rust_extension/src/logger/mod.rs' for per-hunk detail, 'weave check' to verify your resolution
+
+#[cfg(test)]
+mod test_modules;

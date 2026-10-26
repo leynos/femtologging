@@ -11,7 +11,7 @@
 //! a full channel refuses `try_send`, a channel whose senders are all dropped
 //! drains and then reports disconnection, and a channel whose receivers are
 //! all dropped refuses sends. A zero capacity, which `crossbeam_channel`
-//! treats as a rendezvous, is raised to one; no handler builds a rendezvous
+//! treats as a rendezvous, is raised to one; no worker builds a rendezvous
 //! channel.
 //!
 //! The items are `pub` rather than `pub(crate)` because a `test-util` build
@@ -22,10 +22,7 @@ use std::collections::VecDeque;
 use std::sync::PoisonError;
 use std::time::Duration;
 
-use loom::{
-    sync::{Arc, Condvar, Mutex, MutexGuard},
-    thread::Thread,
-};
+use loom::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use crossbeam_channel::{
     RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError,
@@ -41,8 +38,6 @@ struct State<T> {
     senders: usize,
     /// Number of live receiver handles used to detect disconnection.
     receivers: usize,
-    /// Threads parked in `recv_either` until this channel changes.
-    selectors: Vec<Thread>,
     /// Threads blocked on the condition variable in `send` or `recv`.
     waiting: usize,
 }
@@ -61,17 +56,13 @@ impl<T> Shared<T> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Wake every thread waiting on this channel, by condition variable or
-    /// in `recv_either`, after `state` has changed.
+    /// Wake every thread waiting on this channel after `state` has changed.
     ///
     /// A notification nobody waits for is skipped: each one is a step Loom
     /// explores, and in the models most changes have no waiter.
     fn wake(&self, state: &mut State<T>) {
         if state.waiting > 0 {
             self.changed.notify_all();
-        }
-        for selector in state.selectors.drain(..) {
-            selector.unpark();
         }
     }
 
@@ -116,7 +107,6 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             capacity: capacity.max(1),
             senders: 1,
             receivers: 1,
-            selectors: Vec::new(),
             waiting: 0,
         }),
         changed: Condvar::new(),
@@ -220,15 +210,6 @@ impl<T> Receiver<T> {
             return Err(TryRecvError::Disconnected);
         }
         Err(TryRecvError::Empty)
-    }
-
-    /// Ask to be unparked the next time this channel changes.
-    ///
-    /// `recv_either` registers with both receivers, checks them again, and
-    /// only then parks, so a change between its check and its park still
-    /// wakes it.
-    pub fn wake_on_change(&self) {
-        self.shared.lock().selectors.push(loom::thread::current());
     }
 
     /// Dequeue the next message, waiting without a bound.

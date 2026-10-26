@@ -141,18 +141,23 @@ instead of rotting.
 
 The Rust extension is loaded as a Python extension module and has no `main`, so
 it has no composition root of its own. It has one all the same, in the tests:
-the point where a child process's environment is built. Clearing that
-environment is what makes a subprocess test hermetic, and a cleared environment
-has no `PATH`, so the child could not be found at all. That single read of the
-parent's `PATH`, at the site where the child's environment is composed, is the
-one sanctioned exception, and it carries the item-scoped attribute like any
-other. `option_env!` is not a way around it: it resolves at compile time and
-would bake in the building machine's `PATH`.
+the point where a child process's environment is built. The isolated test
+runner obtains the executable with `current_exe()` before clearing the child
+environment, so it does not read `PATH` to locate the child. The one sanctioned
+ambient read is Cargo's dynamic-library search path: `LD_LIBRARY_PATH` on Linux,
+`DYLD_FALLBACK_LIBRARY_PATH` on macOS, or `PATH` on Windows. The runner
+supplies it so a cleared child can load the same Python shared library as its
+parent. Tests may forward that value, under an item-scoped expectation, to the
+isolated child; they must still clear every other inherited variable.
 
-The exception is narrow on purpose. It covers the value a cleared environment
-cannot supply and nothing else; every other variable the child needs is set
-explicitly, and a second read for a different variable would be a new decision
-rather than an extension of this one.
+The exception is narrow on purpose. It covers only the platform-specific loader
+path the cleared environment cannot supply. Every other variable the child
+needs is set explicitly, and reading a different variable would require a
+separate decision. Although the loader variable is named `PATH` on Windows, the
+test executable has already been obtained through `current_exe()`. The loader
+path is set explicitly for the child, so a cleared environment does not need
+any other inherited value. `option_env!` is not a way around the rule: it
+resolves at compile time and would bake in the building machine's environment.
 
 ### Tests
 

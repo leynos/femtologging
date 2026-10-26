@@ -27,6 +27,10 @@ mod visitor;
 #[cfg(test)]
 mod tests;
 
+#[cfg(all(test, not(loom), feature = "python"))]
+#[path = "cardinality_tests.rs"]
+mod cardinality_tests;
+
 /// Message used when a tracing event has no `message` field.
 const FALLBACK_EVENT_MESSAGE: &str = "tracing event";
 

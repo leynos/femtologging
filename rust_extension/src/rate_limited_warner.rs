@@ -77,6 +77,14 @@ impl RateLimitedWarner {
     }
 
     /// Emit a warning if the rate limit interval has elapsed.
+    ///
+    /// Records dropped inside the interval are not forgotten: their count stays
+    /// pending and is reported with the next warning, so the figure is "records
+    /// affected since the last warning" rather than "records in the tick that
+    /// happened to warn". Clearing on a suppressed call would undercount
+    /// exactly the burst the limiter exists to summarize — a stream of
+    /// failures would report one per interval however many it lost. The count
+    /// includes the record whose call triggers the warning.
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
         let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
@@ -86,8 +94,6 @@ impl RateLimitedWarner {
                 warn(count);
             }
             self.last_warn.store(now, Ordering::Relaxed);
-        } else {
-            self.dropped.store(0, Ordering::Relaxed);
         }
     }
 
@@ -180,13 +186,20 @@ mod tests {
         let (warner, clock) = warner;
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
+        // Suppressed by the interval, but not forgotten: the count stays
+        // pending and is reported with the next warning.
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1]);
         clock.advance(1000);
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
-        assert_eq!(warnings, vec![1, 1]);
+        assert_eq!(
+            warnings,
+            vec![1, 2],
+            "the record suppressed with the interval must be counted by the \
+             warning that follows it, not discarded"
+        );
     }
 
     #[rstest]

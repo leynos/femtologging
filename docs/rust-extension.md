@@ -66,11 +66,22 @@ now splits responsibilities between:
 1. `mod.rs` — the public `FemtoLogger` surface, shared state, and PyO3 methods.
 2. `producer.rs` — producer-path level checks, filter evaluation, and
    dispatch.
-3. `worker.rs` — queue draining, shutdown coordination, and worker-thread
-   helpers.
+3. `worker.rs` — the logger's construction path: it resolves the shared pool
+   and stores the shard the logger was assigned.
+4. `dispatcher.rs` — the process-wide pool of dispatch shards, its fallible
+   startup, round-robin shard assignment, and the bound on how many shards a
+   machine may have.
+5. `dispatcher/shard/` — one shard: its bounded job queue and drain barrier
+   (`mod.rs`), the shard-wide permits and the per-logger in-flight budget
+   (`budget.rs`), and the worker loop that runs each handler under
+   `catch_unwind` (`worker.rs`). The drain barrier is what `Drop` and `flush()`
+   wait on.
 
-This refactor keeps the public API unchanged while making producer/worker
-contracts testable in isolation.
+The split matters beyond file size: shard cardinality is now a property of the
+machine rather than of the logger count, so `dispatcher.rs` is where the
+thread-per-logger amplification recorded in ADR 007 was removed. Producer and
+worker contracts also stay testable in isolation, since a test can be handed a
+pool of its own instead of the process-wide one.
 
 ## Builder composition
 
@@ -458,6 +469,10 @@ during application start-up to install a global Rust logger that forwards
 This installs a global logger for the entire Rust process. If another global
 logger is already installed, `setup_rust_logging()` raises `RuntimeError` and
 does not replace it. The call is idempotent after a successful install.
+
+Warnings from femtologging's own Rust targets are written to stderr when this
+bridge is installed. They are kept out of the handler pipeline to prevent a
+warning from recursively entering the logger that emitted it.
 
 Users building the extension from source may disable the bridge with
 `cargo build --no-default-features`, or re-enable it explicitly with

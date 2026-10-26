@@ -13,6 +13,10 @@ import pytest
 import femtologging
 from femtologging import FemtoFileHandler
 
+# This BDD step module is loaded as a plugin during collection, so register it
+# before pytest imports it and the assertion-rewrite hook can process it.
+pytest.register_assert_rewrite("tests.steps.logging_context_steps")
+
 warnings.filterwarnings(
     "ignore",
     message="'maxsplit' is passed as positional argument",

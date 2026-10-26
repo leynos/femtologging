@@ -40,8 +40,13 @@ sequenceDiagram
     participant FemtoLogger
 
     PythonAPI->>Manager: get_logger(py, name)
-    alt logger exists
+    Manager->>Manager: validate name (bytes, segments, control characters)
+    alt name is invalid
+        Manager-->>PythonAPI: raise ValueError
+    else logger exists
         Manager-->>PythonAPI: return existing FemtoLogger
+    else registry is at MAX_LOGGERS
+        Manager-->>PythonAPI: raise RuntimeError
     else logger does not exist
         Manager->>Manager: determine parent (dotted-name logic)
         Manager->>FemtoLogger: FemtoLogger::with_parent(name, parent)

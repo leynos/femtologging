@@ -158,7 +158,8 @@ mod tests {
     #[fixture]
     fn logger_with_handler() -> (FemtoLogger, Arc<CollectingHandler>) {
         log_context::clear_log_context_for_test();
-        let logger = FemtoLogger::new("macro.test".into());
+        let logger =
+            FemtoLogger::new("macro.test".into()).expect("test logger should be constructible");
         logger.set_level(crate::FemtoLevel::Debug);
         let handler = Arc::new(CollectingHandler::default());
         assert!(
@@ -245,7 +246,8 @@ mod tests {
     #[rstest]
     fn below_threshold_returns_none() {
         // Use default INFO level so DEBUG is filtered out.
-        let logger = FemtoLogger::new("macro.test".into());
+        let logger =
+            FemtoLogger::new("macro.test".into()).expect("test logger should be constructible");
         let handler = Arc::new(CollectingHandler::default());
         logger
             .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
