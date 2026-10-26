@@ -232,24 +232,29 @@ impl FemtoLogger {
         self.context_capture_failures.load(Ordering::Relaxed)
     }
 
-    /// Flush all handlers attached to this logger, releasing the GIL while waiting.
+    /// Flush all handlers attached to this logger, releasing the GIL while the
+    /// worker and handlers finish.
     ///
-    /// First waits up to 2 seconds for the logger's dispatch shard to drain
-    /// the records already queued for it, then calls ``flush()`` on every
-    /// attached handler (each handler applies its own timeout).
+    /// Waits up to 2 seconds for the worker to acknowledge the flush marker,
+    /// then calls ``flush()`` on every attached handler. The GIL is released
+    /// while waiting for the worker and while flushing handlers so Python
+    /// callbacks can run. The 2-second timeout bounds only the acknowledgement
+    /// wait; enqueueing the marker and flushing the handlers can take
+    /// additional time.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the dispatcher drains the queue in time and every
-    ///     handler flush succeeds. ``False`` when the queued work cannot be
-    ///     drained (the shard is gone or the wait times out) or any handler
-    ///     flush returns ``False``.
+    ///     ``True`` when the worker drains in time and every handler flush
+    ///     succeeds. ``False`` when the worker queue cannot be drained (channel
+    ///     closed or timeout exceeded) or any handler flush returns
+    ///     ``False``.
     ///
     /// Examples
     /// --------
     /// >>> logger.flush_handlers()
     /// True
+    #[cfg(feature = "python")]
     #[pyo3(name = "flush_handlers", text_signature = "(self)")]
     fn py_flush_handlers(&self, py: Python<'_>) -> bool {
         py.detach(|| self.flush_handlers())
@@ -268,9 +273,27 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// This call blocks until the worker acknowledges a flush marker and each
+    /// attached handler has flushed. The 2-second timeout bounds only the
+    /// acknowledgement wait; enqueueing the marker and flushing handlers can
+    /// take additional time.
+    ///
+    /// When Python handlers can be attached, callers that currently hold
+    /// Python access must detach before calling this method. Otherwise the
+    /// worker cannot acquire the GIL to run a Python handler.
+    ///
+    /// # Examples
+    ///
+    /// A Rust caller holding Python access detaches during the blocking flush:
+    ///
+    /// ```no_run
+    /// use _femtologging_rs::FemtoLogger;
+    /// use pyo3::Python;
+    ///
+    /// let logger = FemtoLogger::new(String::from("example"));
+    /// let flushed = Python::attach(|py| py.detach(|| logger.flush_handlers()));
+    /// assert!(flushed);
+    /// ```
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking()
     }
