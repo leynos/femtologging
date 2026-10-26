@@ -136,16 +136,15 @@ def test_flush_handlers_releases_gil_for_python_handlers(
         # Enqueue, flush, then inspect: polling first would mask a GIL deadlock.
         assert logger.flush_handlers(), "logger worker did not flush"
 
-        if isinstance(handler, RecordCollectingHandler):
-            payloads = [
-                (record["logger"], record["level"], record["message"])
-                for record in handler.records
-            ]
-        else:
-            payloads = handler.records
-        assert payloads == expected_payloads, (
-            f"Python handler captured unexpected payloads: {payloads!r}"
-        )
+        match handler:
+            case RecordCollectingHandler():
+                payloads = [
+                    (record["logger"], record["level"], record["message"])
+                    for record in handler.records
+                ]
+            case CollectingHandler():
+                payloads = handler.records
+        assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
     finally:
         logger.remove_handler(handler)
 
