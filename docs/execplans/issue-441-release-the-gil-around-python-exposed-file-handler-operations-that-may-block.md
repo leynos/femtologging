@@ -4,7 +4,7 @@ This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
 `Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
 `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 Related: [Issue #441](https://github.com/leynos/femtologging/issues/441)
 
@@ -186,10 +186,9 @@ for this issue; no new public signature or dependency is introduced.
 - [x] The review of `c6ebda9` found two scope overstatements: the user guide's
       GIL guarantee needed to name explicit Python calls, and the developer
       guide needed to acknowledge other blocking handler families. Both prose
-      findings are corrected; docs gates, commit, push, PR-body refresh, and a
-      clean review remain.
-- [ ] Pass the documentation gates, push the scope-clarification commit, and
-      obtain a clean CodeRabbit review on the updated PR head.
+      findings were corrected and pushed as `da7d568`; formatting, Markdownlint
+      and Nixie passed, the draft PR body was refreshed, and CodeRabbit reported
+      no findings on the updated head.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -309,8 +308,9 @@ working changes then reapplied without conflicts. The rebased branch reports
 The earlier six-gate run and CodeRabbit review apply to `a994236`, before this
 rebase. The post-cooldown reviews and follow-ups also completed on the rebased
 candidate. The close-on-close test follow-up passed all six deterministic gates
-and was pushed. The latest review identified two documentation-scope claims,
-which are recorded in `Progress` and corrected in the current worktree.
+and was pushed. The final two documentation-scope findings were corrected and
+pushed in `da7d568`; the docs gates passed and CodeRabbit reported no findings
+on that head.
 
 The earlier pre-rebase gate results did not apply to this dependency and lint
 matrix. The complete gate run on the rebased candidate is recorded in
