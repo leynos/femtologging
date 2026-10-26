@@ -70,15 +70,16 @@ fn send_bounded(
 
 impl FemtoHandlerTrait for FemtoFileHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let Some(tx) = &self.tx else {
+        let tx = self.tx.lock().clone();
+        let Some(tx) = tx else {
             log::warn!("FemtoFileHandler: handle called after close");
             return Err(HandlerError::Closed);
         };
         let command = FileCommand::Record(Box::new(record));
         match self.overflow_policy {
-            OverflowPolicy::Drop => send_bounded(tx, command, None),
-            OverflowPolicy::Block => send_blocking(tx, command),
-            OverflowPolicy::Timeout(dur) => send_bounded(tx, command, Some(dur)),
+            OverflowPolicy::Drop => send_bounded(&tx, command, None),
+            OverflowPolicy::Block => send_blocking(&tx, command),
+            OverflowPolicy::Timeout(dur) => send_bounded(&tx, command, Some(dur)),
         }
     }
 

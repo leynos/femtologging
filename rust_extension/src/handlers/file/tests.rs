@@ -219,20 +219,20 @@ fn build_from_worker_wires_handler_components() {
         overflow_policy: OverflowPolicy::Block,
     };
     let policy = handler_cfg.overflow_policy;
-    let mut handler = FemtoFileHandler::build_from_worker(
+    let handler = FemtoFileHandler::build_from_worker(
         writer,
         DefaultFormatter,
         handler_cfg,
         BuilderOptions::<SharedBuf>::default(),
     );
 
-    assert!(handler.tx.is_some());
-    assert!(handler.handle.is_some());
+    assert!(handler.tx.lock().is_some());
+    assert!(handler.handle.lock().is_some());
     assert_eq!(handler.overflow_policy, policy);
 
-    let tx = handler.tx.take().expect("tx missing");
+    let tx = handler.tx.lock().take().expect("tx missing");
     let done_rx = handler.done_rx.clone();
-    let handle = handler.handle.take().expect("handle missing");
+    let handle = handler.handle.lock().take().expect("handle missing");
 
     tx.send(FileCommand::Record(Box::new(FemtoLogRecord::new(
         "core",

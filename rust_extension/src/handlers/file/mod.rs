@@ -35,7 +35,7 @@ use pyo3::prelude::*;
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
-use crate::sync::{JoinHandle, Receiver, Sender, bounded};
+use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -55,12 +55,11 @@ use worker::{FileCommand, WorkerConfig, spawn_worker};
 /// configuration provided at construction time.
 #[pyclass]
 pub struct FemtoFileHandler {
-    /// Sends records and lifecycle commands to the worker; `None` means the
-    /// handler has begun closing and can no longer accept new commands.
-    tx: Option<Sender<FileCommand>>,
-    /// Owns the worker join handle so shutdown waits for buffered writes and
-    /// rotation work to finish.
-    handle: Option<JoinHandle<()>>,
+    /// Synchronizes Python methods that send to the worker with shutdown;
+    /// `None` means the handler no longer accepts new commands.
+    tx: Mutex<Option<Sender<FileCommand>>>,
+    /// Owns the worker join handle so only one concurrent close waits for it.
+    handle: Mutex<Option<JoinHandle<()>>>,
     /// Receives the worker's final completion signal after its terminal flush.
     done_rx: Receiver<()>,
     /// Selects the producer-side queue behaviour when delivery cannot proceed.
@@ -158,15 +157,8 @@ impl FemtoFileHandler {
     /// handler.close();
     /// ```
     #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let (tx, handle, done_rx) = {
-            let mut handler = slf.borrow_mut(py);
-            (
-                handler.tx.take(),
-                handler.handle.take(),
-                handler.done_rx.clone(),
-            )
-        };
+    fn py_close(&self, py: Python<'_>) {
+        let (tx, handle, done_rx) = self.take_shutdown_state();
         py.detach(move || close_file_worker(tx, handle, done_rx));
     }
 }
@@ -234,15 +226,16 @@ impl FemtoFileHandler {
     }
 
     pub fn flush(&self) -> bool {
-        match &self.tx {
-            Some(tx) => self.perform_flush(tx),
+        let tx = self.tx.lock().clone();
+        match tx {
+            Some(tx) => Self::perform_flush(&tx),
             None => false,
         }
     }
 
     /// Waits for the worker's flush acknowledgement without taking ownership of
     /// the worker thread.
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+    fn perform_flush(tx: &Sender<FileCommand>) -> bool {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -252,16 +245,12 @@ impl FemtoFileHandler {
         {
             return false;
         }
-        self.wait_for_flush_completion(&ack_rx, deadline)
+        Self::wait_for_flush_completion(&ack_rx, deadline)
     }
 
     /// Returns true only when the worker acknowledges the flush successfully
     /// before the caller's deadline.
-    fn wait_for_flush_completion(
-        &self,
-        ack_rx: &Receiver<io::Result<()>>,
-        deadline: Instant,
-    ) -> bool {
+    fn wait_for_flush_completion(ack_rx: &Receiver<io::Result<()>>, deadline: Instant) -> bool {
         let remaining = deadline.saturating_duration_since(Instant::now());
         matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
     }
@@ -277,7 +266,23 @@ impl FemtoFileHandler {
     /// when invoking it. Concurrent calls from multiple threads must be
     /// synchronized externally (for example, with a `Mutex`).
     pub fn close(&mut self) {
-        close_file_worker(self.tx.take(), self.handle.take(), self.done_rx.clone());
+        let (tx, handle, done_rx) = self.take_shutdown_state();
+        close_file_worker(tx, handle, done_rx);
+    }
+
+    /// Take shutdown ownership under short locks shared by Python methods.
+    fn take_shutdown_state(
+        &self,
+    ) -> (
+        Option<Sender<FileCommand>>,
+        Option<JoinHandle<()>>,
+        Receiver<()>,
+    ) {
+        (
+            self.tx.lock().take(),
+            self.handle.lock().take(),
+            self.done_rx.clone(),
+        )
     }
 
     /// Builds a handler from an existing worker writer and publishes its
@@ -303,8 +308,8 @@ impl FemtoFileHandler {
         let overflow_policy = config.overflow_policy;
         let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
-            tx: Some(tx),
-            handle: Some(handle),
+            tx: Mutex::new(Some(tx)),
+            handle: Mutex::new(Some(handle)),
             done_rx,
             overflow_policy,
         }
