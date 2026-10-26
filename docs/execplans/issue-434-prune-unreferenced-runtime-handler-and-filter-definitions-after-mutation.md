@@ -652,8 +652,11 @@ configured filter IDs.
 
 ## Outcomes & Retrospective
 
-Implementation is complete and the deterministic evidence is in hand; the draft
-pull request is the remaining deliverable.
+Implementation is complete, the deterministic evidence is in hand, and the pull
+request is delivered. Head `81c51f2` is pushed and the PR check suite is fully
+green: all four `build-test` lanes (Python 3.12 through 3.15), CodeScene, and
+Gecko Security. The final `coderabbit review --agent` on that head reviewed all
+26 changed files with zero findings.
 
 What landed, by requirement:
 
