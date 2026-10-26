@@ -437,12 +437,13 @@ blocked. The shard worker uses blocking `recv()` and has no idle polling tick.
 
 ## Releasing the GIL at the Python boundary
 
-The file handlers are the one place where a Python caller can wait on a Rust
-channel directly, so the bindings have to give the interpreter lock back for
-the duration of that wait. `FemtoFileHandler`'s `#[pymethods]` block, and the
-rotating and timed-rotating wrappers that delegate to it, take a
-`py: Python<'_>` token and use `py.detach(...)` around the three operations
-that can block:
+These file handlers let Python callers wait directly on a Rust channel, so
+their bindings give the interpreter lock back for the duration of those waits.
+Other Python-exposed handler families also have operations that may block; the
+HTTP, socket, and stream bindings remain follow-up work. `FemtoFileHandler`'s
+`#[pymethods]` block, and the rotating and timed-rotating wrappers that
+delegate to it, take a `py: Python<'_>` token and use `py.detach(...)` around
+the three operations that can block:
 
 - `handle()`, waiting on channel capacity under `OverflowPolicy::Block`
   (unbounded `Sender::send`) or `OverflowPolicy::Timeout` (`send_timeout`);
