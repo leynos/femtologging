@@ -310,28 +310,28 @@ pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
 ///
 /// Keeping the replacement under one write lock prevents readers from seeing
 /// a mixture of the old and new configuration.
+///
+/// Returns the displaced snapshot rather than dropping it here: handler
+/// destruction may flush output or join a worker thread, so the caller
+/// releases it after the lock, and a Python caller also releases the GIL
+/// first.
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
     handler_filter_ids: BTreeMap<String, Vec<String>>,
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
-) {
-    let previous = {
-        let mut mgr = MANAGER.write();
-        std::mem::replace(
-            &mut mgr.runtime,
-            RuntimeStateSnapshot {
-                handler_registry,
-                handler_filter_ids,
-                filter_registry,
-                logger_states,
-            },
-        )
-    };
-    // Handler destruction may flush output or join a worker thread, so it must
-    // not run while the manager write lock is held.
-    drop(previous);
+) -> RuntimeStateSnapshot {
+    let mut mgr = MANAGER.write();
+    std::mem::replace(
+        &mut mgr.runtime,
+        RuntimeStateSnapshot {
+            handler_registry,
+            handler_filter_ids,
+            filter_registry,
+            logger_states,
+        },
+    )
 }
 
 /// Flush every registered logger for the Rust `log` bridge; ignore failures.

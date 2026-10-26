@@ -30,11 +30,11 @@ use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
 
-#[cfg(all(test, not(loom)))]
-use crate::log_record::FemtoLogRecord;
 use crate::formatter::SharedFormatter;
 #[cfg(test)]
 use crate::level::FemtoLevel;
+#[cfg(all(test, not(loom)))]
+use crate::log_record::FemtoLogRecord;
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::RwLock;
@@ -263,4 +263,3 @@ impl Drop for FemtoLogger {
 
 #[cfg(test)]
 mod test_modules;
-// weave: run 'weave explain rust_extension/src/logger/mod.rs' for per-hunk detail, 'weave check' to verify your resolution

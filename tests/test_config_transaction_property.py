@@ -46,6 +46,30 @@ def _logger_state(name: str) -> LoggerState:
     )
 
 
+def _with_invalid_logger(
+    builder: ConfigBuilder, kind: str
+) -> tuple[ConfigBuilder, type[Exception], str]:
+    """Add an invalid logger scenario and return its expected error."""
+    match kind:
+        case "handler":
+            logger = LoggerConfigBuilder().with_handlers(["missing"])
+            return builder.with_logger("broken", logger), KeyError, "missing"
+        case "filter":
+            logger = LoggerConfigBuilder().with_filters(["missing"])
+            return builder.with_logger("broken", logger), KeyError, "missing"
+        case "name":
+            # ConfigBuilder wraps the manager's invalid-name ValueError in its
+            # public RuntimeError contract.
+            return (
+                builder.with_logger("broken..name", LoggerConfigBuilder()),
+                RuntimeError,
+                "consecutive dots",
+            )
+        case _:
+            message = f"unknown invalid_reference: {kind!r}"
+            raise ValueError(message)
+
+
 # This stateful property resets global workers between examples. It checks
 # atomicity, not elapsed time, so shared-host contention must not affect it.
 @settings(max_examples=25, deadline=None)
@@ -95,27 +119,9 @@ def test_failed_reconfiguration_preserves_generated_logger_state(
             .with_root_logger(LoggerConfigBuilder().with_level("ERROR"))
             .with_disable_existing_loggers(disable_existing_loggers)
         )
-        match invalid_reference:
-            case "handler":
-                failed = failed.with_logger(
-                    "broken", LoggerConfigBuilder().with_handlers(["missing"])
-                )
-                expected_error: type[Exception] = KeyError
-                expected_match = "missing"
-            case "filter":
-                failed = failed.with_logger(
-                    "broken", LoggerConfigBuilder().with_filters(["missing"])
-                )
-                expected_error = KeyError
-                expected_match = "missing"
-            case _:
-                # A malformed logger name must be rejected by the same
-                # preparation pass, after the generated logger plans are built.
-                failed = failed.with_logger("broken..name", LoggerConfigBuilder())
-                # ConfigBuilder wraps the manager's invalid-name ValueError in
-                # its public RuntimeError contract.
-                expected_error = RuntimeError
-                expected_match = "consecutive dots"
+        failed, expected_error, expected_match = _with_invalid_logger(
+            failed, invalid_reference
+        )
 
         with pytest.raises(expected_error, match=expected_match):
             failed.build_and_init()

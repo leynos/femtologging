@@ -77,20 +77,22 @@ impl ConfigBuilder {
         }
 
         let components = self.build_runtime_components()?;
-        let displaced = Python::attach(move |py| -> Result<_, ConfigError> {
+        Python::attach(move |py| -> Result<(), ConfigError> {
             let targets = self
                 .root_logger()
                 .map(|config| ("root", config))
                 .into_iter()
-                .chain(self.logger_builders().iter().map(|(name, config)| {
-                    (name.as_str(), config)
-                }));
+                .chain(
+                    self.logger_builders()
+                        .iter()
+                        .map(|(name, config)| (name.as_str(), config)),
+                );
             let plans = targets
                 .map(|(name, config)| self.prepare_logger_plan(name, config, &components))
                 .collect::<Result<Vec<_>, _>>()?;
             let loggers = self.pair_plans_with_loggers(py, plans)?;
 
-            Ok(manager::commit_configuration(
+            let displaced = manager::commit_configuration(
                 py,
                 manager::PreparedConfiguration {
                     loggers,
@@ -100,18 +102,12 @@ impl ConfigBuilder {
                     handler_filter_ids: components.handler_filter_ids,
                     filter_registry: components.built_filters,
                 },
-            ))
+            );
+            // Handler teardown can flush or join a worker, so release displaced
+            // references without the GIL now that the manager lock is gone.
+            displaced.drop_without_gil(py);
+            Ok(())
         })?;
-
-        // Handler teardown can flush or join a worker, so release all displaced
-        // references after the manager lock and Python attachment have ended.
-        let manager::DisplacedAttachments {
-            handlers,
-            filters,
-            unused_loggers,
-            runtime_state,
-        } = displaced;
-        drop((handlers, filters, unused_loggers, runtime_state));
         Ok(())
     }
 
@@ -335,4 +331,3 @@ impl ConfigBuilder {
         })
     }
 }
-// weave: run 'weave explain rust_extension/src/config/build.rs' for per-hunk detail, 'weave check' to verify your resolution

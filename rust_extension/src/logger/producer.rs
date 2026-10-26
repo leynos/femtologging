@@ -16,7 +16,6 @@ use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
 mod admission;
-
 mod handler_filters;
 
 #[cfg(all(test, not(loom)))]

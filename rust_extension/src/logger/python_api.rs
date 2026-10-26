@@ -173,4 +173,3 @@ impl FemtoLogger {
         self.filter_ptrs_for_test_native()
     }
 }
-// weave: run 'weave explain rust_extension/src/logger/python_api.rs' for per-hunk detail, 'weave check' to verify your resolution
