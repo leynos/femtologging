@@ -111,7 +111,7 @@ impl Worker {
         self.send_request(&payload);
     }
 
-    /// Encode with the configured format and fields; JSON input produces JSON.
+    /// Encode the record in the configured format, optionally limiting its fields.
     fn serialize_record(&self, record: &FemtoLogRecord) -> io::Result<String> {
         let fields = self.config.record_fields.as_deref();
         match self.config.format {
@@ -245,7 +245,7 @@ impl Worker {
         }
     }
 
-    /// Apply custom headers; configured `X-Trace-Id` is copied onto the request.
+    /// Apply every configured custom header to the request.
     fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
         for (key, value) in &self.config.headers {
             req = req.set(key, value);
