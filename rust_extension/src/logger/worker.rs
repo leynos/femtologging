@@ -40,6 +40,7 @@ use super::dispatcher::LOOM_RECORDS_PER_LOGGER;
 /// drop is what ends it.
 #[cfg(not(loom))]
 type ShardHandle = &'static Shard;
+/// A Loom model owns its shard so its worker ends with that model iteration.
 #[cfg(loom)]
 type ShardHandle = std::sync::Arc<Shard>;
 
@@ -209,13 +210,7 @@ impl FemtoLogger {
     #[cfg(not(loom))]
     pub fn with_parent(name: String, parent: Option<String>) -> Result<Self, DispatcherError> {
         let dispatcher = Dispatcher::shared()?;
-        Ok(Self::assembled(
-            name,
-            parent,
-            dispatcher.assign_shard(),
-            #[cfg(feature = "python")]
-            std::sync::Arc::new(ContextVarsSnapshotProvider),
-        ))
+        Ok(Self::from_shard(name, parent, dispatcher.assign_shard()))
     }
 
     /// Create a logger that owns the only shard in its Loom model.
@@ -233,13 +228,7 @@ impl FemtoLogger {
     pub fn with_parent(name: String, parent: Option<String>) -> Result<Self, DispatcherError> {
         let shard = Shard::start(0, LOOM_RECORDS_PER_LOGGER)
             .map_err(|source| DispatcherError::new(0, source))?;
-        Ok(Self::assembled(
-            name,
-            parent,
-            std::sync::Arc::new(shard),
-            #[cfg(feature = "python")]
-            std::sync::Arc::new(ContextVarsSnapshotProvider),
-        ))
+        Ok(Self::from_shard(name, parent, std::sync::Arc::new(shard)))
     }
 
     /// Create a logger with a test-controlled context snapshot provider.
@@ -266,9 +255,14 @@ impl FemtoLogger {
     /// Loom only, like the pool it borrows from.
     #[cfg(all(test, not(loom)))]
     pub(crate) fn assembled_for_test(name: String, shard: ShardHandle) -> Self {
+        Self::from_shard(name, None, shard)
+    }
+
+    /// Assemble a logger on a shard with the default context snapshot provider.
+    fn from_shard(name: String, parent: Option<String>, shard: ShardHandle) -> Self {
         Self::assembled(
             name,
-            None,
+            parent,
             shard,
             #[cfg(feature = "python")]
             std::sync::Arc::new(ContextVarsSnapshotProvider),

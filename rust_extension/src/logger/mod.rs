@@ -33,7 +33,7 @@ use crate::rate_limited_warner::RateLimitedWarner;
 #[cfg(feature = "python")]
 use context_snapshot::ContextSnapshotProvider;
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 use crate::log_record::FemtoLogRecord;
 use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the

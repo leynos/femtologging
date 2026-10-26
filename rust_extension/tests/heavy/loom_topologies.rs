@@ -22,7 +22,7 @@ use loom::thread;
 use _femtologging_rs::{FemtoHandlerTrait, FemtoLevel, FemtoLogger};
 
 use crate::loom_sink::SinkHandler;
-use crate::shared_buffer::loom::read_output;
+use crate::shared_buffer_loom::read_output;
 
 /// A loom-instrumented byte buffer shared with a stream handler.
 type LoomBuffer = LoomArc<LoomMutex<Vec<u8>>>;

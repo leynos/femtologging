@@ -1,5 +1,6 @@
 //! Test module declarations for logger dispatch and producer paths.
 
+#[cfg(not(loom))]
 use super::*;
 
 // These tests use real threads and `crossbeam_channel`; the heavy lane's models

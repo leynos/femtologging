@@ -18,7 +18,7 @@ use crate::manager;
 mod admission;
 mod handler_filters;
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 use super::HandlerAttachment;
 use super::{FemtoLogger, QueuedRecord};
 
@@ -288,7 +288,7 @@ impl FemtoLogger {
     }
 
     /// Exercise the production handler-filter chain without starting a worker.
-    #[cfg(test)]
+    #[cfg(all(test, not(loom)))]
     pub(super) fn filter_handlers_for_test(
         record: &mut FemtoLogRecord,
         handlers: Vec<HandlerAttachment>,

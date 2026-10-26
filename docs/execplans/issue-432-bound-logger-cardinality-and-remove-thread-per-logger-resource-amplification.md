@@ -1077,6 +1077,26 @@ did not produce a gate failure. `git diff --check` was clean. Hosted CI,
 CodeScene, and review-thread reconciliation remain pending publication of this
 candidate.
 
+2026-10-26: CodeScene review on the published `1b0b0fa` head found duplicated
+assembly in the normal and Loom `FemtoLogger::with_parent` implementations.
+Both now call `from_shard`, which owns the common logger assembly and is also
+used by the test-only constructor. Focused CodeScene review of the working tree
+reports a 10.00 file score with no issue; `cs delta main HEAD` still examines
+the old committed range and will be rerun after this fix is committed. The next
+`--cfg loom` Clippy attempt found a missing doc comment on the Loom
+`ShardHandle` alias. The following attempt exposed a stale shared-buffer module
+path in `loom_topologies.rs`, plus test-only imports and a helper that should
+not compile under Loom. The buffer import now uses `shared_buffer_loom`, and
+the imports/helper are gated to non-Loom tests. The fourth full sequential gate
+pass passed `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+`make markdownlint`, and `make nixie`; pytest reported 806 passed, 5 skipped,
+and 66 snapshots. Loom Clippy passed with `-D warnings`, and all six Loom
+models passed. The first model-run attempt compiled but could not load
+`libpython3.14.so.1.0`; rerunning with `LD_LIBRARY_PATH` set to the matching uv
+Python library directory passed all six models in 45.72 seconds. Hosted CI,
+CodeScene delta on the new commit, and review-thread reconciliation remain
+pending publication.
+
 ## Outcomes & retrospective
 
 All eight acceptance criteria in the issue are met and evidenced:
