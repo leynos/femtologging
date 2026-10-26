@@ -362,13 +362,23 @@ Known uncertainties identified upfront, with mitigations.
   sequentially: `make fmt`, `make check-fmt`, `make test` (804 passed, 5
   skipped; 66 snapshots), `make typecheck`, `make lint`, `make markdownlint`,
   and `make nixie`. Hosted CI run `40290417321` passed all four Python jobs;
-  CodeScene `8127201` and Gecko passed. This candidate contains the three
+  CodeScene `8127201` passed. Gecko's check was green, but its output says
+  scanning runs only when the PR opens and prior results still apply; no fresh
+  scan of this candidate is claimed. This candidate contains the three
   assessment-accuracy corrections and releases the GIL during worker-backed
   handler `flush()` and `close()` waits, with formatter coverage for both.
-- [ ] (2026-10-26) Obtain a candidate-bound completeness follow-up and separate
-  property-coverage assessment on the final published head. Obtain maintainer
-  disposition on the rejected-record counter warning, then request a current-
-  head formal CodeRabbit review, reconcile findings and approval, and merge.
+- [x] (2026-10-26) Completeness follow-up `6412124126`, response
+  `6412150831`, assessed base `d234990f` and head `e89edbb3`. It confirms no
+  remaining in-scope runtime defect or acceptance omission and that the prior
+  record-accuracy findings are resolved. It also requires qualifying Gecko's
+  green check: its output says scanning runs only at initial PR opening and
+  prior results still apply. The assessment did not run local gates or inspect
+  their logs, and it does not resolve the rejected-record counter warning.
+- [ ] (2026-10-26) Publish the Gecko evidence qualification, then obtain
+  candidate-bound confirmation and a separate bounded property-coverage
+  assessment on the resulting head. Obtain maintainer disposition on the
+  rejected-record counter warning, request a current-head formal CodeRabbit
+  review, reconcile findings and approval, and merge.
 
 ## Surprises & discoveries
 
