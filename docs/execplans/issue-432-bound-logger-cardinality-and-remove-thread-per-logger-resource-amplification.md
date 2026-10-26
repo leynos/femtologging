@@ -1,8 +1,13 @@
 # Bound logger cardinality and remove thread-per-logger amplification (issue 432)
 
-Status: REVIEW IN PROGRESS — PR #544 is open at `3663edc`; five distinct
-follow-up issues are fixed and pushed, and the full local gate sequence is
-green. The PR description and current-head review closure remain outstanding.
+Status: REVIEW IN PROGRESS — PR #544 is open. The latest verified
+implementation head is `6dd6b14`: its source commit `3663edc` passed the full
+local gate sequence, and hosted CI, CodeScene, and Gecko passed on `6dd6b14`.
+The PR description is current at that verified head. This status-only plan
+update passed the local gate set; its new published head needs fresh hosted
+checks and a candidate-bound completeness assessment. CodeRabbit was paused on
+`6dd6b14`, and the aggregate review decision still reflects an earlier change
+request.
 
 ## Purpose and big picture
 
@@ -234,8 +239,13 @@ Milestone 2 detail:
 - [x] Committed the fixes as `3663edc` and pushed over SSH. The authenticated
       identity was `leynos`, and the refreshed remote-tracking ref and `ls-remote`
       both matched the local commit.
-- [ ] Refresh the PR description, then reconcile current-head CI and reviews
-      before merging the exact approved head.
+- [x] Refreshed the PR description on `6dd6b14`; hosted CI, CodeScene and
+      Gecko passed on that head. Local gates passed on the source commit
+      `3663edc`, and the follow-up changed only this plan's delivery status.
+- [ ] Obtain a completeness assessment for the current base/head, recover the
+      paused formal review through the managed queue, reconcile the stale
+      change-request decision, and merge only after the exact-head approval
+      conditions hold.
 
 Re-gated at `467f406`:
 
@@ -1233,3 +1243,10 @@ current-head reviews remained outstanding.
 2026-10-26 publication: The review fixes were committed as `3663edc` and pushed
 over SSH. The remote branch head matches the local commit; PR description and
 current-head checks and reviews remain to be reconciled.
+
+2026-10-26 review follow-up: The PR description was refreshed on `6dd6b14`.
+Hosted CI, CodeScene and Gecko passed on that head. The local source gates
+passed on `3663edc`; `6dd6b14` changed only this plan's publication record. The
+candidate-bound completeness assessment and formal review remain open, with
+CodeRabbit's current-head status paused and the aggregate review decision still
+carrying an earlier change request.
