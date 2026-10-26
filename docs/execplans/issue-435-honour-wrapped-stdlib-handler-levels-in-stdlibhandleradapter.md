@@ -283,8 +283,14 @@ Known uncertainties identified upfront, with mitigations.
   CodeScene result `8124222` passed. CodeRabbit's focused confirmation
   `6407235083` confirmed the publication wording and found no other stale
   status entry.
-- [ ] (2026-10-26) Mark PR #546 ready, reconcile formal review and any findings,
-  obtain the applicable approval, and merge.
+- [x] (2026-10-26) PR #546 is ready for review; GitHub recorded the
+  `ready_for_review` event at 04:13:42Z. CodeRabbit's status on head `7b863f6`
+  was `Review rate limited`; its summary said the next included review would be
+  available in 11 minutes. No PR #546 request appeared in `comenq list` at that
+  observation.
+- [ ] (2026-10-26) Obtain candidate-bound confirmation of the current plan
+  status, request formal review through `comenq-coderabbit` when eligible,
+  reconcile all findings, obtain the applicable approval, and merge.
 
 ## Surprises & discoveries
 
@@ -438,8 +444,9 @@ not identify this as a runtime defect. The proof-specific assessment was
 received on `fb5a5df` and identified precision corrections recorded below. The
 later candidate-bound assessment accepted the manual argument within its stated
 scope; no machine proof is claimed. Focused outcome confirmation on published
-head `5a3825e` is recorded above. Formal PR review remains pending while the PR
-is a draft.
+head `5a3825e` is recorded above. PR #546 is now ready for review; the outcome
+confirmation for the current head and formal review remain pending. The
+CodeRabbit status at the readiness transition was rate limited.
 
 ## Context and orientation
 
