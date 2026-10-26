@@ -195,16 +195,17 @@ impl ShutdownSignal {
     /// Sleep for `delay`, waking early if the phase changes.
     ///
     /// The replacement for every `thread::sleep` on a worker's retry path. A
-    /// retry delay is a promise not to act yet, so a shutdown that interrupts
-    /// one takes nothing that was owed: the caller learns it should retry
-    /// rather than stop, in time to be told otherwise.
+    /// retry delay postpones the next attempt while running. If graceful
+    /// shutdown starts during that delay, the caller should stop retrying the
+    /// current record and let the worker apply its drain policy. If shutdown
+    /// aborts or the drain deadline expires, the caller must stop work.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let signal = ShutdownSignal::new();
+    /// let signal = std::sync::Arc::new(ShutdownSignal::new());
     /// let waiting = std::thread::spawn({
-    ///     let signal = signal.clone();
+    ///     let signal = std::sync::Arc::clone(&signal);
     ///     move || signal.wait(Duration::from_secs(30))
     /// });
     /// // A shutdown interrupts a sleep that had thirty seconds to run.

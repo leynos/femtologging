@@ -24,7 +24,15 @@ and uses `Python::try_attach` in both destructors. The full formatting, lint,
 typecheck and test gates have since passed; pytest reported 791 passed, 5
 skipped and 1 warning, with 66 snapshots passed. A Markdown spelling error was
 fixed, and the final formatting, Markdown lint and Mermaid gates passed. The
-draft PR awaits a fresh CodeRabbit review of the follow-up.
+hosted CodeScene check on `b790035` then identified duplicated warning tests.
+Those cases have been consolidated while retaining the rate-limit and
+immediate-flush assertions; rerun all deterministic gates before the next
+CodeRabbit review. A subsequent test run exposed the stream handler's GIL wait
+while invoking Python formatters; its Python `flush`, `close` and drop paths
+now detach while waiting, and the guide documents that behaviour. CodeRabbit
+then identified inaccurate HTTP and shutdown-signal docs plus a missing Loom
+lock constructor. Those findings are fixed; the full gate sequence must pass
+before requesting another review.
 
 Related: [Issue #436](https://github.com/leynos/femtologging/issues/436).
 
@@ -774,6 +782,19 @@ Trace links, from issue #436 to milestone:
   snapshots passed. The first Markdown lint run caught `behavior` in this
   history entry; it was corrected to `behaviour`. Formatting, Markdown lint and
   Mermaid validation then passed. A fresh CodeRabbit review remains.
+- 2026-10-26: CodeScene failed the hosted review because the new rate-limited
+  flush test duplicated setup from the existing rate-limit test. The tests now
+  share one sequence that covers immediate flush and the restarted suppression
+  interval. The full deterministic gate sequence must pass before the follow-up
+  is reviewed again.
+- 2026-10-26: CodeRabbit reviewed the stream-GIL candidate after every
+  deterministic gate passed. Three distinct minor issues were valid: the HTTP
+  worker comments misstated serialization and header behaviour, the shutdown
+  wait docs described retrying and used a non-compiling clone example, and the
+  Loom `RwLock` wrapper lacked the constructor used by the manager. The
+  comments now reflect their implementations, the example uses `Arc::clone` and
+  states that shutdown stops retries, and the Loom wrapper constructs its inner
+  lock. Rerun all deterministic gates before the next review.
 
 ## Outcomes & retrospective
 

@@ -27,6 +27,11 @@ impl<T> Mutex<T> {
 pub(crate) struct RwLock<T>(loom::sync::RwLock<T>);
 
 impl<T> RwLock<T> {
+    /// Create a read-write lock holding `value`.
+    pub(crate) fn new(value: T) -> Self {
+        Self(loom::sync::RwLock::new(value))
+    }
+
     /// Acquire shared access, waiting while a writer holds it.
     pub(crate) fn read(&self) -> loom::sync::RwLockReadGuard<'_, T> {
         self.0.read().unwrap_or_else(PoisonError::into_inner)

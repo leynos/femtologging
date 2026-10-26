@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[rstest]
-    fn rate_limits_subsequent_warnings(
+    fn rate_limits_warnings_and_flushes_pending_drops(
         mut warnings: Vec<u64>,
         warner: (RateLimitedWarner, Arc<FakeClock>),
     ) {
@@ -192,37 +192,19 @@ mod tests {
         warner.record_drop();
         warner.warn_if_due(|c| warnings.push(c));
         assert_eq!(warnings, vec![1, 1]);
-    }
-
-    #[rstest]
-    fn flush_emits_pending_warning(
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-        mut warnings: Vec<u64>,
-    ) {
-        let (warner, _) = warner;
         warner.record_drop();
         warner.flush(|c| warnings.push(c));
-        assert_eq!(warnings, vec![1]);
-    }
-
-    #[rstest]
-    fn flush_emits_pending_warning_even_when_rate_limited(
-        mut warnings: Vec<u64>,
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-    ) {
-        let (warner, clock) = warner;
-        warner.record_drop();
-        warner.warn_if_due(|count| warnings.push(count));
-        clock.advance(500);
-
-        warner.record_drop();
-        warner.flush(|count| warnings.push(count));
-        assert_eq!(warnings, vec![1, 1]);
+        assert_eq!(warnings, vec![1, 1, 1]);
 
         clock.advance(500);
         warner.record_drop();
         warner.warn_if_due(|count| warnings.push(count));
-        assert_eq!(warnings, vec![1, 1]);
+        assert_eq!(warnings, vec![1, 1, 1]);
+
+        clock.advance(500);
+        warner.record_drop();
+        warner.warn_if_due(|count| warnings.push(count));
+        assert_eq!(warnings, vec![1, 1, 1, 1]);
     }
 
     #[rstest]
