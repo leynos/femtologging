@@ -11,8 +11,15 @@ use std::collections::{HashMap, hash_map::Entry};
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::logger::FemtoLogger;
+
+#[cfg(feature = "python")]
+mod configuration;
 #[cfg(feature = "python")]
 use crate::{filters::FemtoFilter, handler::FemtoHandlerTrait};
+#[cfg(feature = "python")]
+pub(crate) use configuration::{
+    DisplacedAttachments, PreparedConfiguration, PreparedLogger, commit_configuration,
+};
 
 /// Point-in-time handler and filter identifiers attached to one logger.
 #[cfg(feature = "python")]
@@ -96,6 +103,13 @@ fn is_invalid_logger_name(name: &str) -> bool {
         || name.split('.').any(|s| s.is_empty())
 }
 
+/// Build the error returned when a logger name is malformed.
+fn invalid_logger_name_error() -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "logger name cannot be empty, start or end with '.', or contain consecutive dots",
+    )
+}
+
 /// Ensure the implicit root logger exists before resolving named loggers.
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
@@ -115,9 +129,7 @@ fn calculate_parent_name(name: &str) -> Option<String> {
 /// Retrieve an existing logger or create one with a dotted-name parent.
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     if is_invalid_logger_name(name) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-        ));
+        return Err(invalid_logger_name_error());
     }
 
     let mut mgr = MANAGER.write();
@@ -138,9 +150,7 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
 #[cfg(all(test, feature = "python"))]
 pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     if is_invalid_logger_name(name) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-        ));
+        return Err(invalid_logger_name_error());
     }
 
     MANAGER
@@ -149,6 +159,23 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
         .get(name)
         .map(|logger| logger.clone_ref(py))
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!("logger {name:?} not found")))
+}
+
+/// Validate a set of logger names without touching the registry.
+///
+/// Configuration preparation calls this so a malformed name is rejected before
+/// any live logger state changes. The error is the same [`ValueError`] text
+/// [`get_logger`] raises for a single name.
+///
+/// [`ValueError`]: pyo3::exceptions::PyValueError
+#[cfg(feature = "python")]
+pub(crate) fn validate_logger_names<'a>(names: impl IntoIterator<Item = &'a str>) -> PyResult<()> {
+    for name in names {
+        if is_invalid_logger_name(name) {
+            return Err(invalid_logger_name_error());
+        }
+    }
+    Ok(())
 }
 
 /// Build logger objects without adding them to the global registry.
@@ -165,9 +192,7 @@ pub(crate) fn stage_loggers<'a>(
         .into_iter()
         .map(|name| {
             if is_invalid_logger_name(name) {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-                ));
+                return Err(invalid_logger_name_error());
             }
             let logger = match mgr.loggers.get(name) {
                 Some(logger) => logger.clone_ref(py),
@@ -177,26 +202,6 @@ pub(crate) fn stage_loggers<'a>(
                 )?,
             };
             Ok((name.to_string(), logger))
-        })
-        .collect()
-}
-
-/// Add fully staged loggers to the registry and return the committed objects.
-#[cfg(feature = "python")]
-pub(crate) fn commit_staged_loggers(
-    py: Python<'_>,
-    staged: BTreeMap<String, Py<FemtoLogger>>,
-) -> BTreeMap<String, Py<FemtoLogger>> {
-    let mut mgr = MANAGER.write();
-    staged
-        .into_iter()
-        .map(|(name, logger)| {
-            let committed = mgr
-                .loggers
-                .entry(name.clone())
-                .or_insert(logger)
-                .clone_ref(py);
-            (name, committed)
         })
         .collect()
 }
@@ -212,37 +217,37 @@ pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
 }
 
-/// Replace runtime registries and attachment snapshots under the manager write lock.
+/// Replace runtime registries and return the old snapshot for detached teardown.
+///
+/// Returning the snapshot keeps handler destruction outside the manager lock;
+/// Python callers also release the GIL before dropping its resources.
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
     handler_filter_ids: BTreeMap<String, Vec<String>>,
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
-) {
-    let mut mgr = MANAGER.write();
-    mgr.runtime = RuntimeStateSnapshot {
-        handler_registry,
-        handler_filter_ids,
-        filter_registry,
-        logger_states,
-    };
+) -> RuntimeStateSnapshot {
+    {
+        let mut mgr = MANAGER.write();
+        std::mem::replace(
+            &mut mgr.runtime,
+            RuntimeStateSnapshot {
+                handler_registry,
+                handler_filter_ids,
+                filter_registry,
+                logger_states,
+            },
+        )
+    }
 }
 
-/// Disable existing loggers not mentioned in the provided keep list.
-///
-/// Iterates through all loggers and clears handlers and filters for any
-/// whose name is absent from `keep_names`.
-#[cfg(feature = "python")]
-pub fn disable_existing_loggers(py: Python<'_>, keep_names: &std::collections::HashSet<String>) {
-    let mgr = MANAGER.read();
-    for (name, logger) in &mgr.loggers {
-        if name != "root" && !keep_names.contains(name) {
-            let logger_ref = logger.borrow(py);
-            logger_ref.clear_handlers();
-            logger_ref.clear_filters();
-        }
-    }
+/// Return all registered logger names for transaction tests.
+#[cfg(all(test, feature = "python"))]
+pub(crate) fn registered_logger_names_for_test() -> Vec<String> {
+    let mut names = MANAGER.read().loggers.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+    names
 }
 
 /// Flush handlers attached to every registered logger.

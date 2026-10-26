@@ -569,13 +569,20 @@ builder = (
 builder.build_and_init()
 ```
 
-- `build_and_init()` validates handler and filter references and prepares the
-  complete configuration before changing live logger state. If configuration
-  fails, the current logger configuration remains intact.
+- `build_and_init()` validates every logger name, handler and filter reference,
+  and scalar setting, and prepares the complete configuration before changing
+  live logger state. The resulting transition is atomic from the caller's
+  perspective: if configuration fails, every pre-existing logger keeps its
+  handlers, filters, level, propagation flag, disabled flag, and runtime
+  attachment metadata exactly as they were.
 - `with_default_level(level)` sets a fallback for loggers that omit explicit
-  levels. `with_disable_existing_loggers(True)` clears handlers and filters on
-  previously created loggers that are not part of the new configuration (their
-  ancestors are preserved automatically).
+  levels. `with_disable_existing_loggers(True)` disables previously created
+  loggers that are not part of the new configuration: they reject records
+  outright, so nothing reaches ancestor or root handlers through propagation,
+  and they lose their handlers and filters. Ancestors of configured loggers are
+  preserved automatically. Naming a logger in a later configuration enables it
+  again; loggers that were never disabled keep their state through a
+  configuration that leaves `disable_existing_loggers` off.
 - Available filter builders are `LevelFilterBuilder`,
   `NameFilterBuilder`, and `PythonCallbackFilterBuilder`. Callback filters run
   on the producer thread and may either return a truthy/falsy value directly or
@@ -719,6 +726,19 @@ For upgrade steps covering handler filters and formatter builders, see the
   not available; supply a callable formatter for more complex output.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
+- `disable_existing_loggers=True` rejects records at each omitted logger,
+  including descendants of configured loggers, and clears their handlers and
+  filters. Ancestors of configured loggers remain available for propagation.
+  This differs from stdlib `dictConfig`, which exempts descendants of
+  configured loggers and leaves handlers and filters attached to other disabled
+  loggers. A later configuration that explicitly names a disabled logger
+  enables it again.
+
+Configuration preparation validates logger names and resource references before
+changing live logger state. If validation fails, every existing logger keeps
+its state. Records already queued before a successful change are not retracted,
+and handler construction can open destinations before a later preparation error
+is reported.
 
 ## Operational tips and caveats
 
