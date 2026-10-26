@@ -949,6 +949,14 @@ registered `root` logger's level, or `INFO` when no root logger is registered.
 Changes to logger levels and configuration take effect for later enablement
 checks.
 
+`log::max_level()` is a conservative process-wide prefilter used by Rust
+logging macros. It includes the levels of registered loggers and the `INFO`
+default used for unknown valid targets, and it is recomputed after logger level
+or registry changes. The maximum is never restrictive enough to suppress a
+record that the bridge could dispatch. It can allow a level through to the
+adapter for a target that rejects it; the target-specific enablement check then
+rejects the record before its arguments are formatted.
+
 The bridge checks the target threshold before Rust logging macros evaluate
 their arguments, so disabled diagnostics avoid that argument work. This check
 does not inspect filters or handlers: an enabled record can still be rejected
