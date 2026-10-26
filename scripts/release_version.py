@@ -61,7 +61,26 @@ def is_prerelease(version: str) -> bool:
 
 
 def main(environ: cabc.Mapping[str, str], root: Path) -> int:
-    """Compare the tag and project versions, then write prerelease status."""
+    """Compare the tag and project versions, then write prerelease status.
+
+    Parameters
+    ----------
+    environ
+        Environment mapping with ``TAG_NAME`` and ``GITHUB_OUTPUT``. An
+        optional ``PYPROJECT_PATH`` selects the project manifest.
+    root
+        Repository root used when ``PYPROJECT_PATH`` is not supplied.
+
+    Returns
+    -------
+    int
+        ``0`` for an exact version match, or ``1`` when the versions differ.
+
+    Examples
+    --------
+    With ``TAG_NAME="v0.2.0-beta1"`` and project version
+    ``"0.2.0-beta1"``, the function writes ``prerelease=true``.
+    """
     tag_name = environ["TAG_NAME"]
     expected = tag_name.removeprefix("v")
     project_path_value = environ.get("PYPROJECT_PATH")
