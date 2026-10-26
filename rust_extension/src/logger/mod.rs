@@ -61,7 +61,7 @@ pub(crate) use runtime_mutation::DetachedOwners;
 /// Threshold applied to loggers when the manager creates them.
 pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
 
-/// Maximum time a logger flush spends across its complete barrier.
+/// Maximum time one flush barrier receives for its Rust-side work, in milliseconds.
 const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
@@ -139,7 +139,7 @@ impl FemtoLogger {
     /// let _ = logger.flush_handlers();
     /// ```
     pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
+        self.flush_handlers_blocking().is_confirmed()
     }
 
     /// Attach a handler.
@@ -268,11 +268,7 @@ impl FemtoLogger {
             .map(|filter| Arc::as_ptr(filter) as *const () as usize)
             .collect()
     }
-
-// refused_by: container_member · collision: none (no common ancestor text)
 }
-
-// refused_by: modify_delete_guard · collision: none (no common ancestor text)
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
