@@ -191,6 +191,10 @@ suite that fails if any drop is discarded or handed off more than once.
 - [x] (2026-10-26) Committed the review fixes as
       `fab5178cbc7535b9d0c068f5f9de580c6fecefd2`; the full gate run and final
       documentation checks passed before commit.
+- [x] (2026-10-26) CodeRabbit request on candidate
+      `203e12fda66e747e610bb69ad13a532611cc80ae` was rate-limited before review
+      findings were produced. Started the requested randomized `vsleep` of
+      80 minutes before retrying.
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
