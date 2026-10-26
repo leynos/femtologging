@@ -139,10 +139,40 @@ jobs:
         shell: bash
         env:
           TAG_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUNNER_TEMP: ${{ runner.temp }}
           IS_PRERELEASE: ${{ needs.check-version.outputs.prerelease }}
         run: |
           set -euo pipefail
-          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+          release_list_path="${RUNNER_TEMP}/releases.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases" > "${release_list_path}"
+          release_state="$(python3 - "${release_list_path}" "${TAG_NAME}" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          release_list = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if not isinstance(release_list, list) or not all(
+              isinstance(page, list) for page in release_list
+          ):
+              raise SystemExit("GitHub release list response is malformed.")
+          releases = [release for page in release_list for release in page]
+          matches = [
+              release
+              for release in releases
+              if isinstance(release, dict)
+              and release.get("tag_name") == sys.argv[2]
+          ]
+          if len(matches) > 1:
+              raise SystemExit(
+                  f"Multiple GitHub Releases use tag {sys.argv[2]}; "
+                  "remove duplicates before retrying."
+              )
+          print("existing" if matches else "missing")
+          PY
+          )"
+          if [ "${release_state}" = existing ]; then
             echo "Reusing the existing release for ${TAG_NAME}."
           else
             flags=(--draft --verify-tag --generate-notes --title "${TAG_NAME}")
@@ -237,7 +267,8 @@ jobs:
         env:
           PYPI_SIMPLE_URL: https://pypi.org/simple/femtologging/
           PYPI_INDEX_PATH: pypi-index.json
-          PYPI_ALLOW_MISSING: "false"
+          PYPI_ALLOW_MISSING: "true"
+          PYPI_EXPECTED_DIRECTORY: dist/publish
         run: |
           set -euo pipefail
           scripts/fetch_pypi_index.sh
