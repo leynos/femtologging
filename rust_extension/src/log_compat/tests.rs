@@ -1,10 +1,12 @@
 //! Unit tests for the `log` crate bridge.
 
 use log::{LevelFilter, Log};
+use proptest::prelude::*;
 
 use super::max_level::{conservative_max_level_from, map_femto_to_log_filter};
 use super::*;
 use crate::handler::FemtoHandlerTrait;
+use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use rstest::{fixture, rstest};
 use serial_test::serial;
@@ -64,6 +66,60 @@ fn conservative_maximum_includes_default_and_live_logger_levels() {
         conservative_max_level_from([FemtoLevel::Critical].into_iter()),
         log::LevelFilter::Info,
     );
+}
+
+proptest! {
+    /// Every threshold accepted by a target remains inside the facade maximum.
+    #[test]
+    fn conservative_maximum_covers_arbitrary_logger_thresholds(
+        level_values in prop::collection::vec(0_u8..=u8::from(FemtoLevel::Critical), 0..32)
+    ) {
+        let levels = level_values
+            .into_iter()
+            .map(|value| FemtoLevel::try_from(value).expect("generated a valid FemtoLevel"))
+            .collect::<Vec<_>>();
+        let maximum = conservative_max_level_from(levels.iter().copied());
+        let expected = levels
+            .iter()
+            .copied()
+            .chain(std::iter::once(DEFAULT_LOGGER_LEVEL))
+            .map(map_femto_to_log_filter)
+            .max()
+            .expect("the default logger level is always included");
+
+        prop_assert_eq!(maximum, expected);
+        prop_assert!(maximum >= map_femto_to_log_filter(DEFAULT_LOGGER_LEVEL));
+        prop_assert!(levels.iter().all(|level| maximum >= map_femto_to_log_filter(*level)));
+    }
+
+    /// Recomputing after generated level changes stays conservative.
+    #[test]
+    fn conservative_maximum_tracks_logger_level_update_sequences(
+        updates in prop::collection::vec(
+            (0_usize..4, 0_u8..=u8::from(FemtoLevel::Critical)),
+            0..48,
+        )
+    ) {
+        let mut levels = [DEFAULT_LOGGER_LEVEL; 4];
+        for (index, level_value) in updates {
+            levels[index] = FemtoLevel::try_from(level_value)
+                .expect("generated a valid FemtoLevel");
+            let maximum = conservative_max_level_from(levels.iter().copied());
+            let expected = levels
+                .iter()
+                .copied()
+                .chain(std::iter::once(DEFAULT_LOGGER_LEVEL))
+                .map(map_femto_to_log_filter)
+                .max()
+                .expect("the default logger level is always included");
+
+            prop_assert_eq!(maximum, expected);
+            let all_levels_are_accepted = levels
+                .iter()
+                .all(|level| maximum >= map_femto_to_log_filter(*level));
+            prop_assert!(all_levels_are_accepted);
+        }
+    }
 }
 
 #[fixture]

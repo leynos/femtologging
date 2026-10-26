@@ -111,7 +111,7 @@ pub use http_handler::{
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
-#[cfg(feature = "log-compat")]
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
 #[doc(hidden)]
 pub use log_compat::{FemtoLogAdapter, install_global_logger};
 pub use log_context::{
@@ -122,7 +122,7 @@ pub use log_context::{
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 /// Re-export the logger, its queued-record handle, and the pool-start error.
 pub use logger::{DispatcherError, FemtoLogger, QueuedRecord};
-#[cfg(feature = "log-compat")]
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
 #[doc(hidden)]
 pub use manager::get_logger as get_logger_for_log_compat;
 use manager::{get_logger as manager_get_logger, reset_manager};

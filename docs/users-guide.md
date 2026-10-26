@@ -929,6 +929,34 @@ For upgrade steps covering handler filters and formatter builders, see the
 - `reset_manager()` is a destructive operation intended for tests. Do not call
   it while other threads might still hold references to existing loggers.
 
+## Rust log facade bridge
+
+Call `setup_rust_logging()` during application start-up to route Rust
+`log`-crate records through femtologging's handlers:
+
+```python
+import femtologging
+
+femtologging.setup_rust_logging()
+```
+
+The bridge installs one process-wide Rust logger. It raises `RuntimeError` if
+another global logger is already installed. Rust targets such as
+`service::worker` are normalized to the femtologging name `service.worker`. A
+registered target uses its own current level; levels are not inherited from
+parent loggers. An unknown valid target uses `INFO`. An invalid target uses the
+registered `root` logger's level, or `INFO` when no root logger is registered.
+Changes to logger levels and configuration take effect for later enablement
+checks.
+
+The bridge checks the target threshold before Rust logging macros evaluate
+their arguments, so disabled diagnostics avoid that argument work. This check
+does not inspect filters or handlers: an enabled record can still be rejected
+or dropped during dispatch. It does not create a logger or enter Python while
+checking the threshold. See the
+[Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
+behaviour and build-feature details.
+
 ## Journald and OpenTelemetry roadmap notes
 
 - Journald support is planned as a Linux/systemd-specific integration and will

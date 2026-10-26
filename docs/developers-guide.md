@@ -133,7 +133,7 @@ compatibility tests validate the same maturin and PyO3 releases:
   editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
-- PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
+- PyO3 is pinned to `0.30.1` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
   the crate declares no minimum supported Rust version.
@@ -159,6 +159,38 @@ For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
+
+### Rust log bridge and handler waits
+
+With `log-compat`, each logger shares its live level atomic with a Python-free
+threshold index. `FemtoLogAdapter::enabled()` reads that index without the GIL,
+logger creation, or log emission. A registered normalized target uses its own
+level; unknown valid targets use the default `INFO` level; invalid targets use
+the root level or the default. Parent levels are not inherited, and this early
+check does not inspect filters or handlers.
+
+When a logger enters the registry, manager code holds `MANAGER` before taking
+the threshold-index write lock. The enablement lookup reads only the index.
+Global `log::max_level()` refreshes after successful bridge installation,
+logger level changes, staged configuration commits, and manager reset. Its
+calculation includes the default level, so the facade macro prefilter cannot
+hide a record accepted for an unknown target.
+
+The root-level `FemtoLogAdapter`, install function, and logger lookup
+re-exports are hidden and require both `log-compat` and `test-util`. Keep
+benchmark-only access behind those feature gates. The Criterion benchmark can
+be run with:
+
+```shell
+cargo bench --manifest-path rust_extension/Cargo.toml --no-default-features \
+  --features log-compat --bench log_bridge
+```
+
+The Python-facing file and stream handler `flush()` and `close()` methods use
+PyO3's detached wait path. The `close()` wrappers first copy the shutdown state
+into Rust-owned values and release the mutable Python-object borrow, then
+release the GIL while they wait for the worker. Preserve the handlers' existing
+timeouts and idempotent-close behaviour when changing this boundary.
 
 ### Dependabot grouping for the extension build
 

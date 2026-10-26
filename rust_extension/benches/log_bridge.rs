@@ -47,9 +47,10 @@ impl BridgeBench {
             }
             Ok(())
         });
-        if let Err(error) = setup_result {
-            panic!("failed to initialize Rust log bridge benchmark: {error}");
-        }
+        expect_bench(
+            setup_result,
+            "failed to initialize Rust log bridge benchmark",
+        );
 
         Self {
             adapter: FemtoLogAdapter,
@@ -72,6 +73,23 @@ fn set_logger_level(py: Python<'_>, name: &str, level: FemtoLevel) -> PyResult<(
     let logger = get_logger_for_log_compat(py, name)?;
     logger.borrow(py).set_level(level);
     Ok(())
+}
+
+/// Consume a benchmark setup result at Criterion's non-fallible boundary.
+///
+/// Criterion benchmark callbacks cannot return errors, so this helper turns a
+/// setup failure into one contextual benchmark failure.
+///
+/// # Examples
+///
+/// ```ignore
+/// expect_bench(setup(), "initializing bridge benchmark");
+/// ```
+fn expect_bench<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => panic!("{context}: {error}"),
+    }
 }
 
 /// Build static log metadata for a benchmark target and level.
@@ -130,9 +148,7 @@ fn bench_log_bridge(c: &mut Criterion) {
 
     let level_change =
         Python::attach(|py| set_logger_level(py, "bench.accepted", FemtoLevel::Warn));
-    if let Err(error) = level_change {
-        panic!("failed to disable Debug in the benchmark: {error}");
-    }
+    expect_bench(level_change, "failed to disable Debug in the benchmark");
     assert_eq!(
         log::max_level(),
         LevelFilter::Info,
