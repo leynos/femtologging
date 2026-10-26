@@ -43,7 +43,15 @@ class FemtoLogger:
     @property
     def propagate(self) -> bool: ...
     @property
-    def disabled(self) -> bool: ...
+    def disabled(self) -> bool:
+        """Whether configuration has disabled this logger.
+
+        A disabled logger rejects its own records and reports every level as
+        disabled. A later full configuration that names the logger enables it
+        again.
+
+        """
+        ...
     def log(
         self,
         level: LevelArg,
@@ -76,8 +84,9 @@ class FemtoLogger:
         Returns
         -------
         str | None
-            The formatted log message if the record passes level and filter
-            checks, otherwise ``None``.
+            The formatted log message if the logger is enabled and the record
+            passes level and filter checks, otherwise ``None``. A disabled
+            logger returns ``None`` without processing or propagating the record.
 
         """
         ...
@@ -111,7 +120,10 @@ class FemtoLogger:
         """
         ...
     def isEnabledFor(self, level: LevelArg) -> bool:  # ruff: ignore[invalid-function-name]  # TODO(#343): camelCase for stdlib compat
-        """Return ``True`` if *level* would pass the effective level filter."""
+        """Return ``True`` if *level* passes and the logger is not disabled.
+
+        A disabled logger returns ``False`` for every level.
+        """
         ...
     def debug(
         self,

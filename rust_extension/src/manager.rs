@@ -103,6 +103,13 @@ fn is_invalid_logger_name(name: &str) -> bool {
         || name.split('.').any(|s| s.is_empty())
 }
 
+/// Build the error returned when a logger name is malformed.
+fn invalid_logger_name_error() -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        "logger name cannot be empty, start or end with '.', or contain consecutive dots",
+    )
+}
+
 /// Ensure the implicit root logger exists before resolving named loggers.
 fn ensure_root_logger(py: Python<'_>, mgr: &mut Manager) -> PyResult<()> {
     if !mgr.loggers.contains_key("root") {
@@ -122,9 +129,7 @@ fn calculate_parent_name(name: &str) -> Option<String> {
 /// Retrieve an existing logger or create one with a dotted-name parent.
 pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     if is_invalid_logger_name(name) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-        ));
+        return Err(invalid_logger_name_error());
     }
 
     let mut mgr = MANAGER.write();
@@ -145,9 +150,7 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
 #[cfg(all(test, feature = "python"))]
 pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     if is_invalid_logger_name(name) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-        ));
+        return Err(invalid_logger_name_error());
     }
 
     MANAGER
@@ -169,9 +172,7 @@ pub(crate) fn lookup_existing_logger(py: Python<'_>, name: &str) -> PyResult<Py<
 pub(crate) fn validate_logger_names<'a>(names: impl IntoIterator<Item = &'a str>) -> PyResult<()> {
     for name in names {
         if is_invalid_logger_name(name) {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-            ));
+            return Err(invalid_logger_name_error());
         }
     }
     Ok(())
@@ -191,9 +192,7 @@ pub(crate) fn stage_loggers<'a>(
         .into_iter()
         .map(|name| {
             if is_invalid_logger_name(name) {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "logger name cannot be empty, start or end with '.', or contain consecutive dots",
-                ));
+                return Err(invalid_logger_name_error());
             }
             let logger = match mgr.loggers.get(name) {
                 Some(logger) => logger.clone_ref(py),
@@ -218,15 +217,18 @@ pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
     MANAGER.read().runtime.clone()
 }
 
-/// Replace runtime registries and attachment snapshots under the manager write lock.
+/// Replace runtime registries and return the old snapshot for detached teardown.
+///
+/// Returning the snapshot keeps handler destruction outside the manager lock;
+/// Python callers also release the GIL before dropping its resources.
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
     handler_filter_ids: BTreeMap<String, Vec<String>>,
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
-) {
-    let previous = {
+) -> RuntimeStateSnapshot {
+    {
         let mut mgr = MANAGER.write();
         std::mem::replace(
             &mut mgr.runtime,
@@ -237,9 +239,7 @@ pub(crate) fn replace_runtime_state(
                 logger_states,
             },
         )
-    };
-    // Handler destruction may flush output or join a worker thread.
-    drop(previous);
+    }
 }
 
 /// Return all registered logger names for transaction tests.

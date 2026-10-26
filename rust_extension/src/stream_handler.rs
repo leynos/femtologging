@@ -205,8 +205,9 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to finish.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        let (handle, done_rx, flush_timeout) = self.take_close_state();
+        py.detach(move || Self::wait_for_close(handle, done_rx, flush_timeout));
     }
 }
 
@@ -294,14 +295,29 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
+        let (handle, done_rx, flush_timeout) = self.take_close_state();
+        Self::wait_for_close(handle, done_rx, flush_timeout);
+    }
+
+    /// Stop accepting records and move shutdown state out of the handler.
+    fn take_close_state(&mut self) -> (Option<JoinHandle<()>>, Receiver<()>, Duration) {
         self.tx.take();
-        let handle = { self.handle.lock().take() };
+        let handle = self.handle.lock().take();
+        let done_rx = self.done_rx.lock().clone();
+        (handle, done_rx, self.flush_timeout)
+    }
+
+    /// Wait for shutdown after any caller-held Python GIL has been released.
+    fn wait_for_close(
+        handle: Option<JoinHandle<()>>,
+        done_rx: Receiver<()>,
+        flush_timeout: Duration,
+    ) {
         if let Some(handle) = handle {
-            let done_rx = self.done_rx.lock().clone();
-            if done_rx.recv_timeout(self.flush_timeout).is_err() {
+            if done_rx.recv_timeout(flush_timeout).is_err() {
                 warn!(
                     "FemtoStreamHandler: worker thread did not shut down within {:?}",
-                    self.flush_timeout
+                    flush_timeout
                 );
                 return;
             }

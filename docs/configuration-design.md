@@ -971,7 +971,9 @@ whole-vector replacement, sets the supplied scalars, and publishes the runtime
 registries and attachment metadata. Handler and filter vectors displaced by the
 commit are returned to the caller rather than dropped in place: a handler's
 `Drop` may flush output or join a worker thread, so teardown happens after the
-lock is released.
+manager lock is released and with the Python GIL released. Runtime mutation
+uses the same teardown boundary, including for the previous runtime registry
+snapshot.
 
 Atomicity is a caller-perspective guarantee, not a global configuration lock.
 Producers observe per-logger state through whole-vector swaps of `Arc` values.
@@ -1063,8 +1065,8 @@ explicitly in the configuration are re-enabled.
 This differs from the standard library in three ways:
 
 - Ancestors of configured loggers are kept. Stdlib `dictConfig` instead exempts
-  descendants of explicitly named loggers from disabling, resetting their
-  level, clearing their handlers, and enabling propagation.
+  descendants of explicitly named loggers from disabling. It still resets their
+  level, clears their handlers, and enables propagation.
 - Femtologging disables every omitted logger, including descendants of
   configured loggers. Stdlib `dictConfig` preserves those descendants through
   its child-logger exemption.

@@ -93,91 +93,132 @@ impl RuntimeConfigBuilder {
     }
 }
 
+/// Resolved values needed to apply one logger update without further validation.
+struct ResolvedLoggerUpdate<'a> {
+    /// Python logger whose live state is being replaced.
+    logger: &'a Py<FemtoLogger>,
+    /// Fully resolved handlers for the logger.
+    handlers: Vec<HandlerAttachment>,
+    /// Fully resolved logger filters.
+    filters: Vec<Arc<dyn FemtoFilter>>,
+    /// Optional scalar changes prepared for this logger.
+    scalar_mutation: Option<&'a LoggerScalarMutation>,
+}
+
 /// Builds requested handlers, preserving each identifier in a `HandlerBuild` error on failure.
 pub(crate) fn build_handlers(
     items: &BTreeMap<String, HandlerBuilder>,
 ) -> Result<SharedHandlers, ConfigError> {
-    let mut built = BTreeMap::new();
-    for (id, builder) in items {
-        let handler = builder
-            .build()
-            .map_err(|source| ConfigError::HandlerBuild {
-                id: id.clone(),
-                source,
-            })?;
-        built.insert(id.clone(), handler);
-    }
-    Ok(built)
+    build_registry(items, HandlerBuilder::build, |id, source| {
+        ConfigError::HandlerBuild { id, source }
+    })
 }
 
 /// Builds requested filters, preserving each identifier in a `FilterBuild` error on failure.
 pub(crate) fn build_filters(
     items: &BTreeMap<String, FilterBuilder>,
 ) -> Result<SharedFilters, ConfigError> {
+    build_registry(items, FilterBuilder::build, |id, source| {
+        ConfigError::FilterBuild { id, source }
+    })
+}
+
+/// Builds each registry entry and preserves its ID in the domain-specific error.
+fn build_registry<Builder, Value, BuildError>(
+    items: &BTreeMap<String, Builder>,
+    mut build: impl FnMut(&Builder) -> Result<Value, BuildError>,
+    mut map_error: impl FnMut(String, BuildError) -> ConfigError,
+) -> Result<BTreeMap<String, Value>, ConfigError> {
     let mut built = BTreeMap::new();
     for (id, builder) in items {
-        let filter = builder.build().map_err(|source| ConfigError::FilterBuild {
-            id: id.clone(),
-            source,
-        })?;
-        built.insert(id.clone(), filter);
+        let value = build(builder).map_err(|source| map_error(id.clone(), source))?;
+        built.insert(id.clone(), value);
     }
     Ok(built)
 }
 
 /// Publishes live logger attachments and the registry snapshot after validation succeeds.
 pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(), ConfigError> {
-    for (name, logger) in &commit.impacted_loggers {
-        let logger_ref = logger.borrow(py);
-        let attachment_state = commit
-            .logger_states
-            .get(name)
-            .cloned()
-            .unwrap_or_else(LoggerAttachmentState::default);
-        let resolved_handlers = resolve_registered_items(
-            name,
-            attachment_state.handler_ids(),
-            &commit.handler_registry,
-            "handler",
-        )?;
-        let next_handlers = attachment_state
-            .handler_ids()
-            .iter()
-            .zip(resolved_handlers)
-            .map(|(handler_id, handler)| {
-                let filters = commit
-                    .resolved_handler_filters
-                    .get(handler_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        ConfigError::InvalidMutation(format!(
-                            "{name}: missing handler filter configuration for {handler_id:?} during commit application",
-                        ))
-                    })?;
-                Ok(HandlerAttachment::with_filters(handler, filters))
-            })
-            .collect::<Result<Vec<_>, ConfigError>>()?;
-        let next_filters = resolve_registered_items(
-            name,
-            attachment_state.filter_ids(),
-            &commit.filter_registry,
-            "filter",
-        )?;
-        // Displaced attachments are dropped here; runtime mutation holds no
-        // manager lock at this point, so handler teardown cannot deadlock.
-        drop(logger_ref.replace_handlers(next_handlers));
-        drop(logger_ref.replace_filters(next_filters));
-        if let Some(mutation) = commit.scalar_mutations.get(name) {
-            apply_scalar_mutation(&logger_ref, mutation);
-        }
+    let logger_updates = commit
+        .impacted_loggers
+        .iter()
+        .map(|(name, logger)| resolve_logger_commit(name, logger, commit))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut displaced = manager::DisplacedAttachments::default();
+    for update in logger_updates {
+        apply_logger_commit(py, update, &mut displaced);
     }
-    manager::replace_runtime_state(
+
+    displaced.runtime_state = Some(manager::replace_runtime_state(
         commit.handler_registry.clone(),
         commit.handler_filter_ids.clone(),
         commit.filter_registry.clone(),
         commit.logger_states.clone(),
-    );
+    ));
+    displaced.drop_without_gil(py);
     Ok(())
+}
+
+/// Resolve a logger's next attachments and scalar changes before any logger is mutated.
+fn resolve_logger_commit<'a>(
+    name: &str,
+    logger: &'a Py<FemtoLogger>,
+    commit: &'a RuntimeCommit,
+) -> Result<ResolvedLoggerUpdate<'a>, ConfigError> {
+    let attachment_state = commit.logger_states.get(name).cloned().unwrap_or_default();
+    let resolved_handlers = resolve_registered_items(
+        name,
+        attachment_state.handler_ids(),
+        &commit.handler_registry,
+        "handler",
+    )?;
+    let handlers = attachment_state
+        .handler_ids()
+        .iter()
+        .zip(resolved_handlers)
+        .map(|(handler_id, handler)| {
+            let filters = commit
+                .resolved_handler_filters
+                .get(handler_id)
+                .cloned()
+                .ok_or_else(|| {
+                    ConfigError::InvalidMutation(format!(
+                        "{name}: missing handler filter configuration for {handler_id:?} during commit application",
+                    ))
+                })?;
+            Ok(HandlerAttachment::with_filters(handler, filters))
+        })
+        .collect::<Result<Vec<_>, ConfigError>>()?;
+    let filters = resolve_registered_items(
+        name,
+        attachment_state.filter_ids(),
+        &commit.filter_registry,
+        "filter",
+    )?;
+
+    Ok(ResolvedLoggerUpdate {
+        logger,
+        handlers,
+        filters,
+        scalar_mutation: commit.scalar_mutations.get(name),
+    })
+}
+
+/// Apply a fully resolved logger update; this phase contains no fallible lookups.
+fn apply_logger_commit(
+    py: Python<'_>,
+    update: ResolvedLoggerUpdate<'_>,
+    displaced: &mut manager::DisplacedAttachments,
+) {
+    let logger_ref = update.logger.borrow(py);
+    let mut old_handlers = logger_ref.replace_handlers(update.handlers);
+    displaced.handlers.append(&mut old_handlers);
+    let mut old_filters = logger_ref.replace_filters(update.filters);
+    displaced.filters.append(&mut old_filters);
+    if let Some(mutation) = update.scalar_mutation {
+        apply_scalar_mutation(&logger_ref, mutation);
+    }
 }
 
 /// Resolves each handler's configured filter IDs against the merged filter registry.
@@ -232,3 +273,7 @@ fn resolve_registered_items<T: ?Sized>(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "commit_tests.rs"]
+mod tests;

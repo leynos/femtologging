@@ -76,7 +76,7 @@ impl ConfigBuilder {
             .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
 
         let components = self.build_runtime_components()?;
-        let displaced = Python::attach(move |py| -> Result<_, ConfigError> {
+        Python::attach(move |py| -> Result<(), ConfigError> {
             let targets = self
                 .root_logger()
                 .map(|config| ("root", config))
@@ -91,7 +91,7 @@ impl ConfigBuilder {
                 .collect::<Result<Vec<_>, _>>()?;
             let loggers = self.pair_plans_with_loggers(py, plans)?;
 
-            Ok(manager::commit_configuration(
+            let displaced = manager::commit_configuration(
                 py,
                 manager::PreparedConfiguration {
                     loggers,
@@ -101,18 +101,10 @@ impl ConfigBuilder {
                     handler_filter_ids: components.handler_filter_ids,
                     filter_registry: components.built_filters,
                 },
-            ))
+            );
+            displaced.drop_without_gil(py);
+            Ok(())
         })?;
-
-        // Handler teardown can flush or join a worker, so release all displaced
-        // references after the manager lock and Python attachment have ended.
-        let manager::DisplacedAttachments {
-            handlers,
-            filters,
-            unused_loggers,
-            runtime_state,
-        } = displaced;
-        drop((handlers, filters, unused_loggers, runtime_state));
         Ok(())
     }
 
