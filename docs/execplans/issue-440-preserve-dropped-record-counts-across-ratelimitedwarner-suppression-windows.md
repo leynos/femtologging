@@ -188,8 +188,10 @@ suite that fails if any drop is discarded or handed off more than once.
       tests and all three stream integration tests. Logs use the `-rerun3.out`
       suffix under `/tmp`. The worktree had three tracked edits over HEAD
       `2529125b233fce1e95059b377a640eaabf92b2a0`.
-- [ ] Commit the review fixes and obtain a clean CodeRabbit review on that
-      exact commit.
+- [x] (2026-10-26) Committed the review fixes as
+      `fab5178cbc7535b9d0c068f5f9de580c6fecefd2`; the full gate run and final
+      documentation checks passed before commit.
+- [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
