@@ -37,8 +37,6 @@ use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::RwLock;
-use flush_diagnostics::FlushDiagnostics;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 pub use dispatcher::DispatcherError;
 #[cfg(all(
     test,
@@ -47,6 +45,8 @@ pub use dispatcher::DispatcherError;
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
+use flush_diagnostics::FlushDiagnostics;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use py_handler::{PyHandler, validate_handler};
 #[cfg(all(feature = "python", test, not(loom)))]
@@ -235,20 +235,18 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// Captures attached handlers and queues a marker on the dispatch shard;
-    /// the worker flushes that snapshot before acknowledging the marker.
-    /// One 2 second deadline covers the snapshot, marker, acknowledgement, and
-    /// every handler flush. Built-in handlers retain shorter configured
-    /// timeouts. Releasing the GIL lets Python worker handlers make progress.
-    ///
-    /// Legacy Rust handlers that implement only synchronous ``flush()`` fail
-    /// closed; arbitrary synchronous handler code cannot be preempted.
+    /// Resolves dispatch state and snapshots handlers before queueing a marker.
+    /// The worker flushes that snapshot and acknowledges the marker. One absolute
+    /// 2 second deadline covers all stages and handler flushes; built-ins retain
+    /// shorter timeouts. Python calls release the GIL.
+    /// Legacy synchronous handlers fail closed; deadline-aware overrides must
+    /// honour the deadline because code cannot be preempted. Violations may
+    /// keep the shared worker busy after ``False`` but cannot hold this caller.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when all stages succeed before the deadline. ``False``
-    ///     when completion is unconfirmed or a handler fails.
+    ///     ``True`` on success; ``False`` when completion is unconfirmed or a handler fails.
     ///
     /// Examples
     /// --------
@@ -272,8 +270,10 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// Shares one deadline across the snapshot, shard marker, and handler
-    /// flushes. Python entry points release the GIL; native callers do not.
+    /// One deadline spans dispatch resolution, snapshot, marker, acknowledgement
+    /// and handler flushes; built-ins keep shorter timeouts. Legacy handlers
+    /// fail closed; overrides must honour the deadline. Python calls release
+    /// the GIL, native callers do not. Failure returns `false`.
     ///
     /// # Examples
     ///

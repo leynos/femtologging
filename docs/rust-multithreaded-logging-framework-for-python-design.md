@@ -208,20 +208,22 @@ the call can fail before the worker ever sees it, and the states below
 distinguish that from a worker that saw the marker but did not answer.
 
 For screen readers: the following state diagram shows a `flush_handlers()` call
-moving from snapshotting the handler list, enqueueing its marker, waiting for
-the worker to drain earlier records and flush the snapshot, awaiting the
-acknowledgement, and reacquiring the interpreter. It succeeds only when the
-worker and every deadline-aware handler confirm before the shared deadline. It
-fails if the snapshot lock, marker enqueue, worker flush, acknowledgement, or
-interpreter reacquisition is not confirmed by the shared deadline, if the
-worker has exited, or if a handler reports failure or does not implement the
-deadline-aware contract. PyO3 must reacquire the interpreter before returning
-to Python; CPython controls that handoff, so it can delay the Python return
-beyond the Rust barrier deadline.
+resolving its dispatch state, snapshotting the handler list, enqueueing its
+marker, waiting for the worker to drain earlier records and flush the snapshot,
+awaiting the acknowledgement, and reacquiring the interpreter. It succeeds only
+when the worker and every deadline-aware handler confirm before the shared
+deadline. It fails if dispatch-state resolution, snapshot-lock acquisition,
+marker enqueue, worker flush, acknowledgement or interpreter reacquisition is
+not confirmed by the shared deadline, if the worker has exited, or if a handler
+reports failure or does not implement the deadline-aware contract. PyO3 must
+reacquire the interpreter before returning to Python; CPython controls that
+handoff, so it can delay the Python return beyond the Rust barrier deadline.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SnapshotHandlers
+    [*] --> ResolveDispatchState
+    ResolveDispatchState --> SnapshotHandlers: state available before deadline
+    ResolveDispatchState --> Failed: worker unavailable or deadline expired
     SnapshotHandlers --> EnqueueMarker: read lock acquired before deadline
     SnapshotHandlers --> Failed: lock unavailable at deadline
     EnqueueMarker --> DrainEarlierRecords: marker enqueued
@@ -238,24 +240,31 @@ stateDiagram-v2
     Failed --> [*]
 ```
 
-_Figure 1: States of a `flush_handlers()` barrier, from snapshotting the
-handlers through worker-side flushing and acknowledgement to reacquiring the
-interpreter, with the transitions on which it fails._
+_Figure 1: States of a `flush_handlers()` barrier, from resolving the dispatch
+state through snapshotting, worker-side flushing and acknowledgement to
+reacquiring the interpreter, with the transitions on which it fails._
 
-One absolute deadline begins when the barrier starts. Handler-list lock
-acquisition, marker enqueue, worker acknowledgement, and every handler flush
-consume that same budget. Built-in handlers also cap their waits at their
-shorter configured timeout. The handler list is cloned while holding a
-deadline-bounded read lock; bounded marker insertion happens under that lock,
-then a start gate ensures the worker releases it before callbacks run. A
-removal after the snapshot does not cancel this barrier: the marker keeps the
-handler alive until the worker releases it. A late handler destructor runs on
-the worker, not on the flush caller. Additions after the snapshot participate
-in the next barrier. Concurrent calls each use their own deadline and bounded
-queue marker; the logger creates no helper threads or unbounded task queue.
-Once the worker exits, marker insertion fails and the barrier returns `false`.
-Shutdown joins the worker and can therefore wait for a callback already in
-progress; synchronous arbitrary code cannot be preempted.
+One absolute deadline begins before dispatch-state resolution. Resolving that
+state, handler-list lock acquisition, marker enqueue, worker acknowledgement,
+and every handler flush consume the same budget. Built-in handlers also cap
+their waits at their shorter configured timeout. The handler list is cloned
+while holding a deadline-bounded read lock; bounded marker insertion happens
+under that lock, then a start gate ensures the worker releases it before
+callbacks run. A removal after the snapshot does not cancel this barrier: the
+marker keeps the handler alive until the worker releases it. A late handler
+destructor runs on the worker, not on the flush caller. Additions after the
+snapshot participate in the next barrier. Concurrent calls each use their own
+deadline and bounded queue marker; the logger creates no helper threads or
+unbounded task queue. Once the worker exits, marker insertion fails and the
+barrier returns `false`.
+
+In a normal build, workers belong to the process-wide dispatch pool. Dropping a
+logger waits only for its own in-flight records, up to the bounded drain
+timeout, and does not join the shared worker. If an opted-in handler violates
+its deadline, its callback may keep that worker occupied after the flush caller
+returns `false` and after the logger is dropped; the queued snapshot retains
+the handler until the callback returns. Synchronous arbitrary code cannot be
+preempted. Loom models use logger-owned workers and join them during cleanup.
 
 Python-facing `flush_handlers()` releases the GIL across snapshot acquisition,
 enqueueing, worker processing, and acknowledgement. The Rust method itself does
@@ -290,11 +299,13 @@ is required to honour the supplied deadline and return `false` if completion is
 not confirmed. The logger runs that callback on its existing worker, so even a
 misbehaving synchronous override cannot hold the `flush_handlers()` caller past
 its deadline. Synchronous arbitrary code still cannot be preempted: a handler
-that violates the contract can hold the worker, and logger shutdown joins that
-worker and waits for the callback to return. The logger creates no helper
-threads or detached flush tasks, and concurrent markers remain bounded by the
-logger's existing queue capacity. Python-backed handlers use a no-op Rust flush
-and are not called back into Python by this barrier.
+that violates the contract can occupy the shared worker after the caller
+returns. Logger drop waits only for the logger's own in-flight records for the
+bounded drain timeout; it does not join the process-wide worker. Loom models
+join their logger-owned workers. The logger creates no helper threads or
+detached flush tasks, and concurrent markers remain bounded by the existing
+queue capacity. Python-backed handlers use a no-op Rust flush and are not
+called back into Python by this barrier.
 
 ### 3.3 `FemtoLogRecord` Structure
 

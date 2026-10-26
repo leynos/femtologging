@@ -11,11 +11,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use log::warn;
 
+use super::Job;
 use crate::handler::remaining;
+use crate::logger::QueuedRecord;
 use crate::logger::flush::flush_handler_snapshot_at;
 use crate::logger::flush_diagnostics::FlushFailureStage;
-use super::Job;
-use crate::logger::QueuedRecord;
 use crate::sync::{Receiver, RecvTimeoutError};
 
 /// Drain a shard's queue, handling each job.

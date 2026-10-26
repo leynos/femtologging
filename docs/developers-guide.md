@@ -371,7 +371,11 @@ The default `FemtoHandlerTrait::flush_until(deadline)` returns `false` without
 calling legacy synchronous `flush()`. Custom handlers must override this method
 and honour the deadline; the logger cannot pre-empt arbitrary synchronous code.
 Concurrent flush calls keep separate deadlines and use the existing bounded
-queue. Shutdown joins the worker and can wait for an in-progress callback.
+queue. In normal builds, logger drop waits for its own in-flight records only,
+up to the bounded drain timeout; it does not join the shared process-wide
+worker. A violating callback may keep that worker occupied and retain its
+handler after the caller returns `false`. Loom models join their logger-owned
+worker during cleanup.
 
 Python-facing calls release the GIL across the barrier. Native Rust callers do
 not acquire or release it, so callers that already hold the interpreter must

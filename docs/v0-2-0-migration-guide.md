@@ -221,7 +221,10 @@ the barrier does not call that method and returns `false`. Override
 against the supplied absolute deadline and report `false` when completion is
 not confirmed. The logger cannot interrupt arbitrary synchronous handler code
 once it starts; calling an unbounded `flush()` from `flush_until()` can still
-occupy the worker, and logger shutdown joins that worker.
+occupy the shared worker after the caller returns. In normal builds, logger
+drop waits only for that logger's in-flight records, up to the bounded drain
+timeout; it does not join the process-wide worker. Loom models join their
+logger-owned worker during cleanup.
 
 Python-facing calls release the GIL while waiting for the worker. CPython must
 reacquire the interpreter before returning to Python, so interpreter contention

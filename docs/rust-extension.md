@@ -546,7 +546,10 @@ preempt synchronous handler code that violates this contract. A handler removed
 after the barrier snapshots the list remains alive for that flush; concurrent
 additions are included by a later barrier. Concurrent flushes use the existing
 bounded queue and create no helper workers. Shutdown that closes the queue
-before acknowledgement produces `false`.
+before acknowledgement produces `false`. In normal builds, logger drop waits
+only for that logger's in-flight records for the bounded drain timeout; it does
+not join the shared worker. A violating callback can keep that worker occupied
+after the caller returns. Loom models join their logger-owned worker.
 
 The `add_handler()` method is exposed through the Python bindings and can be
 called on a shared logger instance. It verifies the provided object defines a

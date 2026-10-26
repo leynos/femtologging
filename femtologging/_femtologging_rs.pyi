@@ -102,10 +102,10 @@ class FemtoLogger:
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Snapshots the handlers and queues a marker behind every accepted
-        record. The logger worker flushes that snapshot before acknowledging
-        the marker. One absolute 2 s deadline covers the handler-list lock,
-        marker enqueue, worker acknowledgement, and all handler flushes.
+        Resolves dispatch state, snapshots handlers, and queues a marker behind
+        accepted records. The worker flushes that snapshot before acknowledging.
+        One absolute 2 s deadline covers dispatch resolution, the handler-list
+        lock, marker enqueue, worker acknowledgement, and all handler flushes.
         Built-in handlers retain their shorter configured timeouts. The
         interpreter is released across the barrier so a worker blocked on a
         Python handler can make progress. PyO3 reacquires it before returning
@@ -117,12 +117,15 @@ class FemtoLogger:
         A custom Rust handler must override ``flush_until()`` and honour its
         deadline. The default returns ``False`` without calling legacy
         synchronous ``flush()``, because arbitrary synchronous code cannot be
-        preempted. Flush callbacks run on the logger worker without the
-        handler-list lock. A handler removed after the snapshot stays alive in
-        the queued marker until the worker releases it; its destructor does
-        not run on the flush caller. Additions after the snapshot are included
-        by the next call. Shutdown joins the worker and waits for a callback
-        already in progress, which cannot be preempted.
+        preempted. Flush callbacks run on the worker without the handler-list
+        lock. A removed handler stays alive in the queued snapshot until the
+        worker releases it; its destructor does not run on the flush caller.
+        Later additions participate in the next call. In normal builds, logger
+        drop waits only for its own in-flight records, with the existing
+        bounded drain timeout; it does not join the process-wide worker. A
+        callback that violates its deadline can keep that worker occupied and
+        retain the handler after this call returns ``False``. Loom models join
+        their logger-owned worker.
         Concurrent flush calls use independent deadlines and the existing
         bounded queue. The barrier starts no helper threads or tasks, so
         repeated failures do not leave detached work. Shutdown that closes

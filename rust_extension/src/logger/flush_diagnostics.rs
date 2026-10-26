@@ -6,7 +6,7 @@ use std::time::Duration;
 /// Fixed set of terminal failure stages for the flush barrier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-pub(super) enum FlushFailureStage {
+pub(crate) enum FlushFailureStage {
     /// The configured logger timeout could not form a monotonic deadline.
     DeadlineUnrepresentable,
     /// Process-local dispatch state could not be resolved before the deadline.
