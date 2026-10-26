@@ -132,7 +132,7 @@ compatibility tests validate the same maturin and PyO3 releases:
   automatically. `make check-fmt` and `make lint` use its formatter and linter;
   editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
-  steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
+  workflows, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
@@ -153,7 +153,8 @@ When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization
 test in `tests/test_maturin_build.py` verifies that the maturin pins stay
-aligned across `pyproject.toml` and `.github/workflows/heavy-tests.yml`.
+aligned across `pyproject.toml`, `.github/workflows/heavy-tests.yml`, and
+`.github/workflows/build-wheels.yml`.
 
 ### Maturin build features
 
