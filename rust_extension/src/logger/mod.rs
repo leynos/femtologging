@@ -10,6 +10,8 @@
 mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
+#[cfg(all(feature = "python", feature = "test-util"))]
+pub(crate) mod flush_test;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
@@ -118,6 +120,9 @@ pub struct FemtoLogger {
     /// so the two can be replaced together after a fork.
     #[cfg(loom)]
     budget: Arc<LoggerBudget>,
+    /// Test-only notification that the token-free flush method has started.
+    #[cfg(all(feature = "python", feature = "test-util"))]
+    flush_test_hooks: flush_test::FlushTestHooks,
 }
 
 impl FemtoLogger {
@@ -145,6 +150,9 @@ impl FemtoLogger {
     /// assert!(flushed);
     /// ```
     pub fn flush_handlers(&self) -> bool {
+        #[cfg(all(feature = "python", feature = "test-util"))]
+        self.flush_test_hooks.signal_entered();
+
         self.flush_handlers_blocking()
     }
 
