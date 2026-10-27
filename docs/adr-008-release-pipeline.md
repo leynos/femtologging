@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 008: Attested, reconciled release pipeline
+# Architectural decision record (ADR) 008: attested, reconciled release pipeline
 
 ## Status
 
