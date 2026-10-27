@@ -99,6 +99,17 @@ class FemtoLogger:
     def get_context_dropped(self) -> int:
         """Return records dropped because Rust context validation failed."""
         ...
+    def get_flush_diagnostics(self) -> dict[str, int]:
+        """Return this logger's fixed-cardinality flush barrier counters.
+
+        The result always has the same attempt, confirmation, failure-stage,
+        and elapsed-time keys. Values are best-effort snapshots read from
+        relaxed atomics, so concurrent updates may be observed at different
+        instants. Keys contain no logger names, paths, messages, or payloads.
+        Applications can poll these values from a metrics adapter; exporting
+        them to a shared backend remains the application's responsibility.
+        """
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 

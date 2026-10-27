@@ -1,7 +1,8 @@
 //! Generated-time and diagnostic tests for the logger flush barrier.
 
 use std::any::Any;
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
@@ -9,8 +10,39 @@ use proptest::prelude::*;
 use crate::handler::{FemtoHandlerTrait, HandlerError, capped_deadline, deadline_after, remaining};
 use crate::log_record::FemtoLogRecord;
 
+use super::super::flush_clock::{FlushDeadline, MonotonicClock};
 use super::super::flush_diagnostics::{FlushDiagnostics, FlushFailureStage, elapsed_bucket};
 use super::{FemtoLogger, FlushOutcome, confirm_by_deadline, flush_handler_snapshot_at};
+
+/// Clock that returns a fixed sample for a deadline-orchestration test.
+struct FixedClock {
+    /// The monotonic sample every stage observes.
+    now: Instant,
+}
+
+impl MonotonicClock for FixedClock {
+    fn now(&self) -> Instant {
+        self.now
+    }
+}
+
+/// Clock with explicit samples for boundary tests.
+struct SequenceClock {
+    /// Samples returned in the order the production barrier requests them.
+    samples: Mutex<VecDeque<Instant>>,
+    /// Time returned after the explicit samples have been consumed.
+    fallback: Instant,
+}
+
+impl MonotonicClock for SequenceClock {
+    fn now(&self) -> Instant {
+        self.samples
+            .lock()
+            .expect("clock sample lock should not be poisoned")
+            .pop_front()
+            .unwrap_or(self.fallback)
+    }
+}
 
 /// Handler with a fixed result for generated snapshot sequences.
 struct ResultHandler {
@@ -112,14 +144,18 @@ proptest! {
             Err(FlushFailureStage::HandlerFlushUnconfirmed)
         };
         let diagnostics = FlushDiagnostics::default();
+        let timing = FlushDeadline::with_clock(
+            Duration::from_millis(budget_ms),
+            Arc::new(FixedClock { now: started_at }),
+        );
+        prop_assert_eq!(timing.instant(), Some(deadline));
         let outcome = FlushOutcome {
             result,
-            deadline: Some(deadline),
-            started_at,
+            timing,
             barrier_completed_at,
         };
 
-        let confirmed = outcome.finish(
+        let confirmed = outcome.finish_at(
             caller_returned_at,
             &diagnostics,
             FlushFailureStage::CallerReturnDeadlineExceeded,
@@ -191,6 +227,17 @@ fn flush_diagnostics_use_fixed_stage_and_elapsed_buckets() {
     assert_eq!(snapshot.elapsed_buckets[1], 1);
     assert_eq!(snapshot.elapsed_buckets[3], 1);
     assert_eq!(elapsed_bucket(Duration::from_secs(3)), 4);
+
+    let metrics = snapshot.metrics();
+    assert_eq!(metrics.len(), 22);
+    assert_eq!(metrics["flush_handlers_attempts"], 2);
+    assert_eq!(metrics["flush_handlers_confirmed"], 1);
+    assert_eq!(
+        metrics["flush_handlers_failure_marker_enqueue_timed_out"],
+        1
+    );
+    assert_eq!(metrics["flush_handlers_elapsed_le_100_ms"], 1);
+    assert_eq!(metrics["flush_handlers_elapsed_le_2000_ms"], 1);
 }
 
 #[test]
@@ -208,6 +255,78 @@ fn logger_flush_records_the_handler_failure_stage() {
     assert_eq!(snapshot.confirmed, 0);
     assert_eq!(
         snapshot.failures[FlushFailureStage::HandlerFlushUnconfirmed as usize],
+        1,
+    );
+    assert_eq!(
+        snapshot.metrics()["flush_handlers_failure_handler_flush_unconfirmed"],
+        1,
+    );
+}
+
+#[test]
+fn injected_clock_reaches_the_worker_with_one_deadline() {
+    let logger = FemtoLogger::new("flush-injected-clock".to_owned())
+        .expect("diagnostic test logger should be constructible");
+    logger
+        .add_handler(Arc::new(ResultHandler { confirmed: true }))
+        .expect("test handler should be accepted");
+    let started_at = Instant::now();
+    let outcome = logger.flush_handlers_with_clock(
+        Duration::from_secs(1),
+        Arc::new(FixedClock { now: started_at }),
+    );
+
+    assert!(outcome.finish(
+        &logger.flush_diagnostics,
+        FlushFailureStage::CallerReturnDeadlineExceeded,
+    ));
+}
+
+#[test]
+fn injected_clock_bounds_handler_snapshot_acquisition() {
+    let logger = FemtoLogger::new("flush-snapshot-clock".to_owned())
+        .expect("diagnostic test logger should be constructible");
+    let started_at = Instant::now();
+    let deadline = started_at + Duration::from_secs(1);
+    let clock = Arc::new(SequenceClock {
+        samples: Mutex::new(VecDeque::from([started_at, started_at, deadline])),
+        fallback: deadline,
+    });
+    let _handler_guard = logger.handlers.write();
+    let outcome = logger.flush_handlers_with_clock(Duration::from_secs(1), clock);
+
+    assert!(!outcome.finish(
+        &logger.flush_diagnostics,
+        FlushFailureStage::CallerReturnDeadlineExceeded,
+    ));
+    let snapshot = logger.flush_diagnostics.snapshot();
+    assert_eq!(
+        snapshot.failures[FlushFailureStage::HandlerSnapshotTimedOut as usize],
+        1,
+    );
+}
+
+#[test]
+fn injected_clock_stops_before_marker_when_the_shared_deadline_expires() {
+    let logger = FemtoLogger::new("flush-marker-clock".to_owned())
+        .expect("diagnostic test logger should be constructible");
+    let started_at = Instant::now();
+    let deadline = started_at + Duration::from_secs(1);
+    let clock = Arc::new(SequenceClock {
+        samples: Mutex::new(VecDeque::from([
+            started_at, started_at, started_at, deadline,
+        ])),
+        fallback: deadline,
+    });
+    let outcome = logger.flush_handlers_with_clock(Duration::from_secs(1), clock);
+
+    assert!(!outcome.finish(
+        &logger.flush_diagnostics,
+        FlushFailureStage::CallerReturnDeadlineExceeded,
+    ));
+    let snapshot = logger.flush_diagnostics.snapshot();
+    assert_eq!(
+        snapshot.failures[FlushFailureStage::DeadlineExpiredBeforeMarker as usize],
         1,
     );
 }

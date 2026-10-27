@@ -24,10 +24,11 @@ mod budget;
 mod worker;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::handler::{FemtoHandlerTrait, deadline_after, remaining};
+use crate::handler::FemtoHandlerTrait;
 use crate::logger::QueuedRecord;
+use crate::logger::flush_clock::FlushDeadline;
 use crate::logger::flush_diagnostics::FlushFailureStage;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
@@ -67,7 +68,7 @@ enum Job {
         /// Handlers captured while the logger registry was read-locked.
         handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
         /// Deadline shared by queue insertion, acknowledgement, and callbacks.
-        deadline: Instant,
+        deadline: FlushDeadline,
         /// Gate opened after the logger registry lock has been released.
         start: Receiver<()>,
         /// Reports handler success or its first unconfirmed deadline stage.
@@ -230,21 +231,22 @@ impl Shard {
     /// caller that was promised a two-second drain would otherwise block for
     /// four when the queue is full and the worker is slow.
     pub(crate) fn wait_for_drain(&self) -> bool {
-        let Some(deadline) = deadline_after(Instant::now(), BARRIER_TIMEOUT) else {
-            return false;
-        };
-        self.wait_for_drain_until(deadline).is_ok()
+        self.wait_for_drain_until(&FlushDeadline::system(BARRIER_TIMEOUT))
+            .is_ok()
     }
 
     /// Wait for a drain barrier using a deadline created by the caller.
-    pub(crate) fn wait_for_drain_until(&self, deadline: Instant) -> Result<(), FlushFailureStage> {
+    pub(crate) fn wait_for_drain_until(
+        &self,
+        deadline: &FlushDeadline,
+    ) -> Result<(), FlushFailureStage> {
         let (ack, acked) = bounded::<()>(1);
-        if remaining(deadline, Instant::now()).is_zero() {
+        if deadline.is_expired() {
             return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
         match self
             .queue
-            .send_timeout(Job::Barrier { ack }, remaining(deadline, Instant::now()))
+            .send_timeout(Job::Barrier { ack }, deadline.remaining())
         {
             Ok(()) => {}
             Err(SendTimeoutError::Timeout(_)) => {
@@ -254,7 +256,7 @@ impl Shard {
                 return Err(FlushFailureStage::MarkerEnqueueDisconnected);
             }
         }
-        match recv_timeout(&acked, remaining(deadline, Instant::now())) {
+        match recv_timeout(&acked, deadline.remaining()) {
             Ok(()) => Ok(()),
             Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::AcknowledgementTimedOut),
             Err(RecvTimeoutError::Disconnected) => Err(FlushFailureStage::WorkerExited),
@@ -271,7 +273,7 @@ impl Shard {
     /// out flushes cannot create an unbounded number of tasks or threads.
     pub(crate) fn flush_handlers_until<G>(
         &self,
-        deadline: Instant,
+        deadline: &FlushDeadline,
         handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
         handler_guard: G,
     ) -> Result<(), FlushFailureStage> {
@@ -279,20 +281,17 @@ impl Shard {
         let (ack_tx, ack_rx) = bounded(1);
         let job = Job::Flush {
             handlers,
-            deadline,
+            deadline: deadline.clone(),
             start: start_rx,
             ack: ack_tx,
         };
 
-        if remaining(deadline, Instant::now()).is_zero() {
+        if deadline.is_expired() {
             drop(job);
             drop(handler_guard);
             return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
-        match self
-            .queue
-            .send_timeout(job, remaining(deadline, Instant::now()))
-        {
+        match self.queue.send_timeout(job, deadline.remaining()) {
             Ok(()) => {}
             Err(SendTimeoutError::Timeout(error)) => {
                 drop(error);
@@ -310,7 +309,7 @@ impl Shard {
         if start_tx.try_send(()).is_err() {
             return Err(FlushFailureStage::WorkerStartDisconnected);
         }
-        match recv_timeout(&ack_rx, remaining(deadline, Instant::now())) {
+        match recv_timeout(&ack_rx, deadline.remaining()) {
             Ok(result) => result,
             Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::AcknowledgementTimedOut),
             Err(RecvTimeoutError::Disconnected) => Err(FlushFailureStage::WorkerExited),

@@ -551,6 +551,13 @@ only for that logger's in-flight records for the bounded drain timeout; it does
 not join the shared worker. A violating callback can keep that worker occupied
 after the caller returns. Loom models join their logger-owned worker.
 
+The Python binding exposes `get_flush_diagnostics()` for polling each logger's
+fixed-cardinality attempt, confirmation, failure-stage and elapsed-time
+counters. The returned keys have no logger, path or message dimensions, and the
+relaxed-atomic snapshot may briefly combine values read at different instants.
+Applications can export the counters through their own metrics adapter; shared
+backend integration remains tracked by issue `#551`.
+
 The `add_handler()` method is exposed through the Python bindings and can be
 called on a shared logger instance. It verifies the provided object defines a
 callable `handle(logger, level, message)` method and raises `TypeError` if the

@@ -10,7 +10,9 @@ mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
 mod flush;
+mod flush_clock;
 mod flush_diagnostics;
+mod flush_diagnostics_api;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
@@ -226,13 +228,6 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Return how many records were dropped because Python context capture failed.
-    #[cfg(feature = "python")]
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_context_capture_failures(&self) -> u64 {
-        self.context_capture_failures.load(Ordering::Relaxed)
-    }
-
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
     /// Resolves dispatch state and snapshots handlers before queueing a marker.
@@ -285,7 +280,6 @@ impl FemtoLogger {
     /// ```
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking().finish(
-            std::time::Instant::now(),
             &self.flush_diagnostics,
             flush::FlushFailureStage::CallerReturnDeadlineExceeded,
         )

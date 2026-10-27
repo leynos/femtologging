@@ -77,6 +77,33 @@ class StallingHandler:
 class TestFlushHandlersBarrier:
     """Contracts for the logger's cross-thread flush barrier."""
 
+    def test_flush_diagnostics_have_a_stable_schema(self) -> None:
+        """Expose fixed-cardinality counters without a logging callback."""
+        logger = FemtoLogger("flush_diagnostics")
+
+        before = logger.get_flush_diagnostics()
+        assert len(before) == 22, "diagnostics must expose the fixed 22-key schema"
+        assert set(before.values()) == {0}, "a new logger must start with zero counters"
+        assert before["flush_handlers_attempts"] == 0, "no flush attempt has run yet"
+        assert before["flush_handlers_confirmed"] == 0, "no flush is confirmed yet"
+
+        assert logger.flush_handlers(), "an empty logger should flush successfully"
+
+        after = logger.get_flush_diagnostics()
+        assert after.keys() == before.keys(), "diagnostic keys must remain stable"
+        assert after["flush_handlers_attempts"] == 1, "one flush must add one attempt"
+        assert after["flush_handlers_confirmed"] == 1, (
+            "the successful flush must be counted"
+        )
+        assert (
+            sum(
+                value
+                for key, value in after.items()
+                if key.startswith("flush_handlers_elapsed_")
+            )
+            == 1
+        ), "the successful attempt must enter exactly one elapsed-time bucket"
+
     def test_flush_handlers_does_not_deadlock_on_a_gil_needing_handler(self) -> None:
         """A flush must not hold the interpreter while its worker needs it.
 

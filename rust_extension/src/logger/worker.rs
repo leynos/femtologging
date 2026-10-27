@@ -13,26 +13,25 @@
 //! `tests/heavy/` assert message routing and handler invocation counts, neither
 //! of which the size of the pool changes.
 
-#[cfg(feature = "python")]
-use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
-use crate::formatter::{DefaultFormatter, SharedFormatter};
-use crate::level::FemtoLevel;
-use crate::rate_limited_warner::RateLimitedWarner;
-use crate::sync::RwLock;
-use std::time::Instant;
-
 use super::FemtoLogger;
 use super::HandlerAttachment;
 #[cfg(not(loom))]
 use super::LoggerBudget;
 use super::Shard;
+#[cfg(feature = "python")]
+use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
 #[cfg(not(loom))]
 use super::dispatcher::Dispatcher;
 use super::dispatcher::DispatcherError;
 #[cfg(loom)]
 use super::dispatcher::LOOM_RECORDS_PER_LOGGER;
+use super::flush_clock::FlushDeadline;
 #[cfg(not(loom))]
 use super::pid_reservation::PidReservation;
+use crate::formatter::{DefaultFormatter, SharedFormatter};
+use crate::level::FemtoLevel;
+use crate::rate_limited_warner::RateLimitedWarner;
+use crate::sync::RwLock;
 
 /// How a logger refers to the shard its records are dispatched on.
 ///
@@ -125,11 +124,11 @@ impl FemtoLogger {
     #[cfg(not(loom))]
     pub(super) fn dispatch_state_until(
         &self,
-        deadline: Instant,
+        deadline: &FlushDeadline,
     ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
         let process_id = std::process::id();
         loop {
-            if Instant::now() > deadline {
+            if deadline.is_late() {
                 return Ok(None);
             }
             if self
@@ -147,14 +146,18 @@ impl FemtoLogger {
                         return Ok(None);
                     };
                     let handles = self.publish_dispatch_state(process_id, dispatcher);
-                    return Ok((Instant::now() <= deadline).then_some(handles));
+                    return Ok((!deadline.is_late()).then_some(handles));
                 }
                 Err(owner) => {
-                    PidReservation::wait_or_clear_stale(
+                    let owner_released = PidReservation::wait_or_clear_stale_until(
                         &self.dispatch.starting_process,
                         process_id,
                         owner,
+                        deadline,
                     );
+                    if !owner_released {
+                        return Ok(None);
+                    }
                 }
             }
         }
