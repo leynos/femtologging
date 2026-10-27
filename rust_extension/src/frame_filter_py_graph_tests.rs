@@ -29,6 +29,7 @@ impl GraphFilterLimits {
     }
 }
 
+/// Apply explicit frame and exception-graph limits to one payload.
 fn filter_with_limits<'py>(
     py: Python<'py>,
     payload: &Bound<'py, PyDict>,
@@ -48,6 +49,7 @@ fn filter_with_limits<'py>(
     Ok(filtered_dict.clone())
 }
 
+/// Assert that an error is a `ValueError` containing the expected detail.
 fn assert_value_error(py: Python<'_>, error: &PyErr, message: &str) {
     assert!(
         error.is_instance_of::<PyValueError>(py),
@@ -59,6 +61,7 @@ fn assert_value_error(py: Python<'_>, error: &PyErr, message: &str) {
     );
 }
 
+/// Reject self-cycles through cause, context and exception-group edges.
 #[rstest]
 #[case::cause("cause", "$.cause")]
 #[case::context("context", "$.context")]
@@ -92,6 +95,7 @@ fn filter_exception_graph_rejects_self_cycles(#[case] edge: &str, #[case] path: 
     });
 }
 
+/// Reject a cycle formed by cause and context edges between two payloads.
 #[rstest]
 #[serial]
 fn filter_exception_graph_rejects_two_node_cycle() {
@@ -115,6 +119,7 @@ fn filter_exception_graph_rejects_two_node_cycle() {
     });
 }
 
+/// Report a cycle path reached after traversing a valid acyclic prefix.
 #[rstest]
 #[serial]
 fn filter_exception_graph_reports_cycle_below_valid_prefix() {
@@ -142,6 +147,7 @@ fn filter_exception_graph_reports_cycle_below_valid_prefix() {
     });
 }
 
+/// Copy and filter shared cause/context payloads independently per occurrence.
 #[rstest]
 #[serial]
 fn filter_exception_graph_copies_shared_cause_and_context_per_occurrence() {
@@ -187,6 +193,7 @@ fn filter_exception_graph_copies_shared_cause_and_context_per_occurrence() {
     });
 }
 
+/// Copy and filter each repeated exception-group member independently.
 #[rstest]
 #[serial]
 fn filter_exception_graph_copies_shared_group_member_per_occurrence() {
@@ -229,6 +236,7 @@ fn filter_exception_graph_copies_shared_group_member_per_occurrence() {
     });
 }
 
+/// Enforce exception-graph depth and occurrence-count boundaries.
 #[rstest]
 #[serial]
 fn filter_exception_graph_enforces_depth_and_node_boundaries() {
@@ -269,6 +277,7 @@ fn filter_exception_graph_enforces_depth_and_node_boundaries() {
     });
 }
 
+/// Keep graph depth limits independent from per-payload frame depth.
 #[rstest]
 #[serial]
 fn filter_exception_graph_depth_limit_is_independent_of_frame_depth() {

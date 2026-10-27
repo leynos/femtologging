@@ -6,7 +6,7 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use super::super::filter_exception_payload_node;
+use super::super::filter_payload_frames;
 use super::{
     ActiveNode, AttachTarget, ChildOccurrence, DictEdgeWork, Edge, EnterNode,
     ExceptionGraphTraversal, GroupWork, TraversalContext, Work, attach_filtered_payload,
@@ -77,8 +77,7 @@ impl<'py, 'filters> ExceptionGraphTraversal<'py, 'filters> {
         self.check_node_budget()?;
         self.visited_nodes += 1;
 
-        let filtered =
-            filter_exception_payload_node(self.context.py, &node, &self.context.filter_options)?;
+        let filtered = filter_payload_frames(self.context.py, &node, &self.context.filter_options)?;
         attach_filtered_payload(target, filtered.clone(), &mut self.filtered_root)?;
         self.active_identities.insert(identity);
         self.active_path.push(ActiveNode { identity, edge });
