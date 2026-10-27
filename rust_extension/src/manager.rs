@@ -76,7 +76,7 @@ pub(crate) use registry::lookup_existing_logger;
     any(feature = "log-compat", feature = "tracing-compat")
 ))]
 pub(crate) use registry::named_logger_count_for_test;
-#[cfg(all(test, feature = "log-compat"))]
+#[cfg(all(test, feature = "python", feature = "log-compat"))]
 pub(crate) use registry::manager_write_available_for_test;
 
 #[cfg(feature = "log-compat")]
