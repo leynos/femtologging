@@ -131,21 +131,20 @@ def test_flush_handlers_releases_gil_for_python_handlers(
     logger_name = "python.handlers"
     logger = FemtoLogger(logger_name)
     handler = handler_type()
-    gate = HandlerFlushGate(handler, logger)
-    logger.add_handler(handler)
     messages = ["first", "second", "third"]
     expected_payloads = [(logger_name, "INFO", message) for message in messages]
 
     try:
-        for message in messages:
-            logger.info(message)
+        with HandlerFlushGate(handler, logger):
+            logger.add_handler(handler)
+            for message in messages:
+                logger.info(message)
 
-        # Enqueue, then flush before inspecting; polling first masks the defect.
-        assert logger.flush_handlers(), "logger worker did not flush"
-        payloads = handler_payloads(handler)
-        assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
+            # Enqueue, then flush before inspecting; polling first masks the defect.
+            assert logger.flush_handlers(), "logger worker did not flush"
+            payloads = handler_payloads(handler)
+            assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
     finally:
-        gate.close()
         logger.remove_handler(handler)
 
 
