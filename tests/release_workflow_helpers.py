@@ -8,7 +8,11 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests execut
 import sys
 import typing as typ
 
+import yaml
+
 from tests.make_contract_helpers import (
+    mapping,
+    objects,
     repo_root,
     sole_workflow_step,
     workflow_job,
@@ -54,6 +58,44 @@ def step_environment(workflow: str, job_name: str, step_name: str) -> dict[str, 
             }
             result.update(typ.cast("dict[str, str]", entries))
     return result
+
+
+def workflow_environment_mappings(workflow: str) -> list[dict[str, object]]:
+    """Collect the workflow, job, and step environment mappings.
+
+    Parameters
+    ----------
+    workflow : str
+        Repository-relative path to the parsed workflow document.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        All environment mappings, including empty mappings at unset levels.
+
+    Examples
+    --------
+    >>> isinstance(workflow_environment_mappings(".github/workflows/ci.yml"), list)
+    True
+    """
+    document = mapping(
+        yaml.safe_load((ROOT / workflow).read_text(encoding="utf-8")),
+        subject=workflow,
+    )
+    jobs = mapping(document.get("jobs"), subject=f"{workflow} jobs")
+    job_documents = [
+        mapping(job, subject=f"{workflow} {name} job") for name, job in jobs.items()
+    ]
+    step_documents: list[dict[str, object]] = []
+    for job_document in job_documents:
+        step_documents.extend(
+            objects(job_document.get("steps", []), subject="workflow steps")
+        )
+    levels = [document, *job_documents, *step_documents]
+    return [
+        mapping(level.get("env", {}), subject=f"{workflow} environment")
+        for level in levels
+    ]
 
 
 def run_bash(

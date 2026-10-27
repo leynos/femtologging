@@ -8,6 +8,43 @@ import sys
 from pathlib import Path
 
 
+def _native_location_errors(native_location: object) -> list[str]:
+    """Return violations when a native module path is outside this environment.
+
+    Parameters
+    ----------
+    native_location : object
+        The value reported by the native module's ``__file__`` attribute.
+
+    Returns
+    -------
+    list[str]
+        Human-readable path or extension-suffix violations.
+
+    Examples
+    --------
+    >>> _native_location_errors(None)
+    ['native extension has no filesystem origin']
+    """
+    if not isinstance(native_location, str):
+        return ["native extension has no filesystem origin"]
+
+    native_path = Path(native_location).resolve()
+    environment = Path(sys.prefix).resolve()
+    errors: list[str] = []
+    try:
+        native_path.relative_to(environment)
+    except ValueError:
+        errors.append(f"native extension is outside sys.prefix: {native_path}")
+    has_extension_suffix = any(
+        native_path.name.endswith(suffix)
+        for suffix in importlib.machinery.EXTENSION_SUFFIXES
+    )
+    if not has_extension_suffix:
+        errors.append(f"native module does not use an extension suffix: {native_path}")
+    return errors
+
+
 def release_wheel_errors() -> list[str]:
     """Return checks that fail when this process is not using a release wheel.
 
@@ -20,25 +57,7 @@ def release_wheel_errors() -> list[str]:
     import femtologging
 
     native = importlib.import_module("femtologging._femtologging_rs")
-    errors: list[str] = []
-    native_location = getattr(native, "__file__", None)
-    if not isinstance(native_location, str):
-        errors.append("native extension has no filesystem origin")
-    else:
-        native_path = Path(native_location).resolve()
-        environment = Path(sys.prefix).resolve()
-        try:
-            native_path.relative_to(environment)
-        except ValueError:
-            errors.append(f"native extension is outside sys.prefix: {native_path}")
-        has_extension_suffix = any(
-            native_path.name.endswith(suffix)
-            for suffix in importlib.machinery.EXTENSION_SUFFIXES
-        )
-        if not has_extension_suffix:
-            errors.append(
-                f"native module does not use an extension suffix: {native_path}"
-            )
+    errors = _native_location_errors(getattr(native, "__file__", None))
 
     hooks = (
         "set_timed_rotation_test_times_for_test",
