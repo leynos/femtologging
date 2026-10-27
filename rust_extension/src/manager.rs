@@ -67,6 +67,8 @@ pub(crate) use registry::lookup_existing_logger;
 // Bridge saturation tests use the named count to assert the cap directly.
 #[cfg(all(test, any(feature = "log-compat", feature = "tracing-compat")))]
 pub(crate) use registry::named_logger_count_for_test;
+#[cfg(all(test, feature = "log-compat"))]
+pub(crate) use registry::manager_write_available_for_test;
 
 #[cfg(feature = "log-compat")]
 pub(crate) use registry::flush_all_handlers;

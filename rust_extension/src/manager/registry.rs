@@ -65,6 +65,12 @@ pub(super) struct Manager {
 /// Process-wide registry lock for logger identities and runtime configuration.
 pub(super) static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Check whether a test can acquire the manager write lock without blocking.
+#[cfg(all(test, feature = "log-compat"))]
+pub(crate) fn manager_write_available_for_test() -> bool {
+    MANAGER.try_write().is_some()
+}
+
 /// Clear the Python-specific runtime configuration while preserving loggers.
 #[cfg(feature = "python")]
 pub(super) fn clear_runtime_state(mgr: &mut Manager) {

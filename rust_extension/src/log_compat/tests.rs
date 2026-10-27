@@ -8,8 +8,9 @@ use crate::test_utils::collecting_handler::CollectingHandler;
 use rstest::{fixture, rstest};
 use std::sync::{
     Arc, Once,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+use std::time::{Duration, Instant};
 
 static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -114,6 +115,107 @@ fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].logger(), logger_name.as_str());
     });
+}
+
+#[rstest]
+fn adapter_flush_releases_manager_for_python_handlers(
+    unique_logger_name: String,
+) -> pyo3::PyResult<()> {
+    let adapter = FemtoLogAdapter;
+    Python::attach(|py| -> pyo3::PyResult<()> {
+        let source = std::ffi::CString::new(concat!(
+            "from threading import Event\n",
+            "class GatedHandler:\n",
+            "    def __init__(self):\n",
+            "        self.started = Event()\n",
+            "        self.release = Event()\n",
+            "        self.records = []\n",
+            "    def handle_record(self, record):\n",
+            "        self.started.set()\n",
+            "        if not self.release.wait(timeout=5.0):\n",
+            "            raise TimeoutError('handler gate timed out')\n",
+            "        self.records.append(record)\n",
+            "    def handle(self, logger, level, message):\n",
+            "        self.records.append((logger, level, message))\n",
+            "handler = GatedHandler()\n",
+        ))
+        .expect("test handler source contains no NUL bytes");
+        let filename = std::ffi::CString::new("gated_handler.py")
+            .expect("test filename contains no NUL bytes");
+        let module_name = std::ffi::CString::new("gated_handler")
+            .expect("test module name contains no NUL bytes");
+        let module = PyModule::from_code(
+            py,
+            source.as_c_str(),
+            filename.as_c_str(),
+            module_name.as_c_str(),
+        )?;
+        let handler = module.getattr("handler")?.unbind();
+        let started = handler.getattr(py, "started")?;
+        let release = handler.getattr(py, "release")?;
+        let lock_available_during_flush = Arc::new(AtomicBool::new(false));
+        let helper_lock_available = Arc::clone(&lock_available_during_flush);
+        let helper_started = started.clone_ref(py);
+        let helper_release = release.clone_ref(py);
+
+        let logger = manager::get_logger(py, &unique_logger_name)?;
+        logger.borrow(py).py_add_handler(handler.clone_ref(py))?;
+        logger
+            .borrow(py)
+            .log(FemtoLevel::Info, "before bridge flush");
+
+        let lock_probe = std::thread::spawn(move || {
+            Python::attach(|py| {
+                let callback_started = helper_started
+                    .bind(py)
+                    .call_method1("wait", (5.0,))
+                    .and_then(|value| value.extract::<bool>())
+                    .unwrap_or(false);
+                if callback_started {
+                    let manager_lock_was_available = py.detach(|| {
+                        let deadline = Instant::now() + Duration::from_secs(3);
+                        loop {
+                            if manager::manager_write_available_for_test() {
+                                break true;
+                            }
+                            if Instant::now() >= deadline {
+                                break false;
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                    });
+                    helper_lock_available.store(manager_lock_was_available, Ordering::Release);
+                }
+                let _ = helper_release.bind(py).call_method0("set");
+            });
+        });
+
+        // Keep Python attached from enqueue through the log bridge flush.
+        adapter.flush();
+        let delivered_before_bridge_return = handler.bind(py).getattr("records")?.len()? == 1;
+        let manager_lock_was_available = lock_available_during_flush.load(Ordering::Acquire);
+
+        release.bind(py).call_method0("set")?;
+        let cleanup_flushed = {
+            let borrowed_logger = logger.borrow(py);
+            let logger_ref: &crate::FemtoLogger = &borrowed_logger;
+            py.detach(|| logger_ref.flush_handlers())
+        };
+        logger.borrow(py).py_remove_handler(handler.clone_ref(py));
+        let helper_joined = py.detach(|| lock_probe.join()).is_ok();
+
+        assert!(helper_joined, "manager lock probe thread should finish");
+        assert!(cleanup_flushed, "cleanup should drain the Python handler");
+        assert!(
+            delivered_before_bridge_return,
+            "log bridge flush should deliver the queued Python callback before returning",
+        );
+        assert!(
+            manager_lock_was_available,
+            "manager lock should be available while the Python handler is gated",
+        );
+        Ok(())
+    })
 }
 
 #[rstest]
