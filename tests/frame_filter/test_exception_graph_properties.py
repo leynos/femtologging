@@ -11,13 +11,16 @@ from hypothesis import strategies as st
 from femtologging import filter_frames
 
 from .conftest import ExceptionPayload, FilteredPayload, make_exception_payload
+from .exception_graph_builders import (
+    _EDGE_KEYS,
+    _build_acyclic_graph,
+    _build_cyclic_chain,
+    _GraphPlan,
+    _NodePlan,
+)
 
-type _NodePlan = tuple[int | None, int | None, tuple[int, ...]]
-type _GraphPlan = tuple[_NodePlan, ...]
 type _AcyclicCase = tuple[_GraphPlan, tuple[str, ...]]
 type _ChildOccurrence = tuple[FilteredPayload, int, int]
-
-_EDGE_KEYS = ("cause", "context", "exceptions")
 
 
 @st.composite
@@ -43,31 +46,6 @@ def _acyclic_graph_cases(draw: st.DrawFn) -> _AcyclicCase:
 
     insertion_order = draw(st.permutations(_EDGE_KEYS))
     return tuple(plan), tuple(insertion_order)
-
-
-def _build_acyclic_graph(
-    plan: _GraphPlan,
-    insertion_order: tuple[str, ...],
-) -> ExceptionPayload:
-    """Build a Python payload DAG from forward-only node references."""
-    nodes = [
-        make_exception_payload([], type_name=f"GraphNode{index}")
-        for index in range(len(plan))
-    ]
-
-    for index, (cause, context, members) in enumerate(plan):
-        edges: dict[str, object] = {}
-        if cause is not None:
-            edges["cause"] = nodes[cause]
-        if context is not None:
-            edges["context"] = nodes[context]
-        if members:
-            edges["exceptions"] = [nodes[member] for member in members]
-        for key in insertion_order:
-            if key in edges:
-                typ.cast("dict[str, object]", nodes[index])[key] = edges[key]
-
-    return nodes[0]
 
 
 def _children(plan: _GraphPlan, node_id: int) -> list[int]:
@@ -264,31 +242,6 @@ def test_generated_exception_dags_preserve_occurrences_and_limits(
     assert _snapshot_graph(root) == before, (
         "depth-limit rejection mutated the input graph"
     )
-
-
-def _build_cyclic_chain(
-    node_count: int,
-    target: int,
-    closing_edge: str,
-    insertion_order: tuple[str, ...],
-) -> ExceptionPayload:
-    """Build a cause chain closed by one generated back-edge."""
-    nodes = [
-        make_exception_payload([], type_name=f"CycleNode{index}")
-        for index in range(node_count)
-    ]
-    for index, node in enumerate(nodes):
-        edges: dict[str, object] = {}
-        if index + 1 < node_count:
-            edges["cause"] = nodes[index + 1]
-        elif closing_edge == "exceptions":
-            edges[closing_edge] = [nodes[target]]
-        else:
-            edges[closing_edge] = nodes[target]
-        for key in insertion_order:
-            if key in edges:
-                typ.cast("dict[str, object]", node)[key] = edges[key]
-    return nodes[0]
 
 
 def _build_graph_with_selected_back_edges(
