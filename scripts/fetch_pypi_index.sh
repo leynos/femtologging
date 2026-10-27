@@ -11,6 +11,7 @@ fetch_index() {
   while [ "${attempt}" -lt 6 ]; do
     attempt=$((attempt + 1))
     status=$(curl --silent --show-error --location \
+      --proto '=https' --proto-redir '=https' \
       --connect-timeout 10 --max-time 60 \
       --output "${PYPI_INDEX_PATH}" --write-out '%{http_code}' \
       --header 'Accept: application/vnd.pypi.simple.v1+json' \

@@ -362,6 +362,7 @@ jobs:
           while IFS=$'\t' read -r name url; do
             [ -n "${name}" ] || continue
             curl --silent --show-error --location --fail \
+              --proto '=https' --proto-redir '=https' \
               --retry 5 --retry-all-errors --retry-delay 2 \
               --connect-timeout 10 --max-time 300 \
               --output "${PYPI_DOWNLOAD_DIRECTORY}/${name}" "${url}"

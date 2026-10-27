@@ -46,6 +46,7 @@ class IndexRunLayout:
 
     tools: pathlib.Path
     calls: pathlib.Path
+    arguments: pathlib.Path
     sleeps: pathlib.Path
     responses: pathlib.Path
     expected_directory: pathlib.Path
@@ -55,11 +56,13 @@ def _fake_curl_tools(directory: pathlib.Path) -> pathlib.Path:
     """Install a scripted curl and no-op sleep tool for index tests."""
     tools = directory / "fake-tools"
     curl_body = (
-        "import os, pathlib, sys\n"
+        "import json, os, pathlib, sys\n"
         "args = sys.argv[1:]\n"
         "calls = pathlib.Path(os.environ['FAKE_CURL_CALLS'])\n"
         "index = int(calls.read_text() or '0') if calls.exists() else 0\n"
         "calls.write_text(str(index + 1))\n"
+        "arguments = pathlib.Path(os.environ['FAKE_CURL_ARGUMENTS'])\n"
+        "arguments.write_text(json.dumps(args), encoding='utf-8')\n"
         "statuses = os.environ['FAKE_CURL_STATUSES'].split(',')\n"
         "status = statuses[min(index, len(statuses) - 1)]\n"
         "output = pathlib.Path(args[args.index('--output') + 1])\n"
@@ -97,6 +100,7 @@ def _prepare_index_run(
     layout = IndexRunLayout(
         tools=_fake_curl_tools(tmp_path),
         calls=tmp_path / "curl-calls",
+        arguments=tmp_path / "curl-arguments",
         sleeps=tmp_path / "sleep-calls",
         responses=tmp_path / "curl-responses",
         expected_directory=tmp_path / "dist/publish",
@@ -122,6 +126,7 @@ def _index_environment(
         "FAKE_CURL_STATUSES": scenario.statuses,
         "FAKE_CURL_BODY": '{"files": []}',
         "FAKE_CURL_CALLS": str(layout.calls),
+        "FAKE_CURL_ARGUMENTS": str(layout.arguments),
         "FAKE_SLEEP_CALLS": str(layout.sleeps),
         "PYPI_ALLOW_MISSING": scenario.allow_missing,
         "PYPI_EXPECTED_DIRECTORY": str(layout.expected_directory),
@@ -161,6 +166,20 @@ def test_a_missing_pypi_project_becomes_an_empty_index(tmp_path: pathlib.Path) -
     }, "A 404 before the first release means there is nothing to skip."
     assert (calls, sleeps) == (1, []), (
         "A 404 before the first release means there is nothing to skip."
+    )
+
+
+def test_pypi_index_fetch_restricts_redirects_to_https(tmp_path: pathlib.Path) -> None:
+    """The index request passes HTTPS-only protocol restrictions to curl."""
+    completed, calls, _ = _run_index(tmp_path, IndexScenario(statuses="200"))
+    assert completed.returncode == 0, completed.stderr
+    assert calls == 1, "A successful index fetch makes one curl request."
+    arguments = json.loads((tmp_path / "curl-arguments").read_text(encoding="utf-8"))
+    assert arguments[arguments.index("--proto") + 1] == "=https", (
+        "The index request permits only HTTPS as its initial protocol."
+    )
+    assert arguments[arguments.index("--proto-redir") + 1] == "=https", (
+        "The index request permits only HTTPS redirects."
     )
 
 
