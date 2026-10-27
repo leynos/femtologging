@@ -154,7 +154,11 @@ the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization
 test in `tests/test_maturin_build.py` verifies that the maturin pins stay
 aligned across `pyproject.toml`, `.github/workflows/heavy-tests.yml`, and
-`.github/workflows/build-wheels.yml`.
+`.github/workflows/build-wheels.yml`. The isolated sdist builders read the same
+pin from `.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`;
+update that file alongside the other pins.
+`tests/test_ci_build_wheels_sdist_cardinality.py::test_sdist_builds_share_the_pinned_maturin_constraint`
+verifies the sdist constraint.
 
 ### Maturin build features
 
