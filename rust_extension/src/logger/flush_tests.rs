@@ -14,6 +14,8 @@ use super::super::flush_clock::{FlushDeadline, MonotonicClock};
 use super::super::flush_diagnostics::{FlushDiagnostics, FlushFailureStage, elapsed_bucket};
 use super::{FemtoLogger, FlushOutcome, confirm_by_deadline, flush_handler_snapshot_at};
 
+const TEST_FLUSH_BUDGET: Duration = Duration::from_secs(1);
+
 /// Clock that returns a fixed sample for a deadline-orchestration test.
 struct FixedClock {
     /// The monotonic sample every stage observes.
@@ -64,6 +66,43 @@ impl FemtoHandlerTrait for ResultHandler {
     }
 }
 
+fn assert_single_flush_failure(diagnostics: &FlushDiagnostics, stage: FlushFailureStage) {
+    let snapshot = diagnostics.snapshot();
+    assert_eq!(
+        (
+            snapshot.attempts,
+            snapshot.confirmed,
+            snapshot.failures[stage as usize],
+        ),
+        (1, 0, 1),
+        "one unconfirmed flush should be counted at its terminal stage",
+    );
+}
+
+fn assert_flush_fails_at_clock_offsets(
+    logger: &FemtoLogger,
+    clock_offsets: &[Duration],
+    expected_stage: FlushFailureStage,
+) {
+    let started_at = Instant::now();
+    let deadline = started_at + TEST_FLUSH_BUDGET;
+    let samples = clock_offsets
+        .iter()
+        .map(|offset| started_at + *offset)
+        .collect();
+    let clock = Arc::new(SequenceClock {
+        samples: Mutex::new(samples),
+        fallback: deadline,
+    });
+    let outcome = logger.flush_handlers_with_clock(TEST_FLUSH_BUDGET, clock);
+
+    assert!(!outcome.finish(
+        &logger.flush_diagnostics,
+        FlushFailureStage::CallerReturnDeadlineExceeded,
+    ));
+    assert_single_flush_failure(&logger.flush_diagnostics, expected_stage);
+}
+
 proptest! {
     #[test]
     fn generated_handler_sequences_cannot_extend_the_absolute_deadline(
@@ -78,10 +117,12 @@ proptest! {
         let current = start + Duration::from_millis(elapsed_ms);
 
         let remaining_budget = remaining(deadline, current);
-        prop_assert!(remaining_budget <= budget);
         prop_assert_eq!(
-            remaining_budget,
-            budget.saturating_sub(Duration::from_millis(elapsed_ms)),
+            (remaining_budget <= budget, remaining_budget),
+            (
+                true,
+                budget.saturating_sub(Duration::from_millis(elapsed_ms)),
+            ),
         );
 
         let local_cap = capped_deadline(
@@ -148,7 +189,8 @@ proptest! {
             Duration::from_millis(budget_ms),
             Arc::new(FixedClock { now: started_at }),
         );
-        prop_assert_eq!(timing.instant(), Some(deadline));
+        let sampled_deadline = timing.instant();
+        prop_assert_eq!(sampled_deadline, Some(deadline));
         let outcome = FlushOutcome {
             result,
             timing,
@@ -163,10 +205,9 @@ proptest! {
         let expected = completed
             && barrier_elapsed_ms <= budget_ms
             && caller_elapsed_ms <= budget_ms;
-        prop_assert_eq!(confirmed, expected);
+        prop_assert_eq!((sampled_deadline, confirmed), (Some(deadline), expected));
         let snapshot = diagnostics.snapshot();
-        prop_assert_eq!(snapshot.attempts, 1);
-        prop_assert_eq!(snapshot.confirmed, u64::from(expected));
+        prop_assert_eq!((snapshot.attempts, snapshot.confirmed), (1, u64::from(expected)));
     }
 }
 
@@ -186,25 +227,32 @@ fn flush_deadline_helpers_cover_the_exact_boundary() {
     let deadline = deadline_after(started_at, Duration::from_millis(50))
         .expect("a short test deadline should be representable");
 
-    assert_eq!(remaining(deadline, started_at), Duration::from_millis(50));
-    assert_eq!(remaining(deadline, deadline), Duration::ZERO);
-    assert_eq!(
-        confirm_by_deadline(
-            Ok(()),
-            deadline,
-            deadline,
-            FlushFailureStage::BarrierDeadlineExceeded,
-        ),
-        Ok(())
+    let confirmed_at_deadline = confirm_by_deadline(
+        Ok(()),
+        deadline,
+        deadline,
+        FlushFailureStage::BarrierDeadlineExceeded,
+    );
+    let confirmed_after_deadline = confirm_by_deadline(
+        Ok(()),
+        deadline,
+        deadline + Duration::from_nanos(1),
+        FlushFailureStage::BarrierDeadlineExceeded,
     );
     assert_eq!(
-        confirm_by_deadline(
-            Ok(()),
-            deadline,
-            deadline + Duration::from_nanos(1),
-            FlushFailureStage::BarrierDeadlineExceeded,
+        (
+            remaining(deadline, started_at),
+            remaining(deadline, deadline),
+            confirmed_at_deadline,
+            confirmed_after_deadline,
         ),
-        Err(FlushFailureStage::BarrierDeadlineExceeded)
+        (
+            Duration::from_millis(50),
+            Duration::ZERO,
+            Ok(()),
+            Err(FlushFailureStage::BarrierDeadlineExceeded),
+        ),
+        "deadline helpers must preserve the exact completion boundary",
     );
 }
 
@@ -218,26 +266,31 @@ fn flush_diagnostics_use_fixed_stage_and_elapsed_buckets() {
     diagnostics.record(Ok(()), Duration::from_millis(750));
 
     let snapshot = diagnostics.snapshot();
-    assert_eq!(snapshot.attempts, 2);
-    assert_eq!(snapshot.confirmed, 1);
     assert_eq!(
-        snapshot.failures[FlushFailureStage::MarkerEnqueueTimedOut as usize],
-        1,
+        (
+            snapshot.attempts,
+            snapshot.confirmed,
+            snapshot.failures[FlushFailureStage::MarkerEnqueueTimedOut as usize],
+            snapshot.elapsed_buckets,
+        ),
+        (2, 1, 1, [0, 1, 0, 1, 0]),
+        "diagnostics must preserve outcome stages and elapsed buckets",
     );
-    assert_eq!(snapshot.elapsed_buckets[1], 1);
-    assert_eq!(snapshot.elapsed_buckets[3], 1);
     assert_eq!(elapsed_bucket(Duration::from_secs(3)), 4);
 
     let metrics = snapshot.metrics();
-    assert_eq!(metrics.len(), 22);
-    assert_eq!(metrics["flush_handlers_attempts"], 2);
-    assert_eq!(metrics["flush_handlers_confirmed"], 1);
     assert_eq!(
-        metrics["flush_handlers_failure_marker_enqueue_timed_out"],
-        1
+        (
+            metrics.len(),
+            metrics["flush_handlers_attempts"],
+            metrics["flush_handlers_confirmed"],
+            metrics["flush_handlers_failure_marker_enqueue_timed_out"],
+            metrics["flush_handlers_elapsed_le_100_ms"],
+            metrics["flush_handlers_elapsed_le_2000_ms"],
+        ),
+        (22, 2, 1, 1, 1, 1),
+        "metrics must expose the stable key set and recorded counts",
     );
-    assert_eq!(metrics["flush_handlers_elapsed_le_100_ms"], 1);
-    assert_eq!(metrics["flush_handlers_elapsed_le_2000_ms"], 1);
 }
 
 #[test]
@@ -250,15 +303,13 @@ fn logger_flush_records_the_handler_failure_stage() {
 
     assert!(!logger.flush_handlers());
 
-    let snapshot = logger.flush_diagnostics.snapshot();
-    assert_eq!(snapshot.attempts, 1);
-    assert_eq!(snapshot.confirmed, 0);
-    assert_eq!(
-        snapshot.failures[FlushFailureStage::HandlerFlushUnconfirmed as usize],
-        1,
+    assert_single_flush_failure(
+        &logger.flush_diagnostics,
+        FlushFailureStage::HandlerFlushUnconfirmed,
     );
+    let metrics = logger.flush_diagnostics.snapshot().metrics();
     assert_eq!(
-        snapshot.metrics()["flush_handlers_failure_handler_flush_unconfirmed"],
+        metrics["flush_handlers_failure_handler_flush_unconfirmed"],
         1,
     );
 }
@@ -286,23 +337,11 @@ fn injected_clock_reaches_the_worker_with_one_deadline() {
 fn injected_clock_bounds_handler_snapshot_acquisition() {
     let logger = FemtoLogger::new("flush-snapshot-clock".to_owned())
         .expect("diagnostic test logger should be constructible");
-    let started_at = Instant::now();
-    let deadline = started_at + Duration::from_secs(1);
-    let clock = Arc::new(SequenceClock {
-        samples: Mutex::new(VecDeque::from([started_at, started_at, deadline])),
-        fallback: deadline,
-    });
     let _handler_guard = logger.handlers.write();
-    let outcome = logger.flush_handlers_with_clock(Duration::from_secs(1), clock);
-
-    assert!(!outcome.finish(
-        &logger.flush_diagnostics,
-        FlushFailureStage::CallerReturnDeadlineExceeded,
-    ));
-    let snapshot = logger.flush_diagnostics.snapshot();
-    assert_eq!(
-        snapshot.failures[FlushFailureStage::HandlerSnapshotTimedOut as usize],
-        1,
+    assert_flush_fails_at_clock_offsets(
+        &logger,
+        &[Duration::ZERO, Duration::ZERO, TEST_FLUSH_BUDGET],
+        FlushFailureStage::HandlerSnapshotTimedOut,
     );
 }
 
@@ -310,23 +349,14 @@ fn injected_clock_bounds_handler_snapshot_acquisition() {
 fn injected_clock_stops_before_marker_when_the_shared_deadline_expires() {
     let logger = FemtoLogger::new("flush-marker-clock".to_owned())
         .expect("diagnostic test logger should be constructible");
-    let started_at = Instant::now();
-    let deadline = started_at + Duration::from_secs(1);
-    let clock = Arc::new(SequenceClock {
-        samples: Mutex::new(VecDeque::from([
-            started_at, started_at, started_at, deadline,
-        ])),
-        fallback: deadline,
-    });
-    let outcome = logger.flush_handlers_with_clock(Duration::from_secs(1), clock);
-
-    assert!(!outcome.finish(
-        &logger.flush_diagnostics,
-        FlushFailureStage::CallerReturnDeadlineExceeded,
-    ));
-    let snapshot = logger.flush_diagnostics.snapshot();
-    assert_eq!(
-        snapshot.failures[FlushFailureStage::DeadlineExpiredBeforeMarker as usize],
-        1,
+    assert_flush_fails_at_clock_offsets(
+        &logger,
+        &[
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
+            TEST_FLUSH_BUDGET,
+        ],
+        FlushFailureStage::DeadlineExpiredBeforeMarker,
     );
 }
