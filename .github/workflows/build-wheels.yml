@@ -46,11 +46,11 @@ jobs:
           before-script-linux: |
             set -euo pipefail
             command -v perl
-            # The CentOS 7 image omits OpenSSL's Perl module.
-            if ! perl -MIPC::Cmd -MFindBin -e '1' >/dev/null 2>&1; then
-              yum -y install perl-IPC-Cmd
+            # The CentOS 7 image splits OpenSSL's Perl modules into packages.
+            if ! perl -MIPC::Cmd -MFindBin -MTime::Piece -e '1' >/dev/null 2>&1; then
+              yum -y install perl-IPC-Cmd perl-Time-Piece
             fi
-            perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
+            perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
             command -v make
             command -v cc
           command: build
@@ -68,7 +68,7 @@ jobs:
           before-script-linux: |
             set -euo pipefail
             command -v perl
-            perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
+            perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
             command -v make
             command -v aarch64-unknown-linux-gnu-gcc
             case "$(aarch64-unknown-linux-gnu-gcc -dumpmachine)" in
@@ -159,7 +159,7 @@ jobs:
               ;;
           esac
           command -v perl
-          perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
+          perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
           case "${BUILD_RUNNER_OS}" in
             macOS)
               command -v make
@@ -221,7 +221,7 @@ jobs:
           set -euo pipefail
           test "${BUILD_RUNNER_OS}" = Linux
           command -v perl
-          perl -MIPC::Cmd -MFindBin -e 'print "Perl OpenSSL build modules are present\n"'
+          perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
           command -v make
           command -v cc
       - name: Download all wheel and sdist artefacts

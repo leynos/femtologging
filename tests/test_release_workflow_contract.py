@@ -153,11 +153,12 @@ def test_linux_wheel_builds_prepare_openssl_perl_and_target_compilers() -> None:
     assert isinstance(x86_script, str), "The x86_64 build uses a shell script."
     assert (
         re.search(
-            r"yum -y install perl-IPC-Cmd\s+fi\s+perl -MIPC::Cmd -MFindBin",
+            r"yum -y install perl-IPC-Cmd perl-Time-Piece\s+fi\s+"
+            r"perl -MIPC::Cmd -MFindBin -MTime::Piece",
             x86_script,
         )
         is not None
-    ), "The minimal manylinux image installs OpenSSL's missing Perl module."
+    ), "The minimal manylinux image installs OpenSSL's missing Perl modules."
 
     arm_build = sole_workflow_step(
         BUILD_WORKFLOW, "build-linux", "Build Linux aarch64 wheels"
@@ -166,6 +167,9 @@ def test_linux_wheel_builds_prepare_openssl_perl_and_target_compilers() -> None:
         "before-script-linux"
     )
     assert isinstance(arm_script, str), "The aarch64 build uses a shell script."
+    assert "perl -MIPC::Cmd -MFindBin -MTime::Piece" in arm_script, (
+        "The aarch64 build checks OpenSSL's required Perl modules."
+    )
     assert (
         re.search(
             r"command -v aarch64-unknown-linux-gnu-gcc\s+case.*?"
@@ -175,6 +179,16 @@ def test_linux_wheel_builds_prepare_openssl_perl_and_target_compilers() -> None:
         )
         is not None
     ), "The aarch64 container checks its target C compiler."
+
+    for job_name in ("build-other", "verify-wheel-install"):
+        step = sole_workflow_step(
+            BUILD_WORKFLOW, job_name, "Verify vendored OpenSSL build tools"
+        )
+        script = step.get("run")
+        assert isinstance(script, str), f"{job_name} checks OpenSSL build tools."
+        assert "perl -MIPC::Cmd -MFindBin -MTime::Piece" in script, (
+            f"{job_name} checks OpenSSL's required Perl modules."
+        )
 
 
 def test_windows_wheel_build_uses_the_complete_runner_perl() -> None:
