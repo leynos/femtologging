@@ -13,9 +13,20 @@ import threading
 import typing as typ
 from functools import partial
 
-from femtologging._femtologging_rs import (
-    cancel_flush_wait_for_test,
-    wait_for_flush_entry_for_test,
+from femtologging import _femtologging_rs
+
+cancel_flush_wait_for_test = getattr(
+    _femtologging_rs,
+    "cancel_flush_wait_for_test",
+    None,
+)
+wait_for_flush_entry_for_test = getattr(
+    _femtologging_rs,
+    "wait_for_flush_entry_for_test",
+    None,
+)
+FLUSH_TEST_HOOKS_AVAILABLE = callable(cancel_flush_wait_for_test) and callable(
+    wait_for_flush_entry_for_test
 )
 
 if typ.TYPE_CHECKING:
@@ -156,14 +167,25 @@ class HandlerFlushGate:
             Handler whose callback remains blocked until the flush starts.
         logger : FemtoLogger
             Logger whose token-free flush entry coordinates callback release.
+
+        Raises
+        ------
+        TypeError
+            If the Rust extension does not expose its test-util hooks.
         """
+        wait_for_flush_entry = wait_for_flush_entry_for_test
+        cancel_flush_wait = cancel_flush_wait_for_test
+        if not callable(wait_for_flush_entry) or not callable(cancel_flush_wait):
+            message = "HandlerFlushGate requires the Rust test-util feature"
+            raise TypeError(message)
+
         self._handler = handler
         self._wait_for_flush_entry = partial(
-            wait_for_flush_entry_for_test,
+            wait_for_flush_entry,
             logger,
             3_000,
         )
-        self._cancel_flush_wait = partial(cancel_flush_wait_for_test, logger)
+        self._cancel_flush_wait = partial(cancel_flush_wait, logger)
         self._callback_started = threading.Event()
         self._callback_release = threading.Event()
         handler.callback_gate = self._wait_for_release
@@ -208,6 +230,11 @@ def handler_payloads(
     list[tuple[str, str, str]]
         ``(logger, level, message)`` tuples for each collected record.
 
+    Raises
+    ------
+    TypeError
+        If *handler* does not implement a supported collector protocol.
+
     Examples
     --------
     >>> handler = CollectingHandler()
@@ -224,6 +251,9 @@ def handler_payloads(
             ]
         case CollectingHandler():
             return handler.records
+        case _:
+            message = f"unsupported handler type: {type(handler).__name__}"
+            raise TypeError(message)
 
 
 class MutableHandler:

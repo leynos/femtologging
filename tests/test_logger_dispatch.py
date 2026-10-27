@@ -15,6 +15,7 @@ import pytest
 
 from femtologging import FemtoLogger
 from tests.logger_support import (
+    FLUSH_TEST_HOOKS_AVAILABLE,
     CollectingHandler,
     HandlerFlushGate,
     MutableHandler,
@@ -124,6 +125,9 @@ def test_flush_handlers_releases_gil_for_python_handlers(
     handler_type: type[RecordCollectingHandler] | type[CollectingHandler],
 ) -> None:
     """Flush immediately delivers records to either Python handler protocol."""
+    if not FLUSH_TEST_HOOKS_AVAILABLE:
+        pytest.skip("flush synchronization regression requires the test-util feature")
+
     logger_name = "python.handlers"
     logger = FemtoLogger(logger_name)
     handler = handler_type()
