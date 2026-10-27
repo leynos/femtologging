@@ -16,8 +16,10 @@ import pytest
 from femtologging import FemtoLogger
 from tests.logger_support import (
     CollectingHandler,
+    HandlerFlushGate,
     MutableHandler,
     RecordCollectingHandler,
+    handler_payloads,
     raise_exception,
 )
 
@@ -125,6 +127,7 @@ def test_flush_handlers_releases_gil_for_python_handlers(
     logger_name = "python.handlers"
     logger = FemtoLogger(logger_name)
     handler = handler_type()
+    gate = HandlerFlushGate(handler)
     logger.add_handler(handler)
     messages = ["first", "second", "third"]
     expected_payloads = [(logger_name, "INFO", message) for message in messages]
@@ -133,19 +136,13 @@ def test_flush_handlers_releases_gil_for_python_handlers(
         for message in messages:
             logger.info(message)
 
-        # Enqueue, flush, then inspect: polling first would mask a GIL deadlock.
-        assert logger.flush_handlers(), "logger worker did not flush"
-
-        match handler:
-            case RecordCollectingHandler():
-                payloads = [
-                    (record["logger"], record["level"], record["message"])
-                    for record in handler.records
-                ]
-            case CollectingHandler():
-                payloads = handler.records
+        # Enqueue, then flush before inspecting; polling first masks the defect.
+        with gate.flushing():
+            assert logger.flush_handlers(), "logger worker did not flush"
+        payloads = handler_payloads(handler)
         assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
     finally:
+        gate.close()
         logger.remove_handler(handler)
 
 
