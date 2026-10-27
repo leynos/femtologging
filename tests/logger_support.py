@@ -31,6 +31,7 @@ FLUSH_TEST_HOOKS_AVAILABLE = callable(cancel_flush_wait_for_test) and callable(
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from types import TracebackType
 
     from femtologging import FemtoLogger
     from femtologging.adapter import FemtoRecord
@@ -195,6 +196,19 @@ class HandlerFlushGate:
         )
         self._release_thread.start()
 
+    def __enter__(self) -> HandlerFlushGate:
+        """Return this active callback gate."""
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        """Release the callback and stop the helper thread."""
+        self.close()
+
     def close(self) -> None:
         """Release a pending callback and stop the helper thread."""
         self._handler.callback_gate = None
@@ -204,12 +218,14 @@ class HandlerFlushGate:
         self._release_thread.join(timeout=1.0)
 
     def _wait_for_release(self) -> None:
+        """Block handler delivery until the flush gate releases it."""
         self._callback_started.set()
         if not self._callback_release.wait(timeout=self._WAIT_TIMEOUT_S):
             message = "flush did not release the handler callback gate"
             raise TimeoutError(message)
 
     def _release_after_flush_entry(self) -> None:
+        """Release the callback only after the logger enters its flush method."""
         callback_started = self._callback_started.wait(timeout=self._WAIT_TIMEOUT_S)
         if callback_started and self._wait_for_flush_entry():
             self._callback_release.set()
