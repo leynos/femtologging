@@ -16,6 +16,8 @@ use super::budget::Permit;
 use crate::logger::QueuedRecord;
 use crate::logger::flush::flush_handler_snapshot_until;
 use crate::logger::flush_diagnostics::FlushFailureStage;
+#[cfg(feature = "tracing-compat")]
+use crate::logger::flush_diagnostics::trace_flush_result;
 use crate::sync::{Receiver, RecvTimeoutError};
 
 /// Drain a shard's queue, handling each job.
@@ -53,13 +55,27 @@ fn handle_job(job: Job) {
             start,
             ack,
         } => {
+            #[cfg(feature = "tracing-compat")]
+            let started_at = deadline.now();
             let result = match start.recv_timeout(deadline.remaining()) {
-                Ok(()) => flush_handler_snapshot_until(&handlers, &deadline),
+                Ok(()) => match handlers.recv_timeout(deadline.remaining()) {
+                    Ok(handlers) => flush_handler_snapshot_until(&handlers, &deadline),
+                    Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::WorkerStartTimedOut),
+                    Err(RecvTimeoutError::Disconnected) => {
+                        Err(FlushFailureStage::WorkerStartDisconnected)
+                    }
+                },
                 Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::WorkerStartTimedOut),
                 Err(RecvTimeoutError::Disconnected) => {
                     Err(FlushFailureStage::WorkerStartDisconnected)
                 }
             };
+            #[cfg(feature = "tracing-compat")]
+            trace_flush_result(
+                "worker_complete",
+                result,
+                deadline.now().saturating_duration_since(started_at),
+            );
             let _ = ack.try_send(result);
         }
         #[cfg(loom)]

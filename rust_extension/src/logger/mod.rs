@@ -230,13 +230,16 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// Resolves dispatch state and snapshots handlers before queueing a marker.
-    /// The worker flushes that snapshot and acknowledges the marker. One absolute
-    /// 2 second deadline covers all stages and handler flushes; built-ins retain
-    /// shorter timeouts. Python calls release the GIL.
+    /// Resolves dispatch state, queues a marker for a non-empty handler list,
+    /// then snapshots handlers before allowing the worker to run callbacks.
+    /// With no handlers, it checks only this logger's in-flight work. One
+    /// absolute 2 second deadline covers all stages; built-ins retain shorter
+    /// timeouts. Python calls release the GIL.
     /// Legacy synchronous handlers fail closed; deadline-aware overrides must
     /// honour the deadline because code cannot be preempted. Violations may
     /// keep the shared worker busy after ``False`` but cannot hold this caller.
+    /// Changes completed before the handler snapshot are reflected in this
+    /// barrier; removals after it do not cancel the queued flush.
     ///
     /// Returns
     /// -------
@@ -265,7 +268,7 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// One deadline spans dispatch resolution, snapshot, marker, acknowledgement
+    /// One deadline spans dispatch resolution, marker, snapshot, acknowledgement
     /// and handler flushes; built-ins keep shorter timeouts. Legacy handlers
     /// fail closed; overrides must honour the deadline. Python calls release
     /// the GIL, native callers do not. Failure returns `false`.

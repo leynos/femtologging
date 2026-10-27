@@ -142,11 +142,7 @@ impl FemtoLogger {
 
             match PidReservation::try_reserve(&self.dispatch.starting_process, process_id) {
                 Ok(_reservation) => {
-                    let Some(dispatcher) = Dispatcher::shared_until(deadline)? else {
-                        return Ok(None);
-                    };
-                    let handles = self.publish_dispatch_state(process_id, dispatcher);
-                    return Ok((!deadline.is_late()).then_some(handles));
+                    return self.dispatch_state_reserved_until(process_id, deadline);
                 }
                 Err(owner) => {
                     let owner_released = PidReservation::wait_or_clear_stale_until(
@@ -161,6 +157,32 @@ impl FemtoLogger {
                 }
             }
         }
+    }
+
+    /// Resolve dispatch state after claiming the process-local reservation.
+    ///
+    /// The process ID must be checked again under the reservation: a competing
+    /// caller may have published the current process's shard after this caller
+    /// observed the stale ID but before it acquired the reservation.
+    #[cfg(not(loom))]
+    fn dispatch_state_reserved_until(
+        &self,
+        process_id: u32,
+        deadline: &FlushDeadline,
+    ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
+        if self
+            .dispatch
+            .process_id
+            .load(std::sync::atomic::Ordering::Acquire)
+            == process_id
+        {
+            return Ok(Some(self.dispatch.handles()));
+        }
+        let Some(dispatcher) = Dispatcher::shared_until(deadline)? else {
+            return Ok(None);
+        };
+        let handles = self.publish_dispatch_state(process_id, dispatcher);
+        Ok((!deadline.is_late()).then_some(handles))
     }
 
     /// Reserve and rebind this logger, or wait for its current process owner.
@@ -364,3 +386,7 @@ impl FemtoLogger {
         }
     }
 }
+
+#[cfg(all(test, not(loom)))]
+#[path = "worker_tests.rs"]
+mod tests;

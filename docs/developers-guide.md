@@ -44,38 +44,19 @@ dependency or its version policy:
 
 ### Docstring examples
 
-`make test` runs pytest with `--doctest-modules`, so every `>>>` example in a
-module pytest walks is executed as part of the suite. Before it was wired the
-suite collected 621 items and no examples; with it, 655. The 34 new items are
-the examples, and five of them were failing: `poll_file_for_text`,
-`capture_records`, `latest_key_values`, `AdapterProbe.capture` and
-`_sole_emitted_record` each opened with a name nothing bound, so each raised on
-its first execution. An example nobody executes is a comment that looks like
-evidence.
+`make test` runs two pytest commands: `uv run pytest -v` for the full Python
+suite, then
+`uv run pytest -v --doctest-modules tests/steps/logging_context_steps.py` for
+the logging-context step examples. The first command does not enable
+project-wide doctest discovery, so examples in other modules are documentation
+unless another target executes them.
 
-Two rules follow from that.
+Examples in the doctest target must run on their own. Bind every name they use,
+and show a value rather than an assertion, so a wrong answer fails visibly.
 
-Write an example so it runs on its own. Bind every name it uses, and show a
-value rather than an assertion, so a wrong answer is a failure and not a silent
-pass.
-
-Skip an example only with a written reason beside it. `capture_records` is the
-one skipped here: running it would need a live logger, an emission through the
-process-wide macros, and a bounded wait on the worker that delivers the record,
-and an example that waits on a race is the shape
-[issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
-skipped example is inert text, never compiled, so it cannot be trusted the way
-an executed one can.
-
-`--doctest-modules` imports every module it walks, not only `test_*.py`. Two
-settings keep that import working. `pythonpath = ["scripts"]` in
-`[tool.pytest.ini_options]` lets the helper scripts import each other as
-top-level modules, which is what `[tool.ty.environment] extra-paths` already
-records for type checking. `scripts/conftest.py` excludes
-`scripts/lint_rust_lanes.py`, whose dependencies live in its own `uv` script
-block and cannot be resolved from the project environment;
-`make lint-lanes-test` runs that script, and its examples, in the environment
-that can.
+Keep an example out of the doctest target only when its execution requires
+state the example cannot create or safely bound. A skipped example is inert
+text, so it is not evidence that the documented behaviour works.
 
 ## Typos spelling checker
 
@@ -360,12 +341,13 @@ from recursively logging its own instrumentation.
 ## Logger handler flush barrier
 
 `FemtoLogger::flush_handlers_blocking()` creates one absolute deadline for the
-handler snapshot, marker insertion, worker acknowledgement and all handler
-flushes. Snapshot-lock acquisition and queue waits consume the remaining time;
-callbacks run on the worker after the handler-list lock is released. Built-in
-handlers also retain their shorter configured timeouts. A removed handler in
-the snapshot stays alive until the worker releases it, while later additions
-are included by a subsequent barrier.
+marker insertion, handler snapshot, worker acknowledgement and all handler
+flushes. Queue admission happens before taking the handler-list read lock, so a
+full queue cannot hold that lock while the caller waits. The snapshot lock and
+all channel waits consume the remaining time; callbacks run on the worker after
+the handler-list lock is released. A handler removed after the snapshot remains
+alive until the worker releases it. Built-in handlers retain their shorter
+configured timeouts.
 
 The default `FemtoHandlerTrait::flush_until(deadline)` returns `false` without
 calling legacy synchronous `flush()`. Custom handlers must override this method

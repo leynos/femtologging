@@ -81,10 +81,7 @@ impl StallGuard {
         let (done_tx, done_rx) = bounded(1);
         let watchdog_release = release.clone();
         let watchdog = std::thread::spawn(move || {
-            if done_rx
-                .recv_timeout(flush_bound() + Duration::from_millis(250))
-                .is_err()
-            {
+            if done_rx.recv_timeout(flush_bound() * 3).is_err() {
                 let _ = watchdog_release.try_send(());
             }
         });

@@ -113,10 +113,12 @@ class FemtoLogger:
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Resolves dispatch state, snapshots handlers, and queues a marker behind
-        accepted records. The worker flushes that snapshot before acknowledging.
-        One absolute 2 s deadline covers dispatch resolution, the handler-list
-        lock, marker enqueue, worker acknowledgement, and all handler flushes.
+        Resolves dispatch state and checks the handler list. With handlers, it
+        queues a marker behind accepted records and snapshots the handlers
+        before allowing the worker to run their callbacks. With no handlers, it
+        checks only this logger's in-flight work. One absolute 2 s deadline
+        covers dispatch resolution, marker enqueue, the handler-list lock,
+        worker acknowledgement, and all handler flushes.
         Built-in handlers retain their shorter configured timeouts. The
         interpreter is released across the barrier so a worker blocked on a
         Python handler can make progress. PyO3 reacquires it before returning
@@ -141,6 +143,10 @@ class FemtoLogger:
         bounded queue. The barrier starts no helper threads or tasks, so
         repeated failures do not leave detached work. Shutdown that closes
         the queue before acknowledgement returns ``False``.
+        Handler changes completed before the snapshot are reflected in this
+        barrier. A handler removed after the snapshot remains alive until the
+        worker releases it; additions after the snapshot participate in the
+        next call.
 
         Returns ``False`` when the snapshot, marker enqueue, acknowledgement,
         or any handler flush is not confirmed by the shared deadline; when

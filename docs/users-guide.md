@@ -260,15 +260,26 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
   dispatch-admission refusals.
+- Use `logger.get_flush_diagnostics()` to poll fixed-cardinality flush-barrier
+  counters for attempts, confirmations, failure stages and elapsed-time
+  buckets. The keys remain stable and include no logger names, paths, messages
+  or payloads. Values are a best-effort snapshot read from relaxed atomics, so
+  concurrent updates may appear at different instants. Exporting these values
+  through a shared metrics adapter remains the application's responsibility.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
 
 ### Flushing logger handlers
 
-`logger.flush_handlers()` waits for the logger worker to process records it has
-already accepted, then flushes the handlers in the barrier's snapshot. One
-two-second deadline covers the handler snapshot, marker insertion, worker
+`logger.flush_handlers()` queues a marker behind records the logger has already
+accepted when handlers are attached, then snapshots the handlers before
+allowing the worker to run their flush callbacks. With no handlers, it waits
+only for this logger's in-flight work. Handler additions and removals completed
+before that snapshot are reflected in this barrier; a handler removed
+afterwards remains alive in the snapshot until the worker releases it, and
+later additions participate in the next barrier. One two-second deadline covers
+dispatch resolution, marker insertion, handler-list locking, worker
 acknowledgement and every handler flush. Built-in handlers keep their shorter
 configured timeouts. The Python method releases the GIL while waiting so Python
 handlers can run.

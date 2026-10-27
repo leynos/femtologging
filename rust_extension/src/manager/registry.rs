@@ -343,6 +343,11 @@ pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
 }
 
 /// Flush every registered logger for the Rust `log` bridge.
+///
+/// Returns whether every detached logger confirmed its handler barrier. Each
+/// logger gets its own two-second deadline; the sweep does not share one
+/// aggregate deadline. The `log::Log::flush()` adapter keeps its unit-return
+/// contract and therefore discards this confirmation result.
 /// Snapshot under lock, then flush outside it: a GIL-holding `get_logger`
 /// writer could otherwise starve the queued handler a flush barrier awaits.
 /// `reset_manager` also drops loggers outside the lock.

@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::sync::Sender;
 use pyo3::Python;
 
 use crate::handler::{FemtoHandlerTrait, remaining};
@@ -152,17 +153,14 @@ impl FemtoLogger {
         #[cfg(loom)]
         let handler_guard = self.handlers.read();
 
-        let handlers = clone_handler_snapshot(&handler_guard);
+        let has_handlers = !handler_guard.is_empty();
+        drop(handler_guard);
+
         if timing.is_expired() {
-            // Keep the registry's Arcs alive while discarding the clones. A
-            // concurrent removal must not run a slow final destructor here.
-            drop(handlers);
-            drop(handler_guard);
             return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
 
-        if handlers.is_empty() {
-            drop(handler_guard);
+        if !has_handlers {
             if timing.is_expired() {
                 return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
             }
@@ -173,7 +171,41 @@ impl FemtoLogger {
             };
         }
 
-        shard.flush_handlers_until(timing, handlers, handler_guard)
+        shard.flush_handlers_until(timing, |snapshot_sender| {
+            self.send_handler_snapshot_until(snapshot_sender, timing)
+        })
+    }
+
+    /// Snapshot handlers only after marker admission, so a rejected marker has
+    /// no handler owners to destroy on the flush caller.
+    fn send_handler_snapshot_until(
+        &self,
+        snapshot_sender: Sender<Vec<Arc<dyn FemtoHandlerTrait>>>,
+        timing: &FlushDeadline,
+    ) -> Result<(), FlushFailureStage> {
+        #[cfg(not(loom))]
+        let handler_guard = match self.handlers.try_read_for(timing.remaining()) {
+            Some(guard) => guard,
+            None => return Err(FlushFailureStage::HandlerSnapshotTimedOut),
+        };
+        #[cfg(loom)]
+        let handler_guard = self.handlers.read();
+
+        let handlers = clone_handler_snapshot(&handler_guard);
+        if timing.is_expired() {
+            // The registry still owns every handler while this snapshot drops.
+            drop(handlers);
+            drop(handler_guard);
+            return Err(FlushFailureStage::HandlerSnapshotTimedOut);
+        }
+        if let Err(error) = snapshot_sender.try_send(handlers) {
+            // The registry still owns every handler if the worker has gone.
+            drop(error);
+            drop(handler_guard);
+            return Err(FlushFailureStage::WorkerStartDisconnected);
+        }
+        drop(handler_guard);
+        Ok(())
     }
 }
 

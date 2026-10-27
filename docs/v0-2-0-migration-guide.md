@@ -210,9 +210,9 @@ ______________________________________________________________________
 
 ## Deadline-aware Rust handler flushing
 
-`FemtoLogger::flush_handlers()` now applies one two-second deadline to the
-handler snapshot, marker insertion, worker acknowledgement and every handler
-flush. It returns `false` when any part of that barrier is unconfirmed.
+`FemtoLogger::flush_handlers()` now applies one two-second deadline to marker
+insertion, the non-empty handler snapshot, worker acknowledgement and every
+handler flush. It returns `false` when any part of that barrier is unconfirmed.
 Built-in handlers keep their shorter configured timeouts.
 
 Custom Rust handlers that implement only synchronous `flush()` now fail closed:
