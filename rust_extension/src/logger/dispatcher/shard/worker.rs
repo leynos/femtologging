@@ -13,9 +13,8 @@ use log::warn;
 
 use super::Job;
 use super::budget::Permit;
-use crate::handler::remaining;
 use crate::logger::QueuedRecord;
-use crate::logger::flush::flush_handler_snapshot_at;
+use crate::logger::flush::flush_handler_snapshot_until;
 use crate::logger::flush_diagnostics::FlushFailureStage;
 use crate::sync::{Receiver, RecvTimeoutError};
 
@@ -54,8 +53,8 @@ fn handle_job(job: Job) {
             start,
             ack,
         } => {
-            let result = match start.recv_timeout(remaining(deadline, std::time::Instant::now())) {
-                Ok(()) => flush_handler_snapshot_at(&handlers, deadline, std::time::Instant::now),
+            let result = match start.recv_timeout(deadline.remaining()) {
+                Ok(()) => flush_handler_snapshot_until(&handlers, &deadline),
                 Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::WorkerStartTimedOut),
                 Err(RecvTimeoutError::Disconnected) => {
                     Err(FlushFailureStage::WorkerStartDisconnected)

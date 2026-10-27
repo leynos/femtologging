@@ -137,13 +137,6 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Return how many records were dropped because producer context capture failed.
-    #[cfg(feature = "python")]
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_context_capture_failures(&self) -> u64 {
-        self.context_capture_failures.load(Ordering::Relaxed)
-    }
-
     /// Return how many records were refused because the logger is disabled.
     ///
     /// The counter rises for records aimed at a logger that

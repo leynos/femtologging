@@ -18,7 +18,6 @@ use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvid
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::RwLock;
-use std::time::Instant;
 
 use super::DEFAULT_LOGGER_LEVEL;
 use super::FemtoLogger;
@@ -31,6 +30,7 @@ use super::dispatcher::Dispatcher;
 use super::dispatcher::DispatcherError;
 #[cfg(loom)]
 use super::dispatcher::LOOM_RECORDS_PER_LOGGER;
+use super::flush_clock::FlushDeadline;
 #[cfg(not(loom))]
 use super::pid_reservation::PidReservation;
 
@@ -47,6 +47,7 @@ type ShardHandle = &'static Shard;
 /// A Loom model owns its shard so its worker ends with that model iteration.
 #[cfg(loom)]
 type ShardHandle = std::sync::Arc<Shard>;
+
 
 /// The shard and admission budget assigned to one logger in one process.
 ///
@@ -126,11 +127,11 @@ impl FemtoLogger {
     #[cfg(not(loom))]
     pub(super) fn dispatch_state_until(
         &self,
-        deadline: Instant,
+        deadline: &FlushDeadline,
     ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
         let process_id = std::process::id();
         loop {
-            if Instant::now() > deadline {
+            if deadline.is_late() {
                 return Ok(None);
             }
             if self
@@ -148,14 +149,18 @@ impl FemtoLogger {
                         return Ok(None);
                     };
                     let handles = self.publish_dispatch_state(process_id, dispatcher);
-                    return Ok((Instant::now() <= deadline).then_some(handles));
+                    return Ok((!deadline.is_late()).then_some(handles));
                 }
                 Err(owner) => {
-                    PidReservation::wait_or_clear_stale(
+                    let owner_released = PidReservation::wait_or_clear_stale_until(
                         &self.dispatch.starting_process,
                         process_id,
                         owner,
+                        deadline,
                     );
+                    if !owner_released {
+                        return Ok(None);
+                    }
                 }
             }
         }

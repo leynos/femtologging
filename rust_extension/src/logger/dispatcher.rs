@@ -48,14 +48,12 @@ use pyo3::{PyErr, exceptions::PyRuntimeError};
 #[path = "dispatcher_tests.rs"]
 mod dispatcher_tests;
 
+use super::flush_clock::FlushDeadline;
+pub(crate) use shard::{LoggerBudget, Shard};
 #[cfg(not(loom))]
 use std::ptr::NonNull;
 #[cfg(not(loom))]
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
-#[cfg(not(loom))]
-use std::time::Instant;
-
-pub(crate) use shard::{LoggerBudget, Shard};
 
 /// Threads a dispatcher starts when the machine reports no useful limit.
 ///
@@ -236,15 +234,15 @@ impl Dispatcher {
     /// Resolve the process pool without waiting past a caller's deadline.
     #[cfg(not(loom))]
     pub(crate) fn shared_until(
-        deadline: Instant,
+        deadline: &FlushDeadline,
     ) -> Result<Option<&'static Self>, DispatcherError> {
         let process_id = std::process::id();
         loop {
-            if Instant::now() > deadline {
+            if deadline.is_late() {
                 return Ok(None);
             }
             if let Some(dispatcher) = Self::pool_for_process(process_id) {
-                return Ok((Instant::now() <= deadline).then_some(dispatcher));
+                return Ok((!deadline.is_late()).then_some(dispatcher));
             }
 
             Self::start_or_wait_until(process_id, deadline)?;

@@ -288,8 +288,20 @@ not bound the Python return itself.
 Each logger also keeps fixed-cardinality counters for flush attempts,
 confirmations, terminal failure stages and five elapsed-time buckets. Recording
 uses relaxed atomics and does not invoke a logging or warning callback on the
-caller path. A metrics exporter for these counters belongs to the existing
-[#551 telemetry work](https://github.com/leynos/femtologging/issues/551).
+caller path. Python callers can poll the per-logger snapshot with
+`FemtoLogger.get_flush_diagnostics()`; its stable keys contain no logger name,
+path or message dimensions. The snapshot is best-effort because its counters
+are read independently, and callers remain responsible for exporting them to a
+shared metrics backend. The exporter work remains in
+[#551 telemetry](https://github.com/leynos/femtologging/issues/551).
+
+The barrier carries one purpose-shaped deadline context from dispatch
+resolution through handler snapshotting, marker enqueue, acknowledgement and
+handler flushes. The production clock samples `Instant`; each controllable lock
+or channel wait receives only the remaining duration. This also bounds waiting
+for a concurrent fork/rebind reservation. Tests inject clock samples into the
+same orchestration path; real locks and channels remain real and receive the
+durations sampled from that clock.
 
 The `FemtoHandlerTrait::flush_until()` default fails closed: it returns `false`
 without calling legacy synchronous `flush()`. Existing custom handlers that
