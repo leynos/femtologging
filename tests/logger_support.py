@@ -9,7 +9,9 @@ modules share so that each test module stays focused on one feature.
 
 from __future__ import annotations
 
+import threading
 import typing as typ
+from contextlib import contextmanager
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -88,21 +90,29 @@ def assert_output_contains(
 class CollectingHandler:
     """Handler recording ``(logger, level, message)`` triples."""
 
+    callback_gate: cabc.Callable[[], None] | None
+
     def __init__(self) -> None:
         """Initialize an empty record buffer."""
         self.records: list[tuple[str, str, str]] = []
+        self.callback_gate = None
 
     def handle(self, logger: str, level: str, message: str) -> None:
         """Collect handled records for later assertions."""
+        if self.callback_gate is not None:
+            self.callback_gate()
         self.records.append((logger, level, message))
 
 
 class RecordCollectingHandler:
     """Handler that uses ``handle_record`` for structured access."""
 
+    callback_gate: cabc.Callable[[], None] | None
+
     def __init__(self) -> None:
         """Initialize an empty record buffer."""
         self.records: list[FemtoRecord] = []
+        self.callback_gate = None
 
     @staticmethod
     def handle(_logger: str, _level: str, _message: str) -> None:
@@ -111,9 +121,77 @@ class RecordCollectingHandler:
 
     def handle_record(self, record: FemtoRecord) -> None:
         """Collect a snapshot of each record for later assertions."""
+        if self.callback_gate is not None:
+            self.callback_gate()
         # Snapshot the payload: it crosses the extension boundary, so copying
         # keeps assertions independent of any later mutation.
         self.records.append(typ.cast("FemtoRecord", dict(record)))
+
+
+class HandlerFlushGate:
+    """Hold a collector callback until a flush starts.
+
+    A helper thread releases the callback shortly after it sees both the
+    callback and flush-start signals. The flush does not set the callback's
+    release event.
+    """
+
+    _WAIT_TIMEOUT_S = 3.0
+    _RELEASE_DELAY_S = 0.1
+
+    def __init__(self, handler: RecordCollectingHandler | CollectingHandler) -> None:
+        """Install a bounded gate around *handler*'s Python callback."""
+        self._handler = handler
+        self._callback_started = threading.Event()
+        self._flush_started = threading.Event()
+        self._callback_release = threading.Event()
+        handler.callback_gate = self._wait_for_release
+        self._release_thread = threading.Thread(
+            target=self._release_when_flush_starts,
+            daemon=True,
+        )
+        self._release_thread.start()
+
+    @contextmanager
+    def flushing(self) -> cabc.Iterator[None]:
+        """Signal the flush start while the test calls ``flush_handlers``."""
+        self._flush_started.set()
+        yield
+
+    def close(self) -> None:
+        """Release a pending callback and stop the helper thread."""
+        self._handler.callback_gate = None
+        self._callback_release.set()
+        self._callback_started.set()
+        self._flush_started.set()
+        self._release_thread.join(timeout=1.0)
+
+    def _wait_for_release(self) -> None:
+        self._callback_started.set()
+        self._callback_release.wait(timeout=self._WAIT_TIMEOUT_S)
+
+    def _release_when_flush_starts(self) -> None:
+        callback_started = self._callback_started.wait(timeout=self._WAIT_TIMEOUT_S)
+        flush_started = self._flush_started.wait(timeout=self._WAIT_TIMEOUT_S)
+        if callback_started and flush_started:
+            # Give the direct flush call time to enter its detached wait before
+            # allowing the worker's Python callback to finish.
+            self._callback_release.wait(timeout=self._RELEASE_DELAY_S)
+            self._callback_release.set()
+
+
+def handler_payloads(
+    handler: RecordCollectingHandler | CollectingHandler,
+) -> list[tuple[str, str, str]]:
+    """Return a common payload shape for either Python handler protocol."""
+    match handler:
+        case RecordCollectingHandler():
+            return [
+                (record["logger"], record["level"], record["message"])
+                for record in handler.records
+            ]
+        case CollectingHandler():
+            return handler.records
 
 
 class MutableHandler:
