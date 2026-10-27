@@ -346,6 +346,20 @@ def test_release_asset_reconciliation_precedes_publication() -> None:
     )
 
 
+def test_canonical_pypi_download_restricts_redirects_to_https() -> None:
+    """The canonical-byte fetch rejects insecure initial and redirected URLs."""
+    fetch = sole_workflow_step(
+        RELEASE_WORKFLOW,
+        "publish-release",
+        "Fetch canonical PyPI bytes and refresh its index",
+    )
+    script = fetch.get("run")
+    assert isinstance(script, str), "The canonical PyPI fetch step has a shell script."
+    assert "--proto '=https' --proto-redir '=https'" in script, (
+        "The canonical PyPI fetch step permits only HTTPS requests and redirects."
+    )
+
+
 def test_both_build_and_release_workflows_harden_shell_scripts() -> None:
     """Run values enter through env and GitHub assets are never clobbered."""
     for path in (BUILD_WORKFLOW, RELEASE_WORKFLOW):
