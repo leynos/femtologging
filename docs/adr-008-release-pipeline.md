@@ -69,6 +69,15 @@ Both isolated sdist builds constrain maturin to the workflow's
 `MATURIN_VERSION`, keeping their backend aligned with the wheel builder. Python
 3.15, free-threaded and Windows arm64 wheels are not in this matrix.
 
+Linux builds and wheel verification use the existing `ubicloud-standard-4` lane
+for pushes, same-repository pull requests and release tags. Fork and Dependabot
+pull requests use `ubuntu-latest` instead. This keeps trusted build and
+verification runs on the project's established Linux lane, while avoiding
+execution of untrusted pull-request code on Ubicloud. The release build
+therefore trusts that runner service to produce the uploaded files; the hosted
+attestation job records the artefact digests but does not independently prove
+the build runner's integrity.
+
 The workflow phases are:
 
 - `check-version` compares the tag with `rust_extension/Cargo.toml` and
@@ -152,6 +161,9 @@ those external settings exist.
   rerun can converge.
 - The release-wheel probe covers timed-rotation hooks. Fresh-failure test
   hooks remain a known ungated residual surface.
+- The Ubicloud Linux lane is part of the release supply-chain trust boundary
+  and an availability dependency. A compromised runner could alter an artefact
+  before the hosted attestation job records its digest.
 - The release workflow is a single point of failure for publication
   correctness; contract tests and scratch-directory reconciliation tests cover
   the checked-in workflow steps and helpers.
