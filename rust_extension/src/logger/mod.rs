@@ -132,7 +132,7 @@ pub struct FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// One deadline spans dispatch resolution, snapshot, marker, acknowledgement
+    /// One deadline spans dispatch resolution, marker, snapshot, acknowledgement
     /// and handler flushes; built-ins keep shorter timeouts. Legacy handlers
     /// fail closed; overrides must honour the deadline. Python calls release
     /// the GIL, native callers do not. Failure returns `false`.
@@ -278,6 +278,7 @@ impl FemtoLogger {
             .map(|filter| Arc::as_ptr(filter) as *const () as usize)
             .collect()
     }
+
 }
 
 impl Drop for FemtoLogger {

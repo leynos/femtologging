@@ -63,10 +63,10 @@ enum Job {
         /// The channel used to acknowledge the completed barrier.
         ack: Sender<()>,
     },
-    /// Flush a captured handler snapshot after all jobs queued before it.
+    /// Flush a handler snapshot after all jobs queued before this marker.
     Flush {
-        /// Handlers captured while the logger registry was read-locked.
-        handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+        /// Receives the handler snapshot after the marker is admitted.
+        handlers: Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
         /// Deadline shared by queue insertion, acknowledgement, and callbacks.
         deadline: FlushDeadline,
         /// Gate opened after the logger registry lock has been released.
@@ -263,24 +263,29 @@ impl Shard {
         }
     }
 
-    /// Enqueue handler flushing behind prior work and wait only until `deadline`.
+    /// Enqueue a handler marker behind prior work and wait until `deadline`.
     ///
-    /// The read guard remains held while insertion can fail, so a rejected
-    /// marker's handler snapshot is dropped while the registry still owns its
-    /// handlers. Once accepted, the worker waits at `start` until the guard is
-    /// released; callback code therefore never runs under the registry lock.
-    /// The queue is the existing bounded shard queue, so concurrent and timed
-    /// out flushes cannot create an unbounded number of tasks or threads.
-    pub(crate) fn flush_handlers_until<G>(
+    /// The marker carries only channels while the bounded queue is being
+    /// admitted, so a saturated queue never holds the handler registry lock or
+    /// owns a handler snapshot that might run a custom destructor on this
+    /// caller. After admission, `prepare_snapshot` captures and transfers the
+    /// snapshot while the registry is read-locked. The worker waits at `start`
+    /// until that lock is released before invoking callbacks. The queue remains
+    /// the only task bound, so concurrent timeouts cannot create extra threads
+    /// or unbounded queued work.
+    pub(crate) fn flush_handlers_until<F>(
         &self,
         deadline: &FlushDeadline,
-        handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
-        handler_guard: G,
-    ) -> Result<(), FlushFailureStage> {
+        prepare_snapshot: F,
+    ) -> Result<(), FlushFailureStage>
+    where
+        F: FnOnce(Sender<Vec<Arc<dyn FemtoHandlerTrait>>>) -> Result<(), FlushFailureStage>,
+    {
+        let (handlers_tx, handlers_rx) = bounded(1);
         let (start_tx, start_rx) = bounded(1);
         let (ack_tx, ack_rx) = bounded(1);
         let job = Job::Flush {
-            handlers,
+            handlers: handlers_rx,
             deadline: deadline.clone(),
             start: start_rx,
             ack: ack_tx,
@@ -288,24 +293,27 @@ impl Shard {
 
         if deadline.is_expired() {
             drop(job);
-            drop(handler_guard);
             return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
         match self.queue.send_timeout(job, deadline.remaining()) {
             Ok(()) => {}
-            Err(SendTimeoutError::Timeout(error)) => {
-                drop(error);
-                drop(handler_guard);
+            Err(SendTimeoutError::Timeout(_)) => {
                 return Err(FlushFailureStage::MarkerEnqueueTimedOut);
             }
-            Err(SendTimeoutError::Disconnected(error)) => {
-                drop(error);
-                drop(handler_guard);
+            Err(SendTimeoutError::Disconnected(_)) => {
                 return Err(FlushFailureStage::MarkerEnqueueDisconnected);
             }
         }
 
-        drop(handler_guard);
+        if let Err(stage) = prepare_snapshot(handlers_tx) {
+            drop(start_tx);
+            return Err(stage);
+        }
+        if deadline.is_expired() {
+            drop(start_tx);
+            return Err(FlushFailureStage::WorkerStartTimedOut);
+        }
+
         if start_tx.try_send(()).is_err() {
             return Err(FlushFailureStage::WorkerStartDisconnected);
         }

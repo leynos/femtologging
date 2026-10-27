@@ -14,7 +14,7 @@ pub(crate) enum FlushFailureStage {
     DispatchStateTimedOut,
     /// The logger worker sender was no longer available.
     WorkerUnavailable,
-    /// The handler registry read lock was unavailable before the deadline.
+    /// The handler registry lock and snapshot handoff missed the deadline.
     HandlerSnapshotTimedOut,
     /// The deadline expired before the marker could be enqueued.
     DeadlineExpiredBeforeMarker,
@@ -83,6 +83,27 @@ impl FlushFailureStage {
             Self::CallerReturnDeadlineExceeded => "caller_return_deadline_exceeded",
         }
     }
+}
+
+/// Trace a worker-side flush result with bounded, non-sensitive fields.
+#[cfg(feature = "tracing-compat")]
+pub(super) fn trace_flush_result(
+    event: &'static str,
+    result: Result<(), FlushFailureStage>,
+    elapsed: Duration,
+) {
+    let (outcome, failure_stage) = match result {
+        Ok(()) => ("confirmed", "none"),
+        Err(stage) => ("unconfirmed", stage.metric_suffix()),
+    };
+    tracing::trace!(
+        target: "femtologging::internal",
+        operation = "flush_handlers",
+        event,
+        outcome,
+        failure_stage,
+        elapsed_us = elapsed.as_micros(),
+    );
 }
 
 /// Per-logger, fixed-cardinality accounting for flush attempts.
