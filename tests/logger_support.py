@@ -212,9 +212,12 @@ class HandlerFlushGate:
     def close(self) -> None:
         """Release a pending callback and stop the helper thread."""
         self._handler.callback_gate = None
+        callback_was_released = self._callback_release.is_set()
         self._callback_release.set()
         self._callback_started.set()
-        self._cancel_flush_wait()
+        # A successful gate consumed Entered; avoid queuing a stale Cancel.
+        if not callback_was_released:
+            self._cancel_flush_wait()
         self._release_thread.join(timeout=1.0)
 
     def _wait_for_release(self) -> None:
