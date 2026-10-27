@@ -8,7 +8,13 @@ import typing as typ
 import pytest
 import yaml
 
-from tests.make_contract_helpers import mapping, repo_root, sole_workflow_step
+from tests.make_contract_helpers import (
+    mapping,
+    objects,
+    repo_root,
+    sole_workflow_step,
+    workflow_job,
+)
 from tests.release_workflow_helpers import run_bash, step_environment
 
 if typ.TYPE_CHECKING:
@@ -102,4 +108,29 @@ def test_sdist_builds_share_the_pinned_maturin_constraint() -> None:
     )
     assert "uv pip install --python" in rebuild_script, (
         "The rebuilt wheel is installed into the fresh verification environment."
+    )
+
+
+def test_sdist_build_installs_the_pinned_rust_toolchain() -> None:
+    """The host-side Maturin backend uses the repository toolchain pin."""
+    steps = objects(
+        workflow_job(WORKFLOW, "build-linux").get("steps"),
+        subject="build-linux steps",
+    )
+    setup = sole_workflow_step(
+        WORKFLOW, "build-linux", "Install the pinned Rust toolchain for the sdist"
+    )
+    assert setup.get("uses") == (
+        "leynos/shared-actions/.github/actions/setup-rust@"
+        "ff1dd759dfffc0db3459e30e833f52437ee62b57"
+    ), "The sdist builder installs the repository-pinned Rust toolchain."
+    assert setup.get("if") == "matrix.arch == 'x86_64'", (
+        "Only the Linux x86_64 leg builds the sdist."
+    )
+
+    step_names = [step.get("name") for step in steps]
+    setup_index = step_names.index("Install the pinned Rust toolchain for the sdist")
+    sdist_index = step_names.index("Build the source distribution")
+    assert setup_index < sdist_index, (
+        "The pinned Rust toolchain is available before the sdist build."
     )

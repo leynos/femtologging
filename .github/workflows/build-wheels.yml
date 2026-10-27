@@ -85,6 +85,9 @@ jobs:
         with:
           version: "0.13.2"
           enable-cache: true
+      - name: Install the pinned Rust toolchain for the sdist
+        if: matrix.arch == 'x86_64'
+        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
       - name: Build the source distribution
         if: matrix.arch == 'x86_64'
         shell: bash

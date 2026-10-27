@@ -160,6 +160,11 @@ update that file alongside the other pins.
 `tests/test_ci_build_wheels_sdist_cardinality.py::test_sdist_builds_share_the_pinned_maturin_constraint`
 verifies the sdist constraint.
 
+For `rust_extension/tests/compile_tests.rs`, use
+`TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
+changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
+fixtures.
+
 ### Maturin build features
 
 The persistent `[tool.maturin].features = ["python"]` setting is the production
@@ -172,11 +177,6 @@ action uses `.github/uv-test-util.toml` through `UV_CONFIG_FILE` so its source
 install receives the same features without changing `pyproject.toml`. Coverage
 and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
 then fails before tests start if the extension omitted the hooks.
-
-For `rust_extension/tests/compile_tests.rs`, use
-`TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
-changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
-fixtures.
 
 ### Dependabot grouping for the extension build
 
