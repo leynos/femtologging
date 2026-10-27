@@ -5,6 +5,7 @@ use pyo3::types::PyDict;
 use rstest::rstest;
 use serial_test::serial;
 
+/// Preserve extension-specific payload keys while filtering exception frames.
 #[rstest]
 #[serial]
 fn filter_exception_payload_preserves_extra_keys() {

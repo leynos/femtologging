@@ -160,6 +160,44 @@ For `rust_extension/tests/compile_tests.rs`, use
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
 
+## Frame filtering and exception-graph limits
+
+The Python `filter_frames()` binding owns payload classification, frame
+filtering, and exception-graph safety. Exception payloads are traversed by the
+`ExceptionGraphTraversal` work stack in the Rust frame-filtering module. Each
+`Enter` work item checks active-path dictionary identity, exception depth, and
+the root-inclusive node budget before filtering and attaching a shallow copy.
+It then schedules `cause` and `context` edges and deferred `FilterGroup` work.
+The LIFO stack visits cause, context, and exception-group members in their
+established order. When `FilterGroup` work is popped, it validates the
+`exceptions` list and checks its full width against the remaining node budget
+before allocating the output list or scheduling members.
+
+Cycle detection tracks only dictionaries on the active ancestor path, so shared
+acyclic subgraphs remain valid. The root has graph depth zero;
+`max_exception_depth` defaults to 1000 and `max_exception_nodes` defaults to
+10,000 occurrences, including the root. Both graph limits are ignored for stack
+payloads. The frame-list `max_depth` still limits retained frames in each
+payload only.
+
+Malformed frames and exception edges raise `TypeError`; cycles, exceeded graph
+limits, and a zero exception node budget raise `ValueError`; negative or
+oversized integer limits raise `OverflowError`. The binding returns these
+Python exceptions and does not emit logs or metrics. Applications that need
+operational counts can instrument calls at their own boundary.
+
+See the [frame-filtering design](frame-filtering-design.md) for the public
+contract and diagrams, and the [Python type stub][filter-frames-stub] for the
+public signature. The [Rust graph tests][rust-graph-tests],
+[Python graph tests][python-graph-tests], and
+[Python graph property tests][python-graph-property-tests] cover the traversal
+boundaries.
+
+[filter-frames-stub]: ../femtologging/_femtologging_rs.pyi
+[rust-graph-tests]: ../rust_extension/src/frame_filter_py_graph_tests.rs
+[python-graph-tests]: ../tests/frame_filter/test_exception_graph_limits.py
+[python-graph-property-tests]: ../tests/frame_filter/test_exception_graph_properties.py
+
 ## Type checking and heavy tests
 
 `make typecheck` depends on `make build`, which creates `./.venv`, installs the

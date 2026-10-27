@@ -95,35 +95,44 @@ Exclusion filters are applied before depth limiting. This ensures that:
 
 ## Exception-graph traversal limits and malformed input
 
-The Python binding traverses exception payloads with an explicit `Enter` and
-`Leave` work stack. It visits `cause`, then `context`, then `exceptions[i]` in
-list order. This keeps native stack use independent of exception-chain depth
-while preserving the established edge order.
+The Python binding traverses exception payloads with an explicit `Enter`,
+`FilterGroup`, and `Leave` work stack. It visits `cause`, then `context`, then
+`exceptions[i]` in list order. This keeps native stack use independent of
+exception-chain depth while preserving the established edge order.
 
 ### Exception-graph traversal flow
 
 ```mermaid
 flowchart TD
-    accTitle: Exception graph cycle and budget checks
+    accTitle: Exception graph traversal and budget checks
     accDescr {
-      The traversal checks each payload for an active-path cycle and graph-budget
-      overflow before filtering its frames, then follows cause, context, and
-      exception-group members.
+      Enter work checks active-path identity, depth, and node budget before
+      filtering and attaching a payload. Deferred FilterGroup work checks the
+      exceptions list and its width before allocating a list or scheduling
+      group members.
     }
     A[exception payload] --> B[iterative depth-first work stack]
-    B --> C{active-path identity repeated?}
-    C -->|yes| D[raise ValueError: cycle path]
-    C -->|no| E{depth or node budget exceeded?}
-    E -->|yes| F[raise ValueError: graph limit]
-    E -->|no| G[filter frames for current payload]
-    G --> H{cause, context, or exceptions members?}
-    H -->|yes| B
-    H -->|no| I[attach filtered copy]
+    B --> C{next work item?}
+    C -->|Enter| D{active-path identity repeated?}
+    D -->|yes| E[raise ValueError: cycle path]
+    D -->|no| F{depth or node budget exceeded?}
+    F -->|yes| G[raise ValueError: graph limit]
+    F -->|no| H[filter frames for current payload]
+    H --> I["attach filtered copy"]
+    I --> J["schedule cause and context, then defer FilterGroup"]
+    J --> B
+    C -->|FilterGroup| K[validate exceptions list]
+    K --> L{group width exceeds remaining node budget?}
+    L -->|yes| G
+    L -->|no| M[allocate placeholder list and schedule members]
+    M --> B
+    C -->|Leave| B
 ```
 
-*Figure 2: Each exception payload is checked for an active-path cycle and
-graph-budget overflow before its frames are filtered; traversal follows nested
-cause, context, and exception-group members and attaches filtered copies.*
+*Figure 2: Enter work checks each payload for an active-path cycle and depth or
+node-budget overflow before filtering and attaching its copy. Deferred
+FilterGroup work later validates the exception list and its width before
+allocating the output list and scheduling members.*
 
 ### Python binding sequence
 
@@ -131,9 +140,10 @@ cause, context, and exception-group members and attaches filtered copies.*
 sequenceDiagram
     accTitle: Python exception payload filtering sequence
     accDescr {
-      The Python binding passes graph limits to an iterative traversal, which
-      filters each payload, schedules nested edges, checks cycles and budgets,
-      and attaches each filtered occurrence.
+      Enter work checks the active path, depth, and node budget before filtering
+      and attaching a payload copy. Deferred FilterGroup work later checks
+      exception-group width before allocating its output list and scheduling
+      members.
     }
     participant Caller
     participant filter_frames
@@ -144,19 +154,28 @@ sequenceDiagram
     Caller->>filter_frames: filter_frames(payload, max_exception_depth, max_exception_nodes)
     filter_frames->>Traversal: filter_exception_payload(payload, limits)
     loop Work stack until empty
-        Traversal->>Payload: filter_exception_payload_node()
+        Traversal->>Traversal: Enter: check active path, depth, and node budget
+        Traversal->>Payload: filter_payload_frames()
         Payload-->>Traversal: filtered shallow copy
-        Traversal->>Traversal: schedule cause, context, and group members
-        Traversal->>Traversal: check active path and graph budgets
         Traversal->>Output: attach filtered payload occurrence
+        Traversal->>Traversal: schedule cause/context and deferred FilterGroup work
+        Note over Traversal: Cause and context subgraphs run before deferred FilterGroup work.
+        opt FilterGroup work item is popped
+            Traversal->>Payload: validate exceptions list
+            Payload-->>Traversal: exception-group members
+            Traversal->>Traversal: check group width against remaining node budget
+            Traversal->>Output: attach placeholder list
+            Traversal->>Traversal: schedule group members in list order
+        end
     end
     Traversal-->>filter_frames: filtered exception graph
     filter_frames-->>Caller: return dict
 ```
 
-*Figure 3: The Python binding passes exception-graph limits to the iterative
-traversal, which filters each payload occurrence, schedules its nested edges,
-checks cycle and budget constraints, and assembles the returned graph.*
+*Figure 3: Each Enter work item checks cycle, depth, and node limits before
+filtering and attaching a payload copy. Cause and context subgraphs run before
+deferred FilterGroup work checks the exception-list width, allocates its output
+list, and schedules group members.*
 
 Cycle detection compares Python dictionary identity on the active ancestor
 path. A repeated dictionary on that path is a cycle and raises

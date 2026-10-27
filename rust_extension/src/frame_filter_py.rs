@@ -195,11 +195,11 @@ fn filter_stack_payload(
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
 ) -> PyResult<Py<PyAny>> {
-    filter_exception_payload_node(py, payload, opts).map(Into::into)
+    filter_payload_frames(py, payload, opts).map(Into::into)
 }
 
 /// Filter frames on one payload while preserving all of its other keys.
-fn filter_exception_payload_node<'py>(
+fn filter_payload_frames<'py>(
     py: Python<'py>,
     payload: &Bound<'py, PyDict>,
     opts: &FilterOptions<'_>,
