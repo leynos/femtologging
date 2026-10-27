@@ -183,7 +183,9 @@ class HandlerFlushGate:
 
     def _wait_for_release(self) -> None:
         self._callback_started.set()
-        self._callback_release.wait(timeout=self._WAIT_TIMEOUT_S)
+        if not self._callback_release.wait(timeout=self._WAIT_TIMEOUT_S):
+            message = "flush did not release the handler callback gate"
+            raise TimeoutError(message)
 
     def _release_after_flush_entry(self) -> None:
         callback_started = self._callback_started.wait(timeout=self._WAIT_TIMEOUT_S)
