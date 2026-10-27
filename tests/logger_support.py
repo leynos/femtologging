@@ -11,11 +11,17 @@ from __future__ import annotations
 
 import threading
 import typing as typ
-from contextlib import contextmanager
+from functools import partial
+
+from femtologging._femtologging_rs import (
+    cancel_flush_wait_for_test,
+    wait_for_flush_entry_for_test,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from femtologging import FemtoLogger
     from femtologging.adapter import FemtoRecord
 
 
@@ -129,61 +135,85 @@ class RecordCollectingHandler:
 
 
 class HandlerFlushGate:
-    """Hold a collector callback until a flush starts.
+    """Hold a collector callback until the logger enters its flush method.
 
-    A helper thread releases the callback shortly after it sees both the
-    callback and flush-start signals. The flush does not set the callback's
-    release event.
+    A helper thread waits for an explicit test-only signal from the token-free
+    Rust flush method before releasing the callback.
     """
 
     _WAIT_TIMEOUT_S = 3.0
-    _RELEASE_DELAY_S = 0.1
 
-    def __init__(self, handler: RecordCollectingHandler | CollectingHandler) -> None:
-        """Install a bounded gate around *handler*'s Python callback."""
+    def __init__(
+        self,
+        handler: RecordCollectingHandler | CollectingHandler,
+        logger: FemtoLogger,
+    ) -> None:
+        """Install a bounded gate around *handler*'s Python callback.
+
+        Parameters
+        ----------
+        handler : RecordCollectingHandler | CollectingHandler
+            Handler whose callback remains blocked until the flush starts.
+        logger : FemtoLogger
+            Logger whose token-free flush entry coordinates callback release.
+        """
         self._handler = handler
+        self._wait_for_flush_entry = partial(
+            wait_for_flush_entry_for_test,
+            logger,
+            3_000,
+        )
+        self._cancel_flush_wait = partial(cancel_flush_wait_for_test, logger)
         self._callback_started = threading.Event()
-        self._flush_started = threading.Event()
         self._callback_release = threading.Event()
         handler.callback_gate = self._wait_for_release
         self._release_thread = threading.Thread(
-            target=self._release_when_flush_starts,
+            target=self._release_after_flush_entry,
             daemon=True,
         )
         self._release_thread.start()
-
-    @contextmanager
-    def flushing(self) -> cabc.Iterator[None]:
-        """Signal the flush start while the test calls ``flush_handlers``."""
-        self._flush_started.set()
-        yield
 
     def close(self) -> None:
         """Release a pending callback and stop the helper thread."""
         self._handler.callback_gate = None
         self._callback_release.set()
         self._callback_started.set()
-        self._flush_started.set()
+        self._cancel_flush_wait()
         self._release_thread.join(timeout=1.0)
 
     def _wait_for_release(self) -> None:
         self._callback_started.set()
         self._callback_release.wait(timeout=self._WAIT_TIMEOUT_S)
 
-    def _release_when_flush_starts(self) -> None:
+    def _release_after_flush_entry(self) -> None:
         callback_started = self._callback_started.wait(timeout=self._WAIT_TIMEOUT_S)
-        flush_started = self._flush_started.wait(timeout=self._WAIT_TIMEOUT_S)
-        if callback_started and flush_started:
-            # Give the direct flush call time to enter its detached wait before
-            # allowing the worker's Python callback to finish.
-            self._callback_release.wait(timeout=self._RELEASE_DELAY_S)
+        if callback_started and self._wait_for_flush_entry():
             self._callback_release.set()
 
 
 def handler_payloads(
     handler: RecordCollectingHandler | CollectingHandler,
 ) -> list[tuple[str, str, str]]:
-    """Return a common payload shape for either Python handler protocol."""
+    """Return a common payload shape for either Python handler protocol.
+
+    Parameters
+    ----------
+    handler : RecordCollectingHandler | CollectingHandler
+        Handler whose collected records are normalized.
+
+    Returns
+    -------
+    list[tuple[str, str, str]]
+        ``(logger, level, message)`` tuples for each collected record.
+
+    Examples
+    --------
+    >>> handler = CollectingHandler()
+    >>> handler.records.append(("core", "INFO", "hello"))
+    >>> handler_payloads(handler)
+    [('core', 'INFO', 'hello')]
+
+    """
     match handler:
         case RecordCollectingHandler():
             return [

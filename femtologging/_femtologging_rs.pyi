@@ -499,6 +499,13 @@ reset_manager_py: _Any
 def runtime_attachment_state_for_test(
     name: str,
 ) -> tuple[list[str], list[str]] | None: ...
+def wait_for_flush_entry_for_test(logger: FemtoLogger, timeout_ms: int) -> bool:
+    """Wait for the test-only flush-entry signal within ``timeout_ms``."""
+    ...
+
+def cancel_flush_wait_for_test(logger: FemtoLogger) -> None:
+    """Wake a pending test-only flush-entry wait during cleanup."""
+    ...
 
 setup_rust_logging: Callable[[], None]
 setup_rust_tracing: Callable[[], None]
