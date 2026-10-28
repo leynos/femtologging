@@ -94,9 +94,11 @@ configured filter IDs.
 
 ## Constraints
 
-- `manager.rs` must remain functionally unchanged. No new public registry
-  inspection API, and no change to `replace_runtime_state()` or
-  `snapshot_runtime_state()` semantics, are in scope.
+- `manager.rs` must not gain a new public registry inspection API.
+  `replace_runtime_state()` returns the displaced snapshot, and
+  `disable_existing_loggers()` returns the displaced owners, so callers can
+  release them after the transaction guard drops. The publication semantics of
+  `replace_runtime_state()` and `snapshot_runtime_state()` stay unchanged.
 - Existing error semantics must be preserved. `ConfigError::UnknownIds` keeps
   its precedence over the new reachability rejection, and keeps the order of
   the identifiers it reports.
@@ -1172,3 +1174,9 @@ No new external dependencies are introduced.
   — restores the advisory rules without changing behaviour, and
   `ConfiguredLoggerPlan::apply` absorbs the attachment step so no helper keeps
   an unused receiver.
+- 2026-10-26: CodeRabbit noted that the Constraints section still claimed
+  `manager.rs` would remain functionally unchanged, which the delivered change
+  contradicts. Amended that constraint to describe the displacement-returning
+  contract while keeping the publication-semantics and no-new-public-API
+  restrictions. The 2026-10-24 phrasing is retained in this log rather than
+  deleted, so the earlier state stays on the record.
