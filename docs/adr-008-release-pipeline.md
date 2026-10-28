@@ -107,9 +107,9 @@ of a complete release therefore uploads no new distribution files and succeeds
 after verifying both destinations.
 
 If PyPI and GitHub already hold different bytes under the same filename,
-verification fails and the release remains a draft. Recovery is manual: remove
-the inconsistent GitHub Release asset, because PyPI does not allow published
-files to be deleted, then rerun the same tag.
+verification fails and the release remains a draft. Recovery is manual. Remove
+the inconsistent GitHub Release asset because PyPI does not allow published
+files to be deleted. Then rerun the same tag.
 
 ### Production and test feature sets
 
