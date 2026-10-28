@@ -138,6 +138,7 @@ def copy_release_scripts(directory: Path) -> Path:
         "release_assets_cli.py",
         "release_version.py",
         "fetch_pypi_index.sh",
+        "create_draft_release.sh",
     ):
         source = ROOT / "scripts" / name
         target = scripts / name
