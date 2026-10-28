@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 import typing as typ
 
@@ -145,6 +146,37 @@ def test_filter_frames_rejects_self_cycles_without_mutating_input(
     assert _graph_snapshot(payload) == before, (
         "cycle rejection must not mutate the input graph"
     )
+
+
+@pytest.mark.parametrize(
+    ("edge", "value", "message"),
+    [
+        ("cause", "not a dict", "'cause' must be a dict"),
+        ("context", "not a dict", "'context' must be a dict"),
+        ("exceptions", "not a list", "'exceptions' must be a list"),
+        ("exceptions", ["not a dict"], "each exception must be a dict"),
+    ],
+    ids=[
+        "cause-not-dict",
+        "context-not-dict",
+        "exceptions-not-list",
+        "member-not-dict",
+    ],
+)
+def test_filter_frames_rejects_malformed_exception_edges_without_mutating_input(
+    edge: str,
+    value: object,
+    message: str,
+) -> None:
+    """Malformed exception edges retain their TypeError and input contract."""
+    payload = make_exception_payload([])
+    typ.cast("dict[str, object]", payload)[edge] = value
+    before = copy.deepcopy(payload)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        filter_frames(payload)
+
+    assert payload == before, "edge validation must not mutate the input payload"
 
 
 def test_filter_frames_rejects_two_node_cause_context_cycle() -> None:
