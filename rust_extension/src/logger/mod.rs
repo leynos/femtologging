@@ -107,7 +107,6 @@ pub struct FemtoLogger {
     budget: Arc<LoggerBudget>,
 }
 
-
 #[allow(
     clippy::too_many_arguments,
     reason = "PyO3 generates Python-exposed wrappers and signature shims with many parameters"
@@ -268,7 +267,6 @@ impl FemtoLogger {
     }
 }
 
-
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
@@ -364,7 +362,6 @@ impl FemtoLogger {
             .collect()
     }
 }
-
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
