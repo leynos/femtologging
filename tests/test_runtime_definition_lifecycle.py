@@ -207,6 +207,7 @@ class _ReenteringCallback:
         FINALISER_APPLIED.append("done")
 
 
+@pytest.mark.timeout(30, method="thread")
 def test_callback_finalizer_may_reenter_configuration(core_config: None) -> None:
     """A displaced callback filter must be released outside the transaction.
 

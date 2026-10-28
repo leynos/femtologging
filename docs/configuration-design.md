@@ -977,11 +977,12 @@ per-logger attachment metadata produced by the applied plans.
   - remove IDs by configuration identity
   - clear the collection entirely
 
-- **Transactional apply semantics:** `RuntimeConfigBuilder.apply()` first builds
-  any newly declared Rust-backed handlers and filters, validates every
-  requested ID, computes the full post-mutation attachment state in memory, and
-  only then swaps the live logger attachments. If validation fails, the prior
-  runtime state remains intact.
+- **Transactional apply semantics:** `RuntimeConfigBuilder.apply()` validates
+  every requested ID, computes the full post-mutation attachment state in
+  memory, and rejects declared definitions that this state cannot reach. It
+  then builds the newly declared Rust-backed handlers and filters, and only
+  then swaps the live logger attachments. If a failure occurs before the commit
+  is applied, the prior runtime state remains intact.
 
 - **Manager-owned runtime metadata:** The global manager now retains:
 
