@@ -119,7 +119,7 @@ impl ConfigBuilder {
         let replaced = Self::publish_reachable_registries(components, runtime_loggers);
         deferred_drop.snapshots.push(replaced);
         drop(transaction);
-        deferred_drop.release();
+        deferred_drop.release(py);
         Ok(())
     }
 

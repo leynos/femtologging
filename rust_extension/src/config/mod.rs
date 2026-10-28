@@ -97,17 +97,28 @@ pub(crate) struct DeferredDrop {
 
 #[cfg(feature = "python")]
 impl DeferredDrop {
-    /// Release every deferred owner.
+    /// Release every deferred owner with the interpreter detached.
     ///
     /// Call this only after the runtime transaction guard is gone. Naming the
     /// release keeps the ordering explicit at each call site instead of relying
     /// on a bare `drop`, and gives the one place that explains why these owners
     /// outlive the transaction.
-    pub(crate) fn release(self) {
-        for detached in self.detached {
-            detached.release();
-        }
-        drop(self.snapshots);
+    ///
+    /// The release runs detached because a handler's `Drop` may shut a worker
+    /// down: a socket handler whose queue is backlogged against a slow collector
+    /// blocks in `send` and then joins that worker, which would freeze every
+    /// Python thread for as long as the queue takes to drain. Releasing the last
+    /// `Py` off the interpreter is safe — PyO3 queues the decref and runs it as
+    /// this `detach` re-attaches, by which time the thread holds neither the GIL
+    /// nor the transaction guard, so a finalizer that re-enters configuration
+    /// still finds the guard free.
+    pub(crate) fn release(self, py: Python<'_>) {
+        py.detach(move || {
+            for detached in self.detached {
+                detached.release();
+            }
+            drop(self.snapshots);
+        });
     }
 }
 // Re-export for external consumers.

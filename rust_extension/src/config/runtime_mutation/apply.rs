@@ -95,7 +95,7 @@ impl RuntimeConfigBuilder {
             // before they drop keeps a Python finalizer from re-entering a
             // transaction that this thread already holds.
             drop(transaction);
-            deferred_drop.release();
+            deferred_drop.release(py);
             Ok(())
         })
     }

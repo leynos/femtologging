@@ -10,7 +10,8 @@
 
 use std::{
     path::Path,
-    sync::{Arc, Weak},
+    sync::{Arc, Weak, mpsc},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -20,7 +21,7 @@ use serial_test::serial;
 use tempfile::TempDir;
 
 use super::{
-    ConfigBuilder, LoggerConfigBuilder, LoggerMutationBuilder, RuntimeConfigBuilder,
+    ConfigBuilder, DeferredDrop, LoggerConfigBuilder, LoggerMutationBuilder, RuntimeConfigBuilder,
     test_utils::{
         gil_and_clean_manager,
         prune_test_support::{
@@ -33,6 +34,7 @@ use crate::{
     FemtoLevel, FileHandlerBuilder, HTTPHandlerBuilder, SocketHandlerBuilder,
     handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
+    logger::{DetachedOwners, HandlerAttachment},
     manager,
     sync::{Receiver, Sender, bounded},
 };
@@ -57,6 +59,7 @@ enum HandlerKind {
     Http,
 }
 
+/// Build a `HandlerBuilder` for `kind`, using `path` for file handlers.
 fn resource_handler(kind: HandlerKind, path: &Path) -> HandlerBuilder {
     match kind {
         HandlerKind::File => FileHandlerBuilder::new(path).into(),
@@ -310,4 +313,70 @@ fn in_flight_record_defers_release_until_worker_drains(
         );
         assert_released(&weak, "in-flight record drained");
     });
+}
+
+/// Upper bound for proving a peer thread can reach the interpreter mid-release.
+const GIL_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Handler whose `Drop` records whether a peer thread could attach while it ran.
+///
+/// A socket handler's `Drop` blocks in `send` and then joins a worker that
+/// drains its queue, so releasing owners under `Python::attach` would hold the
+/// GIL for that entire wait and freeze every other Python thread. The probe
+/// succeeds only when a helper thread attaches while the drop is running, which
+/// is exactly what releasing under `Python::detach` buys.
+struct GilFreeingProbeHandler {
+    /// Delivers whether the helper thread attached before the bound elapsed.
+    attached: mpsc::Sender<bool>,
+}
+
+impl FemtoHandlerTrait for GilFreeingProbeHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl Drop for GilFreeingProbeHandler {
+    fn drop(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            Python::attach(|_| {
+                let _ = tx.send(true);
+            });
+        });
+        let attached = rx.recv_timeout(GIL_PROBE_TIMEOUT).unwrap_or(false);
+        let _ = self.attached.send(attached);
+    }
+}
+
+/// Deferred owners must be released with the interpreter detached.
+///
+/// This pins the freeze Codex reported on PR #548: with a backlogged socket
+/// handler, releasing its last reference while attached made every Python
+/// thread wait for the worker to drain. The probe observes the interpreter from
+/// a peer thread rather than timing the drop, so it does not depend on how slow
+/// the host is.
+#[rstest]
+#[serial]
+fn deferred_owners_are_released_without_the_gil(_gil_and_clean_manager: ()) {
+    let (attached_tx, attached_rx) = mpsc::channel();
+    let mut bundle = DeferredDrop::default();
+    bundle.detached.push(DetachedOwners {
+        attachments: vec![HandlerAttachment::new(Arc::new(GilFreeingProbeHandler {
+            attached: attached_tx,
+        }))],
+        filters: Vec::new(),
+    });
+
+    Python::attach(|py| bundle.release(py));
+
+    assert!(
+        attached_rx.recv_timeout(GIL_PROBE_TIMEOUT).unwrap_or(false),
+        "deferred owners must be released with the GIL released, or a handler \
+         shutdown freezes every other Python thread for its duration",
+    );
 }
