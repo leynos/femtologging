@@ -37,22 +37,6 @@ type FileHandlerFactory = cabc.Callable[
 ]
 
 
-
-"""Shared pytest fixtures for femtologging tests."""
-# This BDD step module is loaded as a plugin during collection, so register it
-# before pytest imports it and the assertion-rewrite hook can process it.
-pytest.register_assert_rewrite("tests.steps.logging_context_steps")
-warnings.filterwarnings(
-    message="'maxsplit' is passed as positional argument",
-    category=DeprecationWarning,
-    module=r"gherkin\.gherkin_line",
-# The warning originates in the vendored Gherkin parser, so filter it out until
-# the dependency releases a fix rather than letting our test suite go noisy.
-type FileHandlerFactory = cabc.Callable[
-    [Path, int, int], AbstractContextManager[FemtoFileHandler]
-]
-
-
 @pytest.fixture
 def reset_logger_state() -> cabc.Iterator[None]:
     """Reset the global manager around a test that requests isolation."""

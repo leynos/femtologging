@@ -25,14 +25,6 @@ mod queue;
 mod runtime_mutation;
 mod worker;
 
-pub use py_handler::{PyHandler, validate_handler};
-#[cfg(all(feature = "python", test))]
-pub(crate) use python_helpers::should_capture_exc_info;
-pub use queue::QueuedRecord;
-pub(crate) use queue::{FlushAckHandler, HandlerAttachment, HandlerRecordSnapshot};
-#[cfg(feature = "python")]
-pub(crate) use runtime_mutation::DetachedOwners;
-
 use pyo3::prelude::*;
 use pyo3::{Py, PyAny};
 use std::sync::Arc;
@@ -65,6 +57,8 @@ pub use py_handler::{PyHandler, validate_handler};
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
+#[cfg(feature = "python")]
+pub(crate) use runtime_mutation::DetachedOwners;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
