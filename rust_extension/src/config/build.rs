@@ -296,16 +296,6 @@ impl ConfigBuilder {
         Ok(items)
     }
 
-    /// Convert repeated handler references into the configuration error type.
-    fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
-        ConfigError::DuplicateHandlerIds(ids)
-    }
-
-    /// Convert repeated filter references into the configuration error type.
-    fn duplicate_filter_ids(ids: Vec<String>) -> ConfigError {
-        ConfigError::DuplicateFilterIds(ids)
-    }
-
     /// Validate a logger's resource references without changing live state.
     fn prepare_logger_plan(
         &self,
@@ -316,7 +306,7 @@ impl ConfigBuilder {
         let resolved_handlers = Self::collect_items(
             cfg.handler_ids(),
             &components.built_handlers,
-            Self::duplicate_handler_ids,
+            ConfigError::DuplicateHandlerIds,
         )?;
         #[cfg(feature = "python")]
         if resolved_handlers
@@ -342,7 +332,7 @@ impl ConfigBuilder {
         let planned_filters = Self::collect_items(
             cfg.filter_ids(),
             &components.built_filters,
-            Self::duplicate_filter_ids,
+            ConfigError::DuplicateFilterIds,
         )?;
         Ok(ConfiguredLoggerPlan {
             name: name.to_string(),
@@ -375,7 +365,7 @@ impl ConfigBuilder {
                 Self::collect_items(
                     builder.filter_ids(),
                     &built_filters,
-                    Self::duplicate_filter_ids,
+                    ConfigError::DuplicateFilterIds,
                 )
                 .map(|filters| (id.clone(), filters))
             })
