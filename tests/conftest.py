@@ -12,8 +12,8 @@ import pytest
 
 import femtologging
 from femtologging import (
-    FemtoFileHandler,
     ConfigBuilder,
+    FemtoFileHandler,
     LevelFilterBuilder,
     LoggerConfigBuilder,
     StreamHandlerBuilder,
