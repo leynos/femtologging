@@ -106,26 +106,34 @@ exception-chain depth while preserving the established edge order.
 flowchart TD
     accTitle: Exception payload graph traversal
     accDescr {
-      An iterative depth-first work stack checks active-path identity and graph
-      budgets before filtering each payload. Cycles and exceeded limits raise
-      ValueError. Exception-group width is checked before allocating its output
-      list.
+      Each Enter work item checks active-path identity and graph budgets before
+      filtering and attaching a payload copy. A deferred FilterGroup item checks
+      exception-list width before allocating its output list or scheduling
+      members. Cycles and exceeded limits raise ValueError.
     }
     A[exception payload] --> B[iterative depth-first work stack]
     B --> C{active-path identity repeated?}
     C -->|yes| D[raise ValueError: cycle path]
     C -->|no| E{depth or node budget exceeded?}
     E -->|yes| F[raise ValueError: graph limit]
-    E -->|no| G[filter frames for current payload]
-    G --> H{cause, context, or exceptions members?}
-    H -->|yes| B
-    H -->|no| I[attach filtered copy]
+    E -->|no| G[filter frames and attach filtered copy]
+    G --> H[schedule cause and context and defer group work]
+    H --> I[visit cause and context descendants]
+    I --> J[process deferred FilterGroup work]
+    J --> K{exceptions list present?}
+    K -->|no| B
+    K -->|yes| L[validate list and group width before allocation]
+    L --> M{width exceeds remaining node budget?}
+    M -->|yes| F
+    M -->|no| N[allocate output list and schedule members]
+    N --> B
 ```
 
-*Figure 2: The iterative depth-first traversal checks active-path identity and
-the graph budgets before filtering a payload. It rejects cycles and limit
-overflows with `ValueError`; exception-group width is checked before its output
-list is allocated.*
+*Figure 2: Each `Enter` item checks active-path identity and graph budgets
+before filtering and attaching a payload copy. After cause and context
+descendants, the deferred `FilterGroup` item validates group width before
+allocating its output list and scheduling members. Cycles and limit overflows
+raise `ValueError`.*
 
 ### Python binding sequence
 
@@ -133,10 +141,11 @@ list is allocated.*
 sequenceDiagram
     accTitle: Python exception payload filtering sequence
     accDescr {
-      The caller passes graph limits to filter_frames. Traversal checks active
-      path identity and budgets before filtering each payload, attaches its
-      filtered shallow copy, and schedules its cause, context, and group
-      members. Group width is checked before its output list is allocated.
+      The caller passes graph limits to filter_frames. Each Enter work item
+      checks active-path identity and budgets before filtering and attaching a
+      shallow copy, then schedules cause and context edges. A deferred
+      FilterGroup work item checks list width before output-list allocation and
+      member scheduling.
     }
     participant Caller
     participant filter_frames
@@ -148,19 +157,24 @@ sequenceDiagram
     filter_frames->>Traversal: filter_exception_payload(payload, limits)
     loop Work stack until empty
         Traversal->>Traversal: check active path and graph budgets
-        Traversal->>Payload: filter frames for current payload
+        Traversal->>Payload: filter_payload_frames()
         Payload-->>Traversal: filtered shallow copy
         Traversal->>Output: attach filtered payload occurrence
-        Traversal->>Traversal: schedule cause, context, and group members
-        Note over Traversal: Exception-group width is checked before allocating its output list.
+        Traversal->>Traversal: schedule cause and context edges and defer group work
+        Note over Traversal: Visit cause and context descendants before the deferred group item.
+        Traversal->>Traversal: process FilterGroup work item
+        Traversal->>Traversal: validate exceptions list and group width
+        Traversal->>Output: allocate group output list within node budget
+        Traversal->>Traversal: schedule group members in list order
     end
     Traversal-->>filter_frames: filtered exception graph
     filter_frames-->>Caller: return dict
 ```
 
-*Figure 3: Traversal checks cycle, depth, and node limits before filtering each
-payload. It attaches a filtered shallow copy and schedules cause, context, and
-group members; group width is checked before the output list is allocated.*
+*Figure 3: Each `Enter` work item checks cycle, depth, and node limits before
+filtering and attaching a shallow copy, then schedules cause and context edges.
+After those descendants, `FilterGroup` validates list width before allocating
+the group output list and scheduling members.*
 
 Cycle detection compares Python dictionary identity on the active ancestor
 path. A repeated dictionary on that path is a cycle and raises
