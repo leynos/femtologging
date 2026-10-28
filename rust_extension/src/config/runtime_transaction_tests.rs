@@ -337,7 +337,7 @@ fn deferred_drop_releases_handler_attachments() {
         0,
         "holding the bundle must keep the attachment alive",
     );
-    bundle.release();
+    Python::attach(|py| bundle.release(py));
     assert_eq!(
         HANDLERS_RELEASED.load(Ordering::SeqCst),
         1,
