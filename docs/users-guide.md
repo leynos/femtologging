@@ -752,6 +752,70 @@ def enrich_request(record: logging.LogRecord) -> bool:
 callback_filter = PythonCallbackFilterBuilder(enrich_request)
 ```
 
+### Filtering frames from Python payloads
+
+`filter_frames()` returns a filtered copy of a stack or exception payload. Its
+complete signature is:
+
+```python
+def filter_frames(
+    payload: Mapping[str, Any],
+    *,
+    exclude_filenames: list[str] | None = None,
+    exclude_functions: list[str] | None = None,
+    max_depth: int | None = None,
+    exclude_logging: bool = False,
+    max_exception_depth: int = 1000,
+    max_exception_nodes: int = 10000,
+) -> dict[str, Any]: ...
+```
+
+For example, a custom handler can remove logging frames and retain only the
+most recent application frames:
+
+```python
+from femtologging import filter_frames
+
+payload = {
+    "type_name": "OSError",
+    "message": "file could not be read",
+    "frames": [
+        {"filename": "/srv/app/reader.py", "lineno": 42, "function": "read"},
+        {
+            "filename": "/usr/lib/python3.12/logging/__init__.py",
+            "lineno": 7,
+            "function": "handle",
+        },
+    ],
+}
+filtered = filter_frames(payload, exclude_logging=True, max_depth=10)
+```
+
+`exclude_filenames` and `exclude_functions` remove matching frames by substring.
+`exclude_logging=True` removes common femtologging, standard-library logging,
+and import-system frames. `max_depth` limits the retained frames separately in
+each payload after exclusions; it does not limit exception-chain traversal.
+
+Exception payloads are dictionaries with `type_name` and `message` keys.
+`filter_frames()` follows `cause`, then `context`, then each member of an
+`exceptions` list. The default `max_exception_depth=1000` counts graph edges
+from the root, whose depth is zero. The root-inclusive default
+`max_exception_nodes=10000` limits payload occurrences, including exception
+group width and repeated shared subgraphs. Shared acyclic payloads are
+accepted, but each occurrence is copied and counted independently. Stack
+payloads do not use either exception-graph limit.
+
+Malformed frame data or exception edges raise `TypeError`, including
+`'frames' must be a list`, `each frame must be a dict`,
+`'cause' must be a dict`, `'context' must be a dict`,
+`'exceptions' must be a list`, and `each exception must be a dict`. Cycles raise
+`ValueError` with a path such as `$.cause.exceptions[2]`; exceeding either
+graph limit raises `ValueError` with the parameter name and limit. An exception
+payload with `max_exception_nodes=0` raises `ValueError` with the message
+`max_exception_nodes=0 must be greater than zero`. Negative or oversized
+integer limits raise `OverflowError`. If a legitimate payload exceeds the
+defaults, pass larger `max_exception_depth` or `max_exception_nodes` values.
+
 For upgrade steps covering handler filters and formatter builders, see the
 [v0.2.0 migration guide](v0-2-0-migration-guide.md).
 

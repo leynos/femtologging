@@ -519,6 +519,8 @@ def _install_test_global_tracing_subscriber() -> None: ...
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...
+
+# @codescene(disable:"Excess Number of Function Arguments") Keep named API (2026-10-26)
 def filter_frames(
     payload: Mapping[str, _Any],
     *,
@@ -526,8 +528,19 @@ def filter_frames(
     exclude_functions: list[str] | None = ...,
     max_depth: int | None = ...,
     exclude_logging: bool = ...,
+    max_exception_depth: int = ...,
+    max_exception_nodes: int = ...,
 ) -> dict[str, _Any]:
-    """Return *payload* with stack/exception frames filtered."""
+    """Return *payload* with frames filtered.
+
+    ``max_depth`` limits frames retained in each payload. Exception-graph
+    traversal is separately bounded by ``max_exception_depth`` (default 1000)
+    and ``max_exception_nodes`` (default 10,000).
+
+    Cyclic exception graphs and exceeded graph limits raise ``ValueError``.
+    Malformed frames or exception edges raise ``TypeError``. Negative or
+    oversized integer limits raise ``OverflowError``.
+    """
     ...
 
 def get_logging_infrastructure_patterns() -> list[str]:

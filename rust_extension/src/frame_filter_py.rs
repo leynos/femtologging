@@ -4,7 +4,7 @@
 //! from exception and stack trace payloads. The functions operate on Python
 //! dicts (the same format returned by `handle_record`).
 
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -18,6 +18,7 @@ use crate::frame_filter::{
 ///
 /// This struct groups related filter parameters to reduce function argument counts
 /// and improve code clarity.
+#[derive(Clone, Copy)]
 struct FilterOptions<'a> {
     /// Optional filename substrings whose matching frames are removed.
     exclude_filenames: Option<&'a [String]>,
@@ -27,6 +28,21 @@ struct FilterOptions<'a> {
     max_depth: Option<usize>,
     /// Whether known femtologging and stdlib logging frames are removed.
     exclude_logging: bool,
+}
+
+/// Default maximum depth for exception-payload graph traversal.
+const DEFAULT_MAX_EXCEPTION_DEPTH: usize = 1_000;
+
+/// Default maximum number of exception-payload occurrences to filter.
+const DEFAULT_MAX_EXCEPTION_NODES: usize = 10_000;
+
+/// Limits for walking nested exception payloads.
+#[derive(Clone, Copy)]
+struct ExceptionGraphLimits {
+    /// Maximum edge depth below the root exception payload.
+    max_depth: usize,
+    /// Maximum number of payload occurrences, including the root.
+    max_nodes: usize,
 }
 
 /// Helper to extract an optional field with type error reporting.
@@ -179,40 +195,22 @@ fn filter_stack_payload(
     payload: &Bound<'_, PyDict>,
     opts: &FilterOptions<'_>,
 ) -> PyResult<Py<PyAny>> {
-    let frames = extract_frames(payload)?;
-    let had_frames_key = payload.contains("frames")?;
-    let filtered = apply_filters(frames, opts);
-
-    // Clone all keys from the original payload
-    let result = payload.copy()?;
-
-    update_frames_item(py, &result, had_frames_key, &filtered)?;
-
-    Ok(result.into())
+    filter_payload_frames(py, payload, opts).map(Into::into)
 }
 
-/// Filter an exc_info payload dict, recursively filtering cause/context/exceptions.
-///
-/// Preserves all keys from the original payload, only updating the frames
-/// and recursively filtering cause/context/exceptions.
-fn filter_exception_payload(
-    py: Python<'_>,
-    payload: &Bound<'_, PyDict>,
+/// Filter frames on one payload while preserving all of its other keys.
+fn filter_payload_frames<'py>(
+    py: Python<'py>,
+    payload: &Bound<'py, PyDict>,
     opts: &FilterOptions<'_>,
-) -> PyResult<Py<PyAny>> {
+) -> PyResult<Bound<'py, PyDict>> {
     let frames = extract_frames(payload)?;
     let had_frames_key = payload.contains("frames")?;
     let filtered = apply_filters(frames, opts);
 
-    // Clone all keys from the original payload (preserves unknown keys)
     let result = payload.copy()?;
-
     update_frames_item(py, &result, had_frames_key, &filtered)?;
-    filter_nested_exception(py, payload, &result, "cause", opts)?;
-    filter_nested_exception(py, payload, &result, "context", opts)?;
-    filter_exception_group(py, payload, &result, opts)?;
-
-    Ok(result.into())
+    Ok(result)
 }
 
 /// Replace, retain, or remove the `frames` item to mirror serde semantics.
@@ -237,47 +235,8 @@ fn update_frames_item(
     Ok(())
 }
 
-/// Recursively filter a nested exception payload stored under `key`.
-fn filter_nested_exception(
-    py: Python<'_>,
-    payload: &Bound<'_, PyDict>,
-    result: &Bound<'_, PyDict>,
-    key: &str,
-    opts: &FilterOptions<'_>,
-) -> PyResult<()> {
-    if let Some(nested) = payload.get_item(key)? {
-        let nested_dict = nested
-            .cast::<PyDict>()
-            .map_err(|_| PyTypeError::new_err(format!("'{key}' must be a dict")))?;
-        let filtered_nested = filter_exception_payload(py, nested_dict, opts)?;
-        result.set_item(key, filtered_nested)?;
-    }
-    Ok(())
-}
-
-/// Recursively filter the members of an exception group, if present.
-fn filter_exception_group(
-    py: Python<'_>,
-    payload: &Bound<'_, PyDict>,
-    result: &Bound<'_, PyDict>,
-    opts: &FilterOptions<'_>,
-) -> PyResult<()> {
-    if let Some(exceptions) = payload.get_item("exceptions")? {
-        let exceptions_list = exceptions
-            .cast::<PyList>()
-            .map_err(|_| PyTypeError::new_err("'exceptions' must be a list"))?;
-        let filtered_list = PyList::empty(py);
-        for exc in exceptions_list.iter() {
-            let exc_dict = exc
-                .cast::<PyDict>()
-                .map_err(|_| PyTypeError::new_err("each exception must be a dict"))?;
-            let filtered_exc = filter_exception_payload(py, exc_dict, opts)?;
-            filtered_list.append(filtered_exc)?;
-        }
-        result.set_item("exceptions", filtered_list)?;
-    }
-    Ok(())
-}
+#[path = "frame_filter_py/exception_graph.rs"]
+mod exception_graph;
 
 /// Detect whether a payload is an exception payload or stack payload.
 ///
@@ -301,15 +260,35 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
 /// exclude_functions : list[str], optional
 ///     Function name patterns to exclude (substring matching).
 /// max_depth : int, optional
-///     Maximum number of frames to retain (keeps most recent).
+///     Maximum number of frames to retain per payload (keeps most recent).
 /// exclude_logging : bool, default False
 ///     If True, exclude common logging infrastructure frames
 ///     (femtologging, logging module internals).
+/// max_exception_depth : int, default 1000
+///     Maximum exception-graph edge depth below the root payload. The root
+///     has depth zero.
+/// max_exception_nodes : int, default 10000
+///     Maximum number of exception-payload occurrences to filter, including
+///     the root. Shared payloads count once per occurrence.
+///     Graph limits are ignored for stack payloads.
 ///
 /// Returns
 /// -------
 /// dict
 ///     A new payload dict with frames filtered.
+///
+/// Raises
+/// ------
+/// TypeError
+///     If frames or exception edges have malformed types.
+/// ValueError
+///     If the graph contains a cycle (``exception payload graph contains a
+///     cycle at <path>``), exceeds ``max_exception_depth`` or
+///     ``max_exception_nodes`` (the message names the parameter and limit), or
+///     ``max_exception_nodes`` is zero for an exception payload
+///     (``max_exception_nodes=0 must be greater than zero``).
+/// OverflowError
+///     If an integer limit is negative or too large for the Rust ``usize``.
 ///
 /// Examples
 /// --------
@@ -321,7 +300,8 @@ fn is_exception_payload(payload: &Bound<'_, PyDict>) -> PyResult<bool> {
 ///         # Use filtered payload...
 /// ```
 #[pyfunction]
-#[pyo3(signature = (payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=false))]
+#[pyo3(signature = (payload, *, exclude_filenames=None, exclude_functions=None, max_depth=None, exclude_logging=false, max_exception_depth=DEFAULT_MAX_EXCEPTION_DEPTH, max_exception_nodes=DEFAULT_MAX_EXCEPTION_NODES))]
+// @codescene(disable:"Excess Number of Function Arguments") Keep named API (2026-10-26)
 pub fn filter_frames(
     py: Python<'_>,
     payload: &Bound<'_, PyDict>,
@@ -329,6 +309,8 @@ pub fn filter_frames(
     exclude_functions: Option<Vec<String>>,
     max_depth: Option<usize>,
     exclude_logging: bool,
+    max_exception_depth: usize,
+    max_exception_nodes: usize,
 ) -> PyResult<Py<PyAny>> {
     let opts = FilterOptions {
         exclude_filenames: exclude_filenames.as_deref(),
@@ -338,7 +320,22 @@ pub fn filter_frames(
     };
 
     if is_exception_payload(payload)? {
-        filter_exception_payload(py, payload, &opts)
+        if max_exception_nodes == 0 {
+            return Err(PyValueError::new_err(
+                "max_exception_nodes=0 must be greater than zero",
+            ));
+        }
+
+        exception_graph::filter_exception_payload(
+            py,
+            payload,
+            &opts,
+            ExceptionGraphLimits {
+                max_depth: max_exception_depth,
+                max_nodes: max_exception_nodes,
+            },
+        )
+        .map(Into::into)
     } else {
         filter_stack_payload(py, payload, &opts)
     }
