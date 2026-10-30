@@ -120,7 +120,7 @@ jobs:
         with:
           globs: '**/*.md'
       - name: Install Whitaker
-        uses: leynos/shared-actions/.github/actions/install-whitaker@6dea5677a84fec60ca51b07202570e3af12ffdb4
+        uses: leynos/shared-actions/.github/actions/install-whitaker@5a99aed78ce68dcebd3052b75c31e6f173162b1e # shared-actions 5a99aed7 (whitaker-installer 0.2.11)
       - name: Lint
         run: make lint
       - name: Spelling
