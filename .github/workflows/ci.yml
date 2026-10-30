@@ -78,7 +78,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ env.BUILD_PROFILE }}-${{ matrix.python-version }}-
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@v10.3.2
       - name: Install makeutil
         id: makeutil
         # A digest-verified prebuilt release rather than a from-source build.
