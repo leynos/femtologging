@@ -394,6 +394,60 @@ Known uncertainties identified upfront, with mitigations.
 - [ ] (2026-10-26) Obtain maintainer disposition on the rejected-record counter
   warning. Then request a current-head formal CodeRabbit review, reconcile its
   findings and approval, and merge.
+- [x] (2026-10-31) Actioned two formal-review findings.
+      `Release handler borrow before worker joins` (`65342d9`) takes the PyO3
+      class borrow out of the
+      worker wait: `py_flush` and `py_close` detach, take owned shutdown
+      handles, release the GIL, and re-acquire the borrow only after the worker
+      joins. `tests/test_handler_close_reentry.py` covers closing a handler
+      from a callback that re-enters Python.
+      `Register pytest-bdd steps from the root conftest` (`83d03fa`) loads
+      `tests.steps.logging_context_steps` from a root `conftest.py` behind
+      `find_spec("pytest_bdd")`, so the steps register for tests collected
+      outside `tests/`.
+- [x] (2026-10-31) Rebased the series onto `origin/main` at `187aea7` using
+  `zdiff3` and Git's built-in merge backend; Weave was bypassed because only an
+  ambient global attributes rule, not tracked repository policy, selected it.
+  The replay carried 45 commits and stopped five times for conflicts, each
+  resolved to keep both branches' intent. Recovery refs for the pre-rebase
+  head, boundary and target remain under `refs/recovery/issue435/`, and
+  `git range-diff` showed no patch changes beyond those resolutions.
+  `Format migration guide after rebase` (`c499101`) restored that file's
+  formatting.
+- [x] (2026-10-31) The first full gate run after the rebase failed three
+  `tests/test_build_standard_contract.py` cases at the 30-second pytest
+  timeout. The fixture builds under the host's global `~/.cargo/config.toml`,
+  which installs `build.rustc-wrapper = build-limits-rustc`; each fixture build
+  therefore queued behind shared compile admission, and the documented
+  `CARGO_INCREMENTAL=1` override was rejected because sccache prohibits
+  incremental compilation.
+  `Fix build-standard fixture against global Cargo wrappers` (`a242f97`) sets
+  empty `CARGO_BUILD_RUSTC_WRAPPER` and `CARGO_BUILD_RUSTDOC` values, which
+  override those global config keys without touching the host, so the fixture
+  observes only the repository's settings and the override under test. The
+  file's ten tests then pass in under a second.
+- [x] (2026-10-31) Candidate `0d4fe3f` passed all six local gates sequentially:
+  `make check-fmt`; `make test` (856 passed, 5 skipped, 66 snapshots, 10242 s);
+  `make typecheck` (224 s); `make lint` (1954 s, all nine Rust clippy lanes and
+  the Python stages); `make markdownlint`; and `make nixie`. That run also
+  refreshed the generated `typos.toml` from the shared dictionary, a change
+  `main` had already committed separately as `f26b696`.
+- [x] (2026-10-31) `origin/main` advanced to `f26b696`, which renamed the ADRs
+  to `docs/adrs/adr-000N-*` and rewrote their links, leaving PR #546
+  conflicting. The series was rebased again onto `f26b696`; two conflict stops
+  in `docs/adrs/adr-0003-python-stdlib-filter-parity.md` were resolved by
+  keeping this branch's clarification text and `main`'s
+  `../v0-2-0-migration-guide.md` link. The regenerated `typos.toml` was
+  discarded because it already matches `f26b696` byte for byte. `range-diff`
+  shows only those path and link changes across the replay.
+- [x] (2026-10-31) Rebased candidate `a242f97` passed all six local gates
+  sequentially: `make check-fmt`; `make test` (856 pytest tests passed, 5
+  skipped, 66 snapshots; 2647 Rust tests passed across 68 result lines, 3913 s
+  total); `make typecheck` (228 s); `make lint` (814 s, every Python stage and
+  16 Rust lint lanes); `make markdownlint`; and `make nixie`. Compile admission
+  stayed healthy throughout, with queue depth peaking near 141 ahead and no
+  supervisor faults. This ExecPlan edit is a Markdown-only follow-up to that
+  candidate, validated by the documentation gates below.
 
 ## Surprises & discoveries
 
@@ -642,7 +696,7 @@ technical-design document for this bug fix. The upstream artefacts are:
   `Lib/logging/__init__.py`, whose handler loop begins with
   `if record.levelno >= hdlr.level:`. The adapter reproduces the part of that
   contract that applies to a single handler.
-- `docs/adr-003-python-stdlib-filter-parity.md`, which governs how Python
+- `docs/adrs/adr-0003-python-stdlib-filter-parity.md`, which governs how Python
   stdlib parity work is sequenced in this project. Its "Non-goals" section
   explicitly defers handler-level stdlib filter parity; that restriction is
   about *filters*, not about *severity levels*, so this change does not
@@ -1060,3 +1114,12 @@ status entry. Formal review `5647538903` of head `3333255` returned
 `CHANGES_REQUESTED`; its documentation threads and pre-merge warnings must be
 reconciled before the guarded merge. The existing review queue request is
 `e8d2e60c` completed on `fa210fb`; it does not cover later published heads.
+Revised 2026-10-31 after actioning the formal-review findings, rebasing twice,
+and repairing the build-standard fixture. The first rebase replayed 45 commits
+onto `187aea7` with five conflict stops; the second replayed them onto
+`f26b696`, where `main` renamed the ADRs, and stopped twice in ADR 0003. Both
+were resolved to keep each side's intent, the regenerated `typos.toml` matches
+`f26b696` and was discarded, and recovery refs remain under
+`refs/recovery/issue435/`. The build-standard fixture now pins empty Cargo
+wrapper variables so it observes only repository settings rather than the
+host's global admission wrapper.
