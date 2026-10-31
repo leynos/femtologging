@@ -68,7 +68,9 @@ def test_pytest_bdd_is_updated_by_hand() -> None:
 def test_the_group_carries_the_pull_request_bound_not_its_entries() -> None:
     """Bound the group; Dependabot rejects the bound on an entry that joins it."""
     limit = _document()["multi-ecosystem-groups"][GROUP].get("open-pull-requests-limit")
-    assert isinstance(limit, int)
+    assert isinstance(limit, int), (
+        f"the {GROUP} group needs an integer bound; got {limit!r}"
+    )
     assert limit > 0, f"the {GROUP} group needs a positive bound; got {limit!r}"
     carrying = [
         ecosystem
