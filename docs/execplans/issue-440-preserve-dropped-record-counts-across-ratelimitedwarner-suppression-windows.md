@@ -210,6 +210,50 @@ suite that fails if any drop is discarded or handed off more than once.
       drop-warner flush uses it in builds without the `python` feature.
 - [x] (2026-10-31) Focused suite after the rebase: 15 passed, 0 failed
       (`--no-default-features --features test-util rate_limited_warner`).
+- [x] (2026-10-31) Removed the duplicated flush helpers found in review:
+      `flush_drop_warner` in the HTTP handler was the same report as
+      `flush_drops`, and the socket handler and its worker each carried a
+      private copy. Each handler module now owns one
+      `warn_drops`/`flush_drops` pair and its worker imports them
+      (`835d87a`).
+- [x] (2026-10-31) Added `flush_reports_drops_held_back_by_the_warning_interval`
+      to `producer_rejection_tests`, covering the logger-level wiring rather
+      than only the warner unit: two refusals inside one window warn once, the
+      second count stays pending, and `flush_handlers()` reports it (`670acfb`).
+- [x] (2026-10-31) Focused rerun after those commits: 3 passed, 0 failed,
+      339 filtered out (`cargo test` with `--no-default-features --features
+      test-util --lib producer_rejection_tests`), which also compiled the
+      un-gated HTTP and socket modules.
+- [x] (2026-10-31) Gates on `670acfb`: `fmt`, `check-fmt`, `markdownlint` and
+      `nixie` pass; `make lint` passes in 4,898 s (log
+      `/tmp/lint-issue-440-20261031T123826Z.out`, private-docs contract
+      296.69 s inside main's 600 s limit); `make typecheck` passes in 285 s
+      (log `/tmp/typecheck-issue-440-20261031T123826Z.out`).
+- [x] (2026-10-31) `make test` was killed twice by the harness's background
+      cap, once before any lane and once inside lane 3's `compile_tests`
+      (`/tmp/test-issue-440-20261031T162715Z.out:5471`). The four cargo lanes
+      and the four ignored heavy suites were then completed individually and
+      all pass: log-compat `EXIT=0` in 2,400 s
+      (`/tmp/test-lane-log-compat-issue-440-20261031T190532Z.out`),
+      tracing-compat `EXIT=0` in 1,884 s
+      (`/tmp/test-lane-tracing-compat-issue-440-20261031T195137Z.out`), and
+      heavy test-util, python, log-compat and python+log-compat all `EXIT=0`
+      (`/tmp/heavy-*-issue-440-2026103*.out`).
+- [ ] (2026-10-31) Whole-suite pytest passed 826 and skipped 5 but failed 3
+      cases, all in `tests/test_build_standard_contract.py`
+      (`/tmp/test-pytest-issue-440-20261031T202924Z.out`). This is a host
+      configuration conflict, not a candidate defect: the test's
+      `_compile_fixture` strips `RUSTC_WRAPPER` from the environment, but
+      Cargo also reads `~/.cargo/config.toml`, which the host operator sets to
+      `build.rustc-wrapper = /home/leynos/.local/bin/build-limits-rustc`. The
+      fixture's empty crate therefore still requests an admission slot: two
+      cases exceed their 30 s subprocess timeout while queued, and the
+      `CARGO_INCREMENTAL=1` case is refused by sccache with
+      `incremental compilation is prohibited`
+      (`/tmp/pytest-buildstd-issue-440-20261031T205757Z.out`). Both
+      `tests/test_build_standard_contract.py` and `.cargo/config.toml` are
+      byte-identical to `origin/main`, and admission must not be bypassed, so
+      this needs a host-side decision rather than a code change here.
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
