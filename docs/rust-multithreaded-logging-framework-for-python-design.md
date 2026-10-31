@@ -840,10 +840,10 @@ batches rather than one by one.
 
 [ADR 0004](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md)
 formalizes the analysis of batching strategies. The chosen direction is
-drain-loop batching with `crossbeam-channel` `try_recv()` (Option A),
-complemented by `write_vectored` scatter-gather I/O for file and stream
-handlers (Option C). This combination preserves zero added latency under light
-traffic while amortizing I/O costs under sustained load.
+drain-loop batching with `crossbeam-channel` `try_recv()` (Option A). Vectored
+scatter-gather I/O for file and stream handlers (Option C) is deferred until
+`write_all_vectored` is stable. Drain-loop batching preserves zero added
+latency under light traffic while amortizing I/O costs under sustained load.
 
 Dynamic filtering, while a desirable feature for operational flexibility, also
 has performance implications. If filters are complex or numerous, evaluating

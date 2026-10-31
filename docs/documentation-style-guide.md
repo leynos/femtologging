@@ -712,7 +712,7 @@ contents of the manual.
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust
 /// assert_eq!(add(2, 3), 5);
 /// ```
 #[inline]
@@ -809,19 +809,19 @@ This hierarchy should align with the GIST framework:
 ### 1.1. Logging subsystem
 
 - [ ] 1.1.1. Introduce central logging service
-  - Define log message schema. See design-doc.md §2.1.
-  - Implement log collector daemon.
-  - Add structured logging to API layer.
+  - [ ] Define log message schema. See design-doc.md §2.1.
+  - [ ] Implement log collector daemon.
+  - [ ] Add structured logging to API layer.
 - [ ] 1.1.2. Add error dashboards. Requires 1.1.1.
-  - Deploy Grafana instance.
-  - Create error rate dashboard (target: <1% error rate visible within 5 min).
+  - [ ] Deploy Grafana instance.
+  - [ ] Create error rate dashboard (target: <1% error rate visible within 5 min).
 
 ### 1.2. Authentication
 
 - [ ] 1.2.1. Implement role-based access control (RBAC). Requires 1.1.1.
-  - Define role hierarchy. See design-doc.md §4.3.
-  - Add RBAC middleware to API endpoints.
-  - Write integration tests for permission boundaries.
+  - [ ] Define role hierarchy. See design-doc.md §4.3.
+  - [ ] Add RBAC middleware to API endpoints.
+  - [ ] Write integration tests for permission boundaries.
 ```
 
 ### Writing GIST-aligned steps
