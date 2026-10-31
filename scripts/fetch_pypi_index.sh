@@ -4,6 +4,8 @@ set -euo pipefail
 : "${PYPI_SIMPLE_URL:?PYPI_SIMPLE_URL must be set}"
 : "${PYPI_INDEX_PATH:?PYPI_INDEX_PATH must be set}"
 allow_missing="${PYPI_ALLOW_MISSING:-false}"
+started=${SECONDS}
+tag="${GITHUB_REF_NAME:-unknown}"
 
 fetch_index() {
   local attempt=0
@@ -19,6 +21,8 @@ fetch_index() {
     case "${status}" in
       000|429|5??)
         if [ "${attempt}" -lt 6 ]; then
+          printf '::notice title=release-pypi::tag %s index fetch attempt %d/6 returned HTTP %s; retrying after 2s (%ds elapsed)\n' \
+            "${tag}" "${attempt}" "${status}" "$((SECONDS - started))" >&2
           sleep 2
         fi
         ;;
@@ -33,6 +37,8 @@ fetch_index() {
     404)
       if [ "${allow_missing}" = true ]; then
         printf '{"files": []}\n' > "${PYPI_INDEX_PATH}"
+        printf '::notice title=release-pypi::tag %s PyPI project is unpublished; using an empty index (%ds elapsed)\n' \
+          "${tag}" "$((SECONDS - started))" >&2
       else
         echo "PyPI project is unpublished; no index is available." >&2
         exit 1
@@ -90,6 +96,9 @@ PY
     if [ -z "${missing}" ]; then
       exit 0
     fi
+    printf '::notice title=release-pypi::tag %s index poll %d/10 still missing: %s (%ds elapsed)\n' \
+      "${tag}" "${attempt}" "${missing//$'\n'/ }" \
+      "$((SECONDS - started))" >&2
     if [ "${attempt}" -eq 10 ]; then
       printf 'PyPI Simple index did not list these published files after 10 checks:\n%s\n' \
         "${missing}" >&2
