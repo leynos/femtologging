@@ -479,6 +479,13 @@ shutdown therefore observes the closed state instead of blocking on a borrow
 held by the waiter. `tests/test_handler_close_reentry.py` is the regression
 test for that path.
 
+Detaching preserves the existing return values and bounds. `flush()` still
+returns `True` only when the worker acknowledges within the handler's flush
+timeout and `False` otherwise, and `close()` still returns `None`. The wait in
+`close()` remains bounded by the handler's timeout: a worker that does not
+signal completion in time is reported and skipped rather than waited on
+indefinitely.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` applies a complete configuration through one

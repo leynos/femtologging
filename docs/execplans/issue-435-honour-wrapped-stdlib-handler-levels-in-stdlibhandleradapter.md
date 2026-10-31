@@ -391,9 +391,17 @@ Known uncertainties identified upfront, with mitigations.
   confirmed that direct lock-acquisition counts, exhaustive enumeration,
   concurrent update schedules, execution statistics and formal proof are not
   claimed by this bounded behavioural suite.
-- [ ] (2026-10-26) Obtain maintainer disposition on the rejected-record counter
-  warning. Then request a current-head formal CodeRabbit review, reconcile its
-  findings and approval, and merge.
+- [x] (2026-10-31) Rejected-record counter disposed as separate follow-up work,
+  not a missing issue #435 acceptance requirement. CodeRabbit's pre-merge
+  reconciliation reply `6550398940` withdrew the out-of-scope objection, kept
+  the GIL and borrow releases together as one repair, and classified a counter
+  as follow-up work outside this PR. No counter is added; the PR Notes record
+  the same disposition.
+- [ ] (2026-10-31) Complete the two remaining lifecycle documentation items
+  CodeRabbit named in `6550398940`: the preserved return and timeout behaviour
+  in the developer guide, and the Python-facing lifecycle boundary in the
+  design document. Then request a current-head formal CodeRabbit review,
+  reconcile its findings and approval, and merge.
 - [x] (2026-10-31) Actioned two formal-review findings.
       `Release handler borrow before worker joins` (`65342d9`) takes the PyO3
       class borrow out of the
@@ -611,9 +619,10 @@ missing v0.2.0 migration note, and a rejected-record counter. Candidate
 `a1ae687` reverts the unrelated timeout change, restoring the original
 600-second child and 620-second pytest limits, and adds the migration note. It
 passed all seven sequential local gates. Hosted run `40281574197` was still
-running when that progress entry was written. The remaining counter request
-needs a maintainer disposition. Subsequent plan-only publication and validation
-states are recorded in Progress above.
+running when that progress entry was written. The remaining counter request was
+later disposed as separate follow-up work in Progress above (2026-10-31).
+Subsequent plan-only publication and validation states are recorded in Progress
+above.
 
 ## Context and orientation
 

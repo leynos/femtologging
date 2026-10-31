@@ -1277,6 +1277,14 @@ Consumer threads (which perform actual I/O) release the GIL during blocking
 operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 `log::log()` calls from Rust do not contend with handler I/O.
 
+**Python-facing lifecycle waits:** The Python bindings for the stream, file,
+rotating-file, and timed-rotating-file handlers detach from the GIL while they
+wait for their worker in `flush()` and `close()`. `close()` transfers the
+shutdown state to an owned value under a scoped mutable borrow, and that borrow
+ends before the detached wait. This keeps caller-side lifecycle waits distinct
+from worker-side I/O and lets both a queued Python callable formatter and a
+callback that re-enters the handler in its closed state make progress.
+
 **flush() Behaviour:**
 
 The `flush()` method iterates over all handlers registered with the Manager and
