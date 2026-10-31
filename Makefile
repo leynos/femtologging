@@ -230,7 +230,7 @@ lint-rust-private-docs-policy-test: ## Exercise private-doc policy through Make'
 		-c /dev/null --rootdir=. --noconftest -p no:cacheprovider
 
 lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy lint-rust-test-docs lint-rust-private-docs-policy-test ## Run Rust lint lanes, private-doc policy, and the Whitaker Dylint suite
-	cd rust_extension && $(CARGO_BUILD_ENV) RUSTFLAGS="-D warnings" $(WHITAKER) --all -- --all-targets --all-features
+	RUSTFLAGS="-D warnings" PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0 $(WHITAKER) --all --manifest-path $(RUST_MANIFEST) -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling
 	# Lint only repository Markdown (tracked plus new non-ignored files):

@@ -116,7 +116,7 @@ the corpus still passes.
 The Rust extension build toolchain is pinned so local builds, CI, and the
 compatibility tests validate the same maturin and PyO3 releases:
 
-- `rust-toolchain.toml` selects Rust `1.99.0` exactly and requires `rustfmt`,
+- `rust-toolchain.toml` selects Rust `1.99.1` exactly and requires `rustfmt`,
   `clippy`, and `rust-analyzer`. A floating `stable` channel is not used,
   because rustup would resolve it at install time and the toolchain would
   change without a commit. Dependabot's `rust-toolchain` update entry in
@@ -124,7 +124,7 @@ compatibility tests validate the same maturin and PyO3 releases:
   passes the usual gates before the pin moves. Install the toolchain with:
 
   ```shell
-  rustup toolchain install 1.99.0 --component rustfmt --component clippy \
+  rustup toolchain install 1.99.1 --component rustfmt --component clippy \
     --component rust-analyzer
   ```
 
@@ -163,27 +163,92 @@ fixtures.
 ### Dependabot grouping for the extension build
 
 The project is uv-managed (`uv.lock`, no requirements files), so the Python
-stanza of `.github/dependabot.yml` is `uv`, not `pip`. maturin (the `uv`
-stanza) and PyO3 (the `cargo` stanza) are versioned independently yet build one
-extension, so an update to either alone cannot be built against the other. Both
-stanzas join the `maturin-pyo3` multi-ecosystem group, defined at the top of
-the file with its own daily schedule, so the available updates for the pair
-arrive in one pull request and, when both have one, a single CI run builds them
-together. A bump is not held back when only one of the two has an update. The
-`uv` stanza offers `maturin` and the `cargo` stanza offers `pyo3`. A group
-coordinates the update; it cannot choose compatible versions and it never
-rewrites a pinned literal, so the maturin pin in
-`.github/workflows/heavy-tests.yml` is still kept aligned by
+entries of `.github/dependabot.yml` are `uv`, not `pip`. maturin (the `uv`
+ecosystem) and PyO3 (the `cargo` ecosystem) are versioned independently yet
+build one extension, so an update to either alone cannot be built against the
+other. A multi-ecosystem group, `maturin-pyo3`, defined at the top of the file
+with its own daily schedule and `open-pull-requests-limit` (Dependabot rejects
+that key on an entry that joins a group), puts the available updates for the
+pair into one pull request. When both have one, a single CI run builds them
+together; a bump is not held back when only one of the two has an update, and a
+group cannot choose compatible versions or rewrite a pinned literal, so the
+maturin pin in `.github/workflows/heavy-tests.yml` is still kept aligned by
 `tests/test_maturin_build.py`.
 
-The `uv` stanza also ignores `pytest-bdd`: it is pinned beside `pytest` in
-`pyproject.toml`, and a release has to be checked against the pytest it
-supports before the pair moves, so it is updated by hand.
+An entry that joins a group runs only that group, over the dependencies its
+`patterns` take: its own groups, ignore rules and every other dependency are
+not processed (cuprum's first run of this arrangement showed it). So `uv` and
+`cargo` each have two entries. The group entry, listed first, offers `maturin`
+for `uv` and `pyo3` for `cargo` and carries no groups. The plain entry is the
+stanza as it was, with its catch-all group, and gains an `ignore` of the same
+name so the pair is handled once. The plain `uv` entry also ignores
+`pytest-bdd`: it is pinned beside `pytest` in `pyproject.toml`, and a release
+has to be checked against the pytest it supports before the pair moves, so it
+is updated by hand.
+
 `tests/test_dependabot_config_contract.py` holds the shape. Concordat's
 `dependency-family-contracts` rule (DF-002) accepts a shared multi-ecosystem
-group as one way to protect an independently versioned pair
-(<https://github.com/leynos/concordat/pull/334>), and an `ignore` rule for the
-pytest and pytest-bdd pair.
+group as one way to protect an independently versioned pair, reads the first
+entry that processes each package
+(<https://github.com/leynos/concordat/pull/334>,
+<https://github.com/leynos/concordat/pull/338>), and accepts an `ignore` rule
+for the pytest and pytest-bdd pair.
+
+## Rust build standard
+
+Development, test, lint and typecheck builds link with the `mold` linker on
+Linux. This is a default in `.cargo/config.toml`, which Cargo discovers from
+the repository root or from `rust_extension/`, so a bare `cargo build` and
+`maturin develop` get it. The default compiler driver must be GCC 12.1 or
+newer, or clang: older GCC drivers reject `-fuse-ld=mold` even when `mold` is
+installed, and a host with one sets `-Clinker=clang`. `mold` ships for Linux
+only, so the flag lives in a Linux-only target table, and macOS and Windows
+keep their platform linker. On Linux, install `mold` before building: the
+configuration names it, so a build without it fails at link time. The pin is
+the stable `1.99.1`, so the nightly-only parallel frontend flag (`-Zthreads=8`)
+is not used.
+
+An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
+`[build] rustflags` and each build that assigns `RUSTFLAGS` decides about the
+linker itself:
+
+- CI's `setup-rust` exports `RUSTFLAGS=-D warnings`, so those builds keep the
+  platform linker. The step still installs `mold` (`install-mold: 'true'`),
+  because the compile-time UI tests (trybuild) build a nested crate under
+  `target/` that finds `.cargo/config.toml` without that `RUSTFLAGS`, so the
+  Linux `mold` default applies to it.
+- The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
+  (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
+  `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
+- Release wheel builds run in manylinux containers that carry no `mold`, so they
+  must assign an empty `RUSTFLAGS`, which displaces the Linux table.
+- `make lint-rust` runs Whitaker as
+  `RUSTFLAGS="-D warnings" … $(WHITAKER) --all --manifest-path …`. Whitaker
+  runs under the toolchain its installer manages, so that literal `RUSTFLAGS`
+  is the isolation boundary: it takes none of the development standard (no
+  `mold` flag and no inherited `RUSTFLAGS`).
+
+### Development build footprint
+
+The development profile sets `incremental = false` and `debug = 0` in
+`rust_extension/Cargo.toml`, so a dev build keeps no incremental state or debug
+information. To debug, set `CARGO_PROFILE_DEV_DEBUG=true`; to rebuild
+incrementally, set `CARGO_INCREMENTAL=1` (unset any `sccache` wrapper first,
+which refuses incremental builds). The pin is stable, so the native Cargo
+metadata key (`[unstable] embed-metadata`) does not apply and the configuration
+must not carry it.
+
+`tests/test_build_standard_contract.py` holds all of this: the Linux-only
+`mold` table, the profile settings, the Loom steps and the Whitaker boundary,
+and it proves the defaults and both overrides at the Cargo boundary by building
+a one-file crate under the repository's own configuration.
+
+### Cranelift
+
+Exception: Cranelift is not the development-profile backend. Cranelift requires
+a nightly toolchain, and this repository pins the stable `1.99.1` (recorded
+2026-10-31, with no measurement taken on it). Revisit if the repository moves
+to a nightly pin.
 
 ## Type checking and heavy tests
 
@@ -236,7 +301,7 @@ heavy tests" passes `--no-run` and proves the models build. "Run Loom models"
 executes them under `scripts/run_loom_models.py`:
 
 ```shell
-RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 uv run --script \
+RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" LOOM_MAX_PREEMPTIONS=3 uv run --script \
   scripts/run_loom_models.py --expected rust_extension/tests/heavy/loom-models.txt -- \
   cargo test --release --manifest-path rust_extension/Cargo.toml \
   --no-default-features --test heavy loom_ -- --include-ignored

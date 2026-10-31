@@ -1,16 +1,23 @@
 """Contracts for the Dependabot configuration of the extension build.
 
-maturin (the ``uv`` stanza) and PyO3 (the ``cargo`` stanza) are versioned
+maturin (the ``uv`` ecosystem) and PyO3 (the ``cargo`` ecosystem) are versioned
 independently yet build one extension, so an update to either alone cannot be
 built against the other. A multi-ecosystem group puts the available updates for
 the two into one pull request, so when both have one a single CI run builds
-both. It does not hold back a bump when only one of the two has an update, and
-a group coordinates the update without proving compatibility.
+both. It does not hold back a bump when only one of the two has an update, and a
+group coordinates the update without proving compatibility.
+
+Dependabot builds one job per entry, and an entry that joins a group runs only
+that group, over the dependencies its ``patterns`` take (cuprum's first run of
+the arrangement showed it: the entry's own groups, ignore rules and every other
+dependency were not processed). So each of the two ecosystems has two entries,
+the group entry and a plain entry that ignores the pair so that it is handled
+once.
 
 The project is uv-managed (``uv.lock``, no requirements files), so the Python
-stanza must be ``uv``: a ``pip`` stanza leaves the lock outside Dependabot's
+entries must be ``uv``: a ``pip`` entry leaves the lock outside Dependabot's
 view. A mistake in this file is silent, because Dependabot reports nothing for
-a stanza that names a group the file never defines, so the checked-in
+an entry that names a group the file never defines, so the checked-in
 configuration is read back and held to the arrangement.
 """
 
@@ -39,30 +46,54 @@ def _document() -> dict[str, typ.Any]:
     return typ.cast("dict[str, typ.Any]", document)
 
 
-def _stanzas() -> dict[str, dict[str, typ.Any]]:
-    """Return each update stanza keyed by its package ecosystem."""
+def _entries() -> list[dict[str, typ.Any]]:
+    """Return every ``updates`` entry, in order."""
     updates = _document().get("updates")
     assert isinstance(updates, list), "the configuration must declare `updates`"
-    return {str(stanza["package-ecosystem"]): stanza for stanza in updates}
+    return typ.cast("list[dict[str, typ.Any]]", updates)
 
 
-def test_the_python_stanza_is_uv_not_pip() -> None:
+def _group_entries() -> list[dict[str, typ.Any]]:
+    """Return the entries that join a multi-ecosystem group."""
+    return [entry for entry in _entries() if "multi-ecosystem-group" in entry]
+
+
+def _plain_entry(ecosystem: str) -> dict[str, typ.Any]:
+    """Return the one entry for *ecosystem* that does not join a group."""
+    plain = [
+        entry
+        for entry in _entries()
+        if entry["package-ecosystem"] == ecosystem
+        and "multi-ecosystem-group" not in entry
+    ]
+    assert len(plain) == 1, f"{ecosystem} needs exactly one plain entry"
+    return plain[0]
+
+
+def test_the_python_entries_are_uv_not_pip() -> None:
     """Watch the uv-managed project through the ecosystem that reads ``uv.lock``."""
-    ecosystems = set(_stanzas())
+    ecosystems = {entry["package-ecosystem"] for entry in _entries()}
     assert "uv" in ecosystems, (
-        f"the Python stanza must be `uv`; got {sorted(ecosystems)}"
+        f"the Python entries must be `uv`; got {sorted(ecosystems)}"
     )
-    assert "pip" not in ecosystems, "a `pip` stanza leaves `uv.lock` unwatched"
+    assert "pip" not in ecosystems, "a `pip` entry leaves `uv.lock` unwatched"
 
 
 def test_pytest_bdd_is_updated_by_hand() -> None:
     """Hold pytest-bdd back: it is pinned beside pytest and checked against it."""
-    ignored = [
-        rule.get("dependency-name") for rule in _stanzas()["uv"].get("ignore", [])
-    ]
-    assert ignored == ["pytest-bdd"], (
-        f"the uv stanza must ignore exactly pytest-bdd; got {ignored}"
+    ignored = [rule["dependency-name"] for rule in _plain_entry("uv")["ignore"]]
+    assert "pytest-bdd" in ignored, (
+        f"the plain uv entry must ignore pytest-bdd; got {ignored}"
     )
+
+
+def test_the_group_is_defined_with_a_daily_schedule() -> None:
+    """Define the group the two entries join, on the estate's daily cadence."""
+    groups = _document().get("multi-ecosystem-groups")
+    assert isinstance(groups, dict), "`multi-ecosystem-groups` must be defined"
+    assert GROUP in groups, f"{GROUP!r} must be defined; got {sorted(groups)}"
+    interval = groups[GROUP].get("schedule", {}).get("interval")
+    assert interval == "daily", f"the {GROUP} group must run daily; got {interval!r}"
 
 
 def test_the_group_carries_the_pull_request_bound_not_its_entries() -> None:
@@ -73,47 +104,50 @@ def test_the_group_carries_the_pull_request_bound_not_its_entries() -> None:
     )
     assert limit > 0, f"the {GROUP} group needs a positive bound; got {limit!r}"
     carrying = [
-        ecosystem
-        for ecosystem, stanza in _stanzas().items()
-        if "multi-ecosystem-group" in stanza and "open-pull-requests-limit" in stanza
+        entry["package-ecosystem"]
+        for entry in _group_entries()
+        if "open-pull-requests-limit" in entry
     ]
     assert not carrying, (
         f"Dependabot rejects the bound on {carrying}; set it on the group"
     )
 
 
-def test_the_group_is_defined_with_a_daily_schedule() -> None:
-    """Define the group the two stanzas join, on the estate's daily cadence."""
-    groups = _document().get("multi-ecosystem-groups")
-    assert isinstance(groups, dict), "`multi-ecosystem-groups` must be defined"
-    assert GROUP in groups, f"{GROUP!r} must be defined; got {sorted(groups)}"
-    interval = groups[GROUP].get("schedule", {}).get("interval")
-    assert interval == "daily", f"the {GROUP} group must run daily; got {interval!r}"
+@pytest.mark.parametrize(("ecosystem", "members"), sorted(MEMBERS.items()))
+def test_each_half_of_the_extension_build_has_one_group_entry(
+    ecosystem: str, members: list[str]
+) -> None:
+    """Name the group and the member in one entry per ecosystem, with no groups."""
+    entries = [e for e in _group_entries() if e["package-ecosystem"] == ecosystem]
+    assert len(entries) == 1, (
+        f"{ecosystem} needs exactly one entry joining {GROUP!r}; got {len(entries)}"
+    )
+    (entry,) = entries
+    assert entry["multi-ecosystem-group"] == GROUP, (
+        f"the {ecosystem} group entry must join {GROUP!r}"
+    )
+    assert entry.get("patterns") == members, (
+        f"the {ecosystem} group entry must offer exactly {members}; "
+        f"got {entry.get('patterns')!r}"
+    )
+    assert "groups" not in entry, (
+        f"the {ecosystem} group entry runs only the group, so it carries no `groups`"
+    )
 
 
 @pytest.mark.parametrize(("ecosystem", "members"), sorted(MEMBERS.items()))
-def test_each_half_of_the_extension_build_joins_the_group(
+def test_the_plain_entry_ignores_what_the_group_entry_handles(
     ecosystem: str, members: list[str]
 ) -> None:
-    """Name the group and the members in the stanza, or the pair arrives split."""
-    stanza = _stanzas()[ecosystem]
-    assert stanza.get("multi-ecosystem-group") == GROUP, (
-        f"the {ecosystem} stanza must join {GROUP!r}; "
-        f"got {stanza.get('multi-ecosystem-group')!r}"
-    )
-    assert stanza.get("patterns") == members, (
-        f"the {ecosystem} stanza must offer exactly {members} to the group; "
-        f"got {stanza.get('patterns')!r}"
-    )
+    """Keep the pair out of the plain entry, which handles everything else."""
+    ignored = [rule["dependency-name"] for rule in _plain_entry(ecosystem)["ignore"]]
+    missing = [name for name in members if name not in ignored]
+    assert not missing, f"the plain {ecosystem} entry must ignore {missing}"
 
 
-def test_no_other_stanza_joins_a_multi_ecosystem_group() -> None:
+def test_only_the_extension_build_ecosystems_join_a_group() -> None:
     """Keep the group to the two halves of the extension build."""
-    joined = {
-        ecosystem
-        for ecosystem, stanza in _stanzas().items()
-        if "multi-ecosystem-group" in stanza
-    }
+    joined = {entry["package-ecosystem"] for entry in _group_entries()}
     assert joined == set(MEMBERS), (
         f"only {sorted(MEMBERS)} may join {GROUP!r}; got {sorted(joined)}"
     )

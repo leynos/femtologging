@@ -25,7 +25,13 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # setup-rust installs the toolchain rust-toolchain.toml pins and the
+        # mold linker the build standard selects. `rustflags: ''` exports no
+        # RUSTFLAGS: the Loom steps below assign their own, with the linker flag.
+        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+        with:
+          install-mold: 'true'
+          rustflags: ''
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.2
       - name: Install makeutil
@@ -76,14 +82,14 @@ jobs:
         env:
           CARGO_TARGET_DIR: target/loom
         run: |
-          RUSTFLAGS="--cfg loom" cargo test --release --manifest-path rust_extension/Cargo.toml \
+          RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo test --release --manifest-path rust_extension/Cargo.toml \
             --no-default-features --test heavy --no-run
       - name: Run formatters and tests
         run: |
           source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
           make lint-rust-clippy
-          RUSTFLAGS="--cfg loom" cargo clippy --manifest-path rust_extension/Cargo.toml \
+          RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy --manifest-path rust_extension/Cargo.toml \
             --no-default-features --all-targets -- -D warnings
           feature_sets=("" "python" "log-compat" "python,log-compat")
           for feature_set in "${feature_sets[@]}"; do
@@ -123,7 +129,7 @@ jobs:
           LOOM_MAX_PREEMPTIONS: '3'
           PYO3_PYTHON: ${{ env.pythonLocation }}/bin/python
         run: |
-          RUSTFLAGS="--cfg loom" uv run --script scripts/run_loom_models.py \
+          RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" uv run --script scripts/run_loom_models.py \
             --expected rust_extension/tests/heavy/loom-models.txt -- \
             cargo test --release --manifest-path rust_extension/Cargo.toml \
             --no-default-features --test heavy loom_ -- --include-ignored

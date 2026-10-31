@@ -1,0 +1,24 @@
+# The development build standard (concordat rule `rust-build-defaults`): on
+# Linux, the `mold` linker is the default for every development, test, lint
+# and typecheck build. Cargo auto-discovers this file from the repository root
+# or from `rust_extension/`, so a bare `cargo build` and `maturin develop` get
+# it too. The pin is the stable `1.99.1`, so the nightly-only parallel frontend
+# flag and the Cranelift backend are not used (see "Build standard" in
+# docs/developers-guide.md).
+#
+# `-fuse-ld=mold` is a compiler-driver flag: it needs GCC 12.1 or newer, or
+# clang, as the default driver. A host with an older GCC driver rejects it even
+# with mold installed; set `-Clinker=clang` there.
+#
+# Cargo selects a single `rustflags` source rather than merging them, and an
+# assigned `RUSTFLAGS` replaces every source. The file therefore has no
+# `[build] rustflags`, and a build that assigns `RUSTFLAGS` (CI's `setup-rust`
+# exports `-D warnings`, the Loom steps assign `--cfg loom`) restates the linker
+# flag only where it installs mold. Release wheel builds must assign an empty
+# `RUSTFLAGS`, so the manylinux containers, which carry no mold, keep the
+# platform linker.
+
+# mold ships for Linux only, so the linker flag lives in a Linux-only table.
+# macOS and Windows keep their platform linker.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-Clink-arg=-fuse-ld=mold"]

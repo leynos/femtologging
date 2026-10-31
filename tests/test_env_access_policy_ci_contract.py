@@ -51,7 +51,7 @@ def test_heavy_workflow_delegates_the_standard_clippy_matrix() -> None:
         "heavy-tests must retain only its separate Loom Clippy invocation"
     )
     assert (
-        'RUSTFLAGS="--cfg loom" cargo clippy --manifest-path '
+        'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy --manifest-path '
         "rust_extension/Cargo.toml --no-default-features --all-targets -- -D warnings"
     ) in normalized_run, "the separate Loom Clippy command must retain its flags"
 
