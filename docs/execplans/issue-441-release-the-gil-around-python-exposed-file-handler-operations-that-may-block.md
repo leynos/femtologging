@@ -189,6 +189,14 @@ for this issue; no new public signature or dependency is introduced.
       findings were corrected and pushed as `da7d568`; formatting, Markdownlint
       and Nixie passed, the draft PR body was refreshed, and CodeRabbit reported
       no findings on the updated head.
+- [x] Rebased the branch from `33858df` onto the fetched `origin/main` at
+      `187aea7`. All 17 issue commits plus the CodeScene-directive commit
+      replayed byte-identically; only `docs/developers-guide.md` changed on
+      both sides, and the merge keeps both the target's Dependabot and Rust
+      build-standard sections and this branch's GIL sections. Every
+      target-only path remains byte-identical to the target.
+- [ ] Rerun the six deterministic gates on the rebased candidate and record the
+      results here.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -315,6 +323,45 @@ on that head.
 The earlier pre-rebase gate results did not apply to this dependency and lint
 matrix. The complete gate run on the rebased candidate is recorded in
 `Progress`.
+
+## Rebase onto `origin/main` at `187aea7`
+
+The PR target advanced again after the implementation was complete. The fetched
+target was `187aea7`; the exclusive base was `33858df`, the commit on
+`origin/main` from which the issue branch was cut. The branch contains no merge
+commits, `git cherry` marks every commit as absent upstream, and the series
+held 17 issue commits before the replay, so no inherited parent work was in
+range.
+
+The target's five new commits were dependency and build-standard changes:
+
+| Upstream change                                  | Effect on this branch                                                                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repin `install-whitaker` (#574)                  | Workflow-only; the Whitaker Dylint lane runs unchanged from this branch.                                                                                      |
+| `setup-uv` action bump (#557)                    | Workflow-only.                                                                                                                                                |
+| Rust build standard (#577)                       | Adds `.cargo/config.toml`, `rust_extension/Cargo.toml` settings, Makefile and workflow changes, and a contract test. This branch touches none of those paths. |
+| Dependabot moves to uv and groups maturin (#578) | Adds a Dependabot contract test and a developer-guide grouping section, which the merge retains.                                                              |
+| Minor-and-patch group bump (#579)                | `uv.lock` only; the target version is inherited.                                                                                                              |
+
+`merge=weave` was selected for Rust and Python files only by the user-wide
+attributes file at `~/.config/git/attributes`; the repository tracks no
+`.gitattributes` and has no `.git/info/attributes` rule. Under the unattended
+rebase policy the replay therefore used Git's built-in merge machinery with
+`zdiff3` and `-c core.attributesFile=/dev/null`, and no Weave driver
+participated.
+
+All 18 commits replayed, and `git range-diff` reports every commit unchanged.
+No conflict was raised. The only path changed on both sides is
+`docs/developers-guide.md`: the target-only paths (`.cargo/config.toml`, the
+workflows, `Makefile`, `rust_extension/Cargo.toml`, the dependency contract
+tests, and `uv.lock`) are byte-identical to `187aea7`, and the merged guide
+keeps the target's `Dependabot grouping`, `Rust build standard`,
+`Development build footprint`, and `Cranelift` sections alongside
+`Releasing the GIL at the Python boundary` and `Testing the boundary`. The
+branch now reports 18 commits ahead of `origin/main`.
+
+The earlier gate evidence applies to the pre-rebase head; the gate run for this
+candidate is recorded in `Progress`.
 
 ## Decision log
 
