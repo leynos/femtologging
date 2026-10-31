@@ -195,6 +195,21 @@ suite that fails if any drop is discarded or handed off more than once.
       `203e12fda66e747e610bb69ad13a532611cc80ae` was rate-limited before review
       findings were produced. Started the requested randomized `vsleep` of
       80 minutes before retrying.
+- [x] (2026-10-31) Rebased the twelve issue commits onto `origin/main` at
+      `f26b6964ecc46591a5e75b1829939dbfa342739c`. Main had meanwhile removed the
+      suppressed-path reset and updated its inline test, but `flush()` still
+      delegated to the rate-limited `warn_if_due()`, so the branch's fuller fix
+      is still required. Conflicts were resolved in favour of this branch's
+      helper and test split; the logger flush was re-expressed on main's
+      dispatcher refactor, and the private-docs contract test adopted main's
+      single-lane timeout.
+- [x] (2026-10-31) Adapted the logger flush messages to main's current wording:
+      the drop-warner flush reports `reported by flush`, and the context
+      capture flush reuses main's `after context capture failed` text.
+- [x] (2026-10-31) Made `use log::warn` unconditional in `producer.rs`; the
+      drop-warner flush uses it in builds without the `python` feature.
+- [x] (2026-10-31) Focused suite after the rebase: 15 passed, 0 failed
+      (`--no-default-features --features test-util rate_limited_warner`).
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
@@ -343,6 +358,20 @@ pending action.
   `flush`. The helper's doc comment names the test and states that the wording
   and the test's `DROPPED_RECORD_WARNING` copy must change together, because an
   integration test cannot import from the crate under test.
+- Observation: `main` gained a partial fix for the same defect after this
+  branch was first rebased onto `d234990`. Evidence: `origin/main` removed the
+  `dropped.store(0)` in the suppressed branch and changed its inline test to
+  expect `[1, 2]`, but its `flush()` still calls `warn_if_due()`. Impact: the
+  branch remains necessary for immediate flush semantics, exclusive interval
+  claims and consumer wiring; the rebase resolves main's overlapping changes in
+  favour of the branch's superset.
+- Observation: main's logger dispatcher refactor moved the drop paths into
+  `logger/producer/admission.rs` and changed both logger warning texts. Impact:
+  the flush helper had to adopt main's wording rather than the texts recorded
+  at the original base; the branch's old texts no longer exist on main.
+- Observation: `main` imports `log::warn` in `producer.rs` only under the
+  `python` feature. Impact: the unconditional drop-warner flush did not compile
+  in the no-default-features lane until the import became unconditional.
 - Observation: the fetched main target added a private logger filter-test
   helper beside this change's drop-warning flush. Evidence: the only rebase
   conflict was in `rust_extension/src/logger/producer.rs`; the resolution
@@ -403,6 +432,13 @@ pending action.
   multi-commit replay will use Git's built-in merge with
   `core.attributesFile=/dev/null` and `zdiff3`, leaving the shared attribute
   configuration unchanged. Date/Author: 2026-10-25, agent.
+
+- Decision: rebase onto `origin/main` at `f26b696` before final validation.
+  Rationale: main had advanced eight commits and touched the same warner,
+  logger and lint-contract files; the PR could not merge without resolving
+  those overlaps. Conflict resolutions keep this branch's superset of the
+  warner fix, adopt main's dispatcher structure for the logger, and take main's
+  single-lane private-docs contract. Date/Author: 2026-10-31, agent.
 
 ## Outcomes & retrospective
 
@@ -836,3 +872,9 @@ module; the worker is now 396 lines.
 passed on HEAD `65074bc1684636e858865b884ce2f1c3aac1a807`. Detailed gate logs
 remain under `/tmp` with the `-3.out` suffix. CodeRabbit review and draft PR
 publication remain outstanding.
+
+2026-10-31: rebased onto `origin/main` `f26b696`, resolved the warner, logger
+and lint-contract overlaps, adapted the logger flush messages to main's current
+wording, and fixed the non-Python `warn!` import. Prior gate evidence binds to
+the pre-rebase candidate and is retained as history only; the tip must pass a
+fresh sequential gate run before review.
