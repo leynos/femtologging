@@ -38,6 +38,12 @@ GROUP: typ.Final = "maturin-pyo3"
 #: What each ecosystem offers to that group.
 MEMBERS: typ.Final = {"uv": ["maturin"], "cargo": ["pyo3"]}
 
+#: The directory both entries of each ecosystem describe.
+DIRECTORIES: typ.Final = {"uv": "/", "cargo": "/rust_extension"}
+
+#: The pull-request bound the group carries.
+EXPECTED_LIMIT: typ.Final = 5
+
 
 def _document() -> dict[str, typ.Any]:
     """Return the parsed Dependabot configuration."""
@@ -102,7 +108,9 @@ def test_the_group_carries_the_pull_request_bound_not_its_entries() -> None:
     assert type(limit) is int, (  # a bool is an int
         f"the {GROUP} group needs an integer bound; got {limit!r}"
     )
-    assert limit > 0, f"the {GROUP} group needs a positive bound; got {limit!r}"
+    assert limit == EXPECTED_LIMIT, (
+        f"the {GROUP} group is bounded at {EXPECTED_LIMIT}; got {limit!r}"
+    )
     carrying = [
         entry["package-ecosystem"]
         for entry in _group_entries()
@@ -150,4 +158,34 @@ def test_only_the_extension_build_ecosystems_join_a_group() -> None:
     joined = {entry["package-ecosystem"] for entry in _group_entries()}
     assert joined == set(MEMBERS), (
         f"only {sorted(MEMBERS)} may join {GROUP!r}; got {sorted(joined)}"
+    )
+
+
+@pytest.mark.parametrize(("ecosystem", "directory"), sorted(DIRECTORIES.items()))
+def test_both_entries_of_an_ecosystem_describe_its_manifest_directory(
+    ecosystem: str, directory: str
+) -> None:
+    """Point the group entry and the plain entry at the same manifest."""
+    directories = [
+        entry["directory"]
+        for entry in _entries()
+        if entry["package-ecosystem"] == ecosystem
+    ]
+    assert directories == [directory, directory], (
+        f"the {ecosystem} entries must both describe {directory!r}; got {directories}"
+    )
+
+
+@pytest.mark.parametrize("ecosystem", sorted(MEMBERS))
+def test_the_plain_entry_keeps_the_minor_and_patch_catch_all(ecosystem: str) -> None:
+    """Keep every other dependency on the catch-all group the stanza had."""
+    group = _plain_entry(ecosystem).get("groups", {}).get("minor-and-patch")
+    assert group is not None, f"the plain {ecosystem} entry must keep `minor-and-patch`"
+    assert group.get("patterns") == ["*"], (
+        f"the {ecosystem} catch-all must take every dependency; "
+        f"got {group.get('patterns')!r}"
+    )
+    assert group.get("update-types") == ["minor", "patch"], (
+        f"the {ecosystem} catch-all must take minor and patch updates; "
+        f"got {group.get('update-types')!r}"
     )
