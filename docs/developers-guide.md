@@ -133,7 +133,7 @@ compatibility tests validate the same maturin and PyO3 releases:
   editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   workflows, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
-- PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
+- PyO3 is pinned to `0.30.1` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
   the crate declares no minimum supported Rust version.
