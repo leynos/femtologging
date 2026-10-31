@@ -266,6 +266,18 @@ suite that fails if any drop is discarded or handed off more than once.
       `rate_limited_warner.rs` past the 400-line limit, so the concurrency cases
       moved to `rate_limited_warner_concurrency_tests.rs` behind the same
       `#[path]` pattern as the unit tests.
+- [x] (2026-11-01) Gates on `4ba7af2`: `fmt`, `check-fmt`, `markdownlint` and
+      `nixie` pass; `make lint` passes in 999 s; `make typecheck` passes in
+      217 s; all four cargo test lanes pass (342/543/566/561 lib tests plus
+      29 doctests each); all four ignored heavy suites pass. Logs are
+      `/tmp/*-issue-440-20261031T211359Z.out`. Pytest is unchanged at 826
+      passed, 5 skipped and the same three host-config failures.
+- [x] (2026-11-01) A second CodeRabbit pass raised two test-strength findings,
+      both fixed: the logger flush test now requires exactly one flush warning
+      rather than at least one, and
+      `callback_runs_after_releasing_the_drain_lock` now has its second caller
+      flush instead of warn, because the suppression pre-check would otherwise
+      return before the drain lock was ever tested.
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
