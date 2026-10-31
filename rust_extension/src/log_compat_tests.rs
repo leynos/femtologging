@@ -1,9 +1,12 @@
 //! Unit tests for the `log` crate bridge.
 
 use log::{LevelFilter, Log};
+use proptest::prelude::*;
 
+use super::max_level::{conservative_max_level_from, map_femto_to_log_filter};
 use super::*;
 use crate::handler::FemtoHandlerTrait;
+use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use rstest::{fixture, rstest};
 use serial_test::serial;
@@ -21,6 +24,7 @@ fn unique_logger_name() -> String {
     format!("{base}.{suffix}")
 }
 
+/// The public conversion preserves each concrete Rust facade level.
 #[rstest]
 #[case(log::Level::Trace, FemtoLevel::Trace)]
 #[case(log::Level::Debug, FemtoLevel::Debug)]
@@ -31,6 +35,97 @@ fn level_mapping_is_direct(#[case] level: log::Level, #[case] expected: FemtoLev
     assert_eq!(FemtoLevel::from(level), expected);
 }
 
+/// Each femtologging threshold maps to the broadest Rust level it accepts.
+#[rstest]
+#[case::trace(FemtoLevel::Trace, log::LevelFilter::Trace)]
+#[case::debug(FemtoLevel::Debug, log::LevelFilter::Debug)]
+#[case::info(FemtoLevel::Info, log::LevelFilter::Info)]
+#[case::warn(FemtoLevel::Warn, log::LevelFilter::Warn)]
+#[case::error(FemtoLevel::Error, log::LevelFilter::Error)]
+#[case::critical(FemtoLevel::Critical, log::LevelFilter::Off)]
+fn femto_threshold_maps_to_its_broadest_rust_level(
+    #[case] level: FemtoLevel,
+    #[case] expected: log::LevelFilter,
+) {
+    assert_eq!(map_femto_to_log_filter(level), expected);
+}
+
+/// The facade maximum includes both the default and registered logger levels.
+#[rstest]
+fn conservative_maximum_includes_default_and_live_logger_levels() {
+    assert_eq!(
+        conservative_max_level_from(std::iter::empty()),
+        log::LevelFilter::Info,
+    );
+    assert_eq!(
+        conservative_max_level_from([FemtoLevel::Warn].into_iter()),
+        log::LevelFilter::Info,
+    );
+    assert_eq!(
+        conservative_max_level_from([FemtoLevel::Debug].into_iter()),
+        log::LevelFilter::Debug,
+    );
+    assert_eq!(
+        conservative_max_level_from([FemtoLevel::Critical].into_iter()),
+        log::LevelFilter::Info,
+    );
+}
+
+proptest! {
+    /// Every threshold accepted by a target remains inside the facade maximum.
+    #[test]
+    fn conservative_maximum_covers_arbitrary_logger_thresholds(
+        level_values in prop::collection::vec(0_u8..=u8::from(FemtoLevel::Critical), 0..32)
+    ) {
+        let levels = level_values
+            .into_iter()
+            .map(|value| FemtoLevel::try_from(value).expect("generated a valid FemtoLevel"))
+            .collect::<Vec<_>>();
+        let maximum = conservative_max_level_from(levels.iter().copied());
+        let expected = levels
+            .iter()
+            .copied()
+            .chain(std::iter::once(DEFAULT_LOGGER_LEVEL))
+            .map(map_femto_to_log_filter)
+            .max()
+            .expect("the default logger level is always included");
+
+        prop_assert_eq!(maximum, expected);
+        prop_assert!(maximum >= map_femto_to_log_filter(DEFAULT_LOGGER_LEVEL));
+        prop_assert!(levels.iter().all(|level| maximum >= map_femto_to_log_filter(*level)));
+    }
+
+    /// Recomputing after generated level changes stays conservative.
+    #[test]
+    fn conservative_maximum_tracks_logger_level_update_sequences(
+        updates in prop::collection::vec(
+            (0_usize..4, 0_u8..=u8::from(FemtoLevel::Critical)),
+            0..48,
+        )
+    ) {
+        let mut levels = [DEFAULT_LOGGER_LEVEL; 4];
+        for (index, level_value) in updates {
+            levels[index] = FemtoLevel::try_from(level_value)
+                .expect("generated a valid FemtoLevel");
+            let maximum = conservative_max_level_from(levels.iter().copied());
+            let expected = levels
+                .iter()
+                .copied()
+                .chain(std::iter::once(DEFAULT_LOGGER_LEVEL))
+                .map(map_femto_to_log_filter)
+                .max()
+                .expect("the default logger level is always included");
+
+            prop_assert_eq!(maximum, expected);
+            let all_levels_are_accepted = levels
+                .iter()
+                .all(|level| maximum >= map_femto_to_log_filter(*level));
+            prop_assert!(all_levels_are_accepted);
+        }
+    }
+}
+
+/// Set a permissive facade maximum for tests that call the adapter directly.
 #[fixture]
 fn log_max_level() {
     static INIT: Once = Once::new();
@@ -39,6 +134,7 @@ fn log_max_level() {
     });
 }
 
+/// Dispatching a Rust record preserves its target and source metadata.
 #[rstest]
 #[serial]
 fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
@@ -85,6 +181,7 @@ fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger
     });
 }
 
+/// Rust module targets dispatch through their normalized dotted logger name.
 #[rstest]
 #[serial]
 fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
@@ -119,6 +216,7 @@ fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name
     });
 }
 
+/// Dispatch rechecks the target threshold before queuing a record.
 #[rstest]
 #[serial]
 fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
@@ -389,5 +487,98 @@ fn the_family_check_requires_a_separator_after_the_root(
         } else {
             "forwarded"
         },
+    );
+}
+
+/// Enablement follows the live level of a registered target logger.
+#[rstest]
+#[serial]
+fn enabled_uses_the_registered_target_threshold(_log_max_level: (), unique_logger_name: String) {
+    let adapter = FemtoLogAdapter;
+
+    Python::attach(|py| {
+        let logger = manager::get_logger(py, &unique_logger_name).expect("logger created");
+        logger.borrow(py).set_level(FemtoLevel::Warn);
+    });
+
+    for (level, expected) in [
+        (log::Level::Trace, false),
+        (log::Level::Debug, false),
+        (log::Level::Info, false),
+        (log::Level::Warn, true),
+        (log::Level::Error, true),
+    ] {
+        let metadata = Metadata::builder()
+            .level(level)
+            .target(&unique_logger_name)
+            .build();
+        assert_eq!(adapter.enabled(&metadata), expected, "level {level}");
+    }
+}
+
+/// Enablement normalizes module targets without creating unknown loggers.
+#[rstest]
+#[serial]
+fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
+    _log_max_level: (),
+    unique_logger_name: String,
+) {
+    let adapter = FemtoLogAdapter;
+    let rust_target = unique_logger_name.replace('.', "::");
+
+    Python::attach(|py| {
+        let logger = manager::get_logger(py, &unique_logger_name).expect("logger created");
+        logger.borrow(py).set_level(FemtoLevel::Warn);
+    });
+
+    let normalized_metadata = Metadata::builder()
+        .level(log::Level::Info)
+        .target(&rust_target)
+        .build();
+    assert!(!adapter.enabled(&normalized_metadata));
+
+    let unknown_target = format!("{unique_logger_name}.missing");
+    assert_eq!(manager::registered_logger_level(&unknown_target), None);
+    let unknown_metadata = Metadata::builder()
+        .level(log::Level::Info)
+        .target(&unknown_target)
+        .build();
+    assert!(adapter.enabled(&unknown_metadata));
+    assert_eq!(manager::registered_logger_level(&unknown_target), None);
+}
+
+/// Invalid targets use the root threshold, or the default when root is absent.
+#[rstest]
+#[serial]
+fn enabled_uses_root_for_invalid_targets_and_default_when_root_is_absent(_log_max_level: ()) {
+    let adapter = FemtoLogAdapter;
+    manager::reset_manager();
+
+    let invalid_info = Metadata::builder()
+        .level(log::Level::Info)
+        .target("invalid..target")
+        .build();
+    assert!(adapter.enabled(&invalid_info));
+    assert_eq!(manager::registered_logger_level("root"), None);
+
+    Python::attach(|py| {
+        let root = manager::get_logger(py, "root").expect("root logger created");
+        root.borrow(py).set_level(FemtoLevel::Warn);
+    });
+
+    let invalid_debug = Metadata::builder()
+        .level(log::Level::Debug)
+        .target("invalid..target")
+        .build();
+    let invalid_warn = Metadata::builder()
+        .level(log::Level::Warn)
+        .target("invalid..target")
+        .build();
+    assert!(!adapter.enabled(&invalid_debug));
+    assert!(!adapter.enabled(&invalid_info));
+    assert!(adapter.enabled(&invalid_warn));
+    assert_eq!(
+        manager::registered_logger_level("root"),
+        Some(FemtoLevel::Warn)
     );
 }
