@@ -397,11 +397,13 @@ Known uncertainties identified upfront, with mitigations.
   the GIL and borrow releases together as one repair, and classified a counter
   as follow-up work outside this PR. No counter is added; the PR Notes record
   the same disposition.
-- [ ] (2026-10-31) Complete the two remaining lifecycle documentation items
-  CodeRabbit named in `6550398940`: the preserved return and timeout behaviour
-  in the developer guide, and the Python-facing lifecycle boundary in the
-  design document. Then request a current-head formal CodeRabbit review,
-  reconcile its findings and approval, and merge.
+- [x] (2026-10-31) Completed the two lifecycle documentation items CodeRabbit
+  named in `6550398940`: the preserved return and timeout behaviour in
+  `docs/developers-guide.md`, and the Python-facing lifecycle boundary in
+  `docs/rust-multithreaded-logging-framework-for-python-design.md`, both at
+  `ff50f33`. CodeRabbit's reply `6550450312` confirmed both resolved.
+- [ ] (2026-10-31) Request a current-head formal CodeRabbit review, reconcile
+  its findings and approval, and merge.
 - [x] (2026-10-31) Actioned two formal-review findings.
       `Release handler borrow before worker joins` (`65342d9`) takes the PyO3
       class borrow out of the
