@@ -107,7 +107,7 @@ of a complete release therefore uploads no new distribution files and succeeds
 after verifying both destinations.
 
 If PyPI and GitHub already hold different bytes under the same filename,
-verification fails and the release remains a draft. Recovery is manual. Remove
+verification fails, and the release remains a draft. Recovery is manual. Remove
 the inconsistent GitHub Release asset because PyPI does not allow published
 files to be deleted. Then rerun the same tag.
 
@@ -149,6 +149,9 @@ those external settings exist.
   verification.
 - Per-tag runs queue instead of cancelling an upload already in progress.
 - Release telemetry is omitted; this repository has no release telemetry sink.
+  Retry, polling and unpublished-project steps emit bounded `::notice` progress
+  lines, and failures use `::error`, so the workflow record carries operation,
+  tag, attempt, HTTP status and elapsed time without a metrics backend.
 - The first release requires manual GitHub and PyPI publisher setup.
 
 ## Known risks
