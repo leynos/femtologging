@@ -57,6 +57,12 @@ jobs:
           args: >-
             --release --out dist --manifest-path rust_extension/Cargo.toml
             --features python --interpreter 3.12 3.13 3.14
+        # The manylinux image ships no mold, and its GCC driver rejects
+        # -fuse-ld=mold. An assigned RUSTFLAGS replaces the repository's Linux
+        # rustflags table, and maturin-action forwards RUST* variables into the
+        # container, so this wheel links with the container's own toolchain.
+        env:
+          RUSTFLAGS: ""
       - name: Build Linux aarch64 wheels
         if: matrix.arch == 'aarch64'
         uses: messense/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
@@ -79,6 +85,11 @@ jobs:
           args: >-
             --release --out dist --manifest-path rust_extension/Cargo.toml
             --features python --interpreter 3.12 3.13 3.14
+        # The cross manylinux image ships no mold for the target GCC either, so
+        # the same empty RUSTFLAGS displaces the repository's Linux table and
+        # the wheel links with that image's target toolchain.
+        env:
+          RUSTFLAGS: ""
       - name: Set up uv for the source distribution
         if: matrix.arch == 'x86_64'
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
