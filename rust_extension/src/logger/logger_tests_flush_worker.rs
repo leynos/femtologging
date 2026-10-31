@@ -173,7 +173,7 @@ fn flush_handler_destruction_does_not_extend_the_caller_wait() {
 #[test]
 fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
     let shard = Box::leak(Box::new(
-        Shard::start(0, 2).expect("isolated flush shard should start"),
+        Shard::start(0, 1).expect("isolated flush shard should start"),
     ));
     let logger = FemtoLogger::assembled_for_test("flush-registry-lock".to_string(), shard);
     let (started_tx, started_rx) = bounded(1);
@@ -217,6 +217,10 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
             .expect("the third flush caller should start");
         // Give the caller time to reach the full queue's timed send.
         std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !third.is_finished(),
+            "the third flush caller should still be waiting to enqueue its marker"
+        );
 
         let (removed_tx, removed_rx) = bounded(1);
         let remover_logger = &logger;
@@ -231,10 +235,20 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
             .join()
             .expect("handler removal should finish while marker insertion waits");
 
-        drop(release_guard);
+        let finish_deadline = Instant::now() + flush_bound();
+        let callers = [&first, &second, &third];
+        let have_finished = || callers.iter().all(|caller| caller.is_finished());
+        while !have_finished() && Instant::now() < finish_deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            have_finished(),
+            "all flush callers should return while the worker remains blocked"
+        );
         assert!(!first.join().expect("first flush caller should finish"));
         assert!(!second.join().expect("second flush caller should finish"));
         assert!(!third.join().expect("third flush caller should finish"));
+        drop(release_guard);
     });
 }
 

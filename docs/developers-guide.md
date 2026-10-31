@@ -264,13 +264,14 @@ rate-limited warning without waiting. One logger's records remain FIFO on its
 shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
-`flush_handlers()` queues a barrier only when that logger has work in flight.
-The barrier drains records ahead of it on the same shard and has a two-second
-timeout; an idle logger does not consume a queue slot or wait for unrelated
-work. Dropping a logger follows the same per-logger in-flight check. The pool
-itself lives for the process lifetime. If the operating system refuses to start
-a worker, construction returns `DispatcherError` in Rust or `RuntimeError`
-through Python. The pool is not marked failed, so a later construction retries.
+`flush_handlers()` queues a marker when the logger has handlers. With no
+handlers, it waits only for that logger's in-flight records. The
+[flush barrier](#logger-handler-flush-barrier) section describes the shared
+deadline and handler flushes. Dropping a logger uses the per-logger in-flight
+check without queueing a flush marker. The pool itself lives for the process
+lifetime. If the operating system refuses to start a worker, construction
+returns `DispatcherError` in Rust or `RuntimeError` through Python. The pool is
+not marked failed, so a later construction retries.
 
 The production pool is outside the Loom model. Each Loom run owns and stops its
 own shard so worker threads do not survive between model iterations; the
