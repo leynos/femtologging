@@ -934,6 +934,7 @@ For upgrade steps covering handler filters and formatter builders, see the
 Call `setup_rust_logging()` during application start-up to route Rust
 `log`-crate records through femtologging's handlers:
 
+<!-- tested-example: rust-log-bridge-setup -->
 ```python
 import femtologging
 

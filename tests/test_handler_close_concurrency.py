@@ -240,3 +240,66 @@ def test_python_close_releases_pyclass_borrow_while_worker_waits(
         "close retained the PyO3 mutable borrow while waiting"
     )
     assert "closed" in handler_errors[0], "unexpected handler error"
+
+
+def test_every_concurrent_close_waits_for_the_worker(
+    blocked_handler: BlockedHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later ``close`` waits for the worker the first ``close`` is joining.
+
+    Only the first closer can take the join handle, so a second closer that
+    returned as soon as the handle was gone would report a completed shutdown
+    while the worker was still writing queued records. An application that
+    closed the handler from two threads and then tore down the destination
+    could lose those records.
+    """
+    first_started = threading.Event()
+    first_finished = threading.Event()
+    second_started = threading.Event()
+    second_finished = threading.Event()
+    thread_errors: list[str] = []
+    first_thread: threading.Thread | None = None
+    second_thread: threading.Thread | None = None
+
+    def record_thread_error(args: threading.ExceptHookArgs) -> None:
+        """Capture uncaught thread exceptions, including PyO3 panic errors."""
+        thread_errors.append(f"{args.exc_type.__name__}: {args.exc_value}")
+
+    monkeypatch.setattr(threading, "excepthook", record_thread_error)
+
+    def close(started: threading.Event, finished: threading.Event) -> None:
+        """Close the handler and report when the call returned."""
+        started.set()
+        try:
+            blocked_handler.handler.close()
+        finally:
+            finished.set()
+
+    first_thread = threading.Thread(target=close, args=(first_started, first_finished))
+    first_thread.start()
+    try:
+        assert first_started.wait(timeout=1), "first close thread did not start"
+        assert not first_finished.wait(timeout=0.1), (
+            "first close did not wait for the blocked worker"
+        )
+        second_thread = threading.Thread(
+            target=close, args=(second_started, second_finished)
+        )
+        second_thread.start()
+        assert second_started.wait(timeout=1), "second close thread did not start"
+        assert not second_finished.wait(timeout=0.2), (
+            "a concurrent close returned before the worker finished"
+        )
+    finally:
+        blocked_handler.release_formatter.set()
+        first_thread.join(timeout=5)
+        if second_thread is not None:
+            second_thread.join(timeout=5)
+
+    assert not first_thread.is_alive(), "first close thread did not finish"
+    assert second_thread is not None, "second close thread was not started"
+    assert not second_thread.is_alive(), "second close thread did not finish"
+    assert first_finished.is_set(), "first close never observed completion"
+    assert second_finished.is_set(), "second close never observed completion"
+    assert not thread_errors, f"handler calls raised: {thread_errors!r}"

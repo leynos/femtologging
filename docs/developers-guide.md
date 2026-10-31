@@ -174,7 +174,10 @@ the threshold-index write lock. The enablement lookup reads only the index.
 Global `log::max_level()` refreshes after successful bridge installation,
 logger level changes, staged configuration commits, and manager reset. Its
 calculation includes the default level, so the facade macro prefilter cannot
-hide a record accepted for an unknown target.
+hide a record accepted for an unknown target. A staged configuration commit
+refreshes it while still holding `MANAGER`, so no dispatch can observe the new
+index thresholds through a stale prefilter; the refresh takes only the index
+lock, which the manager-then-index ordering already permits.
 
 The root-level `FemtoLogAdapter`, install function, and logger lookup
 re-exports are hidden and require both `log-compat` and `test-util`. Keep

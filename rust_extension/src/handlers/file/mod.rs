@@ -26,6 +26,7 @@ use std::{
     fs::File,
     io::{self, BufWriter, Seek, Write},
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -34,6 +35,7 @@ use pyo3::prelude::*;
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
+use crate::shutdown::ShutdownCompletion;
 use crate::sync::{JoinHandle, Receiver, Sender, bounded};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
@@ -54,21 +56,26 @@ pub(crate) use worker::{NoRotation, RotationStrategy};
 pub(super) struct WorkerShutdown {
     /// Worker thread handle retained for joining after completion.
     handle: Option<JoinHandle<()>>,
-    /// Completion signal used to bound the wait before joining.
-    done_rx: Receiver<()>,
+    /// Broadcast completion every closer waits on, so a closer that does not
+    /// own the join handle still observes worker shutdown.
+    completion: Arc<ShutdownCompletion>,
 }
 
 impl WorkerShutdown {
     /// Wait for worker completion and join it when it reports a clean exit.
+    ///
+    /// Every caller waits on the shared completion, including one that finds
+    /// no join handle left: another closer may still be joining a worker that
+    /// has not finished writing its queued records.
     pub(super) fn wait(self) {
-        if let Some(handle) = self.handle {
-            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-                return;
-            }
-            if handle.join().is_err() {
-                log::warn!("FemtoFileHandler: worker thread panicked");
-            }
+        if !self.completion.wait(Duration::from_secs(1)) {
+            log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
+            return;
+        }
+        if let Some(handle) = self.handle
+            && handle.join().is_err()
+        {
+            log::warn!("FemtoFileHandler: worker thread panicked");
         }
     }
 }
@@ -85,8 +92,10 @@ pub struct FemtoFileHandler {
     /// Owns the worker join handle so shutdown waits for buffered writes and
     /// rotation work to finish.
     handle: Option<JoinHandle<()>>,
-    /// Receives the worker's final completion signal after its terminal flush.
-    done_rx: Receiver<()>,
+    /// Broadcast completion signalled after the worker's terminal flush, so
+    /// every closer waits for the same shutdown even when another closer has
+    /// already taken the join handle.
+    completion: Arc<ShutdownCompletion>,
     /// Selects the producer-side queue behaviour when delivery cannot proceed.
     overflow_policy: OverflowPolicy,
 }
@@ -289,13 +298,15 @@ impl FemtoFileHandler {
     /// Close the handler and wait for the worker to stop.
     ///
     /// This method is idempotent. Calling it multiple times is safe; only the
-    /// first call performs shutdown work.
+    /// first call starts shutdown work, and every call waits for the worker to
+    /// finish before returning so a caller never leaves records unwritten.
     ///
     /// Threading
     /// ---------
     /// The method requires `&mut self`, so callers must ensure exclusive access
     /// when invoking it. Concurrent calls from multiple threads must be
-    /// synchronized externally (for example, with a `Mutex`).
+    /// synchronized externally (for example, with a `Mutex`); the Python
+    /// binding reaches the same shutdown through shared state instead.
     pub fn close(&mut self) {
         self.take_shutdown().wait();
     }
@@ -306,7 +317,7 @@ impl FemtoFileHandler {
         self.tx.take();
         WorkerShutdown {
             handle: self.handle.take(),
-            done_rx: self.done_rx.clone(),
+            completion: Arc::clone(&self.completion),
         }
     }
 
@@ -331,11 +342,11 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
+        let (tx, completion, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
             tx: Some(tx),
             handle: Some(handle),
-            done_rx,
+            completion,
             overflow_policy,
         }
     }

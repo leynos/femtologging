@@ -196,8 +196,10 @@ static INSTALL_RESULT: OnceLock<bool> = OnceLock::new();
 ///
 /// The process-wide maximum includes the default level for unknown targets,
 /// so it can skip macro arguments only when every registered target and the
-/// default would reject that level. It is refreshed without taking the
-/// manager lock; the index's lock ordering is always manager then index.
+/// default would reject that level. It takes only the threshold index's lock,
+/// so it is safe while the caller already holds the manager lock — the
+/// established ordering is manager then index, and this never re-enters the
+/// manager.
 pub(crate) fn refresh_global_max_level() {
     max_level::refresh_global_max_level();
 }

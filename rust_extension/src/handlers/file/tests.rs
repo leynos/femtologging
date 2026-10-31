@@ -231,7 +231,7 @@ fn build_from_worker_wires_handler_components() {
     assert_eq!(handler.overflow_policy, policy);
 
     let tx = handler.tx.take().expect("tx missing");
-    let done_rx = handler.done_rx.clone();
+    let completion = Arc::clone(&handler.completion);
     let handle = handler.handle.take().expect("handle missing");
 
     tx.send(FileCommand::Record(Box::new(FemtoLogRecord::new(
@@ -243,9 +243,8 @@ fn build_from_worker_wires_handler_components() {
     drop(tx);
 
     assert!(
-        done_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .is_ok()
+        completion.wait(std::time::Duration::from_secs(1)),
+        "worker must signal completion after its terminal flush",
     );
     handle.join().expect("worker thread");
 

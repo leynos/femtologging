@@ -105,11 +105,14 @@ pub(crate) fn commit_staged_loggers(
             (name, committed)
         })
         .collect();
-    // The facade maximum is derived state over the index; recompute it once the
-    // registry lock is released so a queued dispatch cannot observe a stale
-    // prefilter after this configuration has been applied.
-    drop(mgr);
+    // The facade maximum is derived state over the index, so recompute it
+    // before releasing the registry lock. A dispatch that observes the new
+    // index thresholds must also observe the widened prefilter; refreshing
+    // afterwards would leave a window in which an enabled level is filtered
+    // out. Holding the manager lock here is safe: the refresh reads only the
+    // index, which the established manager-then-index order already permits.
     #[cfg(feature = "log-compat")]
     crate::log_compat::refresh_global_max_level();
+    drop(mgr);
     Ok(committed)
 }

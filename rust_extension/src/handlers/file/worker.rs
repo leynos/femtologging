@@ -14,6 +14,7 @@ use std::{
 use log::{error, warn};
 
 use super::config::HandlerConfig;
+use crate::shutdown::ShutdownCompletion;
 use crate::sync::{JoinHandle, Receiver, RecvError, Sender, bounded, spawn};
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
@@ -322,14 +323,15 @@ where
 ///
 /// A tuple containing:
 /// - Command sender for enqueueing records and flush requests.
-/// - Completion receiver that signals when the worker thread exits.
+/// - Completion broadcast signalled when the worker thread exits, shared with
+///   every closer rather than consumed by one.
 /// - Join handle for the worker thread.
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     rotation: R,
-) -> (Sender<FileCommand>, Receiver<()>, JoinHandle<()>)
+) -> (Sender<FileCommand>, Arc<ShutdownCompletion>, JoinHandle<()>)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
@@ -342,7 +344,8 @@ where
         start_barrier,
     } = config;
     let (tx, rx) = bounded(capacity);
-    let (done_tx, done_rx) = bounded(1);
+    let completion = ShutdownCompletion::new();
+    let worker_completion = Arc::clone(&completion);
     let handle = spawn(move || {
         if let Some(b) = start_barrier {
             b.wait();
@@ -361,11 +364,9 @@ where
             }
         }
         state.final_flush();
-        if done_tx.send(()).is_err() {
-            warn!("FemtoFileHandler done channel disconnected");
-        }
+        worker_completion.complete();
     });
-    (tx, done_rx, handle)
+    (tx, completion, handle)
 }
 
 #[cfg(test)]

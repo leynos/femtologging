@@ -15,6 +15,7 @@ mod shutdown;
 use std::{
     any::Any,
     io::{self, Write},
+    sync::Arc,
     time::Duration,
 };
 
@@ -22,6 +23,7 @@ use log::warn;
 use pyo3::prelude::*;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::shutdown::ShutdownCompletion;
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
@@ -124,7 +126,7 @@ fn run_stream_worker<W, F>(
     rx: Receiver<StreamCommand>,
     mut writer: W,
     formatter: F,
-    done_tx: Sender<()>,
+    completion: Arc<ShutdownCompletion>,
 ) where
     W: Write,
     F: FemtoFormatter,
@@ -136,7 +138,7 @@ fn run_stream_worker<W, F>(
         }
     }
     flush_with_warning(&mut writer);
-    let _ = done_tx.send(());
+    completion.complete();
 }
 
 #[pyclass]
@@ -145,8 +147,9 @@ pub struct FemtoStreamHandler {
     tx: Option<Sender<StreamCommand>>,
     /// Worker join handle protected so close and drop cannot join twice.
     handle: Mutex<Option<JoinHandle<()>>>,
-    /// Worker-completion receiver used to bound shutdown acknowledgement waits.
-    done_rx: Mutex<Receiver<()>>,
+    /// Completion broadcast every closing thread waits on, so a closer that
+    /// does not own the join handle still observes worker shutdown.
+    completion: Arc<ShutdownCompletion>,
     /// Tracks dropped records and rate-limits warnings.
     warner: RateLimitedWarner,
     /// Timeout for flush operations.
@@ -298,13 +301,14 @@ impl FemtoStreamHandler {
         F: FemtoFormatter + Send + 'static,
     {
         let (tx, rx) = bounded(config.capacity);
-        let (done_tx, done_rx) = bounded(1);
-        let handle = spawn(move || run_stream_worker(rx, writer, formatter, done_tx));
+        let completion = ShutdownCompletion::new();
+        let worker_completion = Arc::clone(&completion);
+        let handle = spawn(move || run_stream_worker(rx, writer, formatter, worker_completion));
 
         Self {
             tx: Some(tx),
             handle: Mutex::new(Some(handle)),
-            done_rx: Mutex::new(done_rx),
+            completion,
             warner: config.warner,
             flush_timeout: config.flush_timeout,
         }
@@ -325,8 +329,8 @@ impl FemtoStreamHandler {
     fn take_shutdown(&mut self) -> StreamShutdown {
         self.tx.take();
         let handle = { self.handle.lock().take() };
-        let done_rx = self.done_rx.lock().clone();
-        StreamShutdown::new(handle, done_rx, self.flush_timeout)
+        let completion = Arc::clone(&self.completion);
+        StreamShutdown::new(handle, completion, self.flush_timeout)
     }
 }
 
