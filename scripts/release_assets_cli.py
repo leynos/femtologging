@@ -38,6 +38,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--github-files", type=Path)
     parser.add_argument("--bundles", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--github-output",
+        type=Path,
+        help="GitHub Actions output file for commands that report a result.",
+    )
     return parser
 
 
@@ -58,12 +63,15 @@ def _carryover(state: State, args: argparse.Namespace) -> None:
 
 def _stage_pypi(state: State, args: argparse.Namespace) -> None:
     """Stage the PyPI upload set and report whether any name remains."""
-    write_output("remaining", value=stage_pypi(state, _path(args, "github_files")))
+    destination = _path(args, "github_output")
+    remaining = stage_pypi(state, _path(args, "github_files"))
+    write_output("remaining", value=remaining, destination=destination)
 
 
 def _stage_github(state: State, args: argparse.Namespace) -> None:
     """Stage missing GitHub names and print required PyPI URLs as TSV."""
     output = _path(args, "output")
+    destination = _path(args, "github_output")
     github_files = args.github_files
     fetch = stage_github(
         state,
@@ -73,7 +81,9 @@ def _stage_github(state: State, args: argparse.Namespace) -> None:
     )
     for name, url in fetch:
         print(f"{name}\t{url}")
-    write_output("pending", value=bool(fetch) or any(output.iterdir()))
+    write_output(
+        "pending", value=bool(fetch) or any(output.iterdir()), destination=destination
+    )
 
 
 def _check_fetched(state: State, args: argparse.Namespace) -> None:
