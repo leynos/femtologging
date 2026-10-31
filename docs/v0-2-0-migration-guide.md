@@ -196,8 +196,8 @@ present in the producer's captured context.
 No code changes are required for this behaviour. Only `contextvars` are
 propagated; other thread-local state, including `threading.local`, belongs to
 the shared shard worker and may be observed by handlers serving different
-loggers. Update filters that depend on such state to use `contextvars` when they
-need values from the producer's captured context.
+loggers. Update filters that depend on such state to use `contextvars` when
+they need values from the producer's captured context.
 
 ______________________________________________________________________
 
