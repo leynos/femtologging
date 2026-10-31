@@ -1,4 +1,8 @@
-"""Generated contracts for release asset reconciliation."""
+"""Test release asset planning and mismatch invariants.
+
+Run with ``pytest tests/test_release_asset_properties.py`` to check source
+precedence, upload sets, and deterministic mismatch reports.
+"""
 
 from __future__ import annotations
 
