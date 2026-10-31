@@ -238,8 +238,10 @@ linker itself:
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
-- Release wheel builds run in manylinux containers that carry no `mold`, so they
-  must assign an empty `RUSTFLAGS`, which displaces the Linux table.
+- Release wheel builds run in manylinux containers that carry no `mold`, so
+  each Linux `maturin-action` step assigns an empty `RUSTFLAGS`, which
+  displaces the Linux table. maturin-action forwards `RUST*` variables into the
+  container, so the wheel links with the container's own toolchain.
 - `make lint-rust` runs Whitaker as
   `RUSTFLAGS="-D warnings" … $(WHITAKER) --all --manifest-path …`. Whitaker
   runs under the toolchain its installer manages, so that literal `RUSTFLAGS`
@@ -257,9 +259,10 @@ metadata key (`[unstable] embed-metadata`) does not apply and the configuration
 must not carry it.
 
 `tests/test_build_standard_contract.py` holds all of this: the Linux-only
-`mold` table, the profile settings, the Loom steps and the Whitaker boundary,
-and it proves the defaults and both overrides at the Cargo boundary by building
-a one-file crate under the repository's own configuration.
+`mold` table, the profile settings, the Loom steps, the release-wheel override
+and the Whitaker boundary, and it proves the defaults and both overrides at the
+Cargo boundary by building a one-file crate under the repository's own
+configuration.
 
 ### Cranelift
 

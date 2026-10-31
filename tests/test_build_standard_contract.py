@@ -296,3 +296,32 @@ def test_the_ci_build_installs_mold_for_the_nested_trybuild_crates() -> None:
     assert str(setup.get("with", {}).get("install-mold")) == "true", (
         "ci.yml must install mold: trybuild's nested crate finds .cargo/config.toml"
     )
+
+
+def test_the_release_wheel_builds_displace_the_linux_linker_flag() -> None:
+    """Each Linux wheel step assigns an empty ``RUSTFLAGS`` for its container.
+
+    A manylinux image carries no ``mold``, and its GCC driver rejects
+    ``-fuse-ld=mold``. An assigned ``RUSTFLAGS`` replaces every ``rustflags``
+    source, and maturin-action forwards ``RUST*`` variables into the container,
+    so the release wheels link with the container's own toolchain instead.
+    """
+    document = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "build-wheels.yml").read_text("utf-8")
+    )
+    steps = document["jobs"]["build-linux"]["steps"]
+    builds = [
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("messense/maturin-action@")
+    ]
+    assert len(builds) == 2, f"expected two Linux wheel builds, found {len(builds)}"
+    for step in builds:
+        environment = step.get("env") or {}
+        assert "RUSTFLAGS" in environment, (
+            f"{step.get('name')}: the Linux wheel build must assign RUSTFLAGS"
+        )
+        assert not environment["RUSTFLAGS"], (
+            f"{step.get('name')}: an empty RUSTFLAGS must displace the repository's "
+            "Linux mold table, because the manylinux container has no mold"
+        )
