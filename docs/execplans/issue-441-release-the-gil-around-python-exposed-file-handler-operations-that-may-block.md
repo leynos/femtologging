@@ -195,8 +195,17 @@ for this issue; no new public signature or dependency is introduced.
       both sides, and the merge keeps both the target's Dependabot and Rust
       build-standard sections and this branch's GIL sections. Every
       target-only path remains byte-identical to the target.
-- [ ] Rerun the six deterministic gates on the rebased candidate and record the
-      results here.
+- [x] Rerun the six deterministic gates on the rebased candidate and record the
+      results here. On `ef5bc04` plus the test-isolation and CodeScene fixes,
+      `make check-fmt` (1 s), `make lint` (2 496 s, including all eight Rust
+      Clippy lanes, the five-stage Python pipeline and the Whitaker Dylint
+      pass), `make typecheck` (200 s) and `make test` (5 962 s) all exited 0.
+      `make test` reported 855 passed, 5 skipped and 66 snapshots passed.
+      `make markdownlint` and `make nixie` passed on the final head. The long
+      durations are the shared compile queue, not failing work; see
+      "Host compile admission and the build-standard contract tests".
+- [x] Committed the host-isolation fix for the build-standard contract tests as
+      `0725590` and the timed-rotating CodeScene directive as `3c92306`.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -362,6 +371,38 @@ branch now reports 18 commits ahead of `origin/main`.
 
 The earlier gate evidence applies to the pre-rebase head; the gate run for this
 candidate is recorded in `Progress`.
+
+## Host compile admission and the build-standard contract tests
+
+The first `make test` on the rebased candidate failed three cases in
+`tests/test_build_standard_contract.py`, a file the rebase inherited unchanged
+from `187aea7`. Two failed with `Timeout (>30.0s) from pytest-timeout` and one
+with a `cargo build failed` message in which sccache refused incremental
+compilation.
+
+`_compile_fixture` copies the repository's `.cargo/config.toml` into a one-file
+crate and removes every wrapper variable from the environment, which assumes
+the repository is the only source of Cargo configuration. It is not: this host's
+`~/.cargo/config.toml` sets
+
+```toml
+[build]
+rustc-wrapper = "/home/leynos/.local/bin/build-limits-rustc"
+rustdoc = "/home/leynos/.local/bin/build-limits-rustdoc"
+```
+
+and no environment variable overrides that. The fixture's three cargo builds
+therefore entered the shared compile-admission pool, where they queued behind
+other builds for longer than the suite-wide 30-second timeout, and the
+incremental-override case failed because the admission wrapper refuses
+incremental compilation for cache reasons.
+
+The fixtures were not weakened. `CARGO_HOME` now points at an empty temporary
+directory, so the fixture sees only the repository's own configuration, which
+is the boundary the test exists to pin. The crate has no dependencies, so the
+relocated home needs no registry cache, and the three cases pass in about a
+second. Neither the repository configuration nor the assertions changed, and
+the failure was host-specific rather than caused by the GIL change.
 
 ## Decision log
 
