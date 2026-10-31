@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import gc
+import os
 import warnings
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
@@ -29,6 +30,33 @@ warnings.filterwarnings(
 type FileHandlerFactory = cabc.Callable[
     [Path, int, int], AbstractContextManager[FemtoFileHandler]
 ]
+
+_MISSING_TEST_UTIL_MESSAGE = "expected test-util hooks, but the extension lacks them"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Reject test runs that promised hooks but built without them.
+
+    Parameters
+    ----------
+    config : pytest.Config
+        Pytest configuration object. This hook does not use it.
+
+    Raises
+    ------
+    pytest.exit.Exception
+        If ``FEMTOLOGGING_EXPECT_TEST_UTIL`` is ``"1"`` and test-util hooks
+        are unavailable.
+    """
+    del config
+    if (
+        os.environ.get("FEMTOLOGGING_EXPECT_TEST_UTIL") == "1"
+        and not femtologging._has_test_util
+    ):
+        raise pytest.exit.Exception(
+            _MISSING_TEST_UTIL_MESSAGE,
+            returncode=pytest.ExitCode.USAGE_ERROR,
+        )
 
 
 @pytest.fixture

@@ -1,0 +1,348 @@
+name: Build Wheels
+
+on:
+  workflow_call:
+
+permissions: {}
+
+env:
+  MATURIN_VERSION: "1.13.3"
+  MANYLINUX_AARCH64_CONTAINER: >-
+    ghcr.io/rust-cross/manylinux_2_28-cross@sha256:4864c3e931d790def6dba05cbf133b236b242d0c732f77546c68663c7923116e
+
+jobs:
+  build-linux:
+    runs-on: >-
+      ${{ (github.event.pull_request.head.repo.fork
+      || github.event.pull_request.user.login == 'dependabot[bot]')
+      && 'ubuntu-latest' || 'ubicloud-standard-4' }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU for Linux aarch64
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
+        with:
+          platforms: arm64
+      - name: Build Linux x86_64 wheels
+        if: matrix.arch == 'x86_64'
+        uses: messense/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.target }}
+          manylinux: auto
+          before-script-linux: |
+            set -euo pipefail
+            command -v perl
+            # The CentOS 7 image splits OpenSSL's Perl modules into packages.
+            if ! perl -MIPC::Cmd -MFindBin -MTime::Piece -e '1' >/dev/null 2>&1; then
+              yum -y install perl-IPC-Cmd perl-Time-Piece
+            fi
+            perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
+            command -v make
+            command -v cc
+          command: build
+          args: >-
+            --release --out dist --manifest-path rust_extension/Cargo.toml
+            --features python --interpreter 3.12 3.13 3.14
+      - name: Build Linux aarch64 wheels
+        if: matrix.arch == 'aarch64'
+        uses: messense/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.target }}
+          manylinux: auto
+          container: ${{ env.MANYLINUX_AARCH64_CONTAINER }}
+          before-script-linux: |
+            set -euo pipefail
+            command -v perl
+            perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
+            command -v make
+            command -v aarch64-unknown-linux-gnu-gcc
+            case "$(aarch64-unknown-linux-gnu-gcc -dumpmachine)" in
+              aarch64-unknown-linux-gnu*) ;;
+              *) echo "Expected an aarch64 C compiler, got $(aarch64-unknown-linux-gnu-gcc -dumpmachine)" >&2; exit 1 ;;
+            esac
+          command: build
+          args: >-
+            --release --out dist --manifest-path rust_extension/Cargo.toml
+            --features python --interpreter 3.12 3.13 3.14
+      - name: Set up uv for the source distribution
+        if: matrix.arch == 'x86_64'
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.2"
+          enable-cache: true
+      - name: Install the pinned Rust toolchain for the sdist
+        if: matrix.arch == 'x86_64'
+        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+      - name: Build the source distribution
+        if: matrix.arch == 'x86_64'
+        shell: bash
+        env:
+          DIST_DIRECTORY: dist
+          UV_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/maturin-build-constraints.txt
+        run: |
+          set -euo pipefail
+          uv build --sdist --out-dir "${DIST_DIRECTORY}"
+      - name: Upload Linux wheel artefact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels-native-linux-${{ matrix.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+      - name: Upload the source distribution artefact
+        if: matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-other:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            artifact-os: macos
+            arch: x86_64
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            artifact-os: macos
+            arch: arm64
+            target: aarch64-apple-darwin
+          - os: windows-2022
+            artifact-os: windows
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Verify vendored OpenSSL build tools
+        shell: bash
+        env:
+          BUILD_RUNNER_OS: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          case "${BUILD_RUNNER_OS}" in
+            Windows)
+              echo 'C:\Strawberry\perl\site\bin' >> "${GITHUB_PATH}"
+              echo 'C:\Strawberry\perl\bin' >> "${GITHUB_PATH}"
+              export PATH="/c/Strawberry/perl/site/bin:/c/Strawberry/perl/bin:${PATH}"
+              ;;
+          esac
+          command -v perl
+          perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
+          case "${BUILD_RUNNER_OS}" in
+            macOS)
+              command -v make
+              command -v cc
+              ;;
+            Windows)
+              ;;
+            *)
+              echo "Unexpected runner OS: ${BUILD_RUNNER_OS}" >&2
+              exit 1
+              ;;
+          esac
+      - name: Build macOS and Windows wheels
+        uses: messense/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
+        with:
+          maturin-version: ${{ env.MATURIN_VERSION }}
+          target: ${{ matrix.target }}
+          command: build
+          args: >-
+            --release --out dist --manifest-path rust_extension/Cargo.toml
+            --features python --interpreter 3.12 3.13 3.14
+      - name: Upload native wheel artefact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels-native-${{ matrix.artifact-os }}-${{ matrix.arch }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  verify-wheel-install:
+    needs:
+      - build-linux
+      - build-other
+    runs-on: >-
+      ${{ (github.event.pull_request.head.repo.fork
+      || github.event.pull_request.user.login == 'dependabot[bot]')
+      && 'ubuntu-latest' || 'ubicloud-standard-4' }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv for the sdist rebuild
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.2"
+      - name: Install the Rust toolchain
+        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+      - name: Verify vendored OpenSSL build tools
+        shell: bash
+        env:
+          BUILD_RUNNER_OS: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          test "${BUILD_RUNNER_OS}" = Linux
+          command -v perl
+          perl -MIPC::Cmd -MFindBin -MTime::Piece -e 'print "Perl OpenSSL build modules are present\n"'
+          command -v make
+          command -v cc
+      - name: Download all wheel and sdist artefacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: "{wheels-native-*,sdist}"
+          path: dist
+          merge-multiple: true
+      - name: Check source distribution cardinality
+        id: sdist
+        shell: bash
+        env:
+          DIST_DIRECTORY: dist
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sdists=("${DIST_DIRECTORY}"/*.tar.gz)
+          if [ "${#sdists[@]}" -eq 0 ]; then
+            echo "Expected exactly one sdist, found none." >&2
+            exit 1
+          fi
+          if [ "${#sdists[@]}" -gt 1 ]; then
+            echo "Expected exactly one sdist, found multiple." >&2
+            exit 1
+          fi
+          printf 'path=%s\n' "${sdists[0]}" >> "${GITHUB_OUTPUT}"
+      - name: Check source distribution members and release features
+        shell: bash
+        env:
+          SDIST_PATH: ${{ steps.sdist.outputs.path }}
+        run: |
+          set -euo pipefail
+          python3.12 - <<'PY'
+          import os
+          import tarfile
+          import tomllib
+          from pathlib import PurePosixPath
+
+          required_members = {
+              "README.md",
+              "pyproject.toml",
+              "femtologging/__init__.py",
+              "femtologging/_rust_compat.py",
+              "rust_extension/Cargo.toml",
+              "rust_extension/Cargo.lock",
+              "rust_extension/src/lib.rs",
+              "rust_extension/src/python_module.rs",
+          }
+          with tarfile.open(os.environ["SDIST_PATH"], mode="r:gz") as source:
+              members = [PurePosixPath(item.name).parts for item in source.getmembers()]
+              root = members[0][0]
+              relative_members = {
+                  PurePosixPath(*parts[1:]).as_posix()
+                  for parts in members
+                  if len(parts) > 1
+              }
+              missing = sorted(required_members - relative_members)
+              if missing:
+                  raise SystemExit(
+                      "Source distribution is missing required members: "
+                      + ", ".join(missing)
+                  )
+
+              project_member = source.extractfile(f"{root}/pyproject.toml")
+              if project_member is None:
+                  raise SystemExit("Source distribution has no pyproject.toml")
+              project = tomllib.loads(project_member.read().decode("utf-8"))
+              features = project["tool"]["maturin"]["features"]
+              if features != ["python"]:
+                  raise SystemExit(
+                      "Source distribution must enable only the python release feature"
+                  )
+          PY
+      - name: Install and probe the CPython 3.12 Linux wheel
+        shell: bash
+        env:
+          DIST_DIRECTORY: dist
+          PROBE_PATH: ${{ github.workspace }}/scripts/release_wheel_probe.py
+          WHEEL_RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wheels=("${DIST_DIRECTORY}"/*-cp312-cp312-manylinux*_x86_64.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one CPython 3.12 manylinux x86_64 wheel." >&2
+            exit 1
+          fi
+          python3.12 -m venv .venv-wheel
+          wheel_python="${PWD}/.venv-wheel/bin/python"
+          "${wheel_python}" -m pip install --no-deps --no-index "${wheels[0]}"
+          wheel_probe_dir=$(mktemp -d "${WHEEL_RUNNER_TEMP}/femtologging-wheel-probe.XXXXXX")
+          (
+            cd "${wheel_probe_dir}"
+            "${wheel_python}" -I "${PROBE_PATH}"
+          )
+      - name: Rebuild the sdist and install it in a fresh environment
+        shell: bash
+        env:
+          SDIST_PATH: ${{ steps.sdist.outputs.path }}
+          PROBE_PATH: ${{ github.workspace }}/scripts/release_wheel_probe.py
+          WHEEL_RUNNER_TEMP: ${{ runner.temp }}
+          UV_BUILD_CONSTRAINT: ${{ github.workspace }}/.github/maturin-build-constraints.txt
+        run: |
+          set -euo pipefail
+          scratch_dir=$(mktemp -d "${WHEEL_RUNNER_TEMP}/femtologging-sdist-rebuild.XXXXXX")
+          python3.12 -m venv .venv-sdist
+          sdist_python="${PWD}/.venv-sdist/bin/python"
+          mkdir -p "${scratch_dir}/wheelhouse"
+          uv build --wheel "${SDIST_PATH}" --out-dir "${scratch_dir}/wheelhouse"
+          shopt -s nullglob
+          rebuilt_wheels=("${scratch_dir}/wheelhouse"/*.whl)
+          if [ "${#rebuilt_wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one wheel rebuilt from the sdist." >&2
+            exit 1
+          fi
+          uv pip install --python "${sdist_python}" \
+            --no-deps --no-index "${rebuilt_wheels[0]}"
+          (
+            cd "${scratch_dir}"
+            "${sdist_python}" -I "${PROBE_PATH}"
+          )

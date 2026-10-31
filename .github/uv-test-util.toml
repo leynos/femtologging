@@ -1,0 +1,4 @@
+# UV_CONFIG_FILE selects this uv.toml for uv configuration. The project-only
+# `package = true` setting remains in pyproject.toml; this adds the coverage
+# build arguments without changing production packaging.
+config-settings-package = { femtologging = { "maturin.build-args" = "--features python,test-util" } }
