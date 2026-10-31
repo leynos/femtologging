@@ -132,8 +132,8 @@ compatibility tests validate the same maturin and PyO3 releases:
   automatically. `make check-fmt` and `make lint` use its formatter and linter;
   editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
-  steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
-- PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
+  workflows, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
+- PyO3 is pinned to `0.30.1` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
   the crate declares no minimum supported Rust version.
@@ -153,12 +153,30 @@ When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization
 test in `tests/test_maturin_build.py` verifies that the maturin pins stay
-aligned across `pyproject.toml` and `.github/workflows/heavy-tests.yml`.
+aligned across `pyproject.toml`, `.github/workflows/heavy-tests.yml`, and
+`.github/workflows/build-wheels.yml`. The isolated sdist builders read the same
+pin from `.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`;
+update that file alongside the other pins.
+`tests/test_ci_build_wheels_sdist_cardinality.py::test_sdist_builds_share_the_pinned_maturin_constraint`
+verifies the sdist constraint.
 
 For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
+
+### Maturin build features
+
+The persistent `features = ["python"]` setting in the `[tool.maturin]` table is
+the production build configuration. It keeps the test-only `test-util` feature
+and timed-rotation hooks out of ordinary wheel builds.
+
+Tests that exercise those hooks opt in explicitly. `make build` and the heavy
+test workflow run `maturin develop --features python,test-util`. The coverage
+action uses `.github/uv-test-util.toml` through `UV_CONFIG_FILE` so its source
+install receives the same features without changing `pyproject.toml`. Coverage
+and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
+then fails before tests start if the extension omitted the hooks.
 
 ### Dependabot grouping for the extension build
 
@@ -220,8 +238,10 @@ linker itself:
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
-- Release wheel builds run in manylinux containers that carry no `mold`, so they
-  must assign an empty `RUSTFLAGS`, which displaces the Linux table.
+- Release wheel builds run in manylinux containers that carry no `mold`, so
+  each Linux `maturin-action` step assigns an empty `RUSTFLAGS`, which
+  displaces the Linux table. maturin-action forwards `RUST*` variables into the
+  container, so the wheel links with the container's own toolchain.
 - `make lint-rust` runs Whitaker as
   `RUSTFLAGS="-D warnings" … $(WHITAKER) --all --manifest-path …`. Whitaker
   runs under the toolchain its installer manages, so that literal `RUSTFLAGS`
@@ -239,9 +259,10 @@ metadata key (`[unstable] embed-metadata`) does not apply and the configuration
 must not carry it.
 
 `tests/test_build_standard_contract.py` holds all of this: the Linux-only
-`mold` table, the profile settings, the Loom steps and the Whitaker boundary,
-and it proves the defaults and both overrides at the Cargo boundary by building
-a one-file crate under the repository's own configuration.
+`mold` table, the profile settings, the Loom steps, the release-wheel override
+and the Whitaker boundary, and it proves the defaults and both overrides at the
+Cargo boundary by building a one-file crate under the repository's own
+configuration.
 
 ### Cranelift
 
@@ -249,6 +270,62 @@ Exception: Cranelift is not the development-profile backend. Cranelift requires
 a nightly toolchain, and this repository pins the stable `1.99.1` (recorded
 2026-10-31, with no measurement taken on it). Revisit if the repository moves
 to a nightly pin.
+
+## Publishing a release
+
+The first release has not yet been published. Before creating its tag,
+configure the GitHub environment and PyPI Trusted Publisher described below.
+Bump the version in both `pyproject.toml` and `rust_extension/Cargo.toml` to
+the same exact string, then commit and push those changes. The Rust extension
+crate is `publish = false`; maturin includes it in the Python distribution, and
+it is never published with `cargo publish`.
+
+Push a tag whose version matches both manifests, for example `v0.2.0-beta1`. The
+`release.yml` workflow accepts `v*.*.*` tags, compares the tag with the Cargo
+package version and the exact Python project version, and marks pre-releases
+from the Python version. The versions must match without the tag's leading `v`.
+
+The workflow then proceeds through these jobs:
+
+- `build` calls `build-wheels.yml`. It builds per-interpreter CPython 3.12,
+  3.13 and 3.14 wheels for Linux x86_64 and aarch64, macOS x86_64 and arm64,
+  and Windows x86_64, plus exactly one source distribution. The build workflow
+  also runs in pull-request CI; its verification job fails if the sdist is
+  absent or duplicated and installs a wheel and a rebuilt sdist.
+- `attest` collects every wheel and the single sdist, attests those files with
+  build provenance, and passes the files and Sigstore bundle to later jobs as
+  one artefact.
+- `draft-release` creates or reuses the tag's GitHub Release as a draft and
+  snapshots any existing release assets.
+- `publish-pypi` runs in the `pypi` environment with Trusted Publishing. It
+  checks the PyPI Simple index, stages names PyPI does not already hold, and
+  uploads only those files with `skip-existing` enabled.
+- `publish-release` reconciles the GitHub Release with PyPI, checks that both
+  destinations have the same SHA-256 digest for every distribution file, then
+  publishes the draft. Pre-release status follows the checked Python version.
+
+Re-running the same tag is safe. Runs for one tag queue rather than cancel each
+other, and the workflow never overwrites an existing filename. For each name,
+existing PyPI bytes take precedence, then existing GitHub Release bytes, then
+the current build. Each destination receives only missing names, so a complete
+rerun has nothing new to upload. If the destinations already hold different
+bytes for the same name, digest verification fails and the release remains a
+draft. PyPI files cannot be deleted; resolve the conflict by removing the
+inconsistent asset from the GitHub Release, then rerun the tag.
+
+### Required publishing settings
+
+Configure these settings manually before the first tag:
+
+- In GitHub, create the `pypi` environment and restrict deployments to tags
+  matching `v*.*.*`.
+- In PyPI, add a Trusted Publisher for project `femtologging`, owner `leynos`,
+  repository `femtologging`, workflow `release.yml`, and environment `pypi`.
+
+The PyPI project and publisher are not registered by this repository change.
+The first release cannot publish until the publisher and GitHub environment
+exist. See [Maturin build features](#maturin-build-features) for the production
+and test feature sets.
 
 ## Type checking and heavy tests
 

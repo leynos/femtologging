@@ -50,6 +50,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md](./adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md)
   - Records the bounds on logger names and registry size, and the shared
     dispatch pool that replaced one worker thread per logger.
+- [adr-008-release-pipeline.md](./adr-008-release-pipeline.md)
+  - Records the attested release pipeline, production feature set and
+    idempotent PyPI/GitHub Release reconciliation.
 
 ## Logging Architecture
 
