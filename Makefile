@@ -266,6 +266,7 @@ nixie: ## Validate Mermaid diagrams
 		xargs -0 -r $(NIXIE)
 
 test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
+	cargo fetch --locked --manifest-path $(RUST_MANIFEST)
 	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
