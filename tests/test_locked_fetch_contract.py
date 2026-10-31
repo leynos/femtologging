@@ -1,11 +1,11 @@
 """Contract tests for the locked-dependency fetch that precedes every test entry point.
 
-Concordat's ``nested-cargo-offline-tests`` rule (NC-008) asks that a nested Cargo build in a
-test never resolve dependencies while holding the shared package-cache lock. The ``test``
-recipe of the Makefile and the CI and heavy-test workflows therefore run
-``cargo fetch --locked`` first. These tests parse those files and hold the command, its
-manifest, its position before every step that runs tests, and its success gating, with
-mutation cases for each way the fetch could be lost.
+Concordat's ``nested-cargo-offline-tests`` rule (NC-008) asks that a nested Cargo
+build in a test never resolve dependencies while holding the shared package-cache
+lock. The ``test`` recipe of the Makefile and the CI and heavy-test workflows
+therefore run ``cargo fetch --locked`` first. These tests parse those files and
+hold the command, its manifest, its position before every step that runs tests,
+and its success gating, with mutation cases for each way the fetch could be lost.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ WORKFLOW_FETCH: typ.Final[str] = (
     "cargo fetch --locked --manifest-path rust_extension/Cargo.toml"
 )
 FETCH_STEP: typ.Final[str] = "Fetch locked dependencies"
-# `make lint` runs the Rust doctests through `lint-rust-test-docs`, so it starts tests too.
+# `make lint` runs the Rust doctests through `lint-rust-test-docs`, so it starts
+# tests too.
 TEST_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
     r"\b(cargo\s+test|make\s+(test|lint))\b"
 )
@@ -75,7 +76,9 @@ def _makefile_problems(makefile: str) -> list[str]:
         One complaint per way the fetch is missing, misplaced or not fail-fast.
     """
     recipe = _recipe(makefile, "test")
-    fetch_at = next((at for at, line in enumerate(recipe) if "cargo fetch" in line), None)
+    fetch_at = next(
+        (at for at, line in enumerate(recipe) if "cargo fetch" in line), None
+    )
     if fetch_at is None:
         return ["the test recipe runs no cargo fetch"]
     problems = []
@@ -83,7 +86,9 @@ def _makefile_problems(makefile: str) -> list[str]:
     if line != MAKE_FETCH:
         problems.append(f"the fetch must be exactly `{MAKE_FETCH}`, found `{line}`")
     tests_before = [
-        at for at, text in enumerate(recipe) if TEST_COMMAND.search(text) and at < fetch_at
+        at
+        for at, text in enumerate(recipe)
+        if TEST_COMMAND.search(text) and at < fetch_at
     ]
     if tests_before:
         problems.append("the fetch must come before every command that runs tests")
@@ -135,7 +140,9 @@ def _job_steps(workflow: str, job: str) -> list[Step]:
     list[Step]
         The job's steps.
     """
-    document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text("utf-8"))
+    document = yaml.safe_load(
+        (ROOT / ".github/workflows" / workflow).read_text("utf-8")
+    )
     return typ.cast("list[Step]", document["jobs"][job]["steps"])
 
 
@@ -192,7 +199,7 @@ def test_a_makefile_without_the_fetch_in_place_is_reported(mutated: str) -> None
     ],
 )
 def test_a_job_without_the_fetch_in_place_is_reported(steps: list[Step]) -> None:
-    """A missing, unlocked, mis-pointed, skippable, non-failing or late fetch is reported."""
+    """Report a missing, unlocked, mis-pointed, skippable, non-failing or late fetch."""
     assert _workflow_problems(steps)
 
 
