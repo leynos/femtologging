@@ -216,6 +216,12 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     crate = tmp_path / "footprint"
     (crate / "src").mkdir(parents=True)
     (crate / ".cargo").mkdir()
+    # An empty Cargo home keeps a host-global config out of the build: a
+    # developer machine may install a rustc wrapper or profile overrides there,
+    # which this contract is meant to exclude. The repository's copied
+    # configuration stays in force.
+    cargo_home = tmp_path / "cargo-home"
+    cargo_home.mkdir()
     (crate / "Cargo.toml").write_text(
         '[package]\nname = "footprint"\nversion = "0.0.0"\nedition = "2021"\n\n'
         + _dev_profile_text(),
@@ -232,6 +238,7 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     env["CARGO_BUILD_RUSTC_WRAPPER"] = ""
     env["CARGO_BUILD_RUSTDOC"] = ""
     env["CARGO_TARGET_DIR"] = str(tmp_path / "target")
+    env["CARGO_HOME"] = str(cargo_home)
     env.update(extra_env or {})
     cargo = shutil.which("cargo")
     assert cargo is not None, "cargo must be on PATH"
