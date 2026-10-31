@@ -116,7 +116,7 @@ the corpus still passes.
 The Rust extension build toolchain is pinned so local builds, CI, and the
 compatibility tests validate the same maturin and PyO3 releases:
 
-- `rust-toolchain.toml` selects Rust `1.99.0` exactly and requires `rustfmt`,
+- `rust-toolchain.toml` selects Rust `1.99.1` exactly and requires `rustfmt`,
   `clippy`, and `rust-analyzer`. A floating `stable` channel is not used,
   because rustup would resolve it at install time and the toolchain would
   change without a commit. Dependabot's `rust-toolchain` update entry in
@@ -124,7 +124,7 @@ compatibility tests validate the same maturin and PyO3 releases:
   passes the usual gates before the pin moves. Install the toolchain with:
 
   ```shell
-  rustup toolchain install 1.99.0 --component rustfmt --component clippy \
+  rustup toolchain install 1.99.1 --component rustfmt --component clippy \
     --component rust-analyzer
   ```
 
@@ -267,7 +267,7 @@ heavy tests" passes `--no-run` and proves the models build. "Run Loom models"
 executes them under `scripts/run_loom_models.py`:
 
 ```shell
-RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 uv run --script \
+RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" LOOM_MAX_PREEMPTIONS=3 uv run --script \
   scripts/run_loom_models.py --expected rust_extension/tests/heavy/loom-models.txt -- \
   cargo test --release --manifest-path rust_extension/Cargo.toml \
   --no-default-features --test heavy loom_ -- --include-ignored
