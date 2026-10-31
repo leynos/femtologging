@@ -63,7 +63,7 @@ pub(super) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
 
 /// Report pending drops without waiting for the warning interval.
 ///
-/// Both the handler (a refused queue) and its worker (serialisation,
+/// Both the handler (a refused queue) and its worker (serialization,
 /// connection or write failures) count drops, so both use this one report.
 /// A suppression window must not carry a count past the last chance to say it:
 /// on close, flush, or worker exit there is no later warning.

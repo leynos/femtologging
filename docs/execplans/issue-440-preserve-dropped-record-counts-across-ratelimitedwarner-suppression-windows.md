@@ -254,6 +254,18 @@ suite that fails if any drop is discarded or handed off more than once.
       `tests/test_build_standard_contract.py` and `.cargo/config.toml` are
       byte-identical to `origin/main`, and admission must not be bypassed, so
       this needs a host-side decision rather than a code change here.
+- [x] (2026-10-31) CodeRabbit reviewed `cdf50f2` and raised five findings, all
+      actioned: the new handler docs now use "serialization"; the heavy
+      generator takes `1..=3` other threads to match its "one to three" doc and
+      this plan's 2–4; the stale plan statements (test artefact, `pending_drops`
+      gating, remaining work) are corrected; and `warn_if_due` gained a
+      lock-free suppression pre-check so a refused record inside the interval no
+      longer contends for the drain mutex.
+- [x] (2026-10-31) The pre-check and its new
+      `suppressed_call_does_not_wait_for_the_drain_lock` test pushed
+      `rate_limited_warner.rs` past the 400-line limit, so the concurrency cases
+      moved to `rate_limited_warner_concurrency_tests.rs` behind the same
+      `#[path]` pattern as the unit tests.
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
@@ -454,13 +466,14 @@ pending action.
   avoids calling the public clock seam while holding an internal lock; the due
   path rechecks the counter under the mutex and does not claim an empty window.
   Date/Author: 2026-10-26, agent, following CodeRabbit review.
-- Decision: add a `#[cfg(feature = "test-util")] pending_drops()` accessor.
-  Rationale: the acceptance criteria ask for an assertion that "reported plus
-  pending equals recorded". The in-module stress test can read the private
-  field, but the heavy property test is a separate binary and cannot. Gating on
-  `test-util` keeps the accessor out of the shipped library, matching the
-  existing `with_test_config` / `with_warner` precedent. Date/Author:
-  2026-10-16, agent.
+- Decision: add a `#[cfg(any(test, feature = "test-util"))] pending_drops()`
+  accessor. Rationale: the acceptance criteria ask for an assertion that
+  "reported plus pending equals recorded". The in-module stress test can read
+  the private field, but the heavy property test is a separate binary and
+  cannot. Gating on `test-util` keeps the accessor out of the shipped library,
+  matching the existing `with_test_config` / `with_warner` precedent; the
+  `test` arm lets this module's own unit tests use it in lanes that do not
+  enable `test-util`. Date/Author: 2026-10-16, agent.
 - Decision: flush each worker-owned warner when the worker's flush command is
   handled and when its loop exits. Rationale: worker-side drops are recorded
   after the handler has already accepted the record, so only the worker can
@@ -491,9 +504,10 @@ compare-and-exchange, and drains explicit flushes independently of the rate
 limit. Both the original rebased candidate and the CodeRabbit-driven race fixes
 have passed the full deterministic and ignored-heavy gate suites. The fixes
 serialize the due-path recheck, claim and drain against flush, keep callbacks
-outside the mutex, and include deterministic race and CAS evidence. The
-remaining work is to commit this candidate, obtain a clean review, and publish
-the draft PR.
+outside the mutex, and include deterministic race and CAS evidence. Suppressed
+calls return on a lock-free read of the last-warning timestamp, so the refusal
+path does not contend for the shared mutex. The candidate is committed; the
+remaining work is to obtain a clean review and publish the draft PR.
 
 ## Context and orientation
 
@@ -606,8 +620,9 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   Method: named `rstest` regression tests with a fake clock. Rationale: each
   names one scenario whose failure the suite must detect; the scenarios are the
   acceptance criteria themselves. Domain: single-threaded sequences of
-  record/warn/advance/flush. Artefact: the in-module `tests` block of
-  `rust_extension/src/rate_limited_warner.rs`. Evidence:
+  record/warn/advance/flush. Artefact:
+  `rust_extension/src/rate_limited_warner_tests.rs`, with the concurrency cases
+  in `rust_extension/src/rate_limited_warner_concurrency_tests.rs`. Evidence:
   `cargo test --manifest-path rust_extension/Cargo.toml
   --no-default-features rate_limited_warner`.
   Each new test must fail against the current implementation (recorded in
@@ -672,9 +687,12 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
 - Lint/typecheck: `make lint`, `make typecheck`, `make check-fmt`,
   `make markdownlint`, `make nixie`.
 - Performance: `record_drop()` remains one relaxed atomic increment without a
-  lock or allocation. `warn_if_due()` now takes a short per-warmer mutex and
-  rechecks the counter before claiming; callbacks remain outside the lock. No
-  benchmark run is required for this correctness fix.
+  lock or allocation. A `warn_if_due()` call whose interval is still open,
+  which is every refused record under sustained overload, returns after one
+  relaxed load of the last-warning timestamp and does not touch the mutex. A
+  call that may be due takes the short per-warmer mutex, rechecks the counter
+  and claims there; callbacks remain outside the lock. No benchmark run is
+  required for this correctness fix.
 
 ## Milestones and plateaus
 
@@ -885,7 +903,7 @@ impl RateLimitedWarner {
     pub fn record_drop(&self);
     pub fn warn_if_due(&self, warn: impl FnMut(u64));
     pub fn flush(&self, warn: impl FnMut(u64));
-    #[cfg(feature = "test-util")]
+    #[cfg(any(test, feature = "test-util"))]
     pub fn pending_drops(&self) -> u64;
 }
 ```
