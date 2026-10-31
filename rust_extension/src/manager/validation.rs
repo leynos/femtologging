@@ -134,6 +134,11 @@ pub fn validate_logger_name(name: &str) -> PyResult<()> {
 /// assert!(is_valid_logger_name("api.v1"));
 /// assert!(!is_valid_logger_name("api..v1"));
 /// ```
+///
+/// Gated with the bridge that calls it: every other lane compiles the registry
+/// without `log_compat`, where an unused `pub(crate)` helper is a dead-code
+/// error rather than a harmless spare.
+#[cfg(feature = "log-compat")]
 pub(crate) fn is_valid_logger_name(name: &str) -> bool {
     validate_logger_name(name).is_ok()
 }
