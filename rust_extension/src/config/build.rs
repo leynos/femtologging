@@ -60,8 +60,9 @@ impl ConfigBuilder {
     ///
     /// Returns [`ConfigError`] for an unsupported version, missing root,
     /// malformed logger name, unknown or duplicate resource ID, failed
-    /// handler/filter construction, or incompatible Python handler dispatch.
-    /// Every such error is found before live logger state is changed.
+    /// handler/filter construction, incompatible Python handler dispatch, or a
+    /// logger set that no longer fits the registry. Every such error leaves
+    /// live logger state unchanged.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
         if self.version() != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version()));
@@ -102,7 +103,8 @@ impl ConfigBuilder {
                     handler_filter_ids: components.handler_filter_ids,
                     filter_registry: components.built_filters,
                 },
-            );
+            )
+            .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
             // Handler teardown can flush or join a worker, so release displaced
             // references without the GIL now that the manager lock is gone.
             displaced.drop_without_gil(py);

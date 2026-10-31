@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 mod config;
 
 #[cfg(feature = "python")]
-pub(crate) use config::stage_loggers;
+pub(crate) use config::{register_missing_ancestors, stage_loggers};
 
 #[cfg(feature = "python")]
 use super::runtime_state::{

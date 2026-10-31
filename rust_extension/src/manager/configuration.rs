@@ -1,11 +1,13 @@
 //! Prepared logger configuration and its single manager commit.
 //!
 //! The configuration builder resolves every fallible reference before calling
-//! the commit. This module publishes the resolved logger states and retains
-//! displaced resources until the manager lock has been released.
+//! the commit. Under one manager write lock the commit rechecks registry
+//! capacity, registers the missing ancestors of configured loggers, publishes
+//! the resolved logger states, and retains displaced resources until the lock
+//! and the Python GIL have been released.
 
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     sync::Arc,
 };
 
@@ -18,14 +20,14 @@ use crate::{
 };
 
 use super::{
-    registry::MANAGER,
+    registry::{MANAGER, register_missing_ancestors},
     runtime_state::{LoggerAttachmentState, RuntimeStateSnapshot, SharedFilters, SharedHandlers},
 };
 
 /// One logger's fully resolved configuration, ready for commit.
 ///
-/// Every object reference is resolved during preparation so the commit takes
-/// no name lookups and performs no fallible work.
+/// Every object reference is resolved during preparation, so applying one
+/// plan takes no name lookups and performs no fallible work.
 pub(crate) struct PreparedLogger {
     /// Name the plan applies to.
     pub(crate) name: String,
@@ -52,7 +54,7 @@ pub(crate) struct PreparedConfiguration {
     /// Whether loggers omitted from this configuration should be disabled.
     pub(crate) disable_existing: bool,
     /// Logger names and ancestors protected from disabling.
-    pub(crate) keep_names: std::collections::HashSet<String>,
+    pub(crate) keep_names: HashSet<String>,
     /// Handler registry to publish.
     pub(crate) handler_registry: SharedHandlers,
     /// Filter IDs associated with each handler in the registry.
@@ -105,8 +107,16 @@ struct LoggerStateUpdate {
 /// Apply a fully prepared configuration as one atomic transition.
 ///
 /// Preparation has validated every logger name, resource reference and scalar
-/// setting. This function takes the manager write lock once, performs no name
-/// lookups and returns no `Result`.
+/// setting. This function takes the manager write lock once. Its only fallible
+/// work is the registry capacity check and the creation of missing ancestor
+/// loggers, and both happen before any live logger is changed, so a refusal
+/// leaves every logger exactly as it was.
+///
+/// The write lock makes the capacity check authoritative: room consumed by
+/// another caller after staging cannot slip in between. The planned set covers
+/// every configured name and its missing ancestors, and those ancestors are
+/// registered in this same commit rather than being left for a later
+/// propagation lookup that can fail.
 ///
 /// The root and every logger name in the keep set are exempt from disabling.
 /// Omitted targets are disabled before their attachments are cleared. The live
@@ -116,7 +126,7 @@ struct LoggerStateUpdate {
 pub(crate) fn commit_configuration(
     py: Python<'_>,
     prepared: PreparedConfiguration,
-) -> DisplacedAttachments {
+) -> PyResult<DisplacedAttachments> {
     let mut displaced = DisplacedAttachments::default();
     let mut manager = MANAGER.write();
     let PreparedConfiguration {
@@ -127,8 +137,13 @@ pub(crate) fn commit_configuration(
         handler_filter_ids,
         filter_registry,
     } = prepared;
-    let mut logger_states = BTreeMap::new();
 
+    let planned: HashSet<&str> = loggers.iter().map(|plan| plan.name.as_str()).collect();
+    register_missing_ancestors(py, &mut manager, planned.iter().copied(), |name| {
+        planned.contains(name)
+    })?;
+
+    let mut logger_states = BTreeMap::new();
     for plan in loggers {
         let (name, state) = apply_prepared_logger(py, &mut manager.loggers, plan, &mut displaced);
         logger_states.insert(name, state);
@@ -148,7 +163,7 @@ pub(crate) fn commit_configuration(
         },
     ));
     drop(manager);
-    displaced
+    Ok(displaced)
 }
 
 /// Apply one resolved plan to its adopted or newly registered logger.
@@ -241,7 +256,7 @@ fn apply_logger_plan(
 fn disable_omitted_loggers(
     py: Python<'_>,
     loggers: &HashMap<String, Py<FemtoLogger>>,
-    keep_names: &std::collections::HashSet<String>,
+    keep_names: &HashSet<String>,
     displaced: &mut DisplacedAttachments,
 ) {
     for (name, logger) in loggers {

@@ -144,8 +144,8 @@ fn disabled_logger_cannot_reach_root_handler(
         );
 
         let root = manager::get_logger(py, "root").expect("root logger exists");
-        omitted.borrow(py).flush_handlers();
-        root.borrow(py).flush_handlers();
+        assert_flush!(py, omitted, "omitted");
+        assert_flush!(py, root, "root");
         assert!(
             read_log_file(&file)
                 .expect("test log file must be readable")
