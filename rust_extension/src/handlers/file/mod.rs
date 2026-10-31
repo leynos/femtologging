@@ -17,11 +17,10 @@ mod config;
 mod handler_impl;
 mod io_utils;
 pub(crate) mod policy;
-mod validations;
-mod worker;
-pub(crate) use worker::{NoRotation, RotationStrategy};
 #[cfg(test)]
 pub(crate) mod test_support;
+mod validations;
+mod worker;
 
 use std::{
     fs::File,
@@ -40,14 +39,39 @@ use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
 };
+use io_utils::open_log_file;
+use worker::{FileCommand, WorkerConfig, spawn_worker};
 
 pub(crate) use builder_options::BuilderOptions;
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
-use io_utils::open_log_file;
 pub(crate) use validations::{
     validate_capacity_nonzero, validate_flush_interval_nonzero, validate_params,
 };
-use worker::{FileCommand, WorkerConfig, spawn_worker};
+pub(crate) use worker::{NoRotation, RotationStrategy};
+
+/// Owns the worker state needed to finish a handler shutdown after its Python
+/// object borrow has been released.
+pub(super) struct WorkerShutdown {
+    /// Worker thread handle retained for joining after completion.
+    handle: Option<JoinHandle<()>>,
+    /// Completion signal used to bound the wait before joining.
+    done_rx: Receiver<()>,
+}
+
+impl WorkerShutdown {
+    /// Wait for worker completion and join it when it reports a clean exit.
+    pub(super) fn wait(self) {
+        if let Some(handle) = self.handle {
+            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
+                log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
+                return;
+            }
+            if handle.join().is_err() {
+                log::warn!("FemtoFileHandler: worker thread panicked");
+            }
+        }
+    }
+}
 
 /// File-based logging handler exposed to Python.
 ///
@@ -158,8 +182,12 @@ impl FemtoFileHandler {
     /// The GIL is released while waiting so a Python callable formatter can
     /// finish on the worker thread.
     #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        py.detach(|| self.close());
+    fn py_close(slf: Py<Self>, py: Python<'_>) {
+        let shutdown = {
+            let mut handler = slf.borrow_mut(py);
+            handler.take_shutdown()
+        };
+        py.detach(move || shutdown.wait());
     }
 }
 
@@ -269,15 +297,16 @@ impl FemtoFileHandler {
     /// when invoking it. Concurrent calls from multiple threads must be
     /// synchronized externally (for example, with a `Mutex`).
     pub fn close(&mut self) {
+        self.take_shutdown().wait();
+    }
+
+    /// Marks the handler closed and transfers worker state to the shutdown
+    /// operation so it can wait without borrowing the Python object.
+    pub(super) fn take_shutdown(&mut self) -> WorkerShutdown {
         self.tx.take();
-        if let Some(handle) = self.handle.take() {
-            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-                return;
-            }
-            if handle.join().is_err() {
-                log::warn!("FemtoFileHandler: worker thread panicked");
-            }
+        WorkerShutdown {
+            handle: self.handle.take(),
+            done_rx: self.done_rx.clone(),
         }
     }
 

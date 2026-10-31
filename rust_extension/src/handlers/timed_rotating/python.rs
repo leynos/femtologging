@@ -21,7 +21,7 @@ use super::clock::{clear_injected_times_for_test, set_injected_times_for_test};
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig},
+    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
     python::fq_py_type,
@@ -39,6 +39,11 @@ impl PyTimedRotatingFileHandler {
     /// Wraps a constructed core handler for Python ownership.
     pub(crate) fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
         Self { inner }
+    }
+
+    /// Transfers the nested file handler's worker shutdown state.
+    fn take_shutdown(&mut self) -> WorkerShutdown {
+        self.inner.inner.take_shutdown()
     }
 }
 
@@ -267,8 +272,12 @@ impl PyTimedRotatingFileHandler {
     /// The GIL is released while waiting so a Python callable formatter can
     /// finish on the worker thread.
     #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        py.detach(|| self.inner.close());
+    fn py_close(slf: Py<Self>, py: Python<'_>) {
+        let shutdown = {
+            let mut handler = slf.borrow_mut(py);
+            handler.take_shutdown()
+        };
+        py.detach(move || shutdown.wait());
     }
 }
 
