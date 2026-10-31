@@ -65,6 +65,12 @@ pub(super) struct Manager {
 /// Process-wide registry lock for logger identities and runtime configuration.
 pub(super) static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Check whether a test can acquire the manager write lock without blocking.
+#[cfg(all(test, feature = "python", feature = "log-compat"))]
+pub(crate) fn manager_write_available_for_test() -> bool {
+    MANAGER.try_write().is_some()
+}
+
 /// Clear the Python-specific runtime configuration while preserving loggers.
 #[cfg(feature = "python")]
 pub(super) fn clear_runtime_state(mgr: &mut Manager) {
@@ -348,14 +354,18 @@ pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
 /// `reset_manager` also drops loggers outside the lock.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
-    let loggers: Vec<Py<FemtoLogger>> = MANAGER
-        .read()
-        .loggers
-        .values()
-        .map(|logger| logger.clone_ref(py))
-        .collect();
+    let loggers: Vec<Py<FemtoLogger>> = {
+        let manager = MANAGER.read();
+        manager
+            .loggers
+            .values()
+            .map(|logger| logger.clone_ref(py))
+            .collect()
+    };
     for logger in loggers {
-        let _ = logger.borrow(py).flush_handlers();
+        let borrowed_logger = logger.borrow(py);
+        let logger_ref: &FemtoLogger = &borrowed_logger;
+        let _ = py.detach(|| logger_ref.flush_handlers());
     }
 }
 

@@ -102,9 +102,11 @@ class FemtoLogger:
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Waits up to 2 s for the worker to drain, then calls
-        ``flush()`` on every handler.  Returns ``False`` when the
-        drain times out or any handler flush fails.
+        Releases the GIL while waiting for the worker acknowledgement and
+        flushing attached handlers, so Python handlers can run. Waits up to
+        2 s for the acknowledgement; enqueueing the marker and flushing the
+        handlers can take additional time. Returns ``False`` when the worker
+        does not acknowledge the marker or any handler flush fails.
 
         """
         ...
@@ -497,6 +499,13 @@ reset_manager_py: _Any
 def runtime_attachment_state_for_test(
     name: str,
 ) -> tuple[list[str], list[str]] | None: ...
+def wait_for_flush_entry_for_test(logger: FemtoLogger, timeout_ms: int) -> bool:
+    """Wait for the test-only flush-entry signal within ``timeout_ms``."""
+    ...
+
+def cancel_flush_wait_for_test(logger: FemtoLogger) -> None:
+    """Wake a pending test-only flush-entry wait during cleanup."""
+    ...
 
 setup_rust_logging: Callable[[], None]
 setup_rust_tracing: Callable[[], None]
