@@ -1,7 +1,6 @@
 //! Producer and worker tracing tests for bounded context-dispatch events.
 
 use std::any::Any;
-use std::collections::BTreeSet;
 use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -23,6 +22,10 @@ use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
 
+#[path = "producer_tracing_test_assertions.rs"]
+mod assertions;
+#[path = "flush_tracing_tests.rs"]
+mod flush_tracing_tests;
 #[path = "producer_tracing_test_helpers.rs"]
 mod helpers;
 use helpers::{
@@ -44,6 +47,8 @@ struct InternalEventCollector {
     test_thread: ThreadId,
     /// Stops collection once the test has captured its expected outcomes.
     is_recording: Arc<AtomicBool>,
+    /// Temporarily permits worker threads during a flush trace assertion.
+    allow_all_threads: Arc<AtomicBool>,
 }
 
 impl InternalEventCollector {
@@ -55,6 +60,7 @@ impl InternalEventCollector {
             events_changed: Arc::new(Condvar::new()),
             test_thread,
             is_recording: Arc::new(AtomicBool::new(true)),
+            allow_all_threads: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -67,6 +73,11 @@ impl InternalEventCollector {
 
     fn stop_recording(&self) {
         self.is_recording.store(false, Ordering::Relaxed);
+    }
+
+    /// Capture events from the logger worker as well as the test thread.
+    fn set_allow_all_threads(&self, allow: bool) {
+        self.allow_all_threads.store(allow, Ordering::Relaxed);
     }
 
     fn allow_current_thread(&self) -> Result<(), String> {
@@ -100,6 +111,44 @@ impl InternalEventCollector {
             ))
         }
     }
+
+    fn should_capture(&self, event: &Event<'_>, current_thread: ThreadId) -> bool {
+        if !self.is_recording.load(Ordering::Relaxed)
+            || event.metadata().target() != "femtologging::internal"
+        {
+            return false;
+        }
+
+        self.allow_all_threads.load(Ordering::Relaxed) || self.is_permitted_thread(current_thread)
+    }
+
+    fn is_permitted_thread(&self, current_thread: ThreadId) -> bool {
+        self.permitted_threads
+            .lock()
+            .is_ok_and(|permitted_threads| permitted_threads.contains(&current_thread))
+    }
+
+    fn record_event(&self, event: &Event<'_>) -> bool {
+        let mut events = match self.events.lock() {
+            Ok(events) => events,
+            Err(_) => return false,
+        };
+        events.push(CapturedEvent {
+            fields: collect_fields(event),
+        });
+        drop(events);
+        self.events_changed.notify_all();
+        true
+    }
+
+    fn revoke_worker_permission(&self, current_thread: ThreadId) {
+        if current_thread == self.test_thread {
+            return;
+        }
+        if let Ok(mut permitted_threads) = self.permitted_threads.lock() {
+            permitted_threads.retain(|permitted_thread| *permitted_thread != current_thread);
+        }
+    }
 }
 
 impl<S> Layer<S> for InternalEventCollector
@@ -108,35 +157,13 @@ where
 {
     fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
         let current_thread = thread::current().id();
-        if !self.is_recording.load(Ordering::Relaxed)
-            || event.metadata().target() != "femtologging::internal"
-        {
+        if !self.should_capture(event, current_thread) {
             return;
         }
-
-        let is_permitted = match self.permitted_threads.lock() {
-            Ok(permitted_threads) => permitted_threads.contains(&current_thread),
-            Err(_) => return,
-        };
-        if !is_permitted {
+        if !self.record_event(event) {
             return;
         }
-
-        let mut events = match self.events.lock() {
-            Ok(events) => events,
-            Err(_) => return,
-        };
-        events.push(CapturedEvent {
-            fields: collect_fields(event),
-        });
-        drop(events);
-        self.events_changed.notify_all();
-        if current_thread == self.test_thread {
-            return;
-        }
-        if let Ok(mut permitted_threads) = self.permitted_threads.lock() {
-            permitted_threads.retain(|permitted_thread| *permitted_thread != current_thread);
-        }
+        self.revoke_worker_permission(current_thread);
     }
 }
 
@@ -174,6 +201,10 @@ impl FemtoHandlerTrait for PythonTestHandler {
         } else {
             Ok(())
         }
+    }
+
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
     }
 
     fn is_python_backed(&self) -> bool {
@@ -226,6 +257,10 @@ impl FemtoHandlerTrait for NativeTestHandler {
         } else {
             Ok(())
         }
+    }
+
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -301,54 +336,6 @@ fn emit_handler_filter_outcomes() {
     emit_handler_filter_chain(raising_callback_filter(), false);
 }
 
-fn assert_no_local_handler_events(events: &[CapturedEvent]) {
-    let no_local_handler_events = events
-        .iter()
-        .filter(|event| {
-            event.fields.get("dispatch_outcome").map(String::as_str) == Some("no_local_handlers")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(no_local_handler_events.len(), 2);
-    for event in no_local_handler_events {
-        assert_eq!(event.fields["handler_kind"], "none");
-        assert_eq!(event.fields["dispatch_outcome"], "no_local_handlers");
-        assert_eq!(
-            event
-                .fields
-                .keys()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["dispatch_outcome", "handler_kind", "operation",]),
-            "no-handler trace fields must stay bounded: {:?}",
-            event.fields,
-        );
-    }
-}
-
-fn assert_no_handlers_accepted_events(events: &[CapturedEvent]) {
-    let no_handlers_accepted_events = events
-        .iter()
-        .filter(|event| {
-            event.fields.get("dispatch_outcome").map(String::as_str) == Some("no_handlers_accepted")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(no_handlers_accepted_events.len(), 1);
-    for event in no_handlers_accepted_events {
-        assert_eq!(event.fields["operation"], "producer_handler_dispatch");
-        assert_eq!(event.fields["handler_kind"], "none");
-        assert_eq!(
-            event
-                .fields
-                .keys()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["dispatch_outcome", "handler_kind", "operation",]),
-            "all-rejected trace fields must stay bounded: {:?}",
-            event.fields,
-        );
-    }
-}
-
 /// Internal tracing events cover each dispatch outcome without exposing data.
 #[test]
 #[serial]
@@ -368,8 +355,6 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
         .expect("real filter dispatch and propagation should emit bounded events");
     emit_python_handler_dispatch(&collector, PythonHandlerOutcome::Failure)
         .expect("failing Python handler should emit its bounded events");
-    collector.stop_recording();
-
     let events = collector
         .captured()
         .expect("tracing events should be captured without mutex poisoning");
@@ -386,6 +371,8 @@ fn context_dispatch_tracing_reports_bounded_outcomes() {
     );
     assert_events(&events, &EXPECTED_EVENTS);
     assert_filter_events(&events);
-    assert_no_local_handler_events(&events);
-    assert_no_handlers_accepted_events(&events);
+    assertions::assert_no_local_handler_events(&events);
+    assertions::assert_no_handlers_accepted_events(&events);
+
+    flush_tracing_tests::assert_unconfirmed_flush_trace(&collector);
 }

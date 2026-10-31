@@ -90,6 +90,10 @@ impl FemtoHandlerTrait for SnapshotPythonHandler {
         Ok(())
     }
 
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
+    }
+
     fn is_python_backed(&self) -> bool {
         true
     }

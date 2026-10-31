@@ -208,6 +208,36 @@ builder and either a direct `FormatterBuilder` or a registered formatter.
 
 ______________________________________________________________________
 
+## Deadline-aware Rust handler flushing
+
+`FemtoLogger::flush_handlers()` now applies one two-second deadline to marker
+insertion, the non-empty handler snapshot, worker acknowledgement and every
+handler flush. It returns `false` when any part of that barrier is unconfirmed.
+Built-in handlers keep their shorter configured timeouts.
+
+Custom Rust handlers that implement only synchronous `flush()` now fail closed:
+the barrier does not call that method and returns `false`. Override
+`flush_until(deadline)` to opt in. The implementation must use bounded waits
+against the supplied absolute deadline and report `false` when completion is
+not confirmed. The logger cannot interrupt arbitrary synchronous handler code
+once it starts; calling an unbounded `flush()` from `flush_until()` can still
+occupy the shared worker after the caller returns. In normal builds, logger
+drop waits only for that logger's in-flight records, up to the bounded drain
+timeout; it does not join the process-wide worker. Loom models join their
+logger-owned worker during cleanup.
+
+Python-facing calls release the GIL while waiting for the worker. CPython must
+reacquire the interpreter before returning to Python, so interpreter contention
+can delay the Python return beyond the Rust barrier deadline; a late handoff
+changes the result to `false`.
+
+See the [user guide](users-guide.md#flushing-logger-handlers), the
+[developer guide](developers-guide.md#logger-handler-flush-barrier), and the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the public contract and implementation details.
+
+______________________________________________________________________
+
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,

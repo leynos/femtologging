@@ -10,6 +10,7 @@ use pyo3::{
     prelude::*,
 };
 use std::any::Any;
+use std::time::Instant;
 
 use super::{
     FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler, TimedRotationConfig,
@@ -49,6 +50,10 @@ impl FemtoHandlerTrait for PyTimedRotatingFileHandler {
 
     fn flush(&self) -> bool {
         self.inner.flush()
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        FemtoHandlerTrait::flush_until(&self.inner, deadline)
     }
 
     fn as_any(&self) -> &dyn Any {

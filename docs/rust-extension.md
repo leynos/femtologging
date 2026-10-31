@@ -537,6 +537,30 @@ Handlers manage worker threads; the logger simply forwards each record to every
 handler. Callers may invoke a handler's `flush()` method to ensure queued
 messages are written before dropping it.
 
+The logger's `flush_handlers()` barrier also supplies its absolute deadline to
+each Rust handler through `flush_until()`. Its default returns `false` without
+calling `flush()`, so a legacy custom handler cannot make the logger caller
+wait indefinitely. A custom handler must override `flush_until(deadline)` to
+opt into barrier flushing and must return by that instant. The logger cannot
+preempt synchronous handler code that violates this contract. The marker is
+admitted before the handler-list read lock is taken, and that lock is released
+before callbacks run. Handler changes completed before the snapshot are
+reflected in this barrier. A handler removed afterwards remains alive for that
+flush; concurrent additions after the snapshot are included by a later barrier.
+Concurrent flushes use the existing bounded queue and create no helper workers.
+Shutdown that closes the queue before acknowledgement produces `false`. In
+normal builds, logger drop waits only for that logger's in-flight records for
+the bounded drain timeout; it does not join the shared worker. A violating
+callback can keep that worker occupied after the caller returns. Loom models
+join their logger-owned worker.
+
+The Python binding exposes `get_flush_diagnostics()` for polling each logger's
+fixed-cardinality attempt, confirmation, failure-stage and elapsed-time
+counters. The returned keys have no logger, path or message dimensions, and the
+relaxed-atomic snapshot may briefly combine values read at different instants.
+Applications can export the counters through their own metrics adapter; shared
+backend integration remains tracked by issue `#551`.
+
 The `add_handler()` method is exposed through the Python bindings and can be
 called on a shared logger instance. It verifies the provided object defines a
 callable `handle(logger, level, message)` method and raises `TypeError` if the

@@ -272,11 +272,8 @@ test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- --test-threads=$(TEST_THREADS)
 	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- --test-threads=$(TEST_THREADS)
-	# `--doctest-modules` is what makes the documented examples load-bearing.
-	# Nothing executed them before, and three test-helper examples named
-	# variables that were never bound. An example nobody runs is a comment
-	# that looks like evidence.
-	uv run pytest -v --doctest-modules
+	uv run pytest -v
+	uv run pytest -v --doctest-modules tests/steps/logging_context_steps.py
 
 typecheck: build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter

@@ -260,9 +260,45 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
   dispatch-admission refusals.
+- Use `logger.get_flush_diagnostics()` to poll fixed-cardinality flush-barrier
+  counters for attempts, confirmations, failure stages and elapsed-time
+  buckets. The keys remain stable and include no logger names, paths, messages
+  or payloads. Values are a best-effort snapshot read from relaxed atomics, so
+  concurrent updates may appear at different instants. Exporting these values
+  through a shared metrics adapter remains the application's responsibility.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
+
+### Flushing logger handlers
+
+`logger.flush_handlers()` queues a marker behind records the logger has already
+accepted when handlers are attached, then snapshots the handlers before
+allowing the worker to run their flush callbacks. With no handlers, it waits
+only for this logger's in-flight work. Handler additions and removals completed
+before that snapshot are reflected in this barrier; a handler removed
+afterwards remains alive in the snapshot until the worker releases it, and
+later additions participate in the next barrier. One two-second deadline covers
+dispatch resolution, marker insertion, handler-list locking, worker
+acknowledgement and every handler flush. Built-in handlers keep their shorter
+configured timeouts. The Python method releases the GIL while waiting so Python
+handlers can run.
+
+The method returns `False` when a stage is not confirmed by the deadline, the
+worker has exited, or a handler reports failure or lacks deadline support. The
+timeout bounds the caller's Rust barrier wait; it cannot stop a synchronous
+handler callback that is still running. In normal builds, logger drop waits for
+its own in-flight records only, up to the bounded drain timeout, and does not
+join the shared process-wide worker. A callback that violates its deadline may
+keep that worker occupied after the flush returns `False`. PyO3 must reacquire
+the interpreter before returning to Python, so interpreter contention can delay
+the Python return beyond the barrier deadline.
+
+Custom Rust handlers that should participate must implement the deadline-aware
+`FemtoHandlerTrait::flush_until(deadline)` contract. Its default fails closed
+without invoking legacy synchronous `flush()` code. See the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the compatibility rules.
 
 ## Built-in handlers
 

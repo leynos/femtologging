@@ -12,20 +12,20 @@
 
 use std::{
     io::{self, Write},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use log::warn;
-use pyo3::prelude::*;
-use std::any::Any;
-
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
+use crate::handler::{FemtoHandlerTrait, capped_deadline, deadline_after, remaining};
+use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
+use log::warn;
+use pyo3::prelude::*;
+
+mod trait_impl;
 
 /// Default queue capacity used when a stream builder does not provide one.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -80,8 +80,8 @@ impl HandlerConfig {
 enum StreamCommand {
     /// Owned record consumed by the worker in queue order.
     Record(FemtoLogRecord),
-    /// Flush request carrying the worker's I/O result acknowledgement channel.
-    Flush(Sender<io::Result<()>>),
+    /// Flush request carrying its acknowledgement and deferred drop warning.
+    Flush(Sender<io::Result<()>>, Option<u64>),
 }
 
 /// Flushes the writer during worker shutdown and logs, but does not propagate, errors.
@@ -107,12 +107,20 @@ where
 }
 
 /// Flushes the writer and sends the exact I/O result to the waiting producer.
-fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
+fn handle_flush_command<W: Write>(
+    writer: &mut W,
+    ack: Sender<io::Result<()>>,
+    pending_drops: Option<u64>,
+) {
     let flush_result = writer.flush();
-    if flush_result.is_err() {
+    let flush_failed = flush_result.is_err();
+    let _ = ack.send(flush_result);
+    if flush_failed {
         warn!("FemtoStreamHandler flush error");
     }
-    let _ = ack.send(flush_result);
+    if let Some(count) = pending_drops {
+        warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+    }
 }
 
 /// Owns the writer and formatter on the background thread until the queue closes.
@@ -128,7 +136,9 @@ fn run_stream_worker<W, F>(
     for cmd in rx {
         match cmd {
             StreamCommand::Record(record) => handle_record_command(&mut writer, &formatter, record),
-            StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
+            StreamCommand::Flush(ack, pending_drops) => {
+                handle_flush_command(&mut writer, ack, pending_drops);
+            }
         }
     }
     flush_with_warning(&mut writer);
@@ -213,6 +223,9 @@ impl FemtoStreamHandler {
     }
 
     /// Close the handler and wait for the worker thread to finish.
+    ///
+    /// The Python-facing method releases the interpreter while waiting so a
+    /// worker running a Python formatter can drain its queue and exit.
     #[pyo3(name = "close")]
     fn py_close(&mut self, py: Python<'_>) {
         py.detach(|| self.close());
@@ -297,8 +310,49 @@ impl FemtoStreamHandler {
     }
 
     /// Flush any pending log records.
+    ///
+    /// Python callers release the interpreter while waiting for the handler's
+    /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(deadline)
+    }
+
+    /// Flush any pending log records, waiting no longer than `deadline`.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare [`FemtoStreamHandler::flush`] keeps the bound it documents and a
+    /// barrier flush cannot outlive the deadline it was given.
+    fn flush_by(&self, deadline: Instant) -> bool {
+        // Whichever comes first — the caller's deadline or this handler's own
+        // budget — bounds the flush as a whole. Giving each wait the budget
+        // afresh let one flush spend it twice over.
+        let effective = capped_deadline(deadline, Instant::now(), self.flush_timeout);
+        match &self.tx {
+            Some(tx) => {
+                let pending_drops = self.warner.take_due();
+                let (ack_tx, ack_rx) = bounded(1);
+                if tx
+                    .send_timeout(
+                        StreamCommand::Flush(ack_tx, pending_drops),
+                        remaining(effective, Instant::now()),
+                    )
+                    .is_err()
+                {
+                    if let Some(count) = pending_drops {
+                        self.warner.restore_drops(count);
+                    }
+                    return false;
+                }
+                matches!(
+                    ack_rx.recv_timeout(remaining(effective, Instant::now())),
+                    Ok(Ok(()))
+                )
+            }
+            None => false,
+        }
     }
 
     /// Close the handler and wait for the worker thread to exit.
@@ -318,63 +372,5 @@ impl FemtoStreamHandler {
                 warn!("FemtoStreamHandler: worker thread panicked");
             }
         }
-    }
-}
-
-impl FemtoHandlerTrait for FemtoStreamHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let Some(tx) = &self.tx else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-            });
-            return Err(HandlerError::Closed);
-        };
-        match tx.try_send(StreamCommand::Record(record)) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
-                self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                Err(HandlerError::QueueFull)
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                Err(HandlerError::Closed)
-            }
-        }
-    }
-
-    fn flush(&self) -> bool {
-        match &self.tx {
-            Some(tx) => {
-                self.warner.flush(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                let (ack_tx, ack_rx) = bounded(1);
-                if tx
-                    .send_timeout(StreamCommand::Flush(ack_tx), self.flush_timeout)
-                    .is_err()
-                {
-                    return false;
-                }
-                matches!(ack_rx.recv_timeout(self.flush_timeout), Ok(Ok(())))
-            }
-            None => false,
-        }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-impl Drop for FemtoStreamHandler {
-    fn drop(&mut self) {
-        self.close();
     }
 }
