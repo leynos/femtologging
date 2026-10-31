@@ -62,7 +62,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.experimental }}
       - name: Install rust
+        # install-mold: the compile-time UI tests (trybuild) build a nested
+        # crate under target/, which finds .cargo/config.toml without the
+        # RUSTFLAGS this job exports, so the Linux mold default applies there.
         uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+        with:
+          install-mold: 'true'
       - name: Cache ~/.cargo and target/
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
