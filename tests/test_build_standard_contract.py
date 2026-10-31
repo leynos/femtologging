@@ -224,6 +224,13 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     (crate / "src" / "lib.rs").write_text("pub fn footprint() {}\n", "utf-8")
     shutil.copy(ROOT / ".cargo" / "config.toml", crate / ".cargo" / "config.toml")
     env = {k: v for k, v in os.environ.items() if k not in WRAPPER_VARIABLES}
+    # A global Cargo config can install a compiler wrapper even after the
+    # environment variables above are removed. An empty value overrides that
+    # config key, so the fixture observes the repository's own settings; a host
+    # wrapper can otherwise hold this build in a shared admission queue or
+    # reject the `CARGO_INCREMENTAL` override under test.
+    env["CARGO_BUILD_RUSTC_WRAPPER"] = ""
+    env["CARGO_BUILD_RUSTDOC"] = ""
     env["CARGO_TARGET_DIR"] = str(tmp_path / "target")
     env.update(extra_env or {})
     cargo = shutil.which("cargo")

@@ -1,0 +1,249 @@
+"""Handler-level threshold tests for :class:`StdlibHandlerAdapter`.
+
+Covers acceptance criteria 1-4 of issue #435: the adapter discards a record
+whose mapped stdlib level falls below the wrapped handler's configured
+``level``, preserves ``NOTSET`` semantics, and still runs the handler's
+filter-and-lock path exactly once for accepted records. Dynamic ``setLevel()``
+changes are covered in ``tests/test_stdlib_adapter_records.py``; construction
+and dispatch live in ``tests/test_stdlib_adapter.py``.
+"""
+
+from __future__ import annotations
+
+import logging
+from unittest import mock
+
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from femtologging import StdlibHandlerAdapter
+from tests.stdlib_adapter_support import (
+    AdapterProbe,
+    CapturingHandler,
+    CountingFilter,
+    HandlerLevelCase,
+    HandlerSetup,
+    LogRequest,
+    dispatch,
+    emitted_messages,
+)
+
+_MAPPED_LEVELS = {
+    "TRACE": 5,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+_BOUNDARY_THRESHOLDS = tuple(
+    mapped_level + offset
+    for mapped_level in _MAPPED_LEVELS.values()
+    for offset in (-1, 0, 1)
+)
+
+
+class TestHandlerLevelThreshold:
+    """Verify the wrapped handler's level gates dispatch."""
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        "case",
+        [
+            HandlerLevelCase("TRACE", "lowest", None),
+            HandlerLevelCase("DEBUG", "detail", None),
+            HandlerLevelCase("INFO", "note", None),
+            HandlerLevelCase("WARNING", "near miss", None),
+            HandlerLevelCase("ERROR", "failure", "ERROR"),
+            HandlerLevelCase("CRITICAL", "fatal", "CRITICAL"),
+        ],
+        ids=["trace", "debug", "info", "warning", "error", "critical"],
+    )
+    def test_error_handler_rejects_below_threshold(
+        probe: AdapterProbe,
+        case: HandlerLevelCase,
+    ) -> None:
+        """An ERROR handler should emit only ERROR and CRITICAL records.
+
+        The femtologging logger is left at ``"TRACE"``, the most permissive
+        threshold available, so any record that fails to appear can only have
+        been rejected by the wrapped handler's own level.
+        """
+        output = probe.capture(
+            LogRequest("app", case.level, case.message, logger_level="TRACE"),
+            HandlerSetup(
+                formatter=logging.Formatter("%(levelname)s %(message)s"),
+                handler_level=logging.ERROR,
+            ),
+        )
+        expected = (
+            ""
+            if case.expected_levelname is None
+            else f"{case.expected_levelname} {case.message}\n"
+        )
+        assert output == expected, (
+            f"handler at ERROR gave {output!r} for level {case.level!r}, "
+            f"expected {expected!r}"
+        )
+
+    @staticmethod
+    @pytest.mark.parametrize(
+        "level",
+        ["TRACE", "DEBUG", "INFO"],
+        ids=["trace", "debug", "info"],
+    )
+    def test_notset_handler_accepts_low_severity_levels(
+        probe: AdapterProbe,
+        level: str,
+    ) -> None:
+        """A NOTSET handler accepts each tested low-severity mapped level.
+
+        TRACE is the lowest mapped numeric level, so its acceptance pins the
+        observable no-threshold contract. This test covers behaviour without
+        requiring a particular way to implement the zero threshold.
+        """
+        output = probe.capture(
+            LogRequest("app", level, "accepted", logger_level="TRACE"),
+            HandlerSetup(
+                formatter=logging.Formatter("%(message)s"),
+                handler_level=logging.NOTSET,
+            ),
+        )
+        assert output == "accepted\n", (
+            f"NOTSET handler dropped a {level} record: {output!r}"
+        )
+
+
+class TestHandleRecordFilterAndLockContract:
+    """Verify the level gate leaves the filter-and-lock path intact."""
+
+    @staticmethod
+    def test_handle_and_filter_counts_by_level() -> None:
+        """Rejected records skip the handler; accepted ones run it once."""
+        handler = CapturingHandler()
+        handler.setLevel(logging.ERROR)
+        counting_filter = CountingFilter()
+        handler.addFilter(counting_filter)
+        adapter = StdlibHandlerAdapter(handler)
+
+        with mock.patch.object(handler, "handle", wraps=handler.handle) as handle_spy:
+            dispatch(adapter, "DEBUG", "suppressed")
+            assert handle_spy.call_count == 0, (
+                f"rejected record still entered handle(): {handle_spy.call_count} calls"
+            )
+            assert counting_filter.calls == 0, (
+                "rejected record still reached the filter: "
+                f"{counting_filter.calls} calls"
+            )
+            assert not handler.records, (
+                f"rejected record was emitted: {emitted_messages(handler)!r}"
+            )
+
+            dispatch(adapter, "ERROR", "accepted")
+            assert handle_spy.call_count == 1, (
+                "accepted record should enter handle() once: "
+                f"{handle_spy.call_count} calls"
+            )
+            assert counting_filter.calls == 1, (
+                "accepted record should consult the filter once: "
+                f"{counting_filter.calls} calls"
+            )
+            assert emitted_messages(handler) == ["accepted"], (
+                f"unexpected emitted records: {emitted_messages(handler)!r}"
+            )
+
+    @staticmethod
+    def test_filter_rejection_still_runs_handle() -> None:
+        """A record above the level is still subject to the handler's filters."""
+        handler = CapturingHandler()
+        handler.setLevel(logging.ERROR)
+        rejecting_filter = CountingFilter(should_accept=False)
+        handler.addFilter(rejecting_filter)
+        adapter = StdlibHandlerAdapter(handler)
+
+        with mock.patch.object(handler, "handle", wraps=handler.handle) as handle_spy:
+            dispatch(adapter, "CRITICAL", "filtered out")
+
+        assert handle_spy.call_count == 1, (
+            f"an accepted record should still enter handle(): {handle_spy.call_count}"
+        )
+        assert rejecting_filter.calls == 1, (
+            f"an accepted record should consult the filter once: "
+            f"{rejecting_filter.calls}"
+        )
+        assert not handler.records, (
+            f"a filter-rejected record must not be emitted: "
+            f"{emitted_messages(handler)!r}"
+        )
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    generated_handler_level=st.integers(min_value=-10, max_value=60),
+)
+def test_handler_level_gate_matches_numeric_boundary_for_all_mapped_levels(
+    generated_handler_level: int,
+) -> None:
+    """Mapped levels follow generated and adjacent numeric thresholds."""
+    handler_levels = {*_BOUNDARY_THRESHOLDS, generated_handler_level}
+    for handler_level in handler_levels:
+        for level_name, mapped_level in _MAPPED_LEVELS.items():
+            message = f"{level_name}-{handler_level}"
+            handler = CapturingHandler()
+            handler.setLevel(handler_level)
+            adapter = StdlibHandlerAdapter(handler)
+
+            with mock.patch.object(
+                handler, "handle", wraps=handler.handle
+            ) as handle_spy:
+                adapter.handle_record({"level": level_name, "message": message})
+
+            expected_messages = [message] if mapped_level >= handler_level else []
+            assert handle_spy.call_count == len(expected_messages), (
+                f"{level_name} at {mapped_level} with handler level "
+                f"{handler_level} entered handle() {handle_spy.call_count} times"
+            )
+            assert emitted_messages(handler) == expected_messages, (
+                f"{level_name} at {mapped_level} with handler level "
+                f"{handler_level} emitted {emitted_messages(handler)!r}"
+            )
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    steps=st.lists(
+        st.tuples(
+            st.sampled_from(tuple(_MAPPED_LEVELS)),
+            st.integers(min_value=-10, max_value=60),
+        ),
+        min_size=2,
+        max_size=20,
+    ).filter(
+        lambda generated_steps: len({threshold for _, threshold in generated_steps}) > 1
+    )
+)
+def test_generated_set_level_dispatch_sequences_use_live_threshold(
+    steps: list[tuple[str, int]],
+) -> None:
+    """Each dispatch uses the most recently assigned handler level."""
+    handler = CapturingHandler()
+    adapter = StdlibHandlerAdapter(handler)
+    accepted_messages: list[str] = []
+
+    with mock.patch.object(handler, "handle", wraps=handler.handle) as handle_spy:
+        for index, (level_name, handler_level) in enumerate(steps):
+            handler.setLevel(handler_level)
+            message = f"step-{index}"
+            adapter.handle_record({"level": level_name, "message": message})
+            if _MAPPED_LEVELS[level_name] >= handler_level:
+                accepted_messages.append(message)
+
+    assert handle_spy.call_count == len(accepted_messages), (
+        f"{len(accepted_messages)} accepted levels should produce exactly that "
+        f"many handle() calls, got {handle_spy.call_count}"
+    )
+    assert emitted_messages(handler) == accepted_messages, (
+        f"generated level changes emitted {emitted_messages(handler)!r}, "
+        f"expected {accepted_messages!r}"
+    )

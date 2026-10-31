@@ -163,20 +163,41 @@ logger creation.
 
 ______________________________________________________________________
 
+## `StdlibHandlerAdapter` honours the wrapped handler level
+
+`StdlibHandlerAdapter` now checks two thresholds in order. `FemtoLogger` first
+checks its own level before dispatching a record; the adapter then checks the
+wrapped standard-library handler's current `level`. Records below the handler
+level are discarded before `Handler.handle()` runs, so that handler's filters
+and emission path do not run for them. `logging.NOTSET` remains permissive and
+accepts every mapped level.
+
+The adapter reads the handler level when it processes each queued record. A
+call to `handler.setLevel()` therefore affects records processed after the
+change, including queued records not yet handled. There is no need to rebuild
+the adapter. For thresholds and configuration examples, see the
+[stdlib handler guide](users-guide.md#using-standard-library-stdlib-logginghandler-subclasses).
+
+______________________________________________________________________
+
 ## `StdlibHandlerAdapter` propagates `contextvars`
 
 When a record is sent through `StdlibHandlerAdapter`, femtologging captures the
-producer thread's `contextvars` context before queueing the record. On the
-logger's shared dispatch-shard worker, `Context.run` calls the wrapped stdlib
-handler's complete `handle()` method inside that context, including its
-filters, formatters, and `emit()` method. Dispatch remains asynchronous.
-Existing filters and formatters that read a `contextvars.ContextVar` therefore
-observe the value set by the thread that emitted the record.
+producer's active `contextvars.Context` before queueing the record. On the
+logger's shared dispatch-shard worker, `Context.run` invokes the wrapped stdlib
+handler's `handle()` method inside that context. With base `Handler.handle()`
+behaviour, the filter chain and `emit()` invocation run synchronously in the
+captured context, as does formatting performed during that call. Dispatch
+remains asynchronous. A handler that defers formatting or emission to another
+thread or process needs separate context propagation. Inline filters and
+formatters that read a `contextvars.ContextVar` therefore observe the value
+present in the producer's captured context.
 
 No code changes are required for this behaviour. Only `contextvars` are
 propagated; other thread-local state, including `threading.local`, belongs to
 the shared shard worker and may be observed by handlers serving different
-loggers. Update filters that depend on producer state to use `contextvars`.
+loggers. Update filters that depend on such state to use `contextvars` when
+they need values from the producer's captured context.
 
 ______________________________________________________________________
 

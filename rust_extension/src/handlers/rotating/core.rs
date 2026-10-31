@@ -80,7 +80,7 @@ impl Default for RotationConfig {
 /// [`FemtoFileHandler`].
 pub struct FemtoRotatingFileHandler {
     /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
-    inner: FemtoFileHandler,
+    pub(super) inner: FemtoFileHandler,
     /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
     max_bytes: u64,
     /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.

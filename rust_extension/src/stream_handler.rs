@@ -10,14 +10,16 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
+mod shutdown;
+
 use std::{
+    any::Any,
     io::{self, Write},
     time::Duration,
 };
 
 use log::warn;
 use pyo3::prelude::*;
-use std::any::Any;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
@@ -26,6 +28,8 @@ use crate::{
     log_record::FemtoLogRecord,
     rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
+
+use shutdown::StreamShutdown;
 
 /// Default queue capacity used when a stream builder does not provide one.
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -207,15 +211,25 @@ impl FemtoStreamHandler {
     /// >>> handler.close()
     /// >>> handler.flush()
     /// False
+    ///
+    /// The GIL is released while waiting so a Python callable formatter can
+    /// run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         py.detach(|| self.flush())
     }
 
     /// Close the handler and wait for the worker thread to finish.
+    ///
+    /// The GIL is released while waiting so a Python callable formatter can
+    /// finish on the worker thread.
     #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        py.detach(|| self.close());
+    fn py_close(slf: Py<Self>, py: Python<'_>) {
+        let shutdown = {
+            let mut handler = slf.borrow_mut(py);
+            handler.take_shutdown()
+        };
+        py.detach(move || shutdown.wait());
     }
 }
 
@@ -303,21 +317,16 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to exit.
     pub fn close(&mut self) {
+        self.take_shutdown().wait();
+    }
+
+    /// Marks the handler closed and transfers worker state to a shutdown
+    /// operation that can wait after the Python object borrow is released.
+    fn take_shutdown(&mut self) -> StreamShutdown {
         self.tx.take();
         let handle = { self.handle.lock().take() };
-        if let Some(handle) = handle {
-            let done_rx = self.done_rx.lock().clone();
-            if done_rx.recv_timeout(self.flush_timeout).is_err() {
-                warn!(
-                    "FemtoStreamHandler: worker thread did not shut down within {:?}",
-                    self.flush_timeout
-                );
-                return;
-            }
-            if handle.join().is_err() {
-                warn!("FemtoStreamHandler: worker thread panicked");
-            }
-        }
+        let done_rx = self.done_rx.lock().clone();
+        StreamShutdown::new(handle, done_rx, self.flush_timeout)
     }
 }
 

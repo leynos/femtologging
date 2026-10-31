@@ -17,7 +17,6 @@ from femtologging import (
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
 )
-from tests.helpers import poll_file_for_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -246,10 +245,12 @@ def test_file_builder_records_inline_timeout(tmp_path: Path) -> None:
     _assert_config_value(data, "timeout_ms", 125, "inline timeout duration")
 
 
+@pytest.mark.parametrize("drain_method", ["flush", "close"], ids=["flush", "close"])
 def test_stream_builder_applies_callable_formatter(
     capfd: pytest.CaptureFixture[str],
+    drain_method: typ.Literal["flush", "close"],
 ) -> None:
-    """Callable formatters shape the text a stream handler emits."""
+    """Stream workers can finish Python formatting during flush and close."""
     handler = (
         StreamHandlerBuilder
         .stderr()
@@ -258,6 +259,10 @@ def test_stream_builder_applies_callable_formatter(
     )
     try:
         handler.handle("logger", "INFO", "hello")
+        if drain_method == "flush":
+            assert handler.flush(), "stream handler did not flush"
+        else:
+            handler.close()
     finally:
         handler.close()
 
@@ -282,24 +287,45 @@ def test_stream_builder_applies_callable_formatter(
             "callable_rotating.log",
             id="rotating",
         ),
+        pytest.param(
+            lambda base: TimedRotatingFileHandlerBuilder(
+                str(base / "callable_timed_rotating.log")
+            ),
+            "callable_timed_rotating.log",
+            id="timed-rotating",
+        ),
     ],
 )
+@pytest.mark.parametrize("drain_method", ["flush", "close"], ids=["flush", "close"])
 def test_file_builders_accept_callable_formatter(
     tmp_path: Path,
     builder_factory: cabc.Callable[
-        [Path], FileHandlerBuilder | RotatingFileHandlerBuilder
+        [Path],
+        FileHandlerBuilder
+        | RotatingFileHandlerBuilder
+        | TimedRotatingFileHandlerBuilder,
     ],
     log_filename: str,
+    drain_method: typ.Literal["flush", "close"],
 ) -> None:
-    """Callable formatter support should extend to file-based builders."""
+    """File workers can finish Python formatting during flush and close."""
     path = tmp_path / log_filename
     builder = builder_factory(tmp_path).with_formatter(
         lambda record: f"callable:{record['message']}"
     )
     handler = builder.build()
-    handler.handle("logger", "INFO", "hello")
-    handler.close()
-    poll_file_for_text(path, "callable:hello", timeout=1.0)
+    try:
+        handler.handle("logger", "INFO", "hello")
+        if drain_method == "flush":
+            assert handler.flush(), "file handler did not flush"
+        else:
+            handler.close()
+    finally:
+        handler.close()
+
+    assert "callable:hello" in path.read_text(encoding="utf-8"), (
+        f"{drain_method} did not write callable formatter output to {path}"
+    )
 
 
 def test_builder_formatter_error_chain(tmp_path: Path) -> None:

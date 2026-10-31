@@ -1277,6 +1277,14 @@ Consumer threads (which perform actual I/O) release the GIL during blocking
 operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 `log::log()` calls from Rust do not contend with handler I/O.
 
+**Python-facing lifecycle waits:** The Python bindings for the stream, file,
+rotating-file, and timed-rotating-file handlers detach from the GIL while they
+wait for their worker in `flush()` and `close()`. `close()` transfers the
+shutdown state to an owned value under a scoped mutable borrow, and that borrow
+ends before the detached wait. This keeps caller-side lifecycle waits distinct
+from worker-side I/O and lets both a queued Python callable formatter and a
+callback that re-enters the handler in its closed state make progress.
+
 **flush() Behaviour:**
 
 The `flush()` method iterates over all handlers registered with the Manager and
@@ -1534,6 +1542,53 @@ This focus on interoperability is strategically important. Rather than forcing
 the entire ecosystem to adopt a new set of logging macros, `femtologging` can
 gain traction by serving as a high-performance, robust backend for these
 established interfaces.
+
+### 6.5. Python standard-library handler adapter
+
+`FemtoLogger` applies its logger-level threshold before dispatching records to
+handlers. When a record reaches `StdlibHandlerAdapter`, the adapter constructs
+a standard-library `LogRecord` and checks its mapped level against the wrapped
+handler's current level before calling `Handler.handle()`. Records below the
+handler threshold are discarded; accepted records are passed to the handler's
+`handle()` method once. For handlers retaining the base
+`logging.Handler.handle()` behaviour, normal execution evaluates the filter
+chain once and, if it accepts, acquires the I/O lock and invokes `emit()`. A
+subclass overriding `handle()` controls its own internal behaviour.
+
+For screen readers: This sequence describes normal execution for a wrapped
+handler retaining the base `logging.Handler.handle()` behaviour. FemtoLogger
+sends a record to the adapter, which constructs a standard-library `LogRecord`
+and compares its mapped level with the level value observed on the handler.
+Lower records are discarded without calling `handle()`. The handler then
+evaluates its filter chain once, which may short-circuit. If the chain accepts,
+the handler acquires its I/O lock and invokes `emit()`; if the chain rejects or
+a filter raises an exception, it does not acquire the lock or invoke `emit()`.
+An `emit()` invocation does not guarantee successful output. Handler subclasses
+overriding `handle()` define their own internal path.
+
+```mermaid
+sequenceDiagram
+    participant Logger as FemtoLogger
+    participant Adapter as StdlibHandlerAdapter
+    participant Handler as logging.Handler
+    participant Filter as logging.Filter
+
+    Logger->>Adapter: handle_record(record)
+    Adapter->>Adapter: _make_log_record(record)
+    alt log_record.levelno >= handler.level
+        Adapter->>Handler: handle(log_record)
+        Handler->>Filter: filter(log_record)
+        alt filter accepts
+            Handler->>Handler: acquire lock and emit
+        else filter rejects
+            Handler-->>Adapter: no emission
+        end
+    else log_record.levelno < handler.level
+        Adapter-->>Logger: discard without handle()
+    end
+```
+
+**Figure: Wrapped standard-library handler level and filter dispatch.**
 
 ## 7. Configuration and Runtime Control
 

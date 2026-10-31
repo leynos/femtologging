@@ -426,15 +426,33 @@ Python inside the supplied context. `FemtoLogger::add_handler()` returns
 declare this support. The default `handle_with_context()` also fails closed for
 Python-backed handlers. `PyHandler` copies the captured context for each
 callback and runs either `handle_record(record_dict)` or the legacy
-`handle(logger, level, message)` call through `Context.run()`. This keeps
-Python filters and formatters in the captured producer context without allowing
-one Python handler to modify another's view of it, while leaving non-Python
-handlers on their existing path.
+`handle(logger, level, message)` call through `Context.run()`. Python filters,
+formatters and other callbacks that execute synchronously within those calls
+use the captured producer context, without allowing one Python handler to
+modify another's view of it. Work deferred to another thread or process needs
+separate context propagation; non-Python handlers retain their existing path.
 
-For `StdlibHandlerAdapter`, `handle_record()` calls the wrapped handler's
-`handle()` method inside `Context.run()`. The complete stdlib handler call,
-including filters, formatters, and `emit()`, therefore runs in the captured
-producer context.
+For Python-backed handlers, the worker invokes
+`StdlibHandlerAdapter.handle_record()` through `Context.run()` before that
+method calls the wrapped handler's `handle()`. A direct call to
+`handle_record()` does not establish that context. With base `Handler.handle()`
+behaviour, the filter chain and `emit()` invocation run synchronously in the
+captured producer context, as does formatting performed during that call. A
+handler that defers formatting or emission to another thread or process needs
+separate context propagation.
+
+### Standard-library handler adapter
+
+The private `femtologging._adapter_record` module owns the adapter record
+schema and conversion to `logging.LogRecord`. `femtologging.adapter` remains
+the public import site and re-exports those record types. `FemtoLogger` applies
+its logger-level threshold before dispatch. Once the worker dispatches a record
+to the adapter, `handle_record()` calls `_make_log_record()`, compares the
+mapped level with the wrapped handler's current `level`, then calls
+`handler.handle()` exactly once when the record meets that threshold. This
+handler-level comparison happens before the handler filter chain. With base
+`Handler.handle()` behaviour, accepted records follow its existing filter and
+lock path; a subclass overriding `handle()` owns its internal dispatch path.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
 capture, handler-filter-chain evaluation, queue dispatch, and worker handler
@@ -446,6 +464,27 @@ handler-kind, and outcome fields; filter-chain events also include elapsed
 microseconds. Record payloads and context values are never included. They target
 `femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
 from recursively logging its own instrumentation.
+
+### Python-facing `flush()` and `close()` waits
+
+The stream, file, rotating-file, and timed-rotating-file handlers run their I/O
+on worker threads. Their Python bindings release the GIL with
+`Python::detach()` before waiting for that worker in `flush()` and `close()`,
+so a Python callable formatter queued on the worker can run to completion
+instead of deadlocking against a producer that still holds the GIL. `close()`
+also releases the Python class borrow before the wait: it takes the shutdown
+state and owned worker handles while the borrow is held, then detaches and
+waits outside the borrow. A Python callback that re-enters the handler during
+shutdown therefore observes the closed state instead of blocking on a borrow
+held by the waiter. `tests/test_handler_close_reentry.py` is the regression
+test for that path.
+
+Detaching preserves the existing return values and bounds. `flush()` still
+returns `True` only when the worker acknowledges within the handler's flush
+timeout and `False` otherwise, and `close()` still returns `None`. The wait in
+`close()` remains bounded by the handler's timeout: a worker that does not
+signal completion in time is reported and skipped rather than waited on
+indefinitely.
 
 ## Configuration transaction
 
@@ -472,8 +511,9 @@ from later chains cannot mutate snapshots already captured for earlier
 handlers. Worker threads perform queued handler delivery; filter callbacks
 remain on the producer thread for femtologging-configured handler filter
 chains. This does not make Python-backed handler workers Python-free: under the
-captured context, their own callbacks can invoke Python, including a wrapped
-stdlib handler's filters, formatter, and emission.
+captured context, their synchronous callbacks can invoke Python, including a
+wrapped stdlib handler's filters, formatter, and `emit()` invocation. Work
+deferred beyond those callbacks requires separate context propagation.
 
 Handler filter IDs are resolved during configuration using the same filter
 registry as logger filters. `ConfigBuilder` resolves builder filter IDs before

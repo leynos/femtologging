@@ -285,7 +285,7 @@ pub(crate) struct TimedRotationConfig {
 /// File handler variant configured for timed rotation.
 pub struct FemtoTimedRotatingFileHandler {
     /// Core file handler used for record delivery and lifecycle operations.
-    inner: FemtoFileHandler,
+    pub(super) inner: FemtoFileHandler,
     /// Schedule retained for Python getters and worker construction.
     schedule: TimedRotationSchedule,
     /// Retention count exposed by the Python-facing timed handler.

@@ -11,7 +11,7 @@ use super::{FemtoRotatingFileHandler as CoreRotatingFileHandler, RotationConfig,
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig},
+    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -34,6 +34,11 @@ impl PyRotatingFileHandler {
     /// Wrap a core rotating file handler for Python exposure.
     pub(crate) fn from_core(inner: CoreRotatingFileHandler) -> Self {
         Self { inner }
+    }
+
+    /// Transfers the nested file handler's worker shutdown state.
+    fn take_shutdown(&mut self) -> WorkerShutdown {
+        self.inner.inner.take_shutdown()
     }
 }
 
@@ -255,12 +260,18 @@ impl PyRotatingFileHandler {
     /// >>> handler.close()
     /// >>> handler.flush()
     /// False
+    ///
+    /// The GIL is released while waiting so a Python callable formatter can
+    /// run on the worker thread.
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.inner.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.inner.flush())
     }
 
     /// Close the handler and stop its file worker.
+    ///
+    /// The GIL is released while waiting so a Python callable formatter can
+    /// finish on the worker thread.
     ///
     /// # Examples
     ///
@@ -268,8 +279,12 @@ impl PyRotatingFileHandler {
     /// handler.py_close();
     /// ```
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.inner.close();
+    fn py_close(slf: Py<Self>, py: Python<'_>) {
+        let shutdown = {
+            let mut handler = slf.borrow_mut(py);
+            handler.take_shutdown()
+        };
+        py.detach(move || shutdown.wait());
     }
 }
 

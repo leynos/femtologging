@@ -1,15 +1,16 @@
 """Construction and record-dispatch tests for :class:`StdlibHandlerAdapter`.
 
 Covers validation of the wrapped handler, translation of femtologging
-records into stdlib ``LogRecord`` output, level mapping, and forwarding of
-exception and stack payloads. Attribute population, delegation, and export
-checks live in ``tests/test_stdlib_adapter_records.py``.
+records into stdlib ``LogRecord`` output, level mapping, producer
+``contextvars`` propagation, and forwarding of exception and stack payloads.
+The wrapped handler's own level threshold is covered in
+``tests/test_stdlib_adapter_levels.py``; attribute population, delegation,
+and export checks live in ``tests/test_stdlib_adapter_records.py``.
 """
 
 from __future__ import annotations
 
 import contextvars
-import dataclasses
 import io
 import logging
 import threading
@@ -20,22 +21,17 @@ import pytest
 
 from femtologging import FemtoLogger, StdlibHandlerAdapter
 from femtologging.adapter import TRACE_LEVEL_NUM
+from tests.stdlib_adapter_support import (
+    AdapterProbe,
+    HandlerSetup,
+    LevelCase,
+    LogRequest,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _REQUEST_ID = contextvars.ContextVar[str | None]("request_id", default=None)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _LevelCase:
-    """A single level-mapping test case."""
-
-    level: str
-    expected_level: str
-    message: str
-    logger_level: str | None = None
-    handler_level: int | None = None
 
 
 def _poll_until(predicate: cabc.Callable[[], bool], timeout: float) -> bool:
@@ -60,87 +56,6 @@ def _assert_eventually(
 ) -> None:
     """Assert that *predicate* succeeds before the monotonic deadline."""
     assert _wait_for(predicate, timeout), message
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _LogRequest:
-    """One log emission routed through the adapter under test."""
-
-    logger_name: str
-    level: str
-    message: str
-    logger_level: str | None = None
-    stack_info: bool = False
-    exc_info: bool = False
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _HandlerSetup:
-    """Optional stdlib handler configuration applied before logging."""
-
-    formatter: logging.Formatter | None = None
-    handler_level: int | None = None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class AdapterProbe:
-    """A StringIO sink, its stdlib handler, and the adapter wrapping it."""
-
-    stream: io.StringIO
-    handler: logging.StreamHandler[io.StringIO]
-    adapter: StdlibHandlerAdapter
-
-    def capture(self, request: _LogRequest, setup: _HandlerSetup | None = None) -> str:
-        """Log one message via the adapter and return the captured output.
-
-        Parameters
-        ----------
-        request
-            The record to emit and the logger threshold to apply.
-        setup
-            Optional formatter and handler-level configuration.
-
-        Returns
-        -------
-        str
-            Everything the wrapped handler wrote to the stream.
-
-        Examples
-        --------
-        >>> stream = io.StringIO()
-        >>> handler = logging.StreamHandler(stream)
-        >>> probe = AdapterProbe(stream, handler, StdlibHandlerAdapter(handler))
-        >>> probe.capture(_LogRequest("doctest.adapter", "INFO", "hi")).strip()
-        'hi'
-
-        """
-        setup = setup or _HandlerSetup()
-        if setup.formatter is not None:
-            self.handler.setFormatter(setup.formatter)
-        if setup.handler_level is not None:
-            self.handler.setLevel(setup.handler_level)
-
-        logger = FemtoLogger(request.logger_name)
-        if request.logger_level is not None:
-            logger.set_level(request.logger_level)
-        logger.add_handler(self.adapter)
-        logger.log(
-            request.level,
-            request.message,
-            stack_info=request.stack_info,
-            exc_info=request.exc_info,
-        )
-        del logger
-
-        return self.stream.getvalue()
-
-
-@pytest.fixture
-def probe() -> AdapterProbe:
-    """Return an adapter wrapping a StreamHandler over a fresh StringIO."""
-    stream = io.StringIO()
-    handler = logging.StreamHandler(stream)
-    return AdapterProbe(stream, handler, StdlibHandlerAdapter(handler))
 
 
 class TestStdlibHandlerAdapterConstruction:
@@ -189,8 +104,8 @@ class TestHandleRecordDispatch:
     def test_basic_message_emitted(probe: AdapterProbe) -> None:
         """A simple log message should appear in the wrapped handler's output."""
         output = probe.capture(
-            _LogRequest("myapp", "INFO", "hello world"),
-            _HandlerSetup(
+            LogRequest("myapp", "INFO", "hello world"),
+            HandlerSetup(
                 formatter=logging.Formatter("%(name)s %(levelname)s %(message)s")
             ),
         )
@@ -202,19 +117,19 @@ class TestHandleRecordDispatch:
     @pytest.mark.parametrize(
         "case",
         [
-            _LevelCase("ERROR", "ERROR", "failure"),
-            _LevelCase("DEBUG", "DEBUG", "trace detail", "DEBUG", logging.DEBUG),
-            _LevelCase("CRITICAL", "CRITICAL", "fatal"),
-            _LevelCase("WARN", "WARNING", "caution"),
-            _LevelCase("TRACE", "TRACE", "lowest", "TRACE", TRACE_LEVEL_NUM),
+            LevelCase("ERROR", "ERROR", "failure"),
+            LevelCase("DEBUG", "DEBUG", "trace detail", "DEBUG", logging.DEBUG),
+            LevelCase("CRITICAL", "CRITICAL", "fatal"),
+            LevelCase("WARN", "WARNING", "caution"),
+            LevelCase("TRACE", "TRACE", "lowest", "TRACE", TRACE_LEVEL_NUM),
         ],
         ids=["error", "debug", "critical", "warn", "trace"],
     )
-    def test_level_mapped(probe: AdapterProbe, case: _LevelCase) -> None:
+    def test_level_mapped(probe: AdapterProbe, case: LevelCase) -> None:
         """Each femtologging level should map to its stdlib equivalent."""
         output = probe.capture(
-            _LogRequest("app", case.level, case.message, case.logger_level),
-            _HandlerSetup(
+            LogRequest("app", case.level, case.message, case.logger_level),
+            HandlerSetup(
                 formatter=logging.Formatter("%(levelname)s %(message)s"),
                 handler_level=case.handler_level,
             ),
@@ -327,8 +242,8 @@ class TestExceptionForwarding:
             TestExceptionForwarding._raise_value_error()
         except ValueError:
             output = probe.capture(
-                _LogRequest("app", "ERROR", "caught", exc_info=True),
-                _HandlerSetup(formatter=logging.Formatter("%(message)s\n%(exc_text)s")),
+                LogRequest("app", "ERROR", "caught", exc_info=True),
+                HandlerSetup(formatter=logging.Formatter("%(message)s\n%(exc_text)s")),
             )
         assert "caught" in output, f"expected 'caught' in output: {output!r}"
         assert "ValueError" in output, f"expected 'ValueError' in output: {output!r}"
@@ -337,8 +252,8 @@ class TestExceptionForwarding:
     def test_stack_info_forwarded(probe: AdapterProbe) -> None:
         """Stack trace payload should appear as stack_info on the LogRecord."""
         output = probe.capture(
-            _LogRequest("app", "INFO", "trace", stack_info=True),
-            _HandlerSetup(formatter=logging.Formatter("%(message)s")),
+            LogRequest("app", "INFO", "trace", stack_info=True),
+            HandlerSetup(formatter=logging.Formatter("%(message)s")),
         )
         assert "trace" in output, f"expected 'trace' in output: {output!r}"
         # stdlib Formatter appends stack_info after the message
