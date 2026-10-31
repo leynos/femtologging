@@ -198,12 +198,17 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     The fixture holds the repository's Cargo configuration and the extension's
     ``[profile.dev]`` table, and builds under the repository's pinned channel
     with every wrapper and profile override removed from the environment, so
-    only the repository's own settings and the override under test apply.
+    only the repository's own settings and the override under test apply. The
+    build also gets a private ``CARGO_HOME``: a host ``config.toml`` can name a
+    ``build.rustc-wrapper`` that Cargo would re-apply after the variable was
+    removed, and the managed wrapper refuses the incremental override the test
+    is asked to observe.
 
     Parameters
     ----------
     tmp_path
-        Scratch directory for the fixture crate and its target directory.
+        Scratch directory for the fixture crate, the private ``CARGO_HOME``
+        and the target directory.
     extra_env
         Environment variables to add, such as a documented override.
 
@@ -228,9 +233,14 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     # environment variables above are removed. An empty value overrides that
     # config key, so the fixture observes the repository's own settings; a host
     # wrapper can otherwise hold this build in a shared admission queue or
-    # reject the `CARGO_INCREMENTAL` override under test.
+    # reject the `CARGO_INCREMENTAL` override under test. The private
+    # `CARGO_HOME` removes that host config as a source altogether, so Cargo
+    # has no wrapper to re-apply after the variables were removed.
     env["CARGO_BUILD_RUSTC_WRAPPER"] = ""
     env["CARGO_BUILD_RUSTDOC"] = ""
+    cargo_home = tmp_path / "cargo-home"
+    cargo_home.mkdir()
+    env["CARGO_HOME"] = str(cargo_home)
     env["CARGO_TARGET_DIR"] = str(tmp_path / "target")
     env.update(extra_env or {})
     cargo = shutil.which("cargo")
