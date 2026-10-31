@@ -54,6 +54,10 @@ impl FemtoHandlerTrait for SignallingCollectingHandler {
         Ok(())
     }
 
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

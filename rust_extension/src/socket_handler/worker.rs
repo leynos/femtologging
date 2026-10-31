@@ -1,15 +1,14 @@
 //! Worker thread driving socket I/O.
 
-use std::{
-    io, thread,
-    time::{Duration, Instant},
-};
+use std::{io, thread, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
+    handler::{HandlerError, remaining},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
 };
 
 use super::{
@@ -29,7 +28,7 @@ pub enum SocketCommand {
     /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     Record(FemtoLogRecord),
     /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
-    Flush(Sender<()>),
+    Flush(Sender<()>, Option<u64>),
     /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
     Shutdown(Sender<()>),
 }
@@ -158,11 +157,14 @@ impl Worker {
     }
 
     /// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
+    fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
         let success = self.flush_connection();
         let _ = ack.send(());
         if !success {
             warn!("FemtoSocketHandler flush requested without active connection");
+        }
+        if let Some(count) = pending_drops {
+            warn!("FemtoSocketHandler dropped {count} records in the last interval");
         }
     }
 
@@ -195,7 +197,9 @@ impl Worker {
         loop {
             match rx.try_recv() {
                 Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(SocketCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(SocketCommand::Shutdown(ack)) => {
                     let _ = ack.send(());
                 }
@@ -209,10 +213,12 @@ impl Worker {
         loop {
             match rx.recv() {
                 Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(SocketCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(SocketCommand::Shutdown(ack)) => {
                     self.drain_pending(&rx);
-                    self.handle_flush_command(ack);
+                    self.handle_flush_command(ack, None);
                     break;
                 }
                 Err(_) => {
@@ -264,14 +270,44 @@ pub fn enqueue_record(
     }
 }
 
-/// Supports socket delivery while keeping connection, retry, and byte-serialisation state on the worker side of the queue.
-pub fn flush_queue(tx: &Sender<SocketCommand>, timeout: Duration) -> bool {
+/// Why a flush command could not be confirmed by the socket worker.
+pub enum FlushFailure {
+    /// The bounded command queue did not accept the flush before its deadline.
+    Enqueue,
+    /// The worker accepted the command but did not acknowledge it in time.
+    Acknowledgement,
+}
+
+/// Ask the worker to drain queued records while keeping connection state on
+/// that worker thread.
+///
+/// Both waits come out of the one deadline: charging the timeout to the send
+/// and again to the receive would let a single flush spend it twice, which is
+/// the overrun the flush barrier exists to prevent. The worker emits
+/// `pending_drops` only after it sends the acknowledgement.
+///
+/// # Errors
+///
+/// Returns [`FlushFailure::Enqueue`] if the bounded queue rejects the command,
+/// or [`FlushFailure::Acknowledgement`] if the worker does not acknowledge it
+/// by `deadline`.
+pub fn flush_queue(
+    tx: &Sender<SocketCommand>,
+    deadline: Instant,
+    pending_drops: Option<u64>,
+) -> Result<(), FlushFailure> {
     let (ack_tx, ack_rx) = bounded(1);
     if tx
-        .send_timeout(SocketCommand::Flush(ack_tx), timeout)
+        .send_timeout(
+            SocketCommand::Flush(ack_tx, pending_drops),
+            remaining(deadline, Instant::now()),
+        )
         .is_err()
     {
-        return false;
+        return Err(FlushFailure::Enqueue);
     }
-    ack_rx.recv_timeout(timeout).is_ok()
+    ack_rx
+        .recv_timeout(remaining(deadline, Instant::now()))
+        .map(|_| ())
+        .map_err(|_| FlushFailure::Acknowledgement)
 }

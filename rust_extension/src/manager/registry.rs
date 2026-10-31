@@ -342,21 +342,28 @@ pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
     }
 }
 
-/// Flush every registered logger for the Rust `log` bridge; ignore failures.
+/// Flush every registered logger for the Rust `log` bridge.
+///
+/// Returns whether every detached logger confirmed its handler barrier. Each
+/// logger gets its own two-second deadline; the sweep does not share one
+/// aggregate deadline. The `log::Log::flush()` adapter keeps its unit-return
+/// contract and therefore discards this confirmation result.
 /// Snapshot under lock, then flush outside it: a GIL-holding `get_logger`
 /// writer could otherwise starve the queued handler a flush barrier awaits.
 /// `reset_manager` also drops loggers outside the lock.
 #[cfg(feature = "log-compat")]
-pub(crate) fn flush_all_handlers(py: Python<'_>) {
+pub(crate) fn flush_all_handlers(py: Python<'_>) -> bool {
     let loggers: Vec<Py<FemtoLogger>> = MANAGER
         .read()
         .loggers
         .values()
         .map(|logger| logger.clone_ref(py))
         .collect();
+    let mut all_confirmed = true;
     for logger in loggers {
-        let _ = logger.borrow(py).flush_handlers();
+        all_confirmed &= logger.borrow(py).flush_handlers_detached(py);
     }
+    all_confirmed
 }
 
 /// Drop every logger and all attached runtime state.

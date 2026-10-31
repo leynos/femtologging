@@ -5,6 +5,7 @@
 //! API.
 
 use std::any::Any;
+use std::time::Instant;
 
 use super::{FemtoFileHandler, FileCommand, OverflowPolicy};
 use crate::{
@@ -84,6 +85,10 @@ impl FemtoHandlerTrait for FemtoFileHandler {
 
     fn flush(&self) -> bool {
         FemtoFileHandler::flush(self)
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        FemtoFileHandler::flush_by(self, deadline)
     }
 
     fn as_any(&self) -> &dyn Any {

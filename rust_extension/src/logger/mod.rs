@@ -1,11 +1,5 @@
-//! Core logger implementation for the FemtoLogger system.
-//!
-//! This module provides the [`FemtoLogger`] struct, which handles log message
-//! filtering, formatting, and asynchronous output through the process-wide
-//! dispatch pool. A logger uses one shard of that pool rather than owning a
-//! thread, so the threads a process spends on logging follow the machine rather
-//! than the number of loggers it has created. If a logger crosses a `fork`, it
-//! rebinds to the child process's pool before its next dispatch.
+//! Core [`FemtoLogger`] implementation for filtering and asynchronous dispatch
+//! through the process-wide shard pool, including rebinding after `fork`.
 #![allow(
     clippy::too_many_arguments,
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
@@ -15,6 +9,10 @@
 mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
+mod flush;
+mod flush_clock;
+mod flush_diagnostics;
+mod flush_diagnostics_api;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
@@ -41,8 +39,6 @@ use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-
 pub use dispatcher::DispatcherError;
 #[cfg(all(
     test,
@@ -51,12 +47,17 @@ pub use dispatcher::DispatcherError;
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
+use flush_diagnostics::FlushDiagnostics;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use py_handler::{PyHandler, validate_handler};
-#[cfg(all(feature = "python", test))]
+#[cfg(all(feature = "python", test, not(loom)))]
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
+
+/// Maximum time one flush barrier receives for its Rust-side work, in milliseconds.
+const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -80,6 +81,8 @@ pub struct FemtoLogger {
     dropped_records: AtomicU64,
     /// Number of records dropped because Rust context payload validation failed.
     context_dropped_records: AtomicU64,
+    /// Fixed-cardinality accounting for flush barrier outcomes and durations.
+    flush_diagnostics: FlushDiagnostics,
     /// Rate limiter for warnings about refused dispatch records.
     drop_warner: RateLimitedWarner,
     /// Captures Python context for queued handlers when they need it.
@@ -225,26 +228,23 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Return how many records were dropped because Python context capture failed.
-    #[cfg(feature = "python")]
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_context_capture_failures(&self) -> u64 {
-        self.context_capture_failures.load(Ordering::Relaxed)
-    }
-
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// First waits up to 2 seconds for the logger's dispatch shard to drain
-    /// the records already queued for it, then calls ``flush()`` on every
-    /// attached handler (each handler applies its own timeout).
+    /// Resolves dispatch state, queues a marker for a non-empty handler list,
+    /// then snapshots handlers before allowing the worker to run callbacks.
+    /// With no handlers, it checks only this logger's in-flight work. One
+    /// absolute 2 second deadline covers all stages; built-ins retain shorter
+    /// timeouts. Python calls release the GIL.
+    /// Legacy synchronous handlers fail closed; deadline-aware overrides must
+    /// honour the deadline because code cannot be preempted. Violations may
+    /// keep the shared worker busy after ``False`` but cannot hold this caller.
+    /// Changes completed before the handler snapshot are reflected in this
+    /// barrier; removals after it do not cancel the queued flush.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the dispatcher drains the queue in time and every
-    ///     handler flush succeeds. ``False`` when the queued work cannot be
-    ///     drained (the shard is gone or the wait times out) or any handler
-    ///     flush returns ``False``.
+    ///     ``True`` on success; ``False`` when completion is unconfirmed or a handler fails.
     ///
     /// Examples
     /// --------
@@ -252,7 +252,7 @@ impl FemtoLogger {
     /// True
     #[pyo3(name = "flush_handlers", text_signature = "(self)")]
     fn py_flush_handlers(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush_handlers())
+        self.flush_handlers_detached(py)
     }
 
     /// Return handler identities so tests can detect replacement or reordering.
@@ -268,19 +268,32 @@ impl FemtoLogger {
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
+    /// One deadline spans dispatch resolution, marker, snapshot, acknowledgement
+    /// and handler flushes; built-ins keep shorter timeouts. Legacy handlers
+    /// fail closed; overrides must honour the deadline. Python calls release
+    /// the GIL, native callers do not. Failure returns `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use _femtologging_rs::FemtoLogger;
+    ///
+    /// let logger = FemtoLogger::new("example".into()).expect("logger starts");
+    /// let _ = logger.flush_handlers();
+    /// ```
     pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
+        self.flush_handlers_blocking().finish(
+            &self.flush_diagnostics,
+            flush::FlushFailureStage::CallerReturnDeadlineExceeded,
+        )
     }
 
-    /// Attach a handler to this logger.
+    /// Attach a handler.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] if a Python-backed
-    /// handler does not provide contextual dispatch support.
+    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] when a
+    /// Python-backed handler lacks contextual dispatch support.
     pub fn add_handler(
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,
@@ -380,5 +393,5 @@ impl Drop for FemtoLogger {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod test_modules;

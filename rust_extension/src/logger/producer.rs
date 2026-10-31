@@ -282,11 +282,6 @@ impl FemtoLogger {
         self.context_snapshot_provider.capture().map(Some)
     }
 
-    /// Drain this logger's queued records, then flush its configured handlers.
-    pub(super) fn flush_handlers_blocking(&self) -> bool {
-        self.wait_for_dispatch_to_drain() && self.flush_configured_handlers()
-    }
-
     /// Exercise the production handler-filter chain without starting a worker.
     #[cfg(all(test, not(loom)))]
     pub(super) fn filter_handlers_for_test(
@@ -294,57 +289,6 @@ impl FemtoLogger {
         handlers: Vec<HandlerAttachment>,
     ) -> Vec<std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>> {
         handler_filters::filter_handlers(record, handlers)
-    }
-
-    /// Wait for the logger's shard to finish the records queued ahead.
-    ///
-    /// The barrier travels the shard's own queue, so it cannot overtake a
-    /// record this logger logged first, and a shard that is gone or too slow
-    /// answers `false` rather than waiting indefinitely.
-    ///
-    /// A logger with nothing in flight has nothing of its own to drain, so it
-    /// answers immediately. The budget releases a record's charge only after
-    /// its handlers have run, so a count of zero means every record this
-    /// logger queued has been handled. Queuing a barrier anyway would cost more
-    /// than the round trip: the `log` bridge's `flush_all_handlers` sweeps
-    /// every registered logger, and a barrier takes a queue slot but no
-    /// permit, so barriers can crowd out the records they were meant to drain
-    /// and make `admit` refuse work the shard had room for. `Drop` already
-    /// skips its wait this way.
-    ///
-    /// The wait is taken with the interpreter detached. `flush_handlers` is a
-    /// Python method, so its caller holds the GIL, and a queued Python handler
-    /// needs that same GIL to finish — holding it here would make the wait time
-    /// out against a handler that could not run. Detaching releases the GIL for
-    /// the duration, and the wait is taken directly when there is no
-    /// interpreter to detach from, which is also when no Python handler can be
-    /// mid-call.
-    fn wait_for_dispatch_to_drain(&self) -> bool {
-        #[cfg(not(loom))]
-        let (shard, budget) = match self.dispatch_state() {
-            Ok(dispatch) => dispatch,
-            Err(_) => return false,
-        };
-        #[cfg(not(loom))]
-        if budget.in_flight() == 0 {
-            return true;
-        }
-        #[cfg(not(loom))]
-        if let Some(drained) = pyo3::Python::try_attach(|py| py.detach(|| shard.wait_for_drain())) {
-            return drained;
-        }
-        #[cfg(not(loom))]
-        return shard.wait_for_drain();
-        #[cfg(loom)]
-        self.shard.wait_for_drain()
-    }
-
-    /// Flush every configured handler and report whether all succeeded.
-    fn flush_configured_handlers(&self) -> bool {
-        self.handlers
-            .read()
-            .iter()
-            .all(|attachment| attachment.handler.flush())
     }
 
     /// Dispatch a record to the logger's handlers through its dispatch shard.

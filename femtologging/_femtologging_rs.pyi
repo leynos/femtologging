@@ -99,12 +99,59 @@ class FemtoLogger:
     def get_context_dropped(self) -> int:
         """Return records dropped because Rust context validation failed."""
         ...
+    def get_flush_diagnostics(self) -> dict[str, int]:
+        """Return this logger's fixed-cardinality flush barrier counters.
+
+        The result always has the same attempt, confirmation, failure-stage,
+        and elapsed-time keys. Values are best-effort snapshots read from
+        relaxed atomics, so concurrent updates may be observed at different
+        instants. Keys contain no logger names, paths, messages, or payloads.
+        Applications can poll these values from a metrics adapter; exporting
+        them to a shared backend remains the application's responsibility.
+        """
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Waits up to 2 s for the worker to drain, then calls
-        ``flush()`` on every handler.  Returns ``False`` when the
-        drain times out or any handler flush fails.
+        Resolves dispatch state and checks the handler list. With handlers, it
+        queues a marker behind accepted records and snapshots the handlers
+        before allowing the worker to run their callbacks. With no handlers, it
+        checks only this logger's in-flight work. One absolute 2 s deadline
+        covers dispatch resolution, marker enqueue, the handler-list lock,
+        worker acknowledgement, and all handler flushes.
+        Built-in handlers retain their shorter configured timeouts. The
+        interpreter is released across the barrier so a worker blocked on a
+        Python handler can make progress. PyO3 reacquires it before returning
+        to Python. CPython controls that handoff, so interpreter contention
+        can delay the Python return beyond the Rust barrier deadline. If the
+        handoff completes late, the result is ``False`` even though the Python
+        call cannot return until CPython makes the interpreter available.
+
+        A custom Rust handler must override ``flush_until()`` and honour its
+        deadline. The default returns ``False`` without calling legacy
+        synchronous ``flush()``, because arbitrary synchronous code cannot be
+        preempted. Flush callbacks run on the worker without the handler-list
+        lock. A removed handler stays alive in the queued snapshot until the
+        worker releases it; its destructor does not run on the flush caller.
+        Later additions participate in the next call. In normal builds, logger
+        drop waits only for its own in-flight records, with the existing
+        bounded drain timeout; it does not join the process-wide worker. A
+        callback that violates its deadline can keep that worker occupied and
+        retain the handler after this call returns ``False``. Loom models join
+        their logger-owned worker.
+        Concurrent flush calls use independent deadlines and the existing
+        bounded queue. The barrier starts no helper threads or tasks, so
+        repeated failures do not leave detached work. Shutdown that closes
+        the queue before acknowledgement returns ``False``.
+        Handler changes completed before the snapshot are reflected in this
+        barrier. A handler removed after the snapshot remains alive until the
+        worker releases it; additions after the snapshot participate in the
+        next call.
+
+        Returns ``False`` when the snapshot, marker enqueue, acknowledgement,
+        or any handler flush is not confirmed by the shared deadline; when
+        the worker has exited; or when a handler reports failure or does not
+        implement the deadline-aware contract.
 
         """
         ...

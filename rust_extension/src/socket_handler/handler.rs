@@ -1,6 +1,9 @@
 //! Public handler type exported by the crate.
 
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -8,7 +11,7 @@ use pyo3::prelude::*;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, HandlerError, capped_deadline, deadline_after},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
 };
@@ -16,7 +19,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
-    worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
+    worker::{FlushFailure, SocketCommand, enqueue_record, flush_queue, spawn_worker},
 };
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -53,7 +56,33 @@ impl FemtoSocketHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(deadline)
+    }
+
+    /// Flush any pending log records, waiting no longer than `deadline`.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare [`FemtoSocketHandler::flush`] keeps the bound it documents and a
+    /// barrier flush cannot outlive the deadline it was given.
+    fn flush_by(&self, deadline: Instant) -> bool {
+        let Some(tx) = self.sender() else {
+            return false;
+        };
+        let pending_drops = self.warner.take_due();
+        let handler_deadline = capped_deadline(deadline, Instant::now(), self.flush_timeout);
+        match flush_queue(&tx, handler_deadline, pending_drops) {
+            Ok(()) => true,
+            Err(FlushFailure::Enqueue) => {
+                if let Some(count) = pending_drops {
+                    self.warner.restore_drops(count);
+                }
+                false
+            }
+            Err(FlushFailure::Acknowledgement) => false,
+        }
     }
 
     /// Close the handler and wait for the worker to exit.
@@ -152,13 +181,11 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
     }
 
     fn flush(&self) -> bool {
-        let Some(tx) = self.sender() else {
-            return false;
-        };
-        self.warner.flush(|count| {
-            log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
-        });
-        flush_queue(&tx, self.flush_timeout)
+        FemtoSocketHandler::flush(self)
+    }
+
+    fn flush_until(&self, deadline: Instant) -> bool {
+        self.flush_by(deadline)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
