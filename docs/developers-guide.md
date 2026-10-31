@@ -179,7 +179,10 @@ An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
 linker itself:
 
 - CI's `setup-rust` exports `RUSTFLAGS=-D warnings`, so those builds keep the
-  platform linker and do not install `mold`.
+  platform linker. The step still installs `mold` (`install-mold: 'true'`),
+  because the compile-time UI tests (trybuild) build a nested crate under
+  `target/` that finds `.cargo/config.toml` without that `RUSTFLAGS`, so the
+  Linux `mold` default applies to it.
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.

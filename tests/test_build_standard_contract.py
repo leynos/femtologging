@@ -267,3 +267,15 @@ def test_the_documented_incremental_override_turns_incremental_back_on(
     """``CARGO_INCREMENTAL=1`` restores incremental compilation."""
     command = _compile_fixture(tmp_path, {"CARGO_INCREMENTAL": "1"})
     assert "-C incremental=" in command, f"the override must restore it: {command}"
+
+
+def test_the_ci_build_installs_mold_for_the_nested_trybuild_crates() -> None:
+    """The pull-request build installs mold, which trybuild's nested crate needs."""
+    document = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
+    )
+    steps = document["jobs"]["build-test"]["steps"]
+    setup = next(step for step in steps if "setup-rust" in str(step.get("uses", "")))
+    assert str(setup.get("with", {}).get("install-mold")) == "true", (
+        "ci.yml must install mold: trybuild's nested crate finds .cargo/config.toml"
+    )
