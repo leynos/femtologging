@@ -465,6 +465,20 @@ microseconds. Record payloads and context values are never included. They target
 `femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
 from recursively logging its own instrumentation.
 
+### Python-facing `flush()` and `close()` waits
+
+The stream, file, rotating-file, and timed-rotating-file handlers run their I/O
+on worker threads. Their Python bindings release the GIL with
+`Python::detach()` before waiting for that worker in `flush()` and `close()`,
+so a Python callable formatter queued on the worker can run to completion
+instead of deadlocking against a producer that still holds the GIL. `close()`
+also releases the Python class borrow before the wait: it takes the shutdown
+state and owned worker handles while the borrow is held, then detaches and
+waits outside the borrow. A Python callback that re-enters the handler during
+shutdown therefore observes the closed state instead of blocking on a borrow
+held by the waiter. `tests/test_handler_close_reentry.py` is the regression
+test for that path.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` applies a complete configuration through one
