@@ -197,8 +197,9 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
 
     The fixture holds the repository's Cargo configuration and the extension's
     ``[profile.dev]`` table, and builds under the repository's pinned channel
-    with every wrapper and profile override removed from the environment, so
-    only the repository's own settings and the override under test apply.
+    with every wrapper and profile override removed from the environment and
+    from any host-level Cargo configuration, so only the repository's own
+    settings and the override under test apply.
 
     Parameters
     ----------
@@ -228,10 +229,28 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     env.update(extra_env or {})
     cargo = shutil.which("cargo")
     assert cargo is not None, "cargo must be on PATH"
+    # A host may configure a compiler wrapper in its own Cargo configuration,
+    # which removing the environment variables cannot undo; an admission
+    # wrapper would then queue this one-file build behind unrelated work and
+    # the fixture would measure the host rather than the repository. An empty
+    # command-line value disables the configured wrapper, and command-line
+    # configuration outranks every file.
     # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is
     # fixed here and the executable is resolved above
     result = subprocess.run(
-        [cargo, f"+{channel}", "build", "--color", "never", "--offline", "-v"],
+        [
+            cargo,
+            f"+{channel}",
+            "build",
+            "--config",
+            'build.rustc-wrapper=""',
+            "--config",
+            'build.rustc-workspace-wrapper=""',
+            "--color",
+            "never",
+            "--offline",
+            "-v",
+        ],
         cwd=crate,
         env=env,
         capture_output=True,
