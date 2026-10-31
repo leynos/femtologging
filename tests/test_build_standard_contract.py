@@ -201,6 +201,13 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     from any host-level Cargo configuration, so only the repository's own
     settings and the override under test apply.
 
+    A user-level ``$CARGO_HOME/config.toml`` can install a ``rustc-wrapper``
+    and ``rustdoc`` that no environment variable overrides; this repository's
+    own build hosts route every rustc invocation through a wrapper that way.
+    ``CARGO_HOME`` is therefore pointed at an empty directory, so the fixture
+    sees only the repository's ``.cargo/config.toml``. The crate has no
+    dependencies, so the relocated home needs no registry cache.
+
     Parameters
     ----------
     tmp_path
@@ -233,6 +240,10 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     env["CARGO_BUILD_RUSTC_WRAPPER"] = ""
     env["CARGO_BUILD_RUSTDOC"] = ""
     env["CARGO_TARGET_DIR"] = str(tmp_path / "target")
+    # An empty home hides any user-level config that would reinstall a wrapper.
+    cargo_home = tmp_path / "cargo-home"
+    cargo_home.mkdir()
+    env["CARGO_HOME"] = str(cargo_home)
     env.update(extra_env or {})
     cargo = shutil.which("cargo")
     assert cargo is not None, "cargo must be on PATH"
