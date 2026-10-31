@@ -264,3 +264,27 @@ fn omitted_logger_that_was_already_disabled_is_not_disturbed(
         );
     });
 }
+
+/// An accepted commit registers the unconfigured ancestors of its loggers.
+#[rstest]
+#[serial]
+fn accepted_configuration_registers_missing_ancestors(
+    _gil_and_clean_manager: (),
+    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
+) {
+    Python::attach(|_py| {
+        let (builder, _root) = base_logger_builder;
+        builder
+            .with_logger("a.b.c", LoggerConfigBuilder::new())
+            .build_and_init()
+            .expect("accepted configuration should commit");
+
+        let registered = manager::registered_logger_names_for_test();
+        for expected in ["a", "a.b", "a.b.c"] {
+            assert!(
+                registered.iter().any(|name| name == expected),
+                "{expected} should be registered by the commit, got {registered:?}",
+            );
+        }
+    });
+}

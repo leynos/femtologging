@@ -36,7 +36,7 @@ mod capacity;
 mod config;
 
 #[cfg(feature = "python")]
-pub(crate) use config::stage_loggers;
+pub(crate) use config::{register_missing_ancestors, stage_loggers};
 
 #[cfg(any(feature = "test-util", doc, test))]
 pub use capacity::MAX_LOGGERS;

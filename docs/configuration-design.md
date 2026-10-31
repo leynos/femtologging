@@ -965,8 +965,17 @@ None of these steps mutate live logger state, so a rejected configuration
 leaves every pre-existing logger untouched.
 
 `manager::commit_configuration` then performs the entire transition under one
-manager write lock, and returns no `Result` because every fallible check has
-already run. It inserts staged loggers, applies each resolved plan with
+manager write lock. Under that lock it first rechecks registry capacity for
+every configured name together with its missing ancestors, and registers those
+ancestors, before touching any live logger. Both steps are fallible, but they
+run before the first mutation, so a refusal leaves every logger exactly as it
+was. The recheck is what makes the bound authoritative: another caller can
+consume registry room between preparation and commit, and only a check made
+under the same lock as the insertions can see that. Registering the ancestors
+in the same commit means a later propagation lookup cannot find an incomplete
+chain.
+
+The commit then inserts staged loggers, applies each resolved plan with
 whole-vector replacement, sets the supplied scalars, and publishes the runtime
 registries and attachment metadata. Handler and filter vectors displaced by the
 commit are returned to the caller rather than dropped in place: a handler's
@@ -1077,10 +1086,10 @@ This differs from the standard library in three ways:
 #### Transaction limits
 
 Two side effects sit outside the atomic guarantee. Records already queued or
-snapshotted onto a logger before the commit are not retracted. And handler
-construction, which happens during preparation, can open a file or socket
-before a later preparation failure rejects the configuration; only live logger
-state is rolled back, not such construction side effects.
+snapshotted onto a logger before the commit are not retracted. Handler
+construction happens during preparation, so it can open a file or socket before
+a later preparation failure rejects the configuration. A rejection restores
+only live logger state; it does not undo the effects of handler construction.
 
 ### 3.2. Runtime mutation control plane
 

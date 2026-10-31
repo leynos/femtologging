@@ -331,8 +331,8 @@ def test_dict_config_omitted_logger_cannot_reach_root(tmp_path: Path) -> None:
     assert omitted.log("ERROR", "must not escape") is None, (
         "a disabled logger must reject the record instead of dispatching it"
     )
-    omitted.flush_handlers()
-    get_logger("root").flush_handlers()
+    assert omitted.flush_handlers(), "the omitted logger should flush its (empty) queue"
+    assert get_logger("root").flush_handlers(), "the root handler should flush"
     contents = path.read_text() if path.exists() else ""
     assert "must not escape" not in contents, (
         "an omitted logger must not reach the dictConfig root handler"
