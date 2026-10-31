@@ -12,10 +12,7 @@
 mod max_level;
 
 use std::borrow::Cow;
-use std::sync::{
-    Arc, LazyLock, OnceLock,
-    atomic::AtomicU8,
-};
+use std::sync::{Arc, LazyLock, OnceLock, atomic::AtomicU8};
 
 use log::{Metadata, Record};
 use pyo3::prelude::*;
