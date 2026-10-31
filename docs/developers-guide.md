@@ -228,6 +228,22 @@ linker itself:
   is the isolation boundary: it takes none of the development standard (no
   `mold` flag and no inherited `RUSTFLAGS`).
 
+### Locked dependency fetch before tests
+
+A test that starts its own Cargo build (the trybuild compile-time UI tests, for
+one) must not resolve dependencies while it holds the shared package-cache
+lock, or a cold cache stalls every other Cargo process on the host. Every test
+entry point therefore fetches first, and `cargo fetch --locked` must succeed
+before any test starts: the `test` recipe of the Makefile begins with
+`cargo fetch --locked --manifest-path $(RUST_MANIFEST)` on its own line (so a
+failed fetch stops the recipe), and the CI and heavy-test workflows each run an
+unconditional `Fetch locked dependencies` step with
+`--manifest-path rust_extension/Cargo.toml` before their first test step. Keep
+a new test-running step after that step. `tests/test_locked_fetch_contract.py`
+parses the Makefile and both workflows and fails on a missing, unlocked,
+mis-pointed, skippable, non-failing or late fetch (Concordat's
+`nested-cargo-offline-tests` rule, NC-008).
+
 ### Development build footprint
 
 The development profile sets `incremental = false` and `debug = 0` in
