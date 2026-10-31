@@ -160,6 +160,59 @@ For `rust_extension/tests/compile_tests.rs`, use
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
 
+## Rust build standard
+
+Development, test, lint and typecheck builds link with the `mold` linker on
+Linux. This is a default in `.cargo/config.toml`, which Cargo discovers from
+the repository root or from `rust_extension/`, so a bare `cargo build` and
+`maturin develop` get it. The default compiler driver must be GCC 12.1 or
+newer, or clang: older GCC drivers reject `-fuse-ld=mold` even when `mold` is
+installed, and a host with one sets `-Clinker=clang`. `mold` ships for Linux
+only, so the flag lives in a Linux-only target table, and macOS and Windows
+keep their platform linker. On Linux, install `mold` before building: the
+configuration names it, so a build without it fails at link time. The pin is
+the stable `1.99.1`, so the nightly-only parallel frontend flag (`-Zthreads=8`)
+is not used.
+
+An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
+`[build] rustflags` and each build that assigns `RUSTFLAGS` decides about the
+linker itself:
+
+- CI's `setup-rust` exports `RUSTFLAGS=-D warnings`, so those builds keep the
+  platform linker and do not install `mold`.
+- The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
+  (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
+  `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
+- Release wheel builds run in manylinux containers that carry no `mold`, so they
+  must assign an empty `RUSTFLAGS`, which displaces the Linux table.
+- `make lint-rust` runs Whitaker as
+  `RUSTFLAGS="-D warnings" … $(WHITAKER) --all --manifest-path …`. Whitaker
+  runs under the toolchain its installer manages, so that literal `RUSTFLAGS`
+  is the isolation boundary: it takes none of the development standard (no
+  `mold` flag and no inherited `RUSTFLAGS`).
+
+### Development build footprint
+
+The development profile sets `incremental = false` and `debug = 0` in
+`rust_extension/Cargo.toml`, so a dev build keeps no incremental state or debug
+information. To debug, set `CARGO_PROFILE_DEV_DEBUG=true`; to rebuild
+incrementally, set `CARGO_INCREMENTAL=1` (unset any `sccache` wrapper first,
+which refuses incremental builds). The pin is stable, so the native Cargo
+metadata key (`[unstable] embed-metadata`) does not apply and the configuration
+must not carry it.
+
+`tests/test_build_standard_contract.py` holds all of this: the Linux-only
+`mold` table, the profile settings, the Loom steps and the Whitaker boundary,
+and it proves the defaults and both overrides at the Cargo boundary by building
+a one-file crate under the repository's own configuration.
+
+### Cranelift
+
+Exception: Cranelift is not the development-profile backend. Cranelift requires
+a nightly toolchain, and this repository pins the stable `1.99.1` (recorded
+2026-10-31, with no measurement taken on it). Revisit if the repository moves
+to a nightly pin.
+
 ## Type checking and heavy tests
 
 `make typecheck` depends on `make build`, which creates `./.venv`, installs the
