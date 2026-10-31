@@ -28,7 +28,7 @@ FETCH_STEP: typ.Final[str] = "Fetch locked dependencies"
 TEST_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
     r"\b(cargo\s+test|make\s+(test|lint))\b"
 )
-Step = dict[str, typ.Any]
+type Step = dict[str, typ.Any]
 
 
 def _recipe(makefile: str, target: str) -> list[str]:
@@ -95,6 +95,49 @@ def _makefile_problems(makefile: str) -> list[str]:
     return problems
 
 
+def _step_problems(step: Step) -> list[str]:
+    """Return the complaints about the fetch step itself.
+
+    Parameters
+    ----------
+    step
+        The fetch step.
+
+    Returns
+    -------
+    list[str]
+        One complaint per way the step is wrong or skippable.
+    """
+    problems = []
+    if str(step.get("run", "")).strip() != WORKFLOW_FETCH:
+        problems.append(f"the fetch step must run exactly `{WORKFLOW_FETCH}`")
+    if "if" in step or step.get("continue-on-error"):
+        problems.append("the fetch step must run on every run and fail the job")
+    return problems
+
+
+def _early_test_steps(steps: list[Step], fetch_at: int) -> list[str]:
+    """Return the names of the steps before the fetch that run tests.
+
+    Parameters
+    ----------
+    steps
+        The job's steps in order.
+    fetch_at
+        The index of the fetch step.
+
+    Returns
+    -------
+    list[str]
+        The offending step names.
+    """
+    return [
+        str(other.get("name"))
+        for other in steps[:fetch_at]
+        if TEST_COMMAND.search(str(other.get("run", "")))
+    ]
+
+
 def _workflow_problems(steps: list[Step]) -> list[str]:
     """Return the complaints about a job's fetch step.
 
@@ -113,16 +156,10 @@ def _workflow_problems(steps: list[Step]) -> list[str]:
     )
     if fetch_at is None:
         return [f"the job has no `{FETCH_STEP}` step"]
-    step = steps[fetch_at]
-    problems = []
-    if str(step.get("run", "")).strip() != WORKFLOW_FETCH:
-        problems.append(f"the fetch step must run exactly `{WORKFLOW_FETCH}`")
-    if "if" in step or step.get("continue-on-error"):
-        problems.append("the fetch step must run on every run and fail the job")
-    for at, other in enumerate(steps):
-        if at < fetch_at and TEST_COMMAND.search(str(other.get("run", ""))):
-            problems.append(f"step {other.get('name')!r} runs tests before the fetch")
-    return problems
+    early = _early_test_steps(steps, fetch_at)
+    return _step_problems(steps[fetch_at]) + [
+        f"step {name!r} runs tests before the fetch" for name in early
+    ]
 
 
 def _job_steps(workflow: str, job: str) -> list[Step]:
@@ -173,7 +210,7 @@ def test_the_workflows_fetch_before_their_test_steps(workflow: str, job: str) ->
 )
 def test_a_makefile_without_the_fetch_in_place_is_reported(mutated: str) -> None:
     """A missing, unlocked, mis-pointed or late fetch is reported."""
-    assert _makefile_problems(mutated)
+    assert _makefile_problems(mutated), "the mutated Makefile must be reported"
 
 
 @pytest.mark.parametrize(
@@ -200,7 +237,7 @@ def test_a_makefile_without_the_fetch_in_place_is_reported(mutated: str) -> None
 )
 def test_a_job_without_the_fetch_in_place_is_reported(steps: list[Step]) -> None:
     """Report a missing, unlocked, mis-pointed, skippable, non-failing or late fetch."""
-    assert _workflow_problems(steps)
+    assert _workflow_problems(steps), "the mutated job must be reported"
 
 
 def test_a_job_with_the_fetch_first_is_accepted() -> None:
@@ -209,4 +246,4 @@ def test_a_job_with_the_fetch_first_is_accepted() -> None:
         {"name": FETCH_STEP, "run": WORKFLOW_FETCH},
         {"name": "Test", "run": "cargo test"},
     ]
-    assert not _workflow_problems(steps)
+    assert not _workflow_problems(steps), "the intended shape must be accepted"
