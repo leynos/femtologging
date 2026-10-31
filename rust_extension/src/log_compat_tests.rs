@@ -3,6 +3,7 @@
 use log::{LevelFilter, Log};
 use proptest::prelude::*;
 
+use super::diagnostics::{LookupFailureDiagnostic, lookup_failure_message};
 use super::max_level::{conservative_max_level_from, map_femto_to_log_filter};
 use super::*;
 use crate::handler::FemtoHandlerTrait;
