@@ -49,6 +49,11 @@ REQUIRED_LANES: typ.Final[Tokens] = ("none", "all")
 #: Manifest feature keys that name no lane of their own.
 LANE_EXEMPT_FEATURES: typ.Final[Tokens] = ("default",)
 STANDARD_CLIPPY_TARGET: typ.Final = "lint-rust-clippy"
+#: The lane-contract test drives real Cargo twice through `make
+#: lint-env-policy`. On a shared machine those compiler invocations queue
+#: behind compile admission, so the original 620 s bound failed on load
+#: rather than on a defect. Allow a full queue drain instead.
+CARGO_CONTRACT_TIMEOUT_SECONDS: typ.Final = 2400
 #: Shell fragments that swallow the preceding command's exit status.
 STATUS_SWALLOWING: typ.Final[Tokens] = (
     "|| true",
@@ -313,7 +318,7 @@ def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-@pytest.mark.timeout(620)
+@pytest.mark.timeout(CARGO_CONTRACT_TIMEOUT_SECONDS)
 def test_a_failing_lane_fails_the_policy_target() -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 
