@@ -164,3 +164,80 @@ fn refused_shard_admission_counts_and_warns_about_the_drop() {
         "the accepted record should drain after the handler is released",
     );
 }
+
+/// A flush reports drops that the warning interval is holding back.
+///
+/// The first refusal warns immediately and starts the interval, so the second
+/// refusal is suppressed and stays pending. A flush must say that pending
+/// count now: on a logger being shut down there may be no due moment left.
+#[test]
+#[serial]
+fn flush_reports_drops_held_back_by_the_warning_interval() {
+    install_test_logger();
+    let shard: &'static Shard = Box::leak(Box::new(
+        Shard::start(0, 1).expect("a one-record test shard should start"),
+    ));
+    let logger = FemtoLogger::assembled_for_test("producer-flush".to_string(), shard);
+    let (started_tx, started_rx) = bounded(1);
+    let (release_tx, release_rx) = bounded(1);
+    logger
+        .add_handler(Arc::new(BlockingHandler {
+            started: started_tx,
+            release: release_rx,
+        }))
+        .expect("native held handler should register");
+
+    assert!(
+        logger
+            .log(FemtoLevel::Info, "occupies the only permit")
+            .is_some(),
+        "the first record should be accepted for dispatch",
+    );
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the worker should start handling the first record");
+
+    assert!(logger.log(FemtoLevel::Info, "first refusal").is_some());
+    assert!(logger.log(FemtoLevel::Info, "second refusal").is_some());
+    let warnings = take_logged_messages();
+    let suppression_warnings = warnings
+        .iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 1 records; dispatch capacity exhausted"
+        })
+        .count();
+    assert_eq!(
+        suppression_warnings, 1,
+        "only the first refusal should warn inside the interval: {warnings:?}",
+    );
+    assert_eq!(
+        logger.drop_warner.pending_drops(),
+        1,
+        "the suppressed refusal must stay pending rather than be discarded",
+    );
+
+    release_tx
+        .send(())
+        .expect("the worker should still be waiting for its first record");
+    assert!(
+        logger.flush_handlers(),
+        "the accepted record should drain after the handler is released",
+    );
+    assert_eq!(
+        logger.drop_warner.pending_drops(),
+        0,
+        "the flush must drain the pending count",
+    );
+    let flush_warnings = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 1 records; reported by flush"
+        })
+        .count();
+    assert!(
+        flush_warnings >= 1,
+        "the flush should report the suppressed drop",
+    );
+}
