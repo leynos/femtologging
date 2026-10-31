@@ -2,7 +2,7 @@
 
 Purpose
 -------
-Verify the bounds recorded in ADR 007: logger names are rejected past a byte
+Verify the bounds recorded in ADR 0007: logger names are rejected past a byte
 and segment budget, the registry refuses new names once it is full instead of
 growing without limit, and the number of operating-system threads the logging
 system uses depends on the machine rather than on how many loggers exist.

@@ -19,7 +19,7 @@
 //! that would switch the policy off wholesale lives in
 //! `env_policy_source_scan.rs`.
 //!
-//! See `docs/adr-006-environment-seam-taxonomy.md` for the policy itself.
+//! See `docs/adrs/adr-0006-environment-seam-taxonomy.md` for the policy itself.
 
 #[path = "test_utils/env_policy.rs"]
 mod env_policy;

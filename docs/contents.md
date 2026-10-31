@@ -30,24 +30,24 @@ libraries. Use the links below to explore each topic.
 
 ## Architecture decision records
 
-- [adr-001-python-exception-logging.md](./adr-001-python-exception-logging.md)
+- [adrs/adr-0001-python-exception-logging.md](./adrs/adr-0001-python-exception-logging.md)
   - Proposes support for `exc_info` and `stack_info` in the Python logging API.
-- [adr-002-journald-and-otel-support.md](./adr-002-journald-and-otel-support.md)
+- [adrs/adr-0002-journald-and-otel-support.md](./adrs/adr-0002-journald-and-otel-support.md)
   - Records the phased design for Journald support and OpenTelemetry
     integration via `tracing`.
-- [adr-003-python-stdlib-filter-parity.md](./adr-003-python-stdlib-filter-parity.md)
+- [adrs/adr-0003-python-stdlib-filter-parity.md](./adrs/adr-0003-python-stdlib-filter-parity.md)
   - Records the decision to add phased parity for Python stdlib callback
     filters.
-- [adr-004-batching-optimizations-in-consumer-threads.md](./adr-004-batching-optimizations-in-consumer-threads.md)
+- [adrs/adr-0004-batching-optimizations-in-consumer-threads.md](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md)
   - Proposes drain-loop batching and vectored I/O optimizations for handler
     consumer threads.
-- [adr-005-four-tier-python-lint-architecture.md](./adr-005-four-tier-python-lint-architecture.md)
+- [adrs/adr-0005-four-tier-python-lint-architecture.md](./adrs/adr-0005-four-tier-python-lint-architecture.md)
   - Records the Python lint pipeline: Ruff, interrogate, PyPy-backed Pylint,
     df12-python-lints/ambrleaks, and the strict Skylos dead-code gate.
-- [adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
+- [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
   - Records the ban on ambient process-environment access in the Rust
     extension and the injection shapes that replace it.
-- [adr-007-bounded-logger-cardinality-and-shared-dispatch.md](./adr-007-bounded-logger-cardinality-and-shared-dispatch.md)
+- [adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md](./adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md)
   - Records the bounds on logger names and registry size, and the shared
     dispatch pool that replaced one worker thread per logger.
 

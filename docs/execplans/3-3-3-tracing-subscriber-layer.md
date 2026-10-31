@@ -62,7 +62,7 @@ The design sources that constrain this plan are:
 - [docs/rust-multithreaded-logging-framework-for-python-design.md](../rust-multithreaded-logging-framework-for-python-design.md)
   section `6.4`, which requires interoperability with the Rust logging
   ecosystem.
-- [docs/adr-002-journald-and-otel-support.md](../adr-002-journald-and-otel-support.md)
+- [docs/adrs/adr-0002-journald-and-otel-support.md](../adrs/adr-0002-journald-and-otel-support.md)
   section `Phase 2`, which describes a `tracing_subscriber::Layer` that should
   capture `tracing` events, compose with OpenTelemetry layers, and avoid
   feedback loops.
@@ -164,7 +164,7 @@ The design sources that constrain this plan are:
 
 ## Progress
 
-- [x] 2026-03-27: Reviewed roadmap item `3.3.3`, design section `6.4`, ADR 002
+- [x] 2026-03-27: Reviewed roadmap item `3.3.3`, design section `6.4`, ADR 0002
   phase 2, and current configuration design notes.
 - [x] 2026-03-27: Reviewed the existing `log::Log` bridge, Python compatibility
   surface, and BDD/snapshot coverage pattern.
@@ -203,7 +203,7 @@ The design sources that constrain this plan are:
   installation wrappers, corresponding updates will be needed in
   `_rust_compat.py`, `__init__.py`, and the `.pyi` stub.
 - The roadmap item is phrased narrowly as a `tracing_subscriber::Layer`, but
-  ADR 002 also expects documentation about OpenTelemetry composition and
+  ADR 0002 also expects documentation about OpenTelemetry composition and
   feedback-loop boundaries. The code and docs must therefore land together.
 - `tracing` macro targets must be static at each callsite. Behavioural tests
   and Python helper functions therefore use fixed literal logger targets rather
@@ -215,7 +215,7 @@ The design sources that constrain this plan are:
 
 - Decision: treat the first implementation as an event bridge with bounded
   span-context enrichment, not full tracing semantic export. Rationale: both
-  the design doc and ADR 002 explicitly frame events as the primary log-record
+  the design doc and ADR 0002 explicitly frame events as the primary log-record
   analogue, while span handling may remain minimal at first.
 
 - Decision: mirror `log_compat.rs` for logger resolution, level mapping, and
@@ -280,7 +280,7 @@ succeeds before any Python-facing work begins.
 ## Stage 2: Implement event conversion and logger dispatch
 
 Implement a concrete layer type such as `FemtoTracingLayer` that satisfies
-`tracing_subscriber::Layer<S>`. Start with `on_event`, because ADR 002 treats
+`tracing_subscriber::Layer<S>`. Start with `on_event`, because ADR 0002 treats
 events as the log-record analogue. The conversion rules should be explicit:
 
 1. Resolve the logger name from `event.metadata().target()`, reusing the same

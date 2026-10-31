@@ -12,7 +12,7 @@
 //! logger could take every permit and starve the others. Each logger therefore
 //! has its own in-flight budget within the pool, charged by the logging thread
 //! at admission and released by the same permit. That is the per-logger bound
-//! ADR 007 promises.
+//! ADR 0007 promises.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -62,7 +62,7 @@ pub(super) struct Permit {
 /// the point it is created, and it is released by [`Permit`]'s drop, after the
 /// handlers have run.
 ///
-/// This is the per-logger in-flight bound ADR 007 promises. It is created by
+/// This is the per-logger in-flight bound ADR 0007 promises. It is created by
 /// [`Shard::budget`](super::Shard::budget) and owned by the logger.
 pub(crate) struct LoggerBudget {
     /// How many of this logger's records may be unhandled at once.

@@ -143,28 +143,29 @@ where applicable.
 - [x] 2.3.3. Deliver batching optimization design for consumer threads. See
   <!-- markdownlint-disable-next-line MD013 -->
   [design §5.4](./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads), [design §8.1](./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap),
-  and [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md).
+  and
+  [ADR 0004](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md).
 - [ ] 2.3.4. Implement drain-loop batching and vectored I/O for file and
   stream handler consumer threads. Introduce `recv_batch` helper and
   `BatchConfig` type, modify `FemtoFileHandler` and `FemtoStreamHandler` worker
   loops, and add Criterion benchmarks. Completion criteria: batched file and
   stream throughput benchmarks show measurable improvement over single-record
   baselines. See
-  [ADR 004 phase 1](./adr-004-batching-optimizations-in-consumer-threads.md#phase-1-core-batch-collection-and-filestream-handler-batching).
+  [ADR 0004 phase 1](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md#phase-1-core-batch-collection-and-filestream-handler-batching).
 - [ ] 2.3.5. Implement drain-loop batching for HTTP and socket handler
   consumer threads. Modify `FemtoHTTPHandler` to send batched JSON array
   payloads and `FemtoSocketHandler` to concatenate frames into combined writes.
   Add Criterion benchmarks and update the user guide. Completion criteria:
   network handler benchmarks show reduced per-record overhead and user-facing
   batching configuration is documented. See
-  [ADR 004 phase 2](./adr-004-batching-optimizations-in-consumer-threads.md#phase-2-network-handler-batching).
+  [ADR 0004 phase 2](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md#phase-2-network-handler-batching).
 - [ ] 2.3.6. Implement drain-loop batching in the logger dispatch worker
   thread and add integration hardening. Modify the logger worker to batch
   records before handler dispatch, verify shutdown drain semantics, and add
   ordering and completeness tests under load. Completion criteria: integration
   tests confirm record ordering, completeness, and graceful shutdown with
   batched workers. See
-  [ADR 004 phase 3](./adr-004-batching-optimizations-in-consumer-threads.md#phase-3-logger-dispatch-batching-and-hardening).
+  [ADR 0004 phase 3](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md#phase-3-logger-dispatch-batching-and-hardening).
 
 ## 3. Configuration, compatibility, and ecosystem integration
 
@@ -204,32 +205,32 @@ where applicable.
   [configuration design §3](./configuration-design.md#3-runtime-reconfiguration).
 - [x] 3.2.5. Deliver Python standard library filter parity for logger and root
   filters. See
-  [ADR 003 decision outcome](./adr-003-python-stdlib-filter-parity.md#decision-outcome--proposed-direction)
+  [ADR 0003 decision outcome](./adrs/adr-0003-python-stdlib-filter-parity.md#decision-outcome--proposed-direction)
   and [configuration design §1.1.1](./configuration-design.md#111-filters).
   - [x] 3.2.5.1. Implement and verify producer-path callback filters:
     execute Python callback filters on the producer path and persist accepted
     enrichments in Rust-owned metadata. Completion criteria: unit tests confirm
     accepted enrichment persistence on records that pass filtering. See
-    [ADR 003 phase 1](./adr-003-python-stdlib-filter-parity.md#phase-1-producer-path-callback-filter-support)
+    [ADR 0003 phase 1](./adrs/adr-0003-python-stdlib-filter-parity.md#phase-1-producer-path-callback-filter-support)
     and [configuration design §1.1.1](./configuration-design.md#111-filters).
   - [x] 3.2.5.2. Implement `dictConfig` filter factory parsing for `"()"` with
-    ADR 003 conflict rejection semantics for mixed declarative/factory forms.
+    ADR 0003 conflict rejection semantics for mixed declarative/factory forms.
     Completion criteria: parser tests cover accepted factory declarations and
     rejected mixed or ambiguous forms. See
-    [ADR 003 phase 2](./adr-003-python-stdlib-filter-parity.md#phase-2-configuration-parity-expansion)
+    [ADR 0003 phase 2](./adrs/adr-0003-python-stdlib-filter-parity.md#phase-2-configuration-parity-expansion)
     and [configuration design §2.2](./configuration-design.md#22-dictconfig).
   - [x] 3.2.5.3. Add integration and concurrency tests for contextvar enrichment
     propagation and thread/async safety. Completion criteria: CI remains green
     with reproducible tests that prove propagation under concurrent and async
     execution paths. See
-    [ADR 003 phase 3](./adr-003-python-stdlib-filter-parity.md#phase-3-conformance-and-hardening)
+    [ADR 0003 phase 3](./adrs/adr-0003-python-stdlib-filter-parity.md#phase-3-conformance-and-hardening)
     and
     [configuration design §7](./configuration-design.md#7-testing-and-benchmarking-coverage).
   - [x] 3.2.5.4. Add handler-level filter attachment with producer-thread
     evaluation for direct and propagated records. Completion criteria: one
     shared handler filter can enrich records from differently named loggers
     without introducing Python work on handler threads. See
-    [ADR 003 handler follow-on](./adr-003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters)
+    [ADR 0003 handler follow-on](./adrs/adr-0003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters)
     and [configuration design §1.1.1](./configuration-design.md#111-filters).
 
 ### 3.3. Rust ecosystem integration
@@ -247,15 +248,15 @@ where applicable.
   process `tracing` spans and events. See
   [design §6.4](./rust-multithreaded-logging-framework-for-python-design.md#64-interoperability-with-the-rust-logging-ecosystem)
   and
-  [Architectural Decision Record (ADR) 002 phase 2](./adr-002-journald-and-otel-support.md#phase-2--tracing-layer-for-opentelemetry-and-more).
+  [Architectural Decision Record (ADR) 002 phase 2](./adrs/adr-0002-journald-and-otel-support.md#phase-2--tracing-layer-for-opentelemetry-and-more).
 
 ### 3.4. Python exception payloads and macro ergonomics
 
 - [x] 3.4.1. Add structured exception and stack payloads for `exc_info` and
   `stack_info`, including schema versioning and Python handler
   interoperability. See
-  [ADR 001 decision](./adr-001-python-exception-logging.md#decision) and
-  [ADR 001 schema versioning](./adr-001-python-exception-logging.md#schema-versioning).
+  [ADR 0001 decision](./adrs/adr-0001-python-exception-logging.md#decision) and
+  [ADR 0001 schema versioning](./adrs/adr-0001-python-exception-logging.md#schema-versioning).
 - [x] 3.4.2. Improve structured logging in macros to simplify context
   propagation. See
   [design §6.2](./rust-multithreaded-logging-framework-for-python-design.md#62-logging-macros-the-primary-user-interface)
@@ -475,7 +476,7 @@ the feature matrix. It may proceed in parallel with step 6.2.
   `write_vectored`. Requires 6.4.1. See
   [benchmarking design §9.4](./benchmarking-and-optimization-design.md#94-group-d-file-batching)
   and
-  [ADR 004 phase 1](./adr-004-batching-optimizations-in-consumer-threads.md#phase-1-core-batch-collection-and-filestream-handler-batching).
+  [ADR 0004 phase 1](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md#phase-1-core-batch-collection-and-filestream-handler-batching).
 - [ ] 6.4.5. Add the `socket_worker` bench: MessagePack serialization into a
   reusable buffer without I/O, loopback write with prebuilt frames, and the
   combined path. See
@@ -528,7 +529,7 @@ measure-hypothesize-change-rerun loop. Requires 6.4 and 6.6.
   handlers where Group D shows benefit, and decide on `write_vectored` from
   measured data. Requires 6.4.4. References:
   - [benchmarking design §9.4](./benchmarking-and-optimization-design.md#94-group-d-file-batching)
-  - [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md)
+  - [ADR 0004](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md)
   - Roadmap item 2.3.4.
 - [ ] 6.7.3. Apply lazy metadata and an inline small map for the common
   zero-to-four-field record where Group B shows allocation cost. Requires
@@ -538,4 +539,5 @@ measure-hypothesize-change-rerun loop. Requires 6.4 and 6.6.
   D, and the channel bench show contention; retain `crossbeam-channel` absent a
   measured loss. Requires 6.4.3, 6.4.4. See
   [benchmarking design §2.1](./benchmarking-and-optimization-design.md#21-goals)
-  and [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md).
+  and
+  [ADR 0004](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md).

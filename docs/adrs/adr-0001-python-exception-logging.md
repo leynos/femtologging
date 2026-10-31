@@ -1,4 +1,4 @@
-# ADR 001: Python exception logging support
+# ADR 0001: Python exception logging support
 
 ## Status
 

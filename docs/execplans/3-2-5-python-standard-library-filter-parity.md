@@ -45,7 +45,7 @@ Observable success after implementation:
 
 This plan implements roadmap items 3.2.5, 3.2.5.1, 3.2.5.2, and 3.2.5.3 as
 defined in `docs/roadmap.md`. The architectural direction is set by
-[Architectural Decision Record (ADR) 003](../adr-003-python-stdlib-filter-parity.md),
+[Architectural Decision Record (ADR) 003](../adrs/adr-0003-python-stdlib-filter-parity.md),
 which chose Option B: evaluate Python callback filters on the producer thread
 and persist accepted enrichments into Rust-owned record metadata before
 queueing.
@@ -130,7 +130,7 @@ The following files are most relevant to this work:
 
 - Execute Python filter callbacks on the producer thread only. Worker threads
   must never hold Python objects or acquire the GIL for filter evaluation, as
-  documented in ADR 003 and `docs/multithreading-in-pyo3.md`.
+  documented in ADR 0003 and `docs/multithreading-in-pyo3.md`.
 - Preserve existing `LevelFilterBuilder` and `NameFilterBuilder` behaviour
   and performance. Users who do not configure Python callback filters must not
   pay any runtime cost for this feature.
@@ -173,10 +173,10 @@ The following files are most relevant to this work:
 - Iterations: if any quality gate still fails after five focused fix
   attempts, stop and document the blocker.
 - Concurrency: if safe filter invocation requires changing handler
-  worker-thread contracts, stop and escalate because ADR 003 explicitly places
+  worker-thread contracts, stop and escalate because ADR 0003 explicitly places
   filter evaluation on the producer path.
 - Feature boundary: if the design starts requiring handler-level filter
-  parity (a non-goal of ADR 003), stop and escalate.
+  parity (a non-goal of ADR 0003), stop and escalate.
 - Ambiguity: if the `FemtoFilter` trait cannot accommodate mutable record
   enrichment without breaking existing filter implementations, present options
   with trade-offs before proceeding.
@@ -200,7 +200,7 @@ The following files are most relevant to this work:
 - Risk: producer-path callback execution increases hot-path latency for
   configurations using Python filters, because the GIL must be acquired for
   each callback invocation. Severity: medium. Likelihood: high. Mitigation:
-  this is an accepted trade-off per ADR 003. Ensure existing Rust-only filter
+  this is an accepted trade-off per ADR 0003. Ensure existing Rust-only filter
   paths remain unchanged and Python callback filters are only invoked when
   explicitly configured. Document the performance implication.
 
@@ -383,7 +383,7 @@ If a Python callback filter raises an exception:
    `"Python filter callback raised an exception; record dropped: {err}"`.
 3. Treat the record as rejected (return `false`).
 
-This matches the principle of deterministic error handling stated in ADR 003.
+This matches the principle of deterministic error handling stated in ADR 0003.
 
 #### B.3. Enrichment persistence
 

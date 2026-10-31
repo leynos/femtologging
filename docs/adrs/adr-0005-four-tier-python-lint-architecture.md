@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 005: Four-tier Python lint architecture
+# Architectural decision record (ADR) 0005: Four-tier Python lint architecture
 
 ## Status
 

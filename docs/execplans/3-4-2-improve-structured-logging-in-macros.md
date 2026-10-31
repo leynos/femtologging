@@ -69,7 +69,7 @@ as explicit Python/Rust errors, and `make fmt`, `make check-fmt`,
   not scoped correctly. Severity: high Likelihood: low Mitigation: use scoped
   guard semantics plus thread/task isolation tests.
 
-- Risk: structured field limits and key conflict rules may diverge from ADR 003
+- Risk: structured field limits and key conflict rules may diverge from ADR 0003
   enrichment constraints. Severity: medium Likelihood: medium Mitigation: reuse
   one shared validation path and document one canonical contract in design docs.
 
@@ -131,8 +131,8 @@ as explicit Python/Rust errors, and `make fmt`, `make check-fmt`,
 
 - Decision: validate structured field constraints through one shared helper used
   by both macro and Python-facing paths. Rationale: avoids drift between Rust
-  and Python behaviour and keeps contract aligned with ADR 003-style enrichment
-  rules. Date/Author: 2026-03-04 / Codex planning pass.
+  and Python behaviour and keeps contract aligned with ADR 0003-style
+  enrichment rules. Date/Author: 2026-03-04 / Codex planning pass.
 
 - Decision: include Python behavioural tests even though macros are Rust-facing.
   Rationale: this project is a Python library implemented in Rust; user-visible

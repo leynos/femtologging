@@ -324,7 +324,7 @@ handler, including propagated records. Reconfiguring a logger replaces its
 filter set: `apply_logger_config` clears any existing filters only after all
 filter IDs validate, replacing them with the newly specified set.
 
-ADR 003 defines the accepted direction for Python standard library parity:
+ADR 0003 defines the accepted direction for Python standard library parity:
 logger and root filters will also support Python callback filters
 (`logging.Filter` objects or callables), evaluated on the producer path with
 record enrichment persisted into Rust-owned metadata before queueing.[^adr003]
@@ -355,7 +355,7 @@ methods via `PyO3` bindings. Type hints will be used for clarity.
 - `LevelFilterBuilder(max_level: Union[str, FemtoLevel])`.
 - `NameFilterBuilder(prefix: str)`.
 
-ADR 003 extends this API direction by adding Python callback filter parity for
+ADR 0003 extends this API direction by adding Python callback filter parity for
 logger and root filters in a phased rollout.[^adr003]
 
 String level parameters accept case-insensitive names: `TRACE`, `DEBUG`, `INFO`,
@@ -1248,4 +1248,4 @@ flowchart TD
     K -- Yes --> M["Return items"]
 ```
 
-[^adr003]: [ADR 003: Python stdlib filter parity support](./adr-003-python-stdlib-filter-parity.md)
+[^adr003]: [ADR 0003: Python stdlib filter parity support](./adrs/adr-0003-python-stdlib-filter-parity.md)

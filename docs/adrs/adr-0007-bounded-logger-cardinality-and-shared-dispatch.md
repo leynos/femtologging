@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 007: bounded logger cardinality and shared dispatch
+# Architectural decision record (ADR) 0007: bounded logger cardinality and shared dispatch
 
 ## Status
 
@@ -254,7 +254,7 @@ keeping the target space bounded.
 - `rust_extension/src/logger/dispatcher.rs` and
   `rust_extension/src/logger/dispatcher/shard/` — the shared pool.
 - `docs/users-guide.md` — the caller-facing naming guidance.
-- ADR 004 (batching optimizations in consumer threads) — the equivalent
+- ADR 0004 (batching optimizations in consumer threads) — the equivalent
   single-consumer design for the file handler.
-- ADR 006 (environment seam taxonomy) — the seam discipline the dispatch
+- ADR 0006 (environment seam taxonomy) — the seam discipline the dispatch
   worker's thread, channel and lock primitives follow.

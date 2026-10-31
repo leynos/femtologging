@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 003: Python standard library filter parity
+# Architectural decision record (ADR) 0003: Python standard library filter parity
 
 ## Status
 
@@ -153,7 +153,7 @@ still invoke Python in their workers under the captured context, including for
 their own stdlib filters, formatters, and emission. Configured handler filters
 are femtologging's supported application-wide enrichment attachment point,
 distinct from full stdlib `Handler.addFilter` worker semantics. For migration
-guidance, see the [0.2.0 migration guide](v0-2-0-migration-guide.md).
+guidance, see the [0.2.0 migration guide](../v0-2-0-migration-guide.md).
 
 ## Migration plan
 
