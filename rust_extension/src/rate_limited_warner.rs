@@ -63,10 +63,12 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 ///
 /// A short per-instance mutex serializes the counter recheck, interval claim and
 /// drain against [`flush`]. [`record_drop`] remains an atomic increment and does
-/// not take that mutex. The mutex is released before either callback runs, so
-/// callbacks are **not** serialized against one another and may re-enter the
-/// warner. At most one [`warn_if_due`] caller claims an interval: the claim uses
-/// compare-exchange, and a caller that loses it returns without draining.
+/// not take that mutex, and a [`warn_if_due`] call whose interval is still open
+/// returns on a lock-free read of the last-warning timestamp. The mutex is
+/// released before either callback runs, so callbacks are **not** serialized
+/// against one another and may re-enter the warner. At most one [`warn_if_due`]
+/// caller claims an interval: the claim uses compare-exchange, and a caller that
+/// loses it returns without draining.
 /// Concurrent callbacks therefore receive disjoint batches. A callback that
 /// panics abandons the batch it was handed; the counter is not restored, which
 /// keeps the "handed off once" guarantee rather than trading it for a
@@ -142,6 +144,14 @@ impl RateLimitedWarner {
     /// draining. The mutex is released before the callback runs, so a slow or
     /// re-entrant callback does not hold up another caller or a flush.
     ///
+    /// A call whose interval is still open returns before taking the mutex. The
+    /// refusal paths call this method for every dropped record, so under
+    /// sustained overload the suppressed calls are the common case and must not
+    /// contend for the shared lock. The pre-check reads `last_warn` without the
+    /// mutex, which is sound because the timestamp only moves forward: a stale
+    /// read can only *over*-report that a warning is due, and the locked recheck
+    /// corrects that; it can never hide a due warning.
+    ///
     /// # Examples
     ///
     /// ```
@@ -163,6 +173,14 @@ impl RateLimitedWarner {
             return;
         }
         let now = self.clock.now_millis();
+        // Suppressed calls are the common case on the refusal paths, so they
+        // return before touching the shared mutex. `last_warn` only moves
+        // forward, so this stale read can only claim a warning is due when it
+        // is not; the recheck under the mutex decides that for real.
+        let observed = self.last_warn.load(Ordering::Relaxed);
+        if observed != u64::MAX && now.saturating_sub(observed) < self.interval_ms {
+            return;
+        }
         let count = {
             let _drain_guard = self.drain_lock.lock();
             // A concurrent flush may have taken the observed batch while the
@@ -254,99 +272,5 @@ impl Default for RateLimitedWarner {
 mod tests;
 
 #[cfg(test)]
-mod concurrency_tests {
-    //! Tests for atomic interval claims and synchronized warning drains.
-
-    use super::{Clock, RateLimitedWarner};
-    use std::sync::Arc;
-    use std::sync::Barrier;
-    use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::thread;
-    use std::time::Duration;
-
-    /// A clock that pauses the first warning caller inside its time sample.
-    struct PausingClock {
-        /// Timestamp returned after the test releases the warning caller.
-        now_ms: u64,
-        /// Pauses only the first clock sample.
-        should_pause: AtomicBool,
-        /// Synchronizes the warning caller with the test before it pauses.
-        entered: Barrier,
-        /// Prevents the warning caller from sampling time until released.
-        resume: Barrier,
-    }
-
-    impl PausingClock {
-        /// Create the two-party barriers used by the race test.
-        fn new(now_ms: u64) -> Self {
-            Self {
-                now_ms,
-                should_pause: AtomicBool::new(true),
-                entered: Barrier::new(2),
-                resume: Barrier::new(2),
-            }
-        }
-    }
-
-    impl Clock for PausingClock {
-        fn now_millis(&self) -> u64 {
-            if self.should_pause.swap(false, Ordering::Relaxed) {
-                self.entered.wait();
-                self.resume.wait();
-            }
-            self.now_ms
-        }
-    }
-
-    /// A flush winning the race does not leave an empty interval claimed.
-    #[test]
-    fn flush_draining_a_due_call_does_not_claim_its_interval() {
-        let clock = Arc::new(PausingClock::new(1000));
-        let warner = Arc::new(RateLimitedWarner::with_clock(
-            Duration::from_secs(1),
-            Arc::clone(&clock) as Arc<dyn Clock>,
-        ));
-        warner.record_drop();
-
-        let warning_counts = Arc::new(Mutex::new(Vec::new()));
-        thread::scope(|scope| {
-            let warning_warner = Arc::clone(&warner);
-            let warning_counts = Arc::clone(&warning_counts);
-            scope.spawn(move || {
-                warning_warner.warn_if_due(|count| {
-                    warning_counts
-                        .lock()
-                        .expect("warning counts lock")
-                        .push(count);
-                });
-            });
-            clock.entered.wait();
-
-            let mut flush_counts = Vec::new();
-            warner.flush(|count| flush_counts.push(count));
-            assert_eq!(flush_counts, vec![1]);
-            assert_eq!(warner.pending_drops(), 0);
-            clock.resume.wait();
-        });
-
-        assert!(
-            warning_counts
-                .lock()
-                .expect("warning counts lock")
-                .is_empty()
-        );
-        warner.record_drop();
-        warner.warn_if_due(|count| {
-            warning_counts
-                .lock()
-                .expect("warning counts lock")
-                .push(count);
-        });
-        assert_eq!(
-            *warning_counts.lock().expect("warning counts lock"),
-            vec![1],
-            "the flush must not leave the next drop suppressed"
-        );
-    }
-}
+#[path = "rate_limited_warner_concurrency_tests.rs"]
+mod concurrency_tests;
