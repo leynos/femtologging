@@ -114,7 +114,7 @@ fn case() -> impl Strategy<Value = Case> {
     // operations. The property is about interleaving, not volume.
     (
         proptest::collection::vec(clock_op(), 10..50),
-        proptest::collection::vec(proptest::collection::vec(non_clock_op(), 1..30), 1..3),
+        proptest::collection::vec(proptest::collection::vec(non_clock_op(), 1..30), 1..=3),
     )
         .prop_map(|(clock_ops, others)| {
             let mut threads = vec![with_advance(clock_ops)];
