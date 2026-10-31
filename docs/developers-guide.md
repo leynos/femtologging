@@ -160,6 +160,40 @@ For `rust_extension/tests/compile_tests.rs`, use
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
 
+### Dependabot grouping for the extension build
+
+The project is uv-managed (`uv.lock`, no requirements files), so the Python
+entries of `.github/dependabot.yml` are `uv`, not `pip`. maturin (the `uv`
+ecosystem) and PyO3 (the `cargo` ecosystem) are versioned independently yet
+build one extension, so an update to either alone may not build against the
+other. A multi-ecosystem group, `maturin-pyo3`, defined at the top of the file
+with its own daily schedule and `open-pull-requests-limit` (Dependabot rejects
+that key on an entry that joins a group), puts the available updates for the
+pair into one pull request. When both have one, a single CI run builds them
+together; a bump is not held back when only one of the two has an update, and a
+group cannot choose compatible versions or rewrite a pinned literal, so the
+maturin pin in `.github/workflows/heavy-tests.yml` is still kept aligned by
+`tests/test_maturin_build.py`.
+
+An entry that joins a group runs only that group, over the dependencies its
+`patterns` take: its own groups, ignore rules and every other dependency are
+not processed (cuprum's first run of this arrangement showed it). So `uv` and
+`cargo` each have two entries. The group entry, listed first, offers `maturin`
+for `uv` and `pyo3` for `cargo` and carries no groups. The plain entry is the
+stanza as it was, with its catch-all group, and gains an `ignore` of the same
+name so the pair is handled once. The plain `uv` entry also ignores
+`pytest-bdd`: it is pinned beside `pytest` in `pyproject.toml`, and a release
+has to be checked against the pytest it supports before the pair moves, so it
+is updated by hand.
+
+`tests/test_dependabot_config_contract.py` holds the shape. Concordat's
+`dependency-family-contracts` rule (DF-002) accepts a shared multi-ecosystem
+group as one way to protect an independently versioned pair, reads the first
+entry that processes each package
+(<https://github.com/leynos/concordat/pull/334>,
+<https://github.com/leynos/concordat/pull/338>), and accepts an `ignore` rule
+for the pytest and pytest-bdd pair.
+
 ## Rust build standard
 
 Development, test, lint and typecheck builds link with the `mold` linker on
