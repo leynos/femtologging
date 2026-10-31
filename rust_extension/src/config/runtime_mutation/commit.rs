@@ -1,20 +1,25 @@
 //! Commit preparation and application for runtime mutations.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
 };
 
 use pyo3::{Py, Python};
 
 use crate::{
-    config::{ConfigError, types::HandlerBuilder},
+    config::{
+        ConfigError,
+        reachability::{ReachableIds, prune_filters, prune_handlers},
+        types::HandlerBuilder,
+    },
     filters::{FemtoFilter, FilterBuilder},
-    logger::{FemtoLogger, HandlerAttachment},
+    logger::{DetachedOwners, FemtoLogger, HandlerAttachment},
     manager::{self, LoggerAttachmentState, RuntimeStateSnapshot},
 };
 
-use super::{LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
+use super::super::DeferredDrop;
+use super::{KnownIds, LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
 
 /// Built handler and filter registries ready to merge into the runtime snapshot.
 pub(crate) struct BuiltRegistries {
@@ -24,6 +29,29 @@ pub(crate) struct BuiltRegistries {
     pub(crate) filters: SharedFilters,
     /// Filter IDs configured on each newly built handler.
     pub(crate) handler_filter_ids: BTreeMap<String, Vec<String>>,
+}
+
+/// Planned logger attachments and scalar changes, before any resource is built.
+pub(crate) struct PlannedMutation {
+    /// Logger attachment states after the requested collection operations.
+    pub(crate) logger_states: BTreeMap<String, LoggerAttachmentState>,
+    /// Logger names whose live attachments or scalar state must be refreshed.
+    pub(crate) impacted_loggers: BTreeSet<String>,
+    /// Scalar overrides supplied for affected loggers.
+    pub(crate) scalar_mutations: BTreeMap<String, LoggerScalarMutation>,
+}
+
+/// Inputs assembled by `apply()` before a commit can be built.
+///
+/// The three pieces travel together: the snapshot every merge starts from, the
+/// validated plan, and the definitions constructed for this transaction.
+pub(crate) struct CommitInputs {
+    /// Runtime snapshot captured before the transaction planned anything.
+    pub(crate) before: RuntimeStateSnapshot,
+    /// Validated logger mutations and the loggers they impact.
+    pub(crate) plan: PlannedMutation,
+    /// Newly built registries for this transaction.
+    pub(crate) built: BuiltRegistries,
 }
 
 /// Fully prepared state applied as one runtime mutation commit.
@@ -45,37 +73,65 @@ pub(crate) struct RuntimeCommit {
 }
 
 impl RuntimeConfigBuilder {
-    /// Builds a private, validated commit from the runtime snapshot and requested changes.
-    pub(crate) fn prepare_commit(
+    /// Compute the post-mutation attachment map before constructing definitions.
+    pub(crate) fn plan_mutation(
+        &self,
+        before: &RuntimeStateSnapshot,
+    ) -> Result<PlannedMutation, ConfigError> {
+        let mut logger_states = before.logger_states.clone();
+        let mut known = KnownIds::from_registries(
+            before.handler_registry.keys(),
+            before.filter_registry.keys(),
+        );
+        known.extend_definitions(self.handlers.keys().cloned(), self.filters.keys().cloned());
+        self.apply_logger_mutations(&mut logger_states, &known)?;
+
+        let impacted_loggers = self.collect_impacted(before);
+        // A mutation may name a logger that does not exist yet, and
+        // `get_logger` registers it. This preflight narrows the chance of a
+        // partial registration, but each lookup takes the registry lock
+        // separately, so a concurrent writer can consume the capacity first.
+        // A late refusal can therefore leave earlier fetched loggers present.
+        let requested = impacted_loggers.iter().cloned().collect::<HashSet<_>>();
+        manager::ensure_registry_capacity(&requested)
+            .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
+
+        Ok(PlannedMutation {
+            logger_states,
+            impacted_loggers,
+            scalar_mutations: self.build_scalar_mutations(),
+        })
+    }
+
+    /// Assemble a pruned commit from the validated plan and built definitions.
+    pub(crate) fn assemble_commit(
         &self,
         py: Python<'_>,
-        before: RuntimeStateSnapshot,
-        built: BuiltRegistries,
+        inputs: CommitInputs,
     ) -> Result<RuntimeCommit, ConfigError> {
+        let CommitInputs {
+            before,
+            plan,
+            built,
+        } = inputs;
         let mut handler_registry = before.handler_registry.clone();
         handler_registry.extend(built.handlers);
         let mut handler_filter_ids = before.handler_filter_ids.clone();
         handler_filter_ids.extend(built.handler_filter_ids);
         let mut filter_registry = before.filter_registry.clone();
         filter_registry.extend(built.filters);
+        let reachable = ReachableIds::from_logger_states_and_handler_filters(
+            plan.logger_states.values(),
+            &handler_filter_ids,
+        );
+        prune_handlers(&mut handler_registry, &reachable);
+        handler_filter_ids.retain(|handler_id, _| reachable.handlers.contains(handler_id));
+        prune_filters(&mut filter_registry, &reachable);
         let resolved_handler_filters =
             resolve_handler_filters(&handler_filter_ids, &filter_registry)?;
 
-        let mut logger_states = before.logger_states.clone();
-        let impacted = self.collect_impacted(&before);
-
-        self.apply_logger_mutations(&mut logger_states, &handler_registry, &filter_registry)?;
-
-        // A mutation may name a logger that does not exist yet, and
-        // `get_logger` registers it. This preflight narrows the chance of a
-        // partial registration, but each lookup takes the registry lock
-        // separately, so a concurrent writer can consume the capacity first.
-        // A late refusal can therefore leave earlier fetched loggers present.
-        let requested = impacted.iter().cloned().collect::<HashSet<_>>();
-        manager::ensure_registry_capacity(&requested)
-            .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
-
-        let impacted_loggers = impacted
+        let impacted_loggers = plan
+            .impacted_loggers
             .into_iter()
             .map(|name| {
                 self.fetch_impacted_logger(py, &name)
@@ -84,16 +140,15 @@ impl RuntimeConfigBuilder {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(RuntimeCommit {
-            logger_states,
+            logger_states: plan.logger_states,
             handler_registry,
             handler_filter_ids,
             resolved_handler_filters,
             filter_registry,
             impacted_loggers,
-            scalar_mutations: self.build_scalar_mutations(),
+            scalar_mutations: plan.scalar_mutations,
         })
     }
-
     /// Looks up an impacted Python logger without mutating it, mapping lookup failures to `LoggerInit`.
     fn fetch_impacted_logger(
         &self,
@@ -138,7 +193,15 @@ pub(crate) fn build_filters(
 }
 
 /// Publishes live logger attachments and the registry snapshot after validation succeeds.
-pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(), ConfigError> {
+///
+/// Owners that this commit displaces are pushed onto `deferred_drop` instead of
+/// being released here. The caller drops that bundle after releasing the runtime
+/// transaction guard, so a Python finalizer cannot re-enter a held transaction.
+pub(crate) fn apply_commit(
+    py: Python<'_>,
+    commit: &RuntimeCommit,
+    deferred_drop: &mut DeferredDrop,
+) -> Result<(), ConfigError> {
     for (name, logger) in &commit.impacted_loggers {
         let logger_ref = logger.borrow(py);
         let attachment_state = commit
@@ -175,18 +238,20 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
             &commit.filter_registry,
             "filter",
         )?;
-        logger_ref.replace_handlers(next_handlers);
-        logger_ref.replace_filters(next_filters);
+        deferred_drop.detached.push(DetachedOwners {
+            attachments: logger_ref.replace_handlers(next_handlers),
+            filters: logger_ref.replace_filters(next_filters),
+        });
         if let Some(mutation) = commit.scalar_mutations.get(name) {
             apply_scalar_mutation(&logger_ref, mutation);
         }
     }
-    manager::replace_runtime_state(
+    deferred_drop.snapshots.push(manager::replace_runtime_state(
         commit.handler_registry.clone(),
         commit.handler_filter_ids.clone(),
         commit.filter_registry.clone(),
         commit.logger_states.clone(),
-    );
+    ));
     Ok(())
 }
 

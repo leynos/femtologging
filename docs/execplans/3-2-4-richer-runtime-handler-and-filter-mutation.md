@@ -467,3 +467,26 @@ resolved by configuration ID. Rust `rstest` coverage, direct Python tests,
 `pytest-bdd` scenarios, and syrupy snapshots were added. The design document,
 configuration design document, and roadmap entry were updated to reflect the
 shipped behaviour.
+
+## Follow-up: reachability pruning (issue #434)
+
+A later change made the registries reachable-only: a published handler or
+filter registry now holds exactly the definitions that some logger in the
+resulting attachment graph references. Two consequences of that rule refine the
+behaviour described above.
+
+- A transaction that declares a handler or filter no logger attaches is
+  rejected with `ConfigError::InvalidMutation` (`ValueError` in Python)
+  *before* anything is built, rather than publishing a dormant definition. This
+  narrows the "rejects unknown IDs before mutating live state" guarantee above:
+  a transaction can now also fail for declaring an ID that exists but is
+  unreachable.
+- Redefining an ID that the same transaction detaches from its last logger is
+  rejected. The freshly built object would be unreachable and pruned in the
+  same commit, so accepting the transaction would report success while
+  discarding the caller's work. Callers must either keep an attachment, or make
+  the detach and the redefine two separate transactions.
+
+See
+[configuration design section 3.2](../configuration-design.md#32-definition-lifecycle-and-reachability)
+for the full lifecycle semantics.
