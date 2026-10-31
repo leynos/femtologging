@@ -130,7 +130,7 @@ impl Shard {
     /// it would be no bound at all. A single-core machine, or a cgroup quota of
     /// one CPU, gives a shard count of one, and then the pool's depth is
     /// [`RECORDS_PER_LOGGER`](super::RECORDS_PER_LOGGER) exactly — the figure
-    /// ADR 007 names as one logger's share. Granting it in full would let one
+    /// ADR 0007 names as one logger's share. Granting it in full would let one
     /// logger take every permit and every other logger on that shard be
     /// refused, which is the starvation this budget exists to prevent.
     ///

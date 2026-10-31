@@ -191,7 +191,7 @@ makes a shared handler a single attach point for cross-cutting enrichment.
 Logger filters remain local to the logger that received the call. For the
 configured attachment order and per-handler snapshot semantics, see the
 accepted handler-filter addendum in
-[ADR-003](adr-003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters).
+[ADR-0003](adrs/adr-0003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters).
 
 Use a `FormatterBuilder` directly when configuring a handler, or register one
 with `ConfigBuilder.with_formatter(id, formatter)` and give the handler that ID.

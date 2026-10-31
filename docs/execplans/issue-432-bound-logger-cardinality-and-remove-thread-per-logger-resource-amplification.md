@@ -23,8 +23,8 @@ instead of each owning one thread.
 
 - Issue #432 (acceptance criteria in the issue body), including the folded
   findings `892a59c0`, `a25c11d3`, `b721c5d5`, `193b1941`.
-- `docs/adr-006-environment-seam-taxonomy.md` (environment-access policy) and
-  `docs/adr-005-four-tier-python-lint-architecture.md` (lint gates).
+- `docs/adrs/adr-0006-environment-seam-taxonomy.md` (environment-access policy)
+  and `docs/adrs/adr-0005-four-tier-python-lint-architecture.md` (lint gates).
 - `AGENTS.md` (code style, 400-line file limit, en-GB-oxendict spelling).
 - Repository conventions: `rust_extension/src/sync.rs` is the only place that
   names threads, channels and locks.
@@ -132,7 +132,7 @@ implementation is reverted.
    `tracing_compat/mod.rs`) with the bounded policy; rate-limit the bridge's
    lookup-failure diagnostic.
 5. Add stress tests (Python and Rust) and document naming and capacity in
-   `docs/users-guide.md` plus ADR 007.
+   `docs/users-guide.md` plus ADR 0007.
 
 Milestone 2 detail:
 
@@ -163,7 +163,7 @@ Milestone 2 detail:
 - [x] Milestone 1: bounded names and registry cap.
 - [x] Milestone 2: shared dispatch pool.
 - [x] Milestone 3: dropped as speculative (see discoveries).
-- [x] Milestone 4: bridges aligned, stress tests added, guides and ADR 007
+- [x] Milestone 4: bridges aligned, stress tests added, guides and ADR 0007
       written.
 - [x] Delivered: gates green, commits pushed, PR #544 ready for review.
 - [x] CodeRabbit review returned nine findings; all nine fixed and
@@ -215,7 +215,7 @@ Milestone 2 detail:
       and identified the stale progress item corrected here.
 - [x] CodeRabbit's review of `a399685` produced eight findings across five
       distinct issues. The working tree fixes the cross-platform `OsString`
-      import, shares PID reservation handling, corrects ADR-006's loader-path
+      import, shares PID reservation handling, corrects ADR-0006's loader-path
       exception, documents every dispatch-admission drop cause, and uses budget
       generations so inherited permits cannot release a child's charge.
 - [x] A metadata-only microbenchmark over 2,000,000 iterations and seven
@@ -961,7 +961,7 @@ Milestone 1 detail:
   3. **Major, per-logger in-flight bound was missing.** `admit` drew only on
      the shard-wide permit pool, so one logger with a stuck handler could
      consume every permit — contradicting this change's own documentation
-     (`dispatcher.rs`) and ADR 007 ("a per-logger in-flight bound"). Fixed
+     (`dispatcher.rs`) and ADR 0007 ("a per-logger in-flight bound"). Fixed
      with `LoggerBudget`: an `AtomicUsize` charged in `admit` and released by
      `Permit`'s drop, with the charge undone when the shard-wide take fails.
      Covered by `one_stuck_logger_does_not_take_another_logger_s_slot`.
@@ -1047,7 +1047,7 @@ Milestone 1 detail:
   child-process saturation tests for the `log` adapter and tracing target
   resolver, plus a convenience-function case. They assert the exact
   named-logger cap, root fallback where the bridge can fall back, stable
-  existing logger identities, and a fixed shard-worker count. ADR 007 now
+  existing logger identities, and a fixed shard-worker count. ADR 0007 now
   records that the `log` adapter emits a rate-limited refusal diagnostic while
   tracing currently falls back silently.
 - 2026-10-24: CodeRabbit paused its automatic review because the branch was
@@ -1088,7 +1088,7 @@ Milestone 1 detail:
   cleared Cargo's `LD_LIBRARY_PATH`, so its child could not load the matching
   Python shared library on Python 3.13–3.15. Both bridge tests now share a
   child-process helper that clears unrelated variables and forwards only the
-  platform loader path; ADR 006 records this test composition-root exception.
+  platform loader path; ADR 0006 records this test composition-root exception.
   Python 3.12 also reported the nested environment-policy target returning Make
   status 2, but the exact target passed when reproduced locally. The contract
   test now includes captured output if that nested target fails again. After
@@ -1185,7 +1185,7 @@ All eight acceptance criteria in the issue are met and evidenced:
 1. **Name bounds** — 255 UTF-8 bytes and 32 segments, enforced at the single
    point where a name becomes a registry key.
 2. **Control characters** — refused, including `0x7F`.
-3. **Cardinality policy** — decided and documented in ADR 007: a hard cap with
+3. **Cardinality policy** — decided and documented in ADR 0007: a hard cap with
    validation, rather than weak ownership or eviction, because a logger is a
    stable component identity and evicting one would silently reset its level
    and handlers.

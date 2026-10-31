@@ -686,8 +686,8 @@ Trace links:
   evidence; item two, a successful scheduled run on the default branch, is
   recorded after merge and before the issue closes; item four maps to EP-M7.
 
-`docs/adr-004-batching-optimizations-in-consumer-threads.md` describes the
-worker model the seam must preserve and is read before EP-M2.
+`docs/adrs/adr-0004-batching-optimizations-in-consumer-threads.md` describes
+the worker model the seam must preserve and is read before EP-M2.
 
 ## Surprises & discoveries
 

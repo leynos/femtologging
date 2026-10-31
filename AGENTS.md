@@ -159,7 +159,7 @@ project:
   keeps the parent's environment, so where an inherited variable could change
   the outcome, call `Command::env_clear` first and add back only what the child
   needs, `PATH` included. See
-  [docs/adr-006-environment-seam-taxonomy.md](docs/adr-006-environment-seam-taxonomy.md).
+  [docs/adrs/adr-0006-environment-seam-taxonomy.md](docs/adrs/adr-0006-environment-seam-taxonomy.md).
 
 ### Dependency Management
 
@@ -231,7 +231,7 @@ production docstring coverage, Pylint (on managed PyPy 3.12),
 strict Skylos production dead-code gate. See
 [Python linting](docs/developers-guide.md#python-linting) for the full pipeline
 and pin details, recorded in
-[ADR-005](docs/adr-005-four-tier-python-lint-architecture.md).
+[ADR-0005](docs/adrs/adr-0005-four-tier-python-lint-architecture.md).
 
 Suppressions must carry reasons; prefer `# ruff: ignore[CODE] reason` over an
 unexplained `# noqa`-style suppression.

@@ -355,12 +355,12 @@ the model list names exactly the models the heavy target defines.
 ## Logger cardinality and shared dispatch
 
 The accepted design for logger names and dispatch is recorded in
-[ADR 007](adr-007-bounded-logger-cardinality-and-shared-dispatch.md). Names are
-validated before registry lookup: no empty dotted segments, at most 255 UTF-8
-bytes and 32 segments, and no control characters or Unicode line and paragraph
-separators. The process-wide registry keeps at most 10,000 named loggers;
-`root` is exempt, and a refused new name or parent chain is rejected without
-evicting or partially inserting existing logger state.
+[ADR 0007](adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md).
+Names are validated before registry lookup: no empty dotted segments, at most
+255 UTF-8 bytes and 32 segments, and no control characters or Unicode line and
+paragraph separators. The process-wide registry keeps at most 10,000 named
+loggers; `root` is exempt, and a refused new name or parent chain is rejected
+without evicting or partially inserting existing logger state.
 
 The manager starts its process-wide dispatcher lazily when the first logger is
 constructed. It starts between one and four shards, clamped from the machine's
@@ -627,7 +627,7 @@ checking, and tests to Makefile targets.
 `femtologging` runs Python linting as five tiers, all reachable through
 `make lint` (`lint-python`, followed by `lint-rust`). Each stage must pass
 before the next runs. The original four-tier decision is recorded in
-[ADR-005: Four-tier Python lint architecture](adr-005-four-tier-python-lint-architecture.md);
+[ADR-0005: Four-tier Python lint architecture](adrs/adr-0005-four-tier-python-lint-architecture.md);
 its addendum records the addition of the docstring-coverage tier below.
 
 1. **Ruff** — fast, broad rule set in preview mode, targeting `py312`. Pinned
@@ -814,7 +814,7 @@ item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`. Use
 
 `rust_extension/tests/env_access_policy.rs` holds this configuration to that
 contract. See
-[adr-006-environment-seam-taxonomy.md](./adr-006-environment-seam-taxonomy.md)
+[adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
 for the decision and its rationale.
 
 ### The source scan

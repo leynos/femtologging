@@ -151,9 +151,9 @@ The primary components of the `femtologging` system include:
 
 - `FemtoFilter` **Trait and Implementations:** A trait for providing
   fine-grained control over which log records are processed. The accepted
-  direction in [ADR 003](./adr-003-python-stdlib-filter-parity.md) is phased
-  parity for Python standard library callback filters on loggers and the root
-  logger, while preserving Rust-native filters for low-overhead cases.
+  direction in [ADR 0003](./adrs/adr-0003-python-stdlib-filter-parity.md) is
+  phased parity for Python standard library callback filters on loggers and the
+  root logger, while preserving Rust-native filters for low-overhead cases.
 
 ### 3.2 The Producer-Consumer Data Flow
 
@@ -174,9 +174,9 @@ The logging process will follow these steps:
 4. **Filter Evaluation and Enrichment (Producer-Side):** The logger applies its
    configured filters after the level check and before queueing. This includes
    Rust-native filters and, per
-   [ADR 003](./adr-003-python-stdlib-filter-parity.md), phased support for
-   Python callback filters. Any filter-provided enrichment is persisted into
-   Rust-owned record metadata before asynchronous dispatch.
+   [ADR 0003](./adrs/adr-0003-python-stdlib-filter-parity.md), phased support
+   for Python callback filters. Any filter-provided enrichment is persisted
+   into Rust-owned record metadata before asynchronous dispatch.
 
 5. **Channel Send:** The accepted `FemtoLogRecord` is sent through one or more
    MPSC channels to the consumer threads associated with the active handlers
@@ -838,19 +838,19 @@ batches rather than one by one.
   destination. This trade-off (throughput vs. individual message latency)
   should be configurable (e.g., batch size, batch timeout).
 
-[ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md) formalizes
-the analysis of batching strategies. The chosen direction is drain-loop
-batching with `crossbeam-channel` `try_recv()` (Option A), complemented by
-`write_vectored` scatter-gather I/O for file and stream handlers (Option C).
-This combination preserves zero added latency under light traffic while
-amortizing I/O costs under sustained load.
+[ADR 0004](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md)
+formalizes the analysis of batching strategies. The chosen direction is
+drain-loop batching with `crossbeam-channel` `try_recv()` (Option A),
+complemented by `write_vectored` scatter-gather I/O for file and stream
+handlers (Option C). This combination preserves zero added latency under light
+traffic while amortizing I/O costs under sustained load.
 
 Dynamic filtering, while a desirable feature for operational flexibility, also
 has performance implications. If filters are complex or numerous, evaluating
 them on the hot path for every log call can add overhead. CPython's `logging`
 allows filters on both loggers and handlers. The current
-[ADR 003](./adr-003-python-stdlib-filter-parity.md) scope prioritizes logger
-and root filter parity first, including Python callback filters, while
+[ADR 0003](./adrs/adr-0003-python-stdlib-filter-parity.md) scope prioritizes
+logger and root filter parity first, including Python callback filters, while
 handler-level parity remains out of scope for that decision.
 
 If `femtologging` supports dynamically changing filters, the mechanism for
@@ -1073,9 +1073,9 @@ potential future enhancement.
 
   Current `dictConfig` support accepts declarative filter definitions (for
   example level and name forms). The accepted direction in
-  [ADR 003](./adr-003-python-stdlib-filter-parity.md) extends this with phased
-  support for standard library factory-based filter declarations (the `"()"`
-  form), while preserving existing declarative behaviour.
+  [ADR 0003](./adrs/adr-0003-python-stdlib-filter-parity.md) extends this with
+  phased support for standard library factory-based filter declarations (the
+  `"()"` form), while preserving existing declarative behaviour.
 
   ```python
   from femtologging import Config, FileHandler, Formatter
@@ -1565,9 +1565,10 @@ involves:
 
 - **Adding Filters:** `FemtoFilter` instances can be associated with specific
   loggers (including the root logger) to provide granular control over log
-  message processing. Per [ADR 003](./adr-003-python-stdlib-filter-parity.md),
-  phased Python callback filter parity is targeted at logger and root filters;
-  handler-level stdlib parity is explicitly deferred.
+  message processing. Per
+  [ADR 0003](./adrs/adr-0003-python-stdlib-filter-parity.md), phased Python
+  callback filter parity is targeted at logger and root filters; handler-level
+  stdlib parity is explicitly deferred.
 
 ### 7.2. Dynamic Reconfiguration
 
@@ -1732,7 +1733,7 @@ A phased approach will allow for iterative development and feedback:
 
   - Add phased Python stdlib filter parity for logger and root filters
     (callback filters plus `dictConfig` factory forms) in line with
-    [ADR 003](./adr-003-python-stdlib-filter-parity.md).
+    [ADR 0003](./adrs/adr-0003-python-stdlib-filter-parity.md).
 
   - Enhance structured logging capabilities in macros (e.g., more sophisticated
     value capture, easier context propagation).
@@ -1742,8 +1743,8 @@ A phased approach will allow for iterative development and feedback:
     handlers and filters at runtime.
 
   - Explore performance optimizations like batching in consumer threads. See
-    [ADR 004](./adr-004-batching-optimizations-in-consumer-threads.md) for the
-    analysis of batching strategies and the chosen drain-loop approach.
+    [ADR 0004](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md)
+    for the analysis of batching strategies and the chosen drain-loop approach.
 
 A strategic consideration for adoption is the "ecosystem play." While
 `femtologging` will have its own powerful API, prioritizing integration with the

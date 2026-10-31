@@ -11,7 +11,7 @@ grown to provide the core handler implementations as well:
   thread. It now provides `flush()` and `close()` to deterministically manage
   that thread.
 
-The file handler lives under `rust_extension/src/handlers/file`. ADR 004's
+The file handler lives under `rust_extension/src/handlers/file`. ADR 0004's
 batching work prompted a split into focused submodules, so the public handler
 API could stay stable while the implementation remained readable. The list
 below covers the primary runtime and test-support modules declared from
@@ -30,18 +30,18 @@ shape rather than a promise that every future internal helper will appear here:
    formatted records.
 6. `validations.rs` — constructor and Python-binding guards for capacity and
    flush-interval validation.
-7. `worker.rs` — the asynchronous consumer thread, including ADR 004's batch
+7. `worker.rs` — the asynchronous consumer thread, including ADR 0004's batch
    draining, flush tracking, and worker lifecycle management.
 8. `policy.rs` — parsing for file-handler overflow policy strings such as
    `"drop"`, `"block"`, and `"timeout:N"`.
 9. `test_support.rs` — shared Rust-test logging capture helpers used by the
    file-handler test modules behind `#[cfg(test)]`.
 
-This split keeps the ADR 004 batching changes local to `worker.rs` and its
+This split keeps the ADR 0004 batching changes local to `worker.rs` and its
 helpers instead of forcing `mod.rs` to carry validation, I/O, builder, and
 runtime concerns in one file.
 
-ADR 004's file-handler work also changed the worker contract in two ways that
+ADR 0004's file-handler work also changed the worker contract in two ways that
 matter for contributors working below the Python API surface:
 
 - `BatchConfig` now owns the worker's drain-loop capacity. Construction is
@@ -53,7 +53,7 @@ matter for contributors working below the Python API surface:
   `FemtoFileHandler::flush()` only reports success when that specific worker
   flush sends `Ok(())` back before the deadline.
 
-Inside `worker.rs`, batching follows ADR 004's "block once, then drain"
+Inside `worker.rs`, batching follows ADR 0004's "block once, then drain"
 strategy. `recv_batch()` blocks for the first command, then uses `try_recv()`
 to pull additional pending commands up to `BatchConfig.capacity()` with no
 extra delay under light traffic. `WorkerState::process_batch()` applies each
@@ -79,7 +79,7 @@ now splits responsibilities between:
 
 The split matters beyond file size: shard cardinality is now a property of the
 machine rather than of the logger count, so `dispatcher.rs` is where the
-thread-per-logger amplification recorded in ADR 007 was removed. Producer and
+thread-per-logger amplification recorded in ADR 0007 was removed. Producer and
 worker contracts also stay testable in isolation, since a test can be handed a
 pool of its own instead of the process-wide one.
 

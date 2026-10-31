@@ -53,7 +53,7 @@ them produces numbers that mislead in both directions.
 
 ### 2.2. Non-goals
 
-- This suite does not select the production channel crate afresh. ADR 004
+- This suite does not select the production channel crate afresh. ADR 0004
   retains `crossbeam-channel` and rejects a `flume` swap; the lab measures
   channel behaviour to confirm or challenge that decision, not to relitigate it
   pre-emptively.[^2]
@@ -453,7 +453,7 @@ happens if I offload I/O the way `femtologging` does?"
 
 ### 9.4. Group D: file batching
 
-Group D tunes `femtologging`'s consumer workers. ADR 004 selects drain-loop
+Group D tunes `femtologging`'s consumer workers. ADR 0004 selects drain-loop
 batching with `try_recv()` as the primary strategy, because it adds no
 light-load latency and forms larger batches naturally under sustained load; it
 also records that the shipped phase has batched-receive plumbing while true
@@ -463,7 +463,7 @@ and 64; message sizes of 32 bytes, 128 bytes, and 1 KiB; and sinks of a `tmpfs`
 file and a real solid-state disk file. It measures records per second, syscalls
 per record, flush latency, shutdown drain latency, and p99 caller latency. Its
 purpose is to decide whether to implement contiguous buffer writes before
-`write_vectored`, because ADR 004 treats vectored I/O as conditional future
+`write_vectored`, because ADR 0004 treats vectored I/O as conditional future
 work pending `write_all_vectored` stabilization.[^2]
 
 ### 9.5. Group E: socket handler
@@ -561,7 +561,7 @@ optimization target; it is not a wishlist of features.
   and contention. Try, in order: a larger bounded capacity, batch-drain
   capacity tuning, non-blocking send with explicit drop accounting, per-handler
   queue sharding, and thread-local staging buffers. A channel-crate swap stays
-  off the table absent a clear, measured loss, consistent with ADR 004.[^2]
+  off the table absent a clear, measured loss, consistent with ADR 0004.[^2]
 - **Formatting dominates.** Preparse format strings, cache formatter plans, and
   reuse consumer-thread buffers. Avoid `format!` in loops; write into an
   existing buffer. The `formatter.rs` bench isolates `format_literal`,
@@ -671,8 +671,8 @@ points last ran, so the coverage gap is visible rather than hidden.
     recommendations and future directions".
     [`rust-multithreaded-logging-framework-for-python-design.md`](./rust-multithreaded-logging-framework-for-python-design.md).
 
-[^2]: ADR 004, "Batching optimizations in consumer threads".
-    [`adr-004-batching-optimizations-in-consumer-threads.md`](./adr-004-batching-optimizations-in-consumer-threads.md).
+[^2]: ADR 0004, "Batching optimizations in consumer threads".
+    [`adrs/adr-0004-batching-optimizations-in-consumer-threads.md`](./adrs/adr-0004-batching-optimizations-in-consumer-threads.md).
 
 [^3]: Python documentation, "logging.handlers — Logging handlers".
     <https://docs.python.org/3/library/logging.handlers.html>.

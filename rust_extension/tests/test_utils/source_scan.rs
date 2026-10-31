@@ -70,7 +70,7 @@
 //! source directly, so `#[path = "../../bypass.rs"] mod bypass;` compiles a
 //! file outside the crate directory the walk reads. The first two are
 //! documented in
-//! `docs/adr-006-environment-seam-taxonomy.md`, with the narrowing that keeps
+//! `docs/adrs/adr-0006-environment-seam-taxonomy.md`, with the narrowing that keeps
 //! the doc-forwarding idiom and `include_str!` out of the findings.
 
 use syn::visit::Visit;

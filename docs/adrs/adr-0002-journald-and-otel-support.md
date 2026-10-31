@@ -1,4 +1,4 @@
-# ADR 002: introduce OpenTelemetry and journald handler support in femtologging
+# ADR 0002: introduce OpenTelemetry and journald handler support in femtologging
 
 ## Status
 
