@@ -23,7 +23,10 @@ WORKFLOW_FETCH: typ.Final[str] = (
     "cargo fetch --locked --manifest-path rust_extension/Cargo.toml"
 )
 FETCH_STEP: typ.Final[str] = "Fetch locked dependencies"
-TEST_COMMAND: typ.Final[re.Pattern[str]] = re.compile(r"\b(cargo\s+test|make\s+test)\b")
+# `make lint` runs the Rust doctests through `lint-rust-test-docs`, so it starts tests too.
+TEST_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
+    r"\b(cargo\s+test|make\s+(test|lint))\b"
+)
 Step = dict[str, typ.Any]
 
 
