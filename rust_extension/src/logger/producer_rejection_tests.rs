@@ -236,8 +236,8 @@ fn flush_reports_drops_held_back_by_the_warning_interval() {
                 && warning.message == "FemtoLogger: dropped 1 records; reported by flush"
         })
         .count();
-    assert!(
-        flush_warnings >= 1,
-        "the flush should report the suppressed drop",
+    assert_eq!(
+        flush_warnings, 1,
+        "the flush should report the suppressed drop exactly once",
     );
 }

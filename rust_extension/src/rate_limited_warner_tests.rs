@@ -240,7 +240,11 @@ fn compare_exchange_rejects_the_other_same_timestamp_claims() {
     assert_eq!(last_warn.load(Ordering::Relaxed), 1000);
 }
 
-/// A slow callback does not hold up another warning attempt or flush.
+/// A flush does not wait for a paused warning callback.
+///
+/// The callback only reaches its barriers if it runs after the drain lock is
+/// released; a callback that held the lock would make the flush below wait out
+/// its timeout.
 #[test]
 fn callback_runs_after_releasing_the_drain_lock() {
     let warner = Arc::new(RateLimitedWarner::new(Duration::from_secs(3600)));
@@ -275,7 +279,10 @@ fn callback_runs_after_releasing_the_drain_lock() {
         scope.spawn(move || {
             second_warner.record_drop();
             worker_attempt_started.wait();
-            second_warner.warn_if_due(|count| {
+            // Flush rather than warn: the interval is open, so `warn_if_due`
+            // would return at the suppression pre-check without ever testing
+            // whether the paused callback still holds the drain lock.
+            second_warner.flush(|count| {
                 second_counts
                     .lock()
                     .expect("warning counts lock")
@@ -291,13 +298,14 @@ fn callback_runs_after_releasing_the_drain_lock() {
 
     assert!(
         second_attempt_finished_while_callback_paused,
-        "warning callbacks must run outside the drain mutex"
+        "a flush must not wait for a paused warning callback"
     );
     assert_eq!(
         *warning_counts.lock().expect("warning counts lock"),
-        vec![1]
+        vec![1, 1],
+        "the paused warning and the flush each report their own drop"
     );
-    assert_eq!(warner.pending_drops(), 1);
+    assert_eq!(warner.pending_drops(), 0);
 }
 
 /// Scenario: threads record, warn, flush and move the clock concurrently.
