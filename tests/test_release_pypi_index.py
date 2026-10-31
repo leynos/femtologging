@@ -167,6 +167,9 @@ def test_a_missing_pypi_project_becomes_an_empty_index(tmp_path: pathlib.Path) -
     assert (calls, sleeps) == (1, []), (
         "A 404 before the first release means there is nothing to skip."
     )
+    assert "PyPI project is unpublished; using an empty index" in completed.stderr, (
+        "The unpublished-project fallback is visible in the workflow record."
+    )
 
 
 def test_pypi_index_fetch_restricts_redirects_to_https(tmp_path: pathlib.Path) -> None:
@@ -199,6 +202,9 @@ def test_transient_index_failures_retry_with_bounded_two_second_waits(
         encoding="utf-8"
     ) == '{"files": []}', (
         "Network errors, 429, and 5xx retry until a successful response."
+    )
+    assert "index fetch attempt 2/6 returned HTTP 429" in completed.stderr, (
+        "A retry reports its attempt, HTTP status and elapsed time."
     )
 
 
@@ -239,6 +245,9 @@ def test_index_polling_waits_for_every_uploaded_filename(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert (calls, sleeps) == (2, ["3"]), (
         "A stale successful index is refreshed until the upload is visible."
+    )
+    assert "index poll 1/10 still missing:" in completed.stderr, (
+        "Polling reports its attempt and the filenames still missing."
     )
 
 
