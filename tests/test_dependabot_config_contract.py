@@ -2,9 +2,10 @@
 
 maturin (the ``uv`` stanza) and PyO3 (the ``cargo`` stanza) are versioned
 independently yet build one extension, so an update to either alone cannot be
-built against the other. A multi-ecosystem group makes the two arrive in a
-single pull request, where one CI run builds both. A group coordinates the
-update without proving compatibility.
+built against the other. A multi-ecosystem group puts the available updates for
+the two into one pull request, so when both have one a single CI run builds
+both. It does not hold back a bump when only one of the two has an update, and
+a group coordinates the update without proving compatibility.
 
 The project is uv-managed (``uv.lock``, no requirements files), so the Python
 stanza must be ``uv``: a ``pip`` stanza leaves the lock outside Dependabot's

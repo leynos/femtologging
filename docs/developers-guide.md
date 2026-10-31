@@ -167,20 +167,23 @@ stanza of `.github/dependabot.yml` is `uv`, not `pip`. maturin (the `uv`
 stanza) and PyO3 (the `cargo` stanza) are versioned independently yet build one
 extension, so an update to either alone cannot be built against the other. Both
 stanzas join the `maturin-pyo3` multi-ecosystem group, defined at the top of
-the file with its own daily schedule, so the pair arrives in a single pull
-request where one CI run builds both. The `uv` stanza offers `maturin` and the
-`cargo` stanza offers `pyo3`. A group coordinates the update; it cannot choose
-compatible versions and it never rewrites a pinned literal, so the maturin pin
-in `.github/workflows/heavy-tests.yml` is still kept aligned by
+the file with its own daily schedule, so the available updates for the pair
+arrive in one pull request and, when both have one, a single CI run builds them
+together. A bump is not held back when only one of the two has an update. The
+`uv` stanza offers `maturin` and the `cargo` stanza offers `pyo3`. A group
+coordinates the update; it cannot choose compatible versions and it never
+rewrites a pinned literal, so the maturin pin in
+`.github/workflows/heavy-tests.yml` is still kept aligned by
 `tests/test_maturin_build.py`.
 
 The `uv` stanza also ignores `pytest-bdd`: it is pinned beside `pytest` in
 `pyproject.toml`, and a release has to be checked against the pytest it
 supports before the pair moves, so it is updated by hand.
-`tests/test_dependabot_config_contract.py` holds the shape. The Concordat
-`dependency-family-contracts` rule reads the group as protecting the maturin
-and PyO3 tuple (DF-002) and the `ignore` rule as protecting the pytest and
-pytest-bdd tuple.
+`tests/test_dependabot_config_contract.py` holds the shape. Concordat's
+`dependency-family-contracts` rule (DF-002) accepts a shared multi-ecosystem
+group as one way to protect an independently versioned pair
+(<https://github.com/leynos/concordat/pull/334>), and an `ignore` rule for the
+pytest and pytest-bdd pair.
 
 ## Type checking and heavy tests
 
