@@ -167,9 +167,9 @@ fixtures.
 
 ### Maturin build features
 
-The persistent `[tool.maturin].features = ["python"]` setting is the production
-build configuration. It keeps the test-only `test-util` feature and
-timed-rotation hooks out of ordinary wheel builds.
+The persistent `features = ["python"]` setting in the `[tool.maturin]` table is
+the production build configuration. It keeps the test-only `test-util` feature
+and timed-rotation hooks out of ordinary wheel builds.
 
 Tests that exercise those hooks opt in explicitly. `make build` and the heavy
 test workflow run `maturin develop --features python,test-util`. The coverage
