@@ -300,8 +300,11 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
     Ok(())
 }
 
-// Bridge stress tests live in a sibling module to respect
-// the 400-line limit.
+// Bridge tests are split across sibling modules to respect the 400-line
+// limit: one per concern, with their fixtures in `test_support`.
+#[cfg(test)]
+mod test_support;
+
 #[cfg(test)]
 #[path = "log_compat_context_tests.rs"]
 mod context_tests;
@@ -309,6 +312,10 @@ mod context_tests;
 #[cfg(test)]
 #[path = "log_compat_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "log_compat/enabled_tests.rs"]
+mod enabled_tests;
 
 #[cfg(test)]
 #[path = "log_compat/diagnostics_tests.rs"]
