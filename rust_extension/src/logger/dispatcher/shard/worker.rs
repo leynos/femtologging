@@ -8,13 +8,16 @@
 //! survives that too rather than ending the shard for every logger on it.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 use log::warn;
 
 use super::Job;
 use super::budget::Permit;
+use crate::handler::FemtoHandlerTrait;
 use crate::logger::QueuedRecord;
 use crate::logger::flush::flush_handler_snapshot_until;
+use crate::logger::flush_clock::FlushDeadline;
 use crate::logger::flush_diagnostics::FlushFailureStage;
 #[cfg(feature = "tracing-compat")]
 use crate::logger::flush_diagnostics::trace_flush_result;
@@ -57,19 +60,8 @@ fn handle_job(job: Job) {
         } => {
             #[cfg(feature = "tracing-compat")]
             let started_at = deadline.now();
-            let result = match start.recv_timeout(deadline.remaining()) {
-                Ok(()) => match handlers.recv_timeout(deadline.remaining()) {
-                    Ok(handlers) => flush_handler_snapshot_until(&handlers, &deadline),
-                    Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::WorkerStartTimedOut),
-                    Err(RecvTimeoutError::Disconnected) => {
-                        Err(FlushFailureStage::WorkerStartDisconnected)
-                    }
-                },
-                Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::WorkerStartTimedOut),
-                Err(RecvTimeoutError::Disconnected) => {
-                    Err(FlushFailureStage::WorkerStartDisconnected)
-                }
-            };
+            let result = receive_flush_snapshot(&start, &handlers, &deadline)
+                .and_then(|snapshot| flush_handler_snapshot_until(&snapshot, &deadline));
             #[cfg(feature = "tracing-compat")]
             trace_flush_result(
                 "worker_complete",
@@ -81,6 +73,24 @@ fn handle_job(job: Job) {
         #[cfg(loom)]
         Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
+}
+
+/// Receive the start signal and snapshot using the same remaining budget.
+fn receive_flush_snapshot(
+    start: &Receiver<()>,
+    handlers: &Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
+    deadline: &FlushDeadline,
+) -> Result<Vec<Arc<dyn FemtoHandlerTrait>>, FlushFailureStage> {
+    let failure_stage = |error| match error {
+        RecvTimeoutError::Timeout => FlushFailureStage::WorkerStartTimedOut,
+        RecvTimeoutError::Disconnected => FlushFailureStage::WorkerStartDisconnected,
+    };
+    start
+        .recv_timeout(deadline.remaining())
+        .map_err(failure_stage)?;
+    handlers
+        .recv_timeout(deadline.remaining())
+        .map_err(failure_stage)
 }
 
 /// Dispatch one record to its captured handlers, then release its permit.

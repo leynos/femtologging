@@ -111,6 +111,44 @@ impl InternalEventCollector {
             ))
         }
     }
+
+    fn should_capture(&self, event: &Event<'_>, current_thread: ThreadId) -> bool {
+        if !self.is_recording.load(Ordering::Relaxed)
+            || event.metadata().target() != "femtologging::internal"
+        {
+            return false;
+        }
+
+        self.allow_all_threads.load(Ordering::Relaxed) || self.is_permitted_thread(current_thread)
+    }
+
+    fn is_permitted_thread(&self, current_thread: ThreadId) -> bool {
+        self.permitted_threads
+            .lock()
+            .is_ok_and(|permitted_threads| permitted_threads.contains(&current_thread))
+    }
+
+    fn record_event(&self, event: &Event<'_>) -> bool {
+        let mut events = match self.events.lock() {
+            Ok(events) => events,
+            Err(_) => return false,
+        };
+        events.push(CapturedEvent {
+            fields: collect_fields(event),
+        });
+        drop(events);
+        self.events_changed.notify_all();
+        true
+    }
+
+    fn revoke_worker_permission(&self, current_thread: ThreadId) {
+        if current_thread == self.test_thread {
+            return;
+        }
+        if let Ok(mut permitted_threads) = self.permitted_threads.lock() {
+            permitted_threads.retain(|permitted_thread| *permitted_thread != current_thread);
+        }
+    }
 }
 
 impl<S> Layer<S> for InternalEventCollector
@@ -119,36 +157,13 @@ where
 {
     fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
         let current_thread = thread::current().id();
-        if !self.is_recording.load(Ordering::Relaxed)
-            || event.metadata().target() != "femtologging::internal"
-        {
+        if !self.should_capture(event, current_thread) {
             return;
         }
-
-        let is_permitted = self.allow_all_threads.load(Ordering::Relaxed)
-            || match self.permitted_threads.lock() {
-                Ok(permitted_threads) => permitted_threads.contains(&current_thread),
-                Err(_) => return,
-            };
-        if !is_permitted {
+        if !self.record_event(event) {
             return;
         }
-
-        let mut events = match self.events.lock() {
-            Ok(events) => events,
-            Err(_) => return,
-        };
-        events.push(CapturedEvent {
-            fields: collect_fields(event),
-        });
-        drop(events);
-        self.events_changed.notify_all();
-        if current_thread == self.test_thread {
-            return;
-        }
-        if let Ok(mut permitted_threads) = self.permitted_threads.lock() {
-            permitted_threads.retain(|permitted_thread| *permitted_thread != current_thread);
-        }
+        self.revoke_worker_permission(current_thread);
     }
 }
 
