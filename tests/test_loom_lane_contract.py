@@ -32,8 +32,10 @@ _COMPILE_STEP: typ.Final = "Compile Loom heavy tests"
 _EXECUTE_STEP: typ.Final = "Run Loom models"
 
 # `shlex.split` keeps an assignment prefix as one token, so the Loom
-# configuration is asserted as the whole token rather than as two.
-_LOOM_RUSTFLAGS: typ.Final = "RUSTFLAGS=--cfg loom"
+# configuration is asserted as the whole token rather than as two. The build
+# standard's mold flag rides along, because an assigned `RUSTFLAGS` replaces the
+# Linux table in `.cargo/config.toml` (the job installs mold).
+_LOOM_RUSTFLAGS: typ.Final = "RUSTFLAGS=--cfg loom -C link-arg=-fuse-ld=mold"
 
 # The name filter Cargo applies to the test binary. It must sit before the `--`
 # separator, because everything after it belongs to the harness.
