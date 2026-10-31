@@ -165,7 +165,7 @@ fixtures.
 The project is uv-managed (`uv.lock`, no requirements files), so the Python
 entries of `.github/dependabot.yml` are `uv`, not `pip`. maturin (the `uv`
 ecosystem) and PyO3 (the `cargo` ecosystem) are versioned independently yet
-build one extension, so an update to either alone cannot be built against the
+build one extension, so an update to either alone may not build against the
 other. A multi-ecosystem group, `maturin-pyo3`, defined at the top of the file
 with its own daily schedule and `open-pull-requests-limit` (Dependabot rejects
 that key on an entry that joins a group), puts the available updates for the

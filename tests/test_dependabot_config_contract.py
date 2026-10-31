@@ -1,8 +1,8 @@
 """Contracts for the Dependabot configuration of the extension build.
 
 maturin (the ``uv`` ecosystem) and PyO3 (the ``cargo`` ecosystem) are versioned
-independently yet build one extension, so an update to either alone cannot be
-built against the other. A multi-ecosystem group puts the available updates for
+independently yet build one extension, so an update to either alone may not
+build against the other. A multi-ecosystem group puts the available updates for
 the two into one pull request, so when both have one a single CI run builds
 both. It does not hold back a bump when only one of the two has an update, and a
 group coordinates the update without proving compatibility.
@@ -99,7 +99,7 @@ def test_the_group_is_defined_with_a_daily_schedule() -> None:
 def test_the_group_carries_the_pull_request_bound_not_its_entries() -> None:
     """Bound the group; Dependabot rejects the bound on an entry that joins it."""
     limit = _document()["multi-ecosystem-groups"][GROUP].get("open-pull-requests-limit")
-    assert isinstance(limit, int), (
+    assert type(limit) is int, (  # a bool is an int
         f"the {GROUP} group needs an integer bound; got {limit!r}"
     )
     assert limit > 0, f"the {GROUP} group needs a positive bound; got {limit!r}"
