@@ -142,6 +142,7 @@ impl FemtoFileHandler {
     /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
     /// the "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
+    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
     fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
         // Parsing raises `ValueError`, so it must happen while the lock is
         // still held; only the enqueue below can wait on the worker.
