@@ -1,4 +1,15 @@
 version: 2
+
+# maturin (uv) and PyO3 (Cargo) are versioned independently yet build one
+# extension, so an update to either alone cannot be built against the other.
+# Joining both stanzas to this group makes the pair arrive in a single pull
+# request, where one CI run builds them together. A group cannot choose
+# compatible versions; it only keeps the pair from splitting.
+multi-ecosystem-groups:
+  maturin-pyo3:
+    schedule:
+      interval: "daily"
+
 updates:
   # Enable version updates for GitHub Actions
   - package-ecosystem: "github-actions"
@@ -25,6 +36,9 @@ updates:
   # Enable version updates for Cargo
   - package-ecosystem: "cargo"
     directory: "/rust_extension"
+    multi-ecosystem-group: "maturin-pyo3"
+    patterns:
+      - "pyo3"
     groups:
       minor-and-patch:
         patterns:
@@ -61,9 +75,12 @@ updates:
     cooldown:
       default-days: 7
 
-  # Enable version updates for Python (pip / requirements*.txt)
-  - package-ecosystem: "pip"
+  # Enable version updates for Python (uv-managed pyproject.toml and uv.lock)
+  - package-ecosystem: "uv"
     directory: "/"
+    multi-ecosystem-group: "maturin-pyo3"
+    patterns:
+      - "maturin"
     groups:
       minor-and-patch:
         patterns:
@@ -71,6 +88,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # pytest-bdd is pinned beside pytest in pyproject.toml, and a release has to
+    # be checked against the pytest it supports before the pair moves, so it is
+    # updated by hand (leynos/cuprum#384).
+    ignore:
+      - dependency-name: "pytest-bdd"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"

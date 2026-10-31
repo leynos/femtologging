@@ -160,6 +160,28 @@ For `rust_extension/tests/compile_tests.rs`, use
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
 
+### Dependabot grouping for the extension build
+
+The project is uv-managed (`uv.lock`, no requirements files), so the Python
+stanza of `.github/dependabot.yml` is `uv`, not `pip`. maturin (the `uv`
+stanza) and PyO3 (the `cargo` stanza) are versioned independently yet build one
+extension, so an update to either alone cannot be built against the other. Both
+stanzas join the `maturin-pyo3` multi-ecosystem group, defined at the top of
+the file with its own daily schedule, so the pair arrives in a single pull
+request where one CI run builds both. The `uv` stanza offers `maturin` and the
+`cargo` stanza offers `pyo3`. A group coordinates the update; it cannot choose
+compatible versions and it never rewrites a pinned literal, so the maturin pin
+in `.github/workflows/heavy-tests.yml` is still kept aligned by
+`tests/test_maturin_build.py`.
+
+The `uv` stanza also ignores `pytest-bdd`: it is pinned beside `pytest` in
+`pyproject.toml`, and a release has to be checked against the pytest it
+supports before the pair moves, so it is updated by hand.
+`tests/test_dependabot_config_contract.py` holds the shape. The Concordat
+`dependency-family-contracts` rule reads the group as protecting the maturin
+and PyO3 tuple (DF-002) and the `ignore` rule as protecting the pytest and
+pytest-bdd tuple.
+
 ## Type checking and heavy tests
 
 `make typecheck` depends on `make build`, which creates `./.venv`, installs the
