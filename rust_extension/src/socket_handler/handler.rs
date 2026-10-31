@@ -55,8 +55,19 @@ pub struct FemtoSocketHandler {
     abandoned: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
-/// Report drops owned by the handler, regardless of the warning interval.
-fn flush_drop_warner(warner: &RateLimitedWarner) {
+/// Record a drop and emit the callback only when the warning interval permits.
+pub(super) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
+    warner.record_drop();
+    warner.warn_if_due(log);
+}
+
+/// Report pending drops without waiting for the warning interval.
+///
+/// Both the handler (a refused queue) and its worker (serialisation,
+/// connection or write failures) count drops, so both use this one report.
+/// A suppression window must not carry a count past the last chance to say it:
+/// on close, flush, or worker exit there is no later warning.
+pub(super) fn flush_drops(warner: &RateLimitedWarner) {
     warner.flush(|count| {
         log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
     });
@@ -110,7 +121,7 @@ impl FemtoSocketHandler {
     ///
     /// Pending handler-side drop warnings are reported before shutdown.
     pub fn close(&mut self) {
-        flush_drop_warner(&self.warner);
+        flush_drops(&self.warner);
         match self.request_shutdown() {
             ShutdownOutcome::Finished => self.join_worker(),
             ShutdownOutcome::TimedOut => self.abandon_worker(),
@@ -309,7 +320,7 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
         // Reported before the closed check: records refused after close are
         // recorded by the handler, so a flush that returned early would leave
         // their count pending on a handler that is never going to warn again.
-        flush_drop_warner(&self.warner);
+        flush_drops(&self.warner);
         let Some(tx) = self.sender() else {
             return false;
         };

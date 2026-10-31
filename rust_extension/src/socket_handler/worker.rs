@@ -26,6 +26,7 @@ use super::{
     backoff::BackoffState,
     config::SocketHandlerConfig,
     frame_write::FrameWriter,
+    handler::{flush_drops, warn_drops},
     serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
 };
@@ -336,24 +337,6 @@ fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::R
         frame_payload(&payload, config.max_frame_size)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "frame too large"))
     })
-}
-
-/// Count a failed record; repeated failures warn when the rate limit expires.
-fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
-    warner.record_drop();
-    warner.warn_if_due(log);
-}
-
-/// Report drops the worker found, ignoring the rate limit.
-///
-/// Serialization failures, connection failures and write errors are recorded
-/// by the worker rather than by the handler, so only the worker can report
-/// them. A suppressed interval would otherwise hold the count until the next
-/// due warning, which on a worker that is exiting never comes.
-fn flush_drops(warner: &RateLimitedWarner) {
-    warner.flush(|count| {
-        warn!("FemtoSocketHandler dropped {count} records in the last interval");
-    });
 }
 
 /// Enqueue one record; a full queue returns `HandlerError::QueueFull` and counts a drop.
