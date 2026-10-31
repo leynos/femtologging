@@ -3,6 +3,7 @@
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::ScopedJoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::handler::{FemtoHandlerTrait, HandlerError, remaining};
@@ -170,6 +171,32 @@ fn flush_handler_destruction_does_not_extend_the_caller_wait() {
     });
 }
 
+/// Block until the shard reports `expected` queued jobs.
+///
+/// Yields politely rather than sleeping so the shard worker can drain, and
+/// fails the test if the queue never reaches that depth within the flush bound.
+fn wait_for_queued_jobs(shard: &Shard, expected: usize) {
+    let deadline = Instant::now() + flush_bound();
+    while shard.queued_jobs_for_test() != expected && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        shard.queued_jobs_for_test(),
+        expected,
+        "the shard queue should hold {expected} job(s) while the worker is blocked"
+    );
+}
+
+/// Report whether every spawned flush caller finished within the flush bound.
+fn all_flush_callers_finished(callers: &[&ScopedJoinHandle<'_, bool>]) -> bool {
+    let deadline = Instant::now() + flush_bound();
+    let have_finished = || callers.iter().all(|caller| caller.is_finished());
+    while !have_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    have_finished()
+}
+
 #[test]
 fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
     let shard = Box::leak(Box::new(
@@ -196,15 +223,7 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
 
         let second_logger = &logger;
         let second = scope.spawn(move || second_logger.flush_handlers());
-        let queue_deadline = Instant::now() + flush_bound();
-        while shard.queued_jobs_for_test() != 1 && Instant::now() < queue_deadline {
-            std::thread::yield_now();
-        }
-        assert_eq!(
-            shard.queued_jobs_for_test(),
-            1,
-            "the second marker should occupy the remaining queue slot"
-        );
+        wait_for_queued_jobs(shard, 1);
 
         let (third_started_tx, third_started_rx) = bounded(1);
         let third_logger = &logger;
@@ -235,14 +254,8 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
             .join()
             .expect("handler removal should finish while marker insertion waits");
 
-        let finish_deadline = Instant::now() + flush_bound();
-        let callers = [&first, &second, &third];
-        let have_finished = || callers.iter().all(|caller| caller.is_finished());
-        while !have_finished() && Instant::now() < finish_deadline {
-            std::thread::sleep(Duration::from_millis(1));
-        }
         assert!(
-            have_finished(),
+            all_flush_callers_finished(&[&first, &second, &third]),
             "all flush callers should return while the worker remains blocked"
         );
         assert!(!first.join().expect("first flush caller should finish"));
