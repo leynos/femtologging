@@ -244,25 +244,40 @@ impl PyTimedRotatingFileHandler {
 
     /// Parses the level and dispatches a record through the worker queue,
     /// mapping delivery failures to a Python value error.
+    ///
+    /// The wait for queue capacity runs with the interpreter lock released, so
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
+    /// the "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        // Parsing raises `ValueError`, so it must happen while the lock is
+        // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
-        self.inner
-            .handle(FemtoLogRecord::new(logger, parsed_level, message))
+        let record = FemtoLogRecord::new(logger, parsed_level, message);
+        // Rotation happens on the worker, so the producer only enqueues and
+        // the closure touches no Python object.
+        py.detach(|| self.inner.handle(record))
             .map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
     }
 
     /// Requests a worker flush and returns whether it acknowledged in time.
+    ///
+    /// Uses a fixed 1-second timeout, and waits with the interpreter lock
+    /// released.
     #[pyo3(name = "flush")]
-    fn py_flush(&self) -> bool {
-        self.inner.flush()
+    fn py_flush(&self, py: Python<'_>) -> bool {
+        py.detach(|| self.inner.flush())
     }
 
     /// Closes the worker-backed handler and releases its Python-owned lifecycle
     /// state.
+    ///
+    /// The wait runs with the interpreter lock released. Closing does not
+    /// cancel a `handle` call that is already waiting for queue capacity; that
+    /// call returns only when the worker makes room or the channel closes.
     #[pyo3(name = "close")]
-    fn py_close(&mut self) {
-        self.inner.close();
+    fn py_close(&mut self, py: Python<'_>) {
+        py.detach(|| self.inner.close());
     }
 }
 
