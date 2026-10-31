@@ -219,7 +219,8 @@ jobs:
           set -euo pipefail
           python3 -m scripts.release_assets_cli stage-pypi \
             --publish "${PUBLISH_DIRECTORY}" --index "${PYPI_INDEX_PATH}" \
-            --assets "${GITHUB_ASSETS_PATH}" --github-files "${GITHUB_FILES}"
+            --assets "${GITHUB_ASSETS_PATH}" --github-files "${GITHUB_FILES}" \
+            --github-output "${GITHUB_OUTPUT}"
       - name: Publish missing files through Trusted Publishing
         if: steps.stage-pypi.outputs.remaining == 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
@@ -312,6 +313,7 @@ jobs:
             --assets "${GITHUB_ASSETS_PATH}" --github-files "${GITHUB_FILES}" \
             --bundles "${ATTESTATION_DIRECTORY}" \
             --output "${GITHUB_UPLOAD_DIRECTORY}" \
+            --github-output "${GITHUB_OUTPUT}" \
             > "${GITHUB_OUTPUT_PATH}"
       - name: Fetch canonical PyPI bytes and refresh its index
         shell: bash

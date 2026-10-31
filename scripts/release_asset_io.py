@@ -9,10 +9,9 @@ from __future__ import annotations
 import dataclasses as dc
 import hashlib
 import json
-import os
 import re
+import typing as typ
 import urllib.parse
-from pathlib import Path
 
 from scripts.release_asset_errors import (
     MalformedDigestError,
@@ -20,6 +19,9 @@ from scripts.release_asset_errors import (
     ReleaseAssetError,
     UnsafeArtifactNamesError,
 )
+
+if typ.TYPE_CHECKING:
+    from pathlib import Path
 
 #: The PEP 691 JSON Simple index; relative file URLs resolve against it.
 INDEX_URL = "https://pypi.org/simple/femtologging/"
@@ -168,8 +170,12 @@ def local_names(directory: Path) -> list[str]:
     return names
 
 
-def write_output(name: str, *, value: bool) -> None:
-    """Append a lowercase Boolean value to the workflow output file.
+def write_output(name: str, *, value: bool, destination: Path) -> None:
+    """Append a lowercase Boolean value to a workflow output file.
+
+    The caller supplies the destination, so this helper never reads the
+    ambient ``GITHUB_OUTPUT`` variable. The workflow command line is the only
+    place that resolves that variable, and tests can pass a scratch path.
 
     Parameters
     ----------
@@ -177,10 +183,13 @@ def write_output(name: str, *, value: bool) -> None:
         Output name consumed by a later GitHub Actions step.
     value
         Boolean value encoded as ``true`` or ``false``.
+    destination
+        File appended to in GitHub Actions output format.
 
     Examples
     --------
-    ``write_output("remaining", value=False)`` writes ``remaining=false``.
+    ``write_output("remaining", value=False, destination=Path("out"))``
+    writes ``remaining=false`` to ``out``.
     """
-    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+    with destination.open("a", encoding="utf-8") as output:
         output.write(f"{name}={str(value).lower()}\n")
