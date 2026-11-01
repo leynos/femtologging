@@ -47,8 +47,6 @@ struct InternalEventCollector {
     test_thread: ThreadId,
     /// Stops collection once the test has captured its expected outcomes.
     is_recording: Arc<AtomicBool>,
-    /// Temporarily permits worker threads during a flush trace assertion.
-    allow_all_threads: Arc<AtomicBool>,
 }
 
 impl InternalEventCollector {
@@ -60,7 +58,6 @@ impl InternalEventCollector {
             events_changed: Arc::new(Condvar::new()),
             test_thread,
             is_recording: Arc::new(AtomicBool::new(true)),
-            allow_all_threads: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -75,11 +72,7 @@ impl InternalEventCollector {
         self.is_recording.store(false, Ordering::Relaxed);
     }
 
-    /// Capture events from the logger worker as well as the test thread.
-    fn set_allow_all_threads(&self, allow: bool) {
-        self.allow_all_threads.store(allow, Ordering::Relaxed);
-    }
-
+    /// Permit the calling thread to contribute captured events.
     fn allow_current_thread(&self) -> Result<(), String> {
         let current_thread = thread::current().id();
         let mut permitted_threads = self
@@ -119,7 +112,7 @@ impl InternalEventCollector {
             return false;
         }
 
-        self.allow_all_threads.load(Ordering::Relaxed) || self.is_permitted_thread(current_thread)
+        self.is_permitted_thread(current_thread)
     }
 
     fn is_permitted_thread(&self, current_thread: ThreadId) -> bool {

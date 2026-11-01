@@ -11,7 +11,10 @@ use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
 
 /// A native handler whose flush fails so tracing can expose its failure stage.
-struct UnconfirmedFlushHandler;
+struct UnconfirmedFlushHandler {
+    /// Collector permitted to observe this worker's flush trace event.
+    collector: InternalEventCollector,
+}
 
 impl FemtoHandlerTrait for UnconfirmedFlushHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
@@ -19,6 +22,13 @@ impl FemtoHandlerTrait for UnconfirmedFlushHandler {
     }
 
     fn flush_until(&self, _deadline: Instant) -> bool {
+        // `flush_until` runs on the worker draining this flush, so permitting
+        // the current thread captures this test's trace event only. A blanket
+        // permission would also admit concurrent tests' workers, whose
+        // `worker_complete` events are selected by the assertion below.
+        self.collector
+            .allow_current_thread()
+            .expect("the flush worker should be permitted to emit its trace");
         false
     }
 
@@ -29,14 +39,14 @@ impl FemtoHandlerTrait for UnconfirmedFlushHandler {
 
 /// Assert that a failed worker flush emits bounded operation and stage fields.
 pub(super) fn assert_unconfirmed_flush_trace(collector: &InternalEventCollector) {
-    collector.set_allow_all_threads(true);
     let logger = FemtoLogger::new("trace-flush-unconfirmed".to_owned())
         .expect("flush tracing logger should construct");
     logger
-        .add_handler(Arc::new(UnconfirmedFlushHandler))
+        .add_handler(Arc::new(UnconfirmedFlushHandler {
+            collector: collector.clone(),
+        }))
         .expect("flush tracing handler should attach");
     assert!(!logger.flush_handlers());
-    collector.set_allow_all_threads(false);
     collector.stop_recording();
 
     let flush_events = collector
