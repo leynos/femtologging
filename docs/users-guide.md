@@ -369,7 +369,10 @@ Two states follow, and they describe different points in the shutdown:
 - Once a `close()` has taken the shutdown state, concurrent `handle()` calls
   raise `RuntimeError`, `flush()` returns `False`, and a second `close()`
   shares the first one's completion wait rather than starting new shutdown
-  work.
+  work. `FemtoTimedRotatingFileHandler` reports the closed handler from
+  `handle()` as `ValueError`, like its other handler errors. This keeps a
+  worker formatter that re-enters the handler safe while shutdown is in
+  progress.
 
 Callers who need a wait that ends on its own must use `"timeout:N"`. They must
 also handle the exception raised when the deadline expires and the record is

@@ -93,9 +93,9 @@ def test_close_while_handle_is_blocked_returns_without_raising(
 @pytest.mark.concurrency
 @pytest.mark.parametrize("builder_name", BUILDER_NAMES)
 @pytest.mark.parametrize("operation", ["handle", "flush", "close"])
-def test_handler_operation_during_close_observes_closed_handler(
+def test_operations_during_close_observe_a_closed_handler(
     tmp_path: Path, builder_name: str, operation: str
 ) -> None:
-    """Calls made during a close must see the closed handler, not a borrow."""
+    """A waiting close leaves its handler closed but still reachable."""
     path = tmp_path / f"{builder_name}-close-{operation}.log"
     run_scenario(builder_name, f"close-{operation}", path)
