@@ -289,9 +289,11 @@ The workflow then proceeds through these jobs:
 
 - `build` calls `build-wheels.yml`. It builds per-interpreter CPython 3.12,
   3.13 and 3.14 wheels for Linux x86_64 and aarch64, macOS x86_64 and arm64,
-  and Windows x86_64, plus exactly one source distribution. The build workflow
-  also runs in pull-request CI; its verification job fails if the sdist is
-  absent or duplicated and installs a wheel and a rebuilt sdist.
+  and Windows x86_64, plus exactly one source distribution. Each building job
+  installs and imports the wheels it produced before uploading them, so a wheel
+  that cannot install never becomes an artefact. The build workflow also runs
+  in pull-request CI; its verification job fails if the sdist is absent or
+  duplicated and installs a wheel and a rebuilt sdist.
 - `attest` collects every wheel and the single sdist, attests those files with
   build provenance, and passes the files and Sigstore bundle to later jobs as
   one artefact.

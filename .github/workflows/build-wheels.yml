@@ -9,6 +9,12 @@ env:
   MATURIN_VERSION: "1.13.3"
   MANYLINUX_AARCH64_CONTAINER: >-
     ghcr.io/rust-cross/manylinux_2_28-cross@sha256:4864c3e931d790def6dba05cbf133b236b242d0c732f77546c68663c7923116e
+  # Probe images carry the CPython interpreters the wheels were built for. They
+  # are pinned by digest so a probe environment cannot change under a run.
+  MANYLINUX_X86_64_PROBE: >-
+    quay.io/pypa/manylinux_2_28_x86_64@sha256:43f7ce12d79ed98b6dbfa3291d5afe389efd40a7e76de089959ffe99501b6edf
+  MANYLINUX_AARCH64_PROBE: >-
+    quay.io/pypa/manylinux_2_28_aarch64@sha256:724b504247662e1cf122590957c857211ec2d16b113ec134f92c570a2d01250f
 
 jobs:
   build-linux:
@@ -90,6 +96,23 @@ jobs:
         # the wheel links with that image's target toolchain.
         env:
           RUSTFLAGS: ""
+      # A wheel that cannot install or import must not become an artefact, so
+      # every Linux wheel is probed in a manylinux image that carries the
+      # interpreters it was built for. The aarch64 leg runs under the QEMU
+      # emulation set up above.
+      - name: Probe the Linux wheels
+        shell: bash
+        env:
+          DIST_DIRECTORY: dist
+          PROBE_VERSIONS: "3.12 3.13 3.14"
+          PROBE_IMAGE: >-
+            ${{ matrix.arch == 'x86_64' && env.MANYLINUX_X86_64_PROBE
+            || env.MANYLINUX_AARCH64_PROBE }}
+          PROBE_PLATFORM: >-
+            ${{ matrix.arch == 'x86_64' && 'linux/amd64' || 'linux/arm64' }}
+        run: |
+          set -euo pipefail
+          bash scripts/probe_manylinux_wheels.sh
       - name: Set up uv for the source distribution
         if: matrix.arch == 'x86_64'
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -195,6 +218,17 @@ jobs:
           args: >-
             --release --out dist --manifest-path rust_extension/Cargo.toml
             --features python --interpreter 3.12 3.13 3.14
+      # A wheel that cannot install or import must not become an artefact, so
+      # each wheel is probed on the runner that built it, using the CPython
+      # versions installed above.
+      - name: Probe the macOS and Windows wheels
+        shell: bash
+        env:
+          DIST_DIRECTORY: dist
+          PROBE_VERSIONS: "3.12 3.13 3.14"
+        run: |
+          set -euo pipefail
+          bash scripts/probe_host_wheels.sh
       - name: Upload native wheel artefact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
