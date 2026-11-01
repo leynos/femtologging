@@ -137,20 +137,26 @@ impl FemtoFileHandler {
 
     /// Parses a Python record, enqueues it according to the configured
     /// overflow policy, and maps delivery failures to a Python runtime error.
+    ///
+    /// The wait for queue capacity runs with the interpreter lock released, so
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
+    /// the "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        // Parsing raises `ValueError`, so it must happen while the lock is
+        // still held; only the enqueue below can wait on the worker.
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        <Self as FemtoHandlerTrait>::handle(
-            self,
-            FemtoLogRecord::new(logger, parsed_level, message),
-        )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        let record = FemtoLogRecord::new(logger, parsed_level, message);
+        py.detach(|| <Self as FemtoHandlerTrait>::handle(self, record))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to the underlying file without closing the
     /// handler.
     ///
-    /// Uses a fixed 1-second timeout.
+    /// Uses a fixed 1-second timeout, and waits with the interpreter lock
+    /// released.
     ///
     /// Returns
     /// -------
@@ -180,14 +186,29 @@ impl FemtoFileHandler {
     /// completion before joining the worker when it reports that it has exited.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread.
+    /// finish on the worker thread. Closing does not cancel a `handle` call
+    /// that is already waiting for queue capacity; that call returns only when
+    /// the worker makes room or the channel closes. The Python borrow is
+    /// released before the wait, so a concurrent call reaches the closed
+    /// handler instead of being rejected by PyO3. A blocked `handle` has not
+    /// released its shared borrow, so closing during one raises
+    /// `RuntimeError` instead of taking the handler. See the user guide for
+    /// the shutdown contract.
     #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
+    fn py_close(slf: Py<Self>, py: Python<'_>) -> PyResult<()> {
         let shutdown = {
-            let mut handler = slf.borrow_mut(py);
+            // A blocked `handle` still holds its shared borrow. `borrow_mut`
+            // would turn that refusal into a Rust panic at the FFI boundary,
+            // so report it as the `RuntimeError` the Python contract promises.
+            let mut handler = slf.try_borrow_mut(py).map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "Cannot close the handler while another call is using it",
+                )
+            })?;
             handler.take_shutdown()
         };
         py.detach(move || shutdown.wait());
+        Ok(())
     }
 }
 

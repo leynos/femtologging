@@ -249,18 +249,27 @@ impl PyTimedRotatingFileHandler {
 
     /// Parses the level and dispatches a record through the worker queue,
     /// mapping delivery failures to a Python value error.
+    ///
+    /// The wait for queue capacity runs with the interpreter lock released, so
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
+    /// the "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        // Parsing raises `ValueError`, so it must happen while the lock is
+        // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
-        self.inner
-            .handle(FemtoLogRecord::new(logger, parsed_level, message))
+        let record = FemtoLogRecord::new(logger, parsed_level, message);
+        // Rotation happens on the worker, so the producer only enqueues and
+        // the closure touches no Python object.
+        py.detach(|| self.inner.handle(record))
             .map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
     }
 
     /// Requests a worker flush and returns whether it acknowledged in time.
     ///
-    /// The GIL is released while waiting so a Python callable formatter can
-    /// run on the worker thread.
+    /// Uses a fixed 1-second timeout, and waits with the interpreter lock
+    /// released so a Python callable formatter can run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         py.detach(|| self.inner.flush())
@@ -270,14 +279,24 @@ impl PyTimedRotatingFileHandler {
     /// state.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread.
+    /// finish on the worker thread. Closing does not cancel a `handle` call
+    /// that is already waiting for queue capacity; that call returns only when
+    /// the worker makes room or the channel closes.
     #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
+    fn py_close(slf: Py<Self>, py: Python<'_>) -> PyResult<()> {
         let shutdown = {
-            let mut handler = slf.borrow_mut(py);
+            // A blocked `handle` still holds its shared borrow. `borrow_mut`
+            // would turn that refusal into a Rust panic at the FFI boundary,
+            // so report it as the `RuntimeError` the Python contract promises.
+            let mut handler = slf.try_borrow_mut(py).map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "Cannot close the handler while another call is using it",
+                )
+            })?;
             handler.take_shutdown()
         };
         py.detach(move || shutdown.wait());
+        Ok(())
     }
 }
 

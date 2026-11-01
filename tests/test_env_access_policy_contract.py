@@ -49,6 +49,14 @@ REQUIRED_LANES: typ.Final[Tokens] = ("none", "all")
 #: Manifest feature keys that name no lane of their own.
 LANE_EXEMPT_FEATURES: typ.Final[Tokens] = ("default",)
 STANDARD_CLIPPY_TARGET: typ.Final = "lint-rust-clippy"
+#: A valid policy lane may wait behind host-wide Cargo work for this long.
+POLICY_LANE_TIMEOUT_SECONDS: typ.Final = 1800
+#: This scenario runs one failing lane and one passing lane.
+POLICY_LANE_CALLS_PER_TEST: typ.Final = 2
+#: Keep pytest alive for both child budgets plus shutdown and reporting slack.
+POLICY_LANE_TEST_TIMEOUT_SECONDS: typ.Final = (
+    POLICY_LANE_CALLS_PER_TEST * POLICY_LANE_TIMEOUT_SECONDS + 60
+)
 #: Shell fragments that swallow the preceding command's exit status.
 STATUS_SWALLOWING: typ.Final[Tokens] = (
     "|| true",
@@ -287,7 +295,8 @@ def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
     The lint and Cargo flags are narrowed so the run exercises the recipe's
     exit-status handling rather than the policy itself. Production policy
     coverage remains separately asserted as `--all-targets`. A lane naming a
-    feature the crate does not declare fails immediately, before any build.
+    feature the crate does not declare fails, although Cargo may resolve
+    package metadata before it reports the invalid feature.
 
     Returns
     -------
@@ -310,10 +319,12 @@ def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        # A Rust lane can wait on the host-wide Cargo cache and compile queue.
+        timeout=POLICY_LANE_TIMEOUT_SECONDS,
     )
 
 
-@pytest.mark.timeout(620)
+@pytest.mark.timeout(POLICY_LANE_TEST_TIMEOUT_SECONDS)
 def test_a_failing_lane_fails_the_policy_target() -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 
@@ -321,7 +332,7 @@ def test_a_failing_lane_fails_the_policy_target() -> None:
     than describing it, because the shell loop it replaced reported only its
     last command's status, and a contract that reads the recipe cannot tell the
     difference. `badfeature` is not a declared feature, so Cargo rejects that
-    lane before building anything.
+    lane; Cargo may resolve package metadata before reporting the error.
     """
     failing_lane = run_policy_lane("badfeature none")
     assert failing_lane.returncode != 0, (
