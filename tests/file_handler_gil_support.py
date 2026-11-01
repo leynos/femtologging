@@ -9,9 +9,11 @@ rather than blocking collection.
 
 Detecting the defect needs care, because a wait that holds the GIL and one that
 releases it are indistinguishable from the caller's own point of view. Each
-scenario parks the file worker inside a formatter, starts a watchdog thread
-that records a progress timestamp every few milliseconds, and then makes the
-blocking call from a second thread.
+scenario parks the file worker inside a formatter and makes the blocking call
+from a second thread. Only once that call is provably parked in the binding
+does the scenario start a watchdog thread that records a progress timestamp
+every few milliseconds, so no record it takes can be attributed to the moments
+before the call entered.
 
 The verdict counts progress records that landed *inside* the call's own window,
 between the moment the calling thread entered the call and the moment it
@@ -23,11 +25,12 @@ returned:
   blocked Rust binding returns to the interpreter only when its wait ends, so
   the watchdog cannot complete even one spin of its loop.
 
-Counting avoids a race that a bare ordering check would have. The caller
-records its window boundary just before the call, so a check that merely asked
-"did the watchdog run before the call returned?" could be satisfied by a
-watchdog that ran *before* the call started. Requiring several records inside
-the window cannot: a GIL-holding wait yields none.
+Counting avoids a race that a bare ordering check would have. A check that
+merely asked "did the watchdog record before the call returned?" could be
+satisfied by a record taken before the call started or after it finished.
+Requiring several records inside the call's own window, taken by a watchdog
+that did not exist until the call was already parked, cannot: a GIL-holding
+wait yields none.
 """
 
 from __future__ import annotations
