@@ -241,7 +241,12 @@ must not carry it.
 `tests/test_build_standard_contract.py` holds all of this: the Linux-only
 `mold` table, the profile settings, the Loom steps and the Whitaker boundary,
 and it proves the defaults and both overrides at the Cargo boundary by building
-a one-file crate under the repository's own configuration.
+a one-file crate under the repository's own configuration. That fixture also
+drops the wrapper variables from its environment and passes empty
+`build.rustc-wrapper` and `build.rustc-workspace-wrapper` values on the Cargo
+command line. A host that configures a compiler wrapper in its own Cargo
+configuration would otherwise queue the one-file build behind that wrapper, and
+the measurement would describe the host instead of this repository.
 
 ### Cranelift
 
