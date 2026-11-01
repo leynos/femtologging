@@ -53,7 +53,9 @@ pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
-#[cfg(all(feature = "python", test))]
+// The consuming unit tests are excluded under `--cfg loom`, so the re-export
+// must be too or `-D unused-imports` fails the Loom Clippy lane.
+#[cfg(all(feature = "python", test, not(loom)))]
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
