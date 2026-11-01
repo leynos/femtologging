@@ -958,11 +958,13 @@ record that the bridge could dispatch. It can allow a level through to the
 adapter for a target that rejects it; the target-specific enablement check then
 rejects the record before its arguments are formatted.
 
-The bridge checks the target threshold before Rust logging macros evaluate
-their arguments, so disabled diagnostics avoid that argument work. This check
-does not inspect filters or handlers: an enabled record can still be rejected
-or dropped during dispatch. It does not create a logger or enter Python while
-checking the threshold. See the
+The `log` crate filters a macro call on the process-wide maximum before it
+evaluates that call's arguments, and asks the bridge's target check only after
+them. Arguments for a target held below the process-wide maximum are therefore
+still evaluated. Add a `log::log_enabled!` guard for the target when an
+argument is expensive. The target check does not inspect filters or handlers:
+an enabled record can still be rejected or dropped during dispatch. It does not
+create a logger or enter Python while checking the threshold. See the
 [Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
 behaviour and build-feature details.
 
