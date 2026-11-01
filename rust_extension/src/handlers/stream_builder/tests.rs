@@ -54,7 +54,7 @@ impl Write for TestWriter {
 #[case(StreamHandlerBuilder::stderr())]
 fn build_stream_handler_with_capacity(#[case] builder: StreamHandlerBuilder) {
     let builder = builder.with_capacity(8);
-    let mut handler = builder
+    let handler = builder
         .build_inner()
         .expect("build_inner must succeed for a valid builder");
     handler.flush();
@@ -67,7 +67,7 @@ fn build_stream_handler_with_capacity(#[case] builder: StreamHandlerBuilder) {
 fn build_stream_handler_with_custom_formatter(#[case] builder: StreamHandlerBuilder) {
     let builder = builder.with_formatter(UpperFormatter).with_capacity(4);
     let sink = Arc::new(Mutex::new(Vec::new()));
-    let mut handler = match builder.common.formatter.as_ref() {
+    let handler = match builder.common.formatter.as_ref() {
         Some(FormatterConfig::Instance(fmt)) => {
             builder.build_with_writer(TestWriter::new(Arc::clone(&sink)), fmt.clone_arc())
         }

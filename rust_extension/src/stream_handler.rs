@@ -143,8 +143,8 @@ fn run_stream_worker<W, F>(
 
 #[pyclass]
 pub struct FemtoStreamHandler {
-    /// Queue sender taken during close so no records can be submitted afterwards.
-    tx: Option<Sender<StreamCommand>>,
+    /// Queue sender taken during close; shared so no closer needs an exclusive borrow.
+    tx: Mutex<Option<Sender<StreamCommand>>>,
     /// Worker join handle protected so close and drop cannot join twice.
     handle: Mutex<Option<JoinHandle<()>>>,
     /// Completion broadcast every closing thread waits on, so a closer that
@@ -225,11 +225,13 @@ impl FemtoStreamHandler {
     /// Close the handler and wait for the worker thread to finish.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread.
+    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
+    /// close can start while another thread still holds the handler in a
+    /// detached flush call.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
-            let mut handler = slf.borrow_mut(py);
+            let handler = slf.borrow(py);
             handler.take_shutdown()
         };
         py.detach(move || shutdown.wait());
@@ -306,7 +308,7 @@ impl FemtoStreamHandler {
         let handle = spawn(move || run_stream_worker(rx, writer, formatter, worker_completion));
 
         Self {
-            tx: Some(tx),
+            tx: Mutex::new(Some(tx)),
             handle: Mutex::new(Some(handle)),
             completion,
             warner: config.warner,
@@ -320,15 +322,18 @@ impl FemtoStreamHandler {
     }
 
     /// Close the handler and wait for the worker thread to exit.
-    pub fn close(&mut self) {
+    ///
+    /// Concurrent callers all wait for the same completion.
+    pub fn close(&self) {
         self.take_shutdown().wait();
     }
 
     /// Marks the handler closed and transfers worker state to a shutdown
     /// operation that can wait after the Python object borrow is released.
-    fn take_shutdown(&mut self) -> StreamShutdown {
-        self.tx.take();
-        let handle = { self.handle.lock().take() };
+    fn take_shutdown(&self) -> StreamShutdown {
+        let tx = self.tx.lock().take();
+        drop(tx);
+        let handle = self.handle.lock().take();
         let completion = Arc::clone(&self.completion);
         StreamShutdown::new(handle, completion, self.flush_timeout)
     }
@@ -336,7 +341,9 @@ impl FemtoStreamHandler {
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let Some(tx) = &self.tx else {
+        // Clone under the lock and release it before sending: a blocking send
+        // must not hold the lock that close needs to take the sender.
+        let Some(tx) = self.tx.lock().clone() else {
             self.warner.record_drop();
             self.warner.warn_if_due(|count| {
                 warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
@@ -363,7 +370,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
-        match &self.tx {
+        match self.tx.lock().clone() {
             Some(tx) => {
                 self.warner.flush(|count| {
                     warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
