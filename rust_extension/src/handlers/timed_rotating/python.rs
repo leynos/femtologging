@@ -283,12 +283,20 @@ impl PyTimedRotatingFileHandler {
     /// that is already waiting for queue capacity; that call returns only when
     /// the worker makes room or the channel closes.
     #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
+    fn py_close(slf: Py<Self>, py: Python<'_>) -> PyResult<()> {
         let shutdown = {
-            let mut handler = slf.borrow_mut(py);
+            // A blocked `handle` still holds its shared borrow. `borrow_mut`
+            // would turn that refusal into a Rust panic at the FFI boundary,
+            // so report it as the `RuntimeError` the Python contract promises.
+            let mut handler = slf.try_borrow_mut(py).map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "Cannot close the handler while another call is using it",
+                )
+            })?;
             handler.take_shutdown()
         };
         py.detach(move || shutdown.wait());
+        Ok(())
     }
 }
 

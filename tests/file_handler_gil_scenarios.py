@@ -17,8 +17,7 @@ import textwrap
 import typing as typ
 
 from .file_handler_gil_close_scenarios import (
-    CLOSE_BORROW_BODY,
-    CLOSE_BORROW_CALLS,
+    CLOSE_DURING_BODIES,
     CONCURRENT_CLOSE_BODY,
 )
 from .file_handler_gil_wait_scenarios import (
@@ -266,9 +265,7 @@ _ERROR_TYPES = {
 _BODIES = {
     **WAIT_BODIES,
     "concurrent-close": CONCURRENT_CLOSE_BODY,
-    "close-handle": CLOSE_BORROW_BODY,
-    "close-flush": CLOSE_BORROW_BODY,
-    "close-close": CLOSE_BORROW_BODY,
+    **CLOSE_DURING_BODIES,
 }
 
 #: Builder labels the test module parametrizes over.
@@ -320,6 +317,5 @@ def render_scenario(builder_name: str, body_name: str, path: Path) -> str:
             hold=BLOCK_HOLD_SECONDS,
             close_hold=CLOSE_HOLD_SECONDS,
             error_type=_ERROR_TYPES[builder_name],
-            operation_call=CLOSE_BORROW_CALLS.get(body_name, ""),
         )
     )

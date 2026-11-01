@@ -439,18 +439,16 @@ blocked. The shard worker uses blocking `recv()` and has no idle polling tick.
 
 These file handlers let Python callers wait directly on a Rust channel, so
 their bindings give the interpreter lock back for the duration of those waits.
-Other Python-exposed handler families also have operations that may block; the
-HTTP, socket, and stream bindings remain follow-up work. `FemtoFileHandler`'s
-`#[pymethods]` block, and the rotating and timed-rotating wrappers that
-delegate to it, take a `py: Python<'_>` token and use `py.detach(...)` around
-the three operations that can block:
-
-- `handle()`, waiting on channel capacity under `OverflowPolicy::Block`
-  (unbounded `Sender::send`) or `OverflowPolicy::Timeout` (`send_timeout`);
-- `flush()`, waiting on the worker's flush acknowledgement with a one-second
-  deadline;
-- `close()`, waiting on the worker's shutdown acknowledgement and then on its
-  join.
+The `flush()` and `close()` boundary is described in
+[Python-facing `flush()` and `close()` waits](#python-facing-flush-and-close-waits);
+this section covers `handle()`, whose wait is the unbounded one, and the
+mechanics all three operations share. `FemtoFileHandler`'s `#[pymethods]`
+block, and the rotating and timed-rotating wrappers that delegate to it, take a
+`py: Python<'_>` token and use `py.detach(...)` around the operation.
+`handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
+(`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
+(`send_timeout`). Other Python-exposed handler families also have operations
+that may block; the HTTP, socket, and stream bindings remain follow-up work.
 
 `py.detach` requires its closure and return type to be `Ungil` — that is,
 `Send` — which is what keeps the pattern honest: a closure that captured a
@@ -495,22 +493,23 @@ instead of reporting. The parent applies a timeout and reports an expiry as a
 probable GIL deadlock.
 
 Each child parks the worker on a blocking formatter behind a capacity-1 queue,
-starts a watchdog thread that records a timestamp every few milliseconds, and
-then makes the blocking call from another thread. The verdict counts the
-watchdog's records that land *inside* the call's own window — between the
-calling thread entering the call and its returning:
+makes the blocking call from its own thread, and only then starts a watchdog
+thread that records a timestamp every few milliseconds. Starting the watchdog
+after a settle period — and after asserting that the blocked thread is still
+alive — is what makes the verdict sound: the call under test cannot return
+while its queue is full or its worker is parked, so a call still running at
+that point is inside the binding, and no record the watchdog makes can precede
+its entry. The verdict then requires at least five records inside the call's
+window and a window of at least half a second:
 
 - a released wait of a second or more yields hundreds of records;
 - a wait that holds the GIL yields none, because a single spin of the
   watchdog's loop is milliseconds of pure bytecode and the calling thread never
   releases the lock for that long.
 
-Counting inside the window, rather than asking only whether the watchdog ran
-before the call returned, is what makes the bounded cases meaningful. A
-`"timeout:N"` or `close()` wait ends on its own deadline, so a GIL-holding
-implementation still lets the watchdog run afterwards; a bare ordering check
-would pass for the defect. The window also cannot be satisfied by progress made
-before the call started, because the caller records its boundary on entry.
+The window check matters for the bounded cases. A `"timeout:N"` or `close()`
+wait ends on its own deadline, so a call that returned early would otherwise
+collect records trivially, and a bare ordering check would pass for the defect.
 
 ## Producer/worker context propagation
 

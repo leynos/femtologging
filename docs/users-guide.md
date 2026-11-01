@@ -342,9 +342,13 @@ Two borrow rules follow, and they describe different states:
   start, although it may then wait on the same queue. A `close()` needs the
   exclusive borrow, so it raises `RuntimeError` instead of starting its
   one-second shutdown wait.
-- While a `close()` call is waiting for the worker, it holds that exclusive
-  borrow with the GIL released. Concurrent `handle()`, `flush()`, and `close()`
-  calls on the same object all raise `RuntimeError`.
+- A `close()` call releases its Python borrow before it waits for the worker,
+  so calls made during that wait reach a handler that is already closed rather
+  than being rejected by the borrow rules: `handle()` raises `RuntimeError`,
+  `flush()` returns `False`, and a second `close()` is a no-op.
+  `FemtoTimedRotatingFileHandler` reports the closed handler from `handle()` as
+  `ValueError`, like its other handler errors. This keeps a worker formatter
+  that re-enters the handler safe while shutdown is in progress.
 
 Callers who need a wait that ends on its own must use `"timeout:N"`. They must
 also handle the exception raised when the deadline expires and the record is

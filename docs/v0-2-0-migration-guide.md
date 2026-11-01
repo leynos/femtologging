@@ -268,10 +268,13 @@ The behaviour that stays the same is the one that makes this safe to adopt:
   bounded wait is acceptable; it drops the record when the deadline expires and
   raises `RuntimeError` from the file and rotating bindings, or `ValueError`
   from the timed-rotating binding.
-- A `close()` that is already in progress holds the exclusive handler borrow.
-  Concurrent `handle()`, `flush()`, and `close()` calls raise `RuntimeError`
-  until it finishes. A blocked `handle()` holds only a shared borrow, so a
-  concurrent `close()` raises `RuntimeError` until that call returns.
+- A `close()` that is already in progress releases its Python borrow before it
+  waits, so calls made during the wait reach a handler that is already closed:
+  `handle()` raises `RuntimeError`, `flush()` returns `False`, and a second
+  `close()` is a no-op. The timed-rotating binding reports that closed handler
+  from `handle()` as `ValueError`. A blocked `handle()` still holds its shared
+  borrow, so a concurrent `close()` raises `RuntimeError` until that call
+  returns.
 - The handler destructor still performs shutdown with the interpreter lock
   held. Call `close()` explicitly during shutdown to get the detached wait.
 

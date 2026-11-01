@@ -418,6 +418,44 @@ branch now reports 18 commits ahead of `origin/main`.
 The earlier gate evidence applies to the pre-rebase head; the gate run for this
 candidate is recorded in `Progress`.
 
+## Rebase onto `origin/main` at `6180cd5` and reconciliation with #546
+
+While this PR awaited review, `origin/main` gained `6180cd5` (#546, "Honour
+wrapped stdlib handler levels in StdlibHandlerAdapter"). That change
+independently released the GIL around `flush()` and `close()` in the same three
+file-handler bindings, and introduced `WorkerShutdown` and `take_shutdown()` so
+a close can wait outside the Python borrow.
+
+The replay kept the issue's unique contribution and adopted the landed design
+rather than reverting it:
+
+| Area                            | Resolution                                                                                                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handle()` detach               | Kept from this branch; #546 did not detach `handle()`, which is the operation issue #441 is about.                                                                                                                                                      |
+| `flush()` detach                | Upstream's form retained; this branch's identical detach was dropped.                                                                                                                                                                                   |
+| `close()` detach                | Upstream's `Py<Self>`/`take_shutdown()`/`detach` form retained. This branch's `&mut self` form is gone because upstream's releases the borrow before waiting.                                                                                           |
+| Close-borrow contract           | Rewritten. A waiting close no longer rejects concurrent calls: `handle()` reaches the closed handler and raises, `flush()` returns `False`, and a second `close()` is a no-op. The user guide, migration guide, module docstrings and tests now say so. |
+| Blocked-`handle()` vs `close()` | Unchanged: a blocked `handle()` still holds its shared borrow, so a concurrent `close()` still raises `RuntimeError`. That scenario is retained.                                                                                                        |
+| Developers' guide               | The flush/close section from #546 is kept; this branch's section was narrowed to `handle()` and the shared `Ungil` mechanics, and its test-oracle description was corrected.                                                                            |
+
+Conflicts appeared in the three Rust binding files and none in the tests or
+documentation, which merged textually. Three commits needed manual resolution:
+the GIL-release commit and the review-follow-up commit on the bindings, and the
+final review-follow-up commit, whose documentation claim about the exclusive
+close borrow was replaced with the landed behaviour.
+
+Running the focused concurrency suite against the rebased tree then exposed a
+defect in the adopted code. `py_close` took the exclusive borrow with
+`Py::borrow_mut`, which panics when a shared borrow is outstanding, so a
+`close()` concurrent with a blocked `handle()` surfaced as `PanicException`
+rather than the `RuntimeError` both branches document. A panic is not an
+acceptable FFI outcome, so all three bindings now use `try_borrow_mut` and map
+its refusal to `RuntimeError`. The same run showed that
+`FemtoTimedRotatingFileHandler.handle()` reports the closed handler as
+`ValueError`, matching its existing handler-error mapping; the `close-handle`
+scenario and both guides now state that instead of claiming `RuntimeError` for
+every binding. All 27 focused concurrency cases pass on the rebased tree.
+
 ## Host compile admission and the build-standard contract tests
 
 The first `make test` on the rebased candidate failed three cases in

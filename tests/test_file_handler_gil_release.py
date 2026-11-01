@@ -8,8 +8,12 @@ runs each case in its own interpreter and explains how the verdict is reached.
 
 PyO3's ``detach`` does not release the handler's borrow flag, so a blocked
 ``handle()`` keeps its shared borrow for the whole wait. A concurrent
-``close()`` therefore fails to take the exclusive borrow it needs, which PyO3
-reports as ``RuntimeError``; that scenario pins the resulting contract.
+``close()`` therefore cannot take the exclusive borrow it needs, which the
+binding reports as ``RuntimeError`` rather than a panic; that scenario pins the
+resulting contract. A
+``close()`` that has started behaves differently: it gives its borrow back
+before it waits, so calls made during the wait reach a closed handler. Those
+scenarios pin the observable outcome of each operation there.
 """
 
 from __future__ import annotations
@@ -91,9 +95,9 @@ def test_close_while_handle_is_blocked_raises_runtime_error(
 @pytest.mark.concurrency
 @pytest.mark.parametrize("builder_name", BUILDER_NAMES)
 @pytest.mark.parametrize("operation", ["handle", "flush", "close"])
-def test_handler_operation_during_close_raises_runtime_error(
+def test_operations_during_close_observe_a_closed_handler(
     tmp_path: Path, builder_name: str, operation: str
 ) -> None:
-    """A detached close keeps its exclusive borrow until its wait finishes."""
+    """A waiting close leaves its handler closed but still reachable."""
     path = tmp_path / f"{builder_name}-close-{operation}.log"
     run_scenario(builder_name, f"close-{operation}", path)
