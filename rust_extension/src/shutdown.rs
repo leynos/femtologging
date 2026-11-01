@@ -101,13 +101,33 @@ impl ShutdownCompletion {
     }
 }
 
+/// Signals a [`ShutdownCompletion`] when dropped, including while unwinding.
+///
+/// A worker that panics never reaches its closing statements. Without a guard,
+/// every closer would wait out its whole timeout and report a worker that "did
+/// not shut down" while the join handle still pointed at a dead thread.
+pub(crate) struct CompleteOnDrop(Arc<ShutdownCompletion>);
+
+impl CompleteOnDrop {
+    /// Arms a guard that completes `completion` however the worker leaves.
+    pub(crate) fn new(completion: Arc<ShutdownCompletion>) -> Self {
+        Self(completion)
+    }
+}
+
+impl Drop for CompleteOnDrop {
+    fn drop(&mut self) {
+        self.0.complete();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Completion-broadcast tests.
 
-    use std::time::Duration;
+    use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
-    use super::ShutdownCompletion;
+    use super::{CompleteOnDrop, ShutdownCompletion};
 
     /// Every waiter registered before completion is woken.
     #[test]
@@ -158,6 +178,37 @@ mod tests {
         assert!(
             completion.wait(Duration::from_secs(1)),
             "a repeated completion must still satisfy a later waiter",
+        );
+    }
+
+    /// The guard completes when its scope ends normally.
+    #[test]
+    fn the_drop_guard_completes_on_a_normal_exit() {
+        let completion = ShutdownCompletion::new();
+        {
+            let _signal = CompleteOnDrop::new(Arc::clone(&completion));
+        }
+
+        assert!(
+            completion.wait(Duration::from_millis(1)),
+            "leaving the guarded scope must signal completion",
+        );
+    }
+
+    /// The guard completes while a panicking worker unwinds.
+    #[test]
+    fn the_drop_guard_completes_while_unwinding() {
+        let completion = ShutdownCompletion::new();
+        let worker_completion = Arc::clone(&completion);
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(move || {
+            let _signal = CompleteOnDrop::new(worker_completion);
+            panic!("simulated worker failure");
+        }));
+
+        assert!(outcome.is_err(), "the simulated worker must have panicked");
+        assert!(
+            completion.wait(Duration::from_millis(1)),
+            "a panicking worker must still signal completion to its closers",
         );
     }
 }

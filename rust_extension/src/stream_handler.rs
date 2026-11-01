@@ -23,7 +23,7 @@ use log::warn;
 use pyo3::prelude::*;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::shutdown::ShutdownCompletion;
+use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
@@ -73,12 +73,9 @@ impl HandlerConfig {
 
 /// Handler that writes formatted log records to an `io::Write` stream.
 ///
-/// Each instance owns a background thread which receives records and flush
-/// commands via a channel and writes them to the provided stream. The writer
-/// and formatter are moved into that thread so the caller never locks or
-/// blocks. The handler supports explicit flushing to ensure all queued records
-/// are written. Flush operations wait up to `flush_timeout` for the worker
-/// thread to confirm completion.
+/// The writer and formatter are moved into an owned background thread, so the
+/// caller never locks or blocks. Flush operations wait up to `flush_timeout`
+/// for the worker thread to confirm completion.
 #[expect(
     clippy::large_enum_variant,
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
@@ -124,13 +121,17 @@ fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
 /// Owns the writer and formatter on the background thread until the queue closes.
 fn run_stream_worker<W, F>(
     rx: Receiver<StreamCommand>,
-    mut writer: W,
+    writer: W,
     formatter: F,
     completion: Arc<ShutdownCompletion>,
 ) where
     W: Write,
     F: FemtoFormatter,
 {
+    // Declared first so it drops last: the writer is dropped before closers
+    // are told the worker stopped, and a panic still signals them.
+    let _signal = CompleteOnDrop::new(completion);
+    let mut writer = writer;
     for cmd in rx {
         match cmd {
             StreamCommand::Record(record) => handle_record_command(&mut writer, &formatter, record),
@@ -138,7 +139,6 @@ fn run_stream_worker<W, F>(
         }
     }
     flush_with_warning(&mut writer);
-    completion.complete();
 }
 
 #[pyclass]

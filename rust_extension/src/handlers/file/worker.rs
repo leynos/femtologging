@@ -14,7 +14,7 @@ use std::{
 use log::{error, warn};
 
 use super::config::HandlerConfig;
-use crate::shutdown::ShutdownCompletion;
+use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
 use crate::sync::{JoinHandle, Receiver, RecvError, Sender, bounded, spawn};
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
@@ -347,6 +347,10 @@ where
     let completion = ShutdownCompletion::new();
     let worker_completion = Arc::clone(&completion);
     let handle = spawn(move || {
+        // Declared first so it drops last: the worker state below is torn down
+        // before closers are told the worker has stopped, and a panic in that
+        // state still signals them instead of leaving every closer to time out.
+        let _signal = CompleteOnDrop::new(worker_completion);
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -364,7 +368,6 @@ where
             }
         }
         state.final_flush();
-        worker_completion.complete();
     });
     (tx, completion, handle)
 }
