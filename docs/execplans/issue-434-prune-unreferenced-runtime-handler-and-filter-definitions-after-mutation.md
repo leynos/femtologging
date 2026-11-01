@@ -446,6 +446,20 @@ configured filter IDs.
   failure attributed to admission contention, and it is now understood rather
   than assumed: the gates must run strictly sequentially, as the repository
   instructions state. Re-running pytest alone passed with zero failures.
+- [x] (2026-11-01) Rebased again onto `main` at `6586148` and re-established the
+  gates on the new head `63c3b0c`. The rebase was verified rather than trusted:
+  16 commits, no conflict markers, and `tests/conftest.py` diffed against
+  `origin/main` showing only the five builder imports and the two shared
+  fixtures. `make check-fmt` and `make lint` both passed. `make lint` includes
+  the Whitaker Dylint suite that had been failing for every branch in the
+  repository, so this run also retires that blocker; see Surprises &
+  Discoveries.
+- [x] (2026-11-01) Recorded how to run a long gate here. The harness stops a
+  background command at a fixed ceiling and kills its process group, which
+  truncated two `make lint` runs partway through the Dylint build. Launch the
+  gate with `nohup setsid`, write its exit status to a separate file, and poll
+  that file: the gate then survives the ceiling and only the exit status has to
+  be re-read.
 
 ## Surprises & Discoveries
 
@@ -631,6 +645,18 @@ configured filter IDs.
   refusal and not the unresponsive-status-query of the previous observation;
   all three modes share one root cause, a pool this small serving this many
   concurrent agents.
+
+- Observation (2026-10-27 to 2026-11-01): for several days every `build-test`
+  lane failed in `make lint-rust` on `main` and on unrelated branches, with
+  `error: failed to run custom build command for 'dylint_driver v6.0.1'` and
+  `revspec 'master' not found`. `dylint_driver`'s build script resolves
+  `rust-lang/rust-clippy`'s default branch by name, and that branch was renamed
+  `master` to `main`; dylint v6.3.0 release notes name this exact fix. Impact:
+  the failure was upstream of this branch and outside its authority to repair —
+  weakening or disabling the Dylint check would have been the wrong remedy. It
+  cleared on its own, and `make lint` passed on head `63c3b0c` on 2026-11-01,
+  which is the evidence that retires the blocker rather than an assumption that
+  it went away.
 
 ## Decision Log
 
