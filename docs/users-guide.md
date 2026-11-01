@@ -263,6 +263,11 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
+- Use `logger.get_disabled_drops()` to inspect records refused because a
+  configuration with `disable_existing_loggers=True` disabled the logger. The
+  record never reaches the level check, filters, formatter, or dispatch, so
+  this counter is separate from `get_dropped()`. A later configuration that
+  names the logger re-enables it and stops the counter rising.
 
 ## Built-in handlers
 
@@ -868,12 +873,15 @@ is reported.
 
 - Always flush or close handlers before shutting down the process; otherwise
   buffered records may be lost.
-- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`, and the
-  warnings emitted by each handler to detect back pressure or Rust context
-  validation failures. When `get_context_dropped()` increases, correct or
-  reduce Rust context fields and explicit metadata that contributes to
-  validation. For queue-full/back-pressure drops, increase handler capacities
-  or switch to blocking/timeout policies when drops are unacceptable.
+- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`,
+  `logger.get_disabled_drops()`, and the warnings emitted by each handler to
+  detect back pressure, Rust context validation failures, or traffic aimed at a
+  logger the current configuration disabled. When `get_context_dropped()`
+  increases, correct or reduce Rust context fields and explicit metadata that
+  contributes to validation. For queue-full/back-pressure drops, increase
+  handler capacities or switch to blocking/timeout policies when drops are
+  unacceptable. When `get_disabled_drops()` increases, either stop logging
+  through that logger or name it in the configuration to re-enable it.
 - File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use

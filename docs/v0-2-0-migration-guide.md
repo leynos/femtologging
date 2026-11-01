@@ -229,6 +229,77 @@ builder and either a direct `FormatterBuilder` or a registered formatter.
 
 ______________________________________________________________________
 
+## `disable_existing_loggers` disables omitted loggers
+
+A configuration with `disable_existing_loggers` enabled now flags every omitted
+logger as disabled instead of only clearing its handlers. The difference is
+observable: a disabled logger rejects records in its own producer path, so its
+`log_record` and `log` return `None` before the level check, filters, the
+logger formatter, and dispatch run, and its records never propagate to ancestor
+handlers. Such a logger previously still forwarded records to ancestor handlers
+after losing its own. `isEnabledFor` reports `False` for every level on a
+disabled logger, and each refusal increments `logger.get_disabled_drops()`, so
+configuration-disabled traffic is visible separately from queue-pressure drops.
+
+Naming a disabled logger in a later configuration re-enables it, and a
+configuration with `disable_existing_loggers=False` leaves the existing
+disabled flag untouched. Ancestors of configured loggers stay enabled with
+their attachments, so a configured descendant can still propagate to them.
+
+The configuration itself is now all-or-nothing for live state: a rejected
+configuration leaves every pre-existing logger as it was. Two side effects sit
+outside that guarantee. Records already queued or snapshotted by a handler
+before the commit are not retracted, and handler construction during
+preparation can open a file or socket before a later preparation failure
+rejects the configuration.
+
+### What breaks for omitted loggers
+
+Loggers omitted from a new configuration stop emitting. Calls on them return
+`None`, no filter, formatter, or handler runs, and nothing reaches an ancestor
+handler through propagation. Code that relied on an omitted logger continuing
+to reach a handler on an ancestor, or on `isEnabledFor` still reporting its
+configured level, now sees no output.
+
+### Before: an omitted logger still reached root
+
+```python
+femtologging.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": True,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": "ERROR"},
+})
+# The omitted logger lost its handlers but still propagated to `root`.
+femtologging.get_logger("noisy").error("still seen")  # reached root
+```
+
+### After: an omitted logger is disabled
+
+```python
+femtologging.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": True,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": "ERROR"},
+})
+# The omitted logger is now disabled: this returns None and reaches nothing.
+femtologging.get_logger("noisy").error("dropped")
+```
+
+### How to migrate omitted loggers
+
+- Name every logger that must keep emitting in the new configuration; an
+  explicit entry re-enables it and keeps its ancestors enabled.
+- Set `disable_existing_loggers=False` when existing loggers should keep their
+  handlers, filters, and enabled state.
+- Move diagnostic calls to a configured logger, or add the emitting logger to
+  the configuration, instead of relying on propagation from an omitted logger.
+- Do not rely on a configuration rollback to retract records already queued or
+  to undo a file or socket opened during handler construction.
+
+______________________________________________________________________
+
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,

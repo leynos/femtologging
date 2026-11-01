@@ -90,7 +90,7 @@ impl FemtoLogger {
         }
         log_context::validate_context_map(&explicit_key_values)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
-        if !self.is_enabled_for(level) {
+        if self.refuse_if_disabled() || !self.is_enabled_for(level) {
             return Ok(None);
         }
         let mut record = FemtoLogRecord::with_metadata(

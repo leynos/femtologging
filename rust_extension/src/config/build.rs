@@ -2,7 +2,8 @@
 //!
 //! `ConfigBuilder::build_and_init` first validates and resolves a complete
 //! configuration without changing live loggers. It then asks the manager to
-//! apply that prepared state in one infallible commit.
+//! apply that prepared state in one commit, whose remaining fallible checks
+//! run before the first mutation.
 
 use std::{
     collections::{BTreeMap, HashSet},

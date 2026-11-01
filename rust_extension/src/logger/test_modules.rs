@@ -14,6 +14,9 @@ mod logger_tests_helpers;
 #[cfg(all(not(loom), feature = "python"))]
 #[path = "producer_context_tests.rs"]
 mod producer_context_tests;
+#[cfg(all(not(loom), feature = "python"))]
+#[path = "producer_disabled_tests.rs"]
+mod producer_disabled_tests;
 #[cfg(not(loom))]
 #[path = "producer_rejection_tests.rs"]
 mod producer_rejection_tests;

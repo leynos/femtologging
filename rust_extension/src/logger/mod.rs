@@ -84,6 +84,12 @@ pub struct FemtoLogger {
     dropped_records: AtomicU64,
     /// Number of records dropped because Rust context payload validation failed.
     context_dropped_records: AtomicU64,
+    /// Number of records refused because configuration disabled this logger.
+    ///
+    /// Counted before level filtering, filters, formatting and dispatch, so the
+    /// value measures traffic aimed at a disabled logger rather than records
+    /// that would have been rejected anyway.
+    disabled_dropped_records: AtomicU64,
     /// Rate limiter for warnings about refused dispatch records.
     drop_warner: RateLimitedWarner,
     /// Captures Python context for queued handlers when they need it.

@@ -944,9 +944,10 @@ surfaces mature further.
 ### 3.1. Bootstrap transaction boundary
 
 `ConfigBuilder::build_and_init()` is split into a fallible preparation step and
-an infallible commit. Preparation validates the whole configuration and
-assembles a `PreparedConfiguration`; the commit applies it in one transition.
-The split is what makes the operation atomic from the caller's perspective.
+a commit whose own fallible work is finished before the first mutation.
+Preparation validates the whole configuration and assembles a
+`PreparedConfiguration`; the commit then applies it in one transition. The
+split is what makes the operation atomic from the caller's perspective.
 
 Preparation runs in this order:
 

@@ -85,10 +85,16 @@ fn disabled_logger_rejects_records_and_reports_disabled(
             !omitted.borrow(py).is_enabled_for(FemtoLevel::Error),
             "a disabled logger must report every level as disabled",
         );
+        let drops_before = omitted.borrow(py).get_disabled_drops();
         assert_eq!(
             omitted.borrow(py).log(FemtoLevel::Error, "must not escape"),
             None,
             "a disabled logger must reject the record without dispatching it",
+        );
+        assert_eq!(
+            omitted.borrow(py).get_disabled_drops(),
+            drops_before + 1,
+            "the rejection should be counted against disabled traffic",
         );
         let root_logger = manager::lookup_existing_logger(py, "root").expect("root exists");
         assert!(

@@ -140,6 +140,17 @@ impl FemtoLogger {
         self.context_capture_failures.load(Ordering::Relaxed)
     }
 
+    /// Return how many records were refused because the logger is disabled.
+    ///
+    /// The counter rises for records aimed at a logger that
+    /// `disable_existing_loggers` has disabled, so a deployment can tell
+    /// configuration-disabled traffic apart from queue pressure. A later
+    /// configuration that names the logger re-enables it and stops the rise.
+    #[pyo3(text_signature = "(self)")]
+    pub fn get_disabled_drops(&self) -> u64 {
+        self.disabled_dropped_records.load(Ordering::Relaxed)
+    }
+
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
     /// First waits up to 2 seconds for the logger's dispatch shard to drain

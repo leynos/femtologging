@@ -32,7 +32,7 @@ impl FemtoLogger {
     /// The disabled check lives here as well as in the public entry points
     /// because this is the funnel every producer path reaches.
     pub(super) fn log_record(&self, mut record: FemtoLogRecord) -> Option<String> {
-        if self.is_disabled() {
+        if self.refuse_if_disabled() {
             return None;
         }
         let threshold = self.level.load(std::sync::atomic::Ordering::Relaxed);
@@ -53,7 +53,7 @@ impl FemtoLogger {
     /// This method is a simplified version of the PyO3-exposed `log` method
     /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
     pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
-        if self.is_disabled() {
+        if self.refuse_if_disabled() {
             return None;
         }
         let record = FemtoLogRecord::new(&self.name, level, message);
@@ -87,7 +87,7 @@ impl FemtoLogger {
         message: &str,
         mut metadata: RecordMetadata,
     ) -> Option<String> {
-        if !self.is_enabled_for(level) {
+        if self.refuse_if_disabled() || !self.is_enabled_for(level) {
             return None;
         }
         match log_context::merge_context_values(&metadata.key_values) {
@@ -114,11 +114,27 @@ impl FemtoLogger {
         message: &str,
         metadata: RecordMetadata,
     ) -> Option<String> {
-        if !self.is_enabled_for(level) {
+        if self.refuse_if_disabled() || !self.is_enabled_for(level) {
             return None;
         }
         let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
         self.log_record(record)
+    }
+
+    /// Refuse and count a record because configuration disabled this logger.
+    ///
+    /// Returns `true` when the logger is disabled, after incrementing
+    /// [`Self::disabled_dropped_records`]. Every producer entry point consults
+    /// this before its level check, so a disabled logger's records never reach
+    /// filters, formatting or dispatch, and the counter records exactly the
+    /// records that rejection discarded.
+    pub(crate) fn refuse_if_disabled(&self) -> bool {
+        let is_disabled = self.is_disabled();
+        if is_disabled {
+            self.disabled_dropped_records
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        is_disabled
     }
 
     /// Return whether `level` is enabled for this logger.

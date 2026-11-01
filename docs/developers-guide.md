@@ -488,18 +488,46 @@ indefinitely.
 
 ## Configuration transaction
 
-`ConfigBuilder::build_and_init` applies a complete configuration through one
-ordered transaction. It first builds handlers and filters, prepares every
-logger plan, stages the logger objects, and commits those staged objects to the
-manager registry. When `disable_existing_loggers` is enabled, it then clears
-unmentioned loggers, applies the prepared plans, and finally replaces the
-manager's runtime attachment metadata.
+`ConfigBuilder::build_and_init` splits into a fallible preparation step and a
+commit that applies the result in one transition, so the operation is atomic
+from the caller's perspective. Preparation validates the schema version and
+root logger, validates every configured logger name before constructing any
+handler, builds the handler and filter registries, and resolves every logger
+plan, rejecting unknown or duplicate identifiers and Python-backed handlers
+that cannot dispatch contextually. It then calls `stage_loggers`, which pairs
+each plan with an existing logger or a new unregistered logger object while
+only reading the registry. All of this work runs before any live state changes,
+so a preparation failure leaves every pre-existing logger untouched.
 
-Handler and filter construction, identifier checks, and logger-plan preparation
-all happen before the registry commit. A failure in those validation steps
-therefore returns without changing the live logger state. `dictConfig` and
-`fileConfig` use this same builder path, so their validation and transaction
-boundary are consistent with direct builder use.
+The resolved state is assembled into a `PreparedConfiguration`, which
+`manager::commit_configuration` applies under a single manager write lock. The
+only fallible work under that lock is `register_missing_ancestors`: it
+recomputes the planned names and their missing dotted ancestors, rechecks
+`registry_has_room_for` against the live registry so room consumed since
+preparation is counted, and builds every missing ancestor object before
+inserting any. A refusal therefore raises the registry-limit `RuntimeError`
+without mutating anything, and all of this happens before the first live-logger
+change. The commit then adopts each staged logger, replacing handlers and
+filters, applying level and propagate, and calling `set_disabled(false)` only
+on the loggers the configuration names explicitly. A logger registered by
+another caller between preparation and commit is adopted instead, and the
+unused staged object is retained for teardown.
+
+When `disable_existing_loggers` is on, the commit then disables every
+registered logger outside `root` and the keep set, clearing each disabled
+logger's handler attachments and filters. The keep set is the explicitly
+configured logger names, plus `root`, plus every dotted ancestor of a
+configured name; kept ancestors stay enabled with their attachments so a
+configured descendant can still propagate to them. The commit finishes by
+publishing one `RuntimeStateSnapshot` holding the handler registry, handler
+filter IDs, filter registry, and per-logger attachment metadata. Handlers,
+filters, unused staged loggers, and the displaced previous snapshot are
+retained in `DisplacedAttachments`; after the manager lock is dropped,
+`build_and_init` calls `displaced.drop_without_gil(py)`, so handler teardown
+that flushes or joins a worker runs without the GIL.
+
+`dictConfig` and `fileConfig` use this same builder path, so their validation
+and transaction boundary match direct builder use.
 
 At runtime, each handler is paired with its resolved filter chain in a
 `HandlerAttachment`. The logger evaluates that chain on the producer thread
