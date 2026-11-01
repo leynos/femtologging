@@ -58,8 +58,9 @@ your process exits.
 - When any queue is full under the default policy, the record is dropped. Each
   component emits rate-limited warnings and maintains drop counters
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
-  monitor pressure. A file handler whose policy is `"block"` or `"timeout:N"`
-  waits for room instead of dropping.
+  monitor pressure. A file handler whose policy is `"block"` waits for room
+  instead of dropping; with `"timeout:N"` it waits for room only until its
+  deadline, then drops the record.
 - Record metadata tracks the logger name, level, message text, timestamps,
   thread identity, optional structured exception (`exc_info`) and call stack
   (`stack_info`) payloads, and validated inline structured fields (`extra`).
@@ -331,12 +332,19 @@ Two consequences follow from that release, and both concern `"block"`:
 - `close()` does **not** cancel a `handle()` call that is already blocked.
   `close()` itself blocks for at most one second waiting for the worker to
   acknowledge shutdown and then abandons it, but the blocked `handle()` is
-  waiting on queue capacity and stays blocked. A concurrent `close()` on the
-  same handler raises `RuntimeError`, because `close()` needs exclusive access.
-  While that wait is in progress, concurrent `handle()` and `flush()` calls on
-  the same Python object also raise `RuntimeError`; the exclusive PyO3 borrow
-  remains active while the GIL is detached. Restore worker progress and let the
-  blocked call finish before calling `close()`.
+  waiting on queue capacity and stays blocked. Restore worker progress and let
+  the blocked call finish before calling `close()`.
+
+Two borrow rules follow, and they describe different states:
+
+- While a `handle()` call is blocked, it holds a shared borrow of the handler.
+  Another `handle()` or `flush()` call may take its own shared borrow and
+  start, although it may then wait on the same queue. A `close()` needs the
+  exclusive borrow, so it raises `RuntimeError` instead of starting its
+  one-second shutdown wait.
+- While a `close()` call is waiting for the worker, it holds that exclusive
+  borrow with the GIL released. Concurrent `handle()`, `flush()`, and `close()`
+  calls on the same object all raise `RuntimeError`.
 
 Callers who need a wait that ends on its own must use `"timeout:N"`. They must
 also handle the exception raised when the deadline expires and the record is

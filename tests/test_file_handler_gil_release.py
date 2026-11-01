@@ -62,6 +62,16 @@ def test_blocking_flush_releases_the_gil(tmp_path: Path, builder_name: str) -> N
 
 @pytest.mark.concurrency
 @pytest.mark.parametrize("builder_name", BUILDER_NAMES)
+def test_flush_acknowledgement_wait_releases_the_gil(
+    tmp_path: Path, builder_name: str
+) -> None:
+    """A flush with queue room releases the GIL while awaiting the worker."""
+    path = tmp_path / f"{builder_name}-flush-ack.log"
+    run_scenario(builder_name, "flush-ack", path)
+
+
+@pytest.mark.concurrency
+@pytest.mark.parametrize("builder_name", BUILDER_NAMES)
 def test_blocking_close_releases_the_gil(tmp_path: Path, builder_name: str) -> None:
     """Every file-handler wrapper releases the GIL while closing."""
     path = tmp_path / f"{builder_name}-close.log"

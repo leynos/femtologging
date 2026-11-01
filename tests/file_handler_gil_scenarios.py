@@ -4,9 +4,11 @@ Issue #441: a direct ``handler.handle()`` call under a blocking overflow policy
 waits for queue capacity while holding the GIL, so a slow or stalled file
 worker starves every other Python thread.
 
-This module owns the program each child interpreter runs;
-``file_handler_gil_support.py`` owns the parent-side runner, and explains how
-the progress-counting verdict those programs reach is arrived at.
+This module owns the shared harness and the renderer that produce each child
+interpreter's program. ``file_handler_gil_wait_scenarios.py`` supplies the
+bodies for the waits themselves, and ``file_handler_gil_support.py`` owns the
+parent-side runner, explaining how the progress-counting verdict those programs
+reach is arrived at.
 """
 
 from __future__ import annotations
@@ -18,6 +20,12 @@ from .file_handler_gil_close_scenarios import (
     CLOSE_BORROW_BODY,
     CLOSE_BORROW_CALLS,
     CONCURRENT_CLOSE_BODY,
+)
+from .file_handler_gil_wait_scenarios import (
+    BLOCK_HOLD_SECONDS,
+    CLOSE_HOLD_SECONDS,
+    TIMEOUT_MS,
+    WAIT_BODIES,
 )
 
 if typ.TYPE_CHECKING:
@@ -40,9 +48,16 @@ PROGRESS_ITERATIONS = 200_000
 #: scheduling noise and still far above what the defect can produce.
 MIN_PROGRESS_RECORDS = 5
 
-#: How long the ``"block"`` scenario waits before releasing the parked worker.
-#: The call cannot return before then, so this is a guaranteed-blocked window.
-BLOCK_HOLD_SECONDS = 1.0
+#: How long to let a started call reach its wait before the watchdog begins.
+#: The call cannot return while its queue is full or its worker is parked, so a
+#: live call at this point is inside the binding, and no progress record can be
+#: attributed to the moment before it entered.
+SETTLE_SECONDS = 0.05
+
+#: Shortest window that counts as the wait a scenario pins. Every wait under
+#: test lasts about a second, so a call that returns sooner did not perform the
+#: wait at all, and counting progress inside its window would prove nothing.
+MIN_WAIT_SECONDS = 0.5
 
 #: How long the formatter parks the worker before giving up and proceeding.
 #: This bounds every scenario: it outlasts the widest wait under test (the
@@ -50,14 +65,11 @@ BLOCK_HOLD_SECONDS = 1.0
 #: that holds the GIL still reaches its assertion instead of hanging.
 WORKER_PARK_SECONDS = 6.0
 
-#: The overflow timeout the scenarios configure. It mirrors the binding's own
-#: unit, milliseconds, so the scenario and the wait it exercises agree.
-_TIMEOUT_MS = 2000
-
 
 #: Harness shared by every scenario. A blocking formatter parks the file
 #: worker so that the queue stays full and a blocking policy really waits.
 _HARNESS = """
+import sys
 import threading
 import time
 
@@ -78,6 +90,8 @@ PROGRESS_ITERATIONS = {iterations}
 MIN_PROGRESS_RECORDS = {records}
 CHILD_WAIT = {child_wait}
 WORKER_PARK = {worker_park}
+MIN_WAIT = {min_wait}
+SETTLE = {settle}
 
 PROGRESSED_AT = []
 ENTERED_AT = []
@@ -117,6 +131,24 @@ def start_watchdog():
     return watchdog
 
 
+def start_watchdog_when_blocked(blocked):
+    \"\"\"Start the watchdog only once ``blocked`` is inside its wait.
+
+    The call under test cannot return while its queue is full or its worker is
+    parked, so a call still alive after the settle period is parked in the
+    binding. Starting the watchdog afterwards means no record it makes can have
+    been taken before the call entered, which a window recorded on the calling
+    thread alone cannot rule out.
+    \"\"\"
+    time.sleep(SETTLE)
+    assert blocked.is_alive(), (
+        "the call was not running when the watchdog was due to start: either it "
+        "returned early or it held the GIL and starved this thread until its "
+        "wait ended"
+    )
+    return start_watchdog()
+
+
 def start_blocked(call):
     \"\"\"Run ``call`` on its own thread, recording the call's own window.\"\"\"
 
@@ -149,6 +181,14 @@ def assert_progress_during(call_name, watchdog):
     stop_watchdog(watchdog)
     entered = ENTERED_AT[0]
     returned = RETURNED_AT[0]
+    waited = returned - entered
+    # A call that never waited would trivially collect progress records from
+    # its own brief window, so pin the window before counting them.
+    assert waited >= MIN_WAIT, (
+        f"{{call_name}} returned after only {{waited:.3f}}s, too short to be the "
+        f"wait this scenario pins (at least {{MIN_WAIT}}s), so the GIL-release "
+        "verdict would be vacuous"
+    )
     during = [stamp for stamp in PROGRESSED_AT if entered <= stamp <= returned]
     assert len(during) >= MIN_PROGRESS_RECORDS, (
         f"a second Python thread recorded only {{len(during)}} progress "
@@ -158,10 +198,10 @@ def assert_progress_during(call_name, watchdog):
     )
 
 
-def build_handler(path, policy):
+def build_handler(path, policy, capacity=1):
     return (
         {builder}
-        .with_capacity(1)
+        .with_capacity(capacity)
         .with_flush_after_records(10_000)
         .with_overflow_policy(policy)
         .with_formatter(blocking_formatter)
@@ -170,7 +210,11 @@ def build_handler(path, policy):
 
 
 def saturate(handler):
-    \"\"\"Park the worker on one record, then fill the single queue slot.\"\"\"
+    \"\"\"Park the worker on one record, then queue a second behind it.
+
+    At the default capacity of 1 the queue is now full; a capacity of 2 leaves
+    one free command slot for the flush scenarios to use.
+    \"\"\"
     handler.handle("core", "INFO", "first")
     assert WORKER_STARTED.wait(CHILD_WAIT), "the worker never reached the formatter"
     handler.handle("core", "INFO", "second")
@@ -184,110 +228,6 @@ def guard(body):
         # Always release the worker: a parked formatter would otherwise leave a
         # handler that cannot shut down inside the scenario's own teardown.
         RELEASE_WORKER.set()
-"""
-
-
-#: An unbounded ``"block"`` wait ends only when the worker is released, so the
-#: window is guaranteed to span :data:`BLOCK_HOLD_SECONDS`.
-_BLOCK_BODY = """
-def body():
-    handler = build_handler({path!r}, OverflowPolicy.block())
-    saturate(handler)
-    watchdog = start_watchdog()
-    blocked = start_blocked(lambda: handler.handle("core", "INFO", "third"))
-    try:
-        # The call cannot return while the worker is parked and the queue is
-        # full, so this window is a genuine blocked wait.
-        time.sleep({hold})
-    finally:
-        RELEASE_WORKER.set()
-    join_blocked(blocked)
-
-    assert_progress_during("handle", watchdog)
-    handler.close()
-
-
-guard(body)
-"""
-
-
-#: The timeout policy ends its own wait, so progress must have been recorded
-#: while the call was still outstanding.
-_TIMEOUT_BODY = """
-def body():
-    handler = build_handler({path!r}, OverflowPolicy.timeout({timeout_ms}))
-    failures = []
-
-    def call():
-        try:
-            handler.handle("core", "INFO", "third")
-        except {error_type} as err:
-            failures.append(err)
-
-    saturate(handler)
-    watchdog = start_watchdog()
-    blocked = start_blocked(call)
-    join_blocked(blocked)
-
-    assert_progress_during("handle", watchdog)
-    assert len(failures) == 1, (
-        "a timed-out handle() must raise exactly once, got "
-        f"{{len(failures)}} failure(s)"
-    )
-    assert "timed out" in str(failures[0]), (
-        "a saturated timeout policy must report the timeout, got "
-        f"{{failures[0]!r}}"
-    )
-    RELEASE_WORKER.set()
-    handler.close()
-
-
-guard(body)
-"""
-
-
-#: ``flush()`` waits for the worker's acknowledgement, so a parked worker parks
-#: the caller until the one-second deadline expires.
-_FLUSH_BODY = """
-def body():
-    handler = build_handler({path!r}, OverflowPolicy.block())
-    results = []
-    saturate(handler)
-    watchdog = start_watchdog()
-    blocked = start_blocked(lambda: results.append(handler.flush()))
-    join_blocked(blocked)
-
-    # ``flush`` gives up on the worker after one second, so the window this
-    # asserts over is the binding's own deadline.
-    assert_progress_during("flush", watchdog)
-    assert results == [False], (
-        "a flush that outlives its one-second deadline must report False, got "
-        f"{{results!r}}"
-    )
-    RELEASE_WORKER.set()
-    handler.close()
-
-
-guard(body)
-"""
-
-
-#: ``close()`` waits for the worker to stop, and abandons a worker that does not
-#: acknowledge within its deadline.
-_CLOSE_BODY = """
-def body():
-    handler = build_handler({path!r}, OverflowPolicy.block())
-    saturate(handler)
-    watchdog = start_watchdog()
-    blocked = start_blocked(handler.close)
-    join_blocked(blocked)
-
-    assert_progress_during("close", watchdog)
-    RELEASE_WORKER.set()
-    handler.close()
-
-
-guard(body)
 """
 
 
@@ -320,12 +260,11 @@ _ERROR_TYPES = {
     "timed-rotating": "ValueError",
 }
 
-#: The scenario bodies, keyed by the label their failures report.
+#: The scenario bodies, keyed by the label their failures report. The waits
+#: themselves live in the sibling module; the close bodies cover the borrow
+#: states a close can produce.
 _BODIES = {
-    "handle-block": _BLOCK_BODY,
-    "handle-timeout": _TIMEOUT_BODY,
-    "flush": _FLUSH_BODY,
-    "close": _CLOSE_BODY,
+    **WAIT_BODIES,
     "concurrent-close": CONCURRENT_CLOSE_BODY,
     "close-handle": CLOSE_BORROW_BODY,
     "close-flush": CLOSE_BORROW_BODY,
@@ -355,11 +294,14 @@ def render_scenario(builder_name: str, body_name: str, path: Path) -> str:
 
     Examples
     --------
-    Render the flush scenario and inspect its generated imports:
+    Render the flush scenario and check that the harness and the selected body
+    both reach the program:
 
     >>> from pathlib import Path
     >>> script = render_scenario("file", "flush", Path("flush.log"))
-    >>> script.lstrip().startswith("import threading")
+    >>> "def blocking_formatter" in script
+    True
+    >>> 'assert_progress_during("flush", watchdog)' in script
     True
     """
     script = _HARNESS.format(
@@ -367,14 +309,16 @@ def render_scenario(builder_name: str, body_name: str, path: Path) -> str:
         records=MIN_PROGRESS_RECORDS,
         child_wait=CHILD_WAIT_SECONDS,
         worker_park=WORKER_PARK_SECONDS,
+        min_wait=MIN_WAIT_SECONDS,
+        settle=SETTLE_SECONDS,
         builder=_BUILDERS[builder_name].format(path=str(path)),
     )
     return script + textwrap.dedent(
         _BODIES[body_name].format(
             path=str(path),
-            timeout_ms=_TIMEOUT_MS,
+            timeout_ms=TIMEOUT_MS,
             hold=BLOCK_HOLD_SECONDS,
-            handoff=BLOCK_HOLD_SECONDS,
+            close_hold=CLOSE_HOLD_SECONDS,
             error_type=_ERROR_TYPES[builder_name],
             operation_call=CLOSE_BORROW_CALLS.get(body_name, ""),
         )
