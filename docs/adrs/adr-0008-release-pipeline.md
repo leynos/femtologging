@@ -1,8 +1,10 @@
-# Architectural decision record (ADR) 008: attested, reconciled release pipeline
+# Architectural decision record (ADR) 0008: attested, reconciled release pipeline
 
 ## Status
 
-Accepted.
+Accepted — 2026-10-26: build one sdist and every supported native wheel, attest
+them, and reconcile each filename across PyPI and GitHub Releases before
+publishing.
 
 ## Date
 

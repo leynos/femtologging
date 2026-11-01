@@ -1992,7 +1992,8 @@ uploaded, and matching SHA-256 digests are required before the draft is
 published. Re-running a tag therefore succeeds without replacing assets.
 
 The workflow's release decision and known limits are recorded in
-[ADR-008](./adr-008-release-pipeline.md). Telemetry steps were not adopted.
+[ADR-0008](./adrs/adr-0008-release-pipeline.md). Telemetry steps were not
+adopted.
 
 ## 9. Conclusion
 
