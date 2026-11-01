@@ -450,11 +450,15 @@ block, and the rotating and timed-rotating wrappers that delegate to it, take a
 (`send_timeout`). Other Python-exposed handler families also have operations
 that may block; the HTTP, socket, and stream bindings remain follow-up work.
 
-`py.detach` requires its closure and return type to be `Ungil` — that is,
-`Send` — which is what keeps the pattern honest: a closure that captured a
-`Bound<'_, PyAny>` or a `Python<'_>` token would not compile, so no Python
-object can be touched while the lock is released. The split is therefore
-mechanical rather than a matter of discipline:
+`py.detach` requires its closure and return type to implement `Ungil`. On
+stable Rust, PyO3 approximates that requirement through `Send`, so the bound
+rules out a closure that captured a `Python<'_>` token, but it is an
+approximation rather than a complete prohibition: a detached closure must still
+be audited to ensure it does not reach Python-bound values or call Python APIs
+without reattaching first. The compile-pass fixture in
+`rust_extension/tests/ui/pass/pyo3_detach_ungil.rs` checks the accepted
+pattern; it does not prove that every forbidden capture is rejected. The split
+below is therefore deliberate, and the fixture guards its shape:
 
 - argument parsing, `FemtoLevel::parse_py`, and record construction run
   **before** the detach, because they can raise;
