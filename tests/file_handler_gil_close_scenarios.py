@@ -14,12 +14,12 @@ shared harness to produce a standalone child-interpreter program;
 :mod:`tests.test_file_handler_gil_release` parametrizes it over the file,
 rotating, and timed-rotating builders.
 
-The probe uses :func:`sys.setswitchinterval` rather than a sleep. A one-second
-switch interval keeps the closing thread on the interpreter lock from the
-moment it signals that it is about to call ``close()`` into the binding itself.
-The probing thread can only wake once that binding detaches, by which point the
-shutdown state has been taken, so the observation does not depend on how
-quickly the shared build host schedules either thread.
+Each body pins the state it probes with :func:`sys.setswitchinterval` rather
+than a sleep. A one-second switch interval keeps the thread that starts the
+call on the interpreter lock from the moment it signals until its binding
+either blocks or detaches, so the probing thread can only resume once the
+handler is provably in the state under test. That makes the verdict
+independent of how quickly the shared build host schedules either thread.
 """
 
 from __future__ import annotations
@@ -58,10 +58,11 @@ def body():
 guard(body)
 """
 
-#: Closing takes the shutdown state before it waits, so a call that arrives
-#: while the close is in progress observes a closed handler rather than a
-#: borrow conflict. Each probe below asserts that contract for one operation.
-CLOSE_BORROW_BODY = """
+#: Shared prologue for the three "operation during close" bodies. The closing
+#: thread takes the shutdown state and then detaches; with a long switch
+#: interval the probing thread can only resume after that, so the operation it
+#: performs is genuinely concurrent with an in-progress close.
+_CLOSE_PROLOGUE = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block())
     saturate(handler)
@@ -75,18 +76,15 @@ def body():
         except Exception as err:
             close_failures.append(err)
 
-    # With a long switch interval the closing thread keeps the interpreter lock
-    # from ``set()`` until its binding detaches, and the binding takes the
-    # shutdown state before detaching. This thread is waiting on the event with
-    # the lock released, so it can only resume once that state has been taken.
-    # The probe therefore observes an in-progress close, not a close that has
-    # merely been scheduled.
     sys.setswitchinterval(1.0)
     blocked = start_blocked(close_handler)
     assert close_entered.wait(CHILD_WAIT), "the close call never started"
     try:
-{operation_call}
-        assert blocked.is_alive(), "close returned before the worker was released"
+"""
+
+#: Shared epilogue for the same bodies: release the worker, wait for the
+#: in-progress close to finish, and report a close that failed on its own.
+_CLOSE_EPILOGUE = """
     finally:
         RELEASE_WORKER.set()
 
@@ -97,26 +95,41 @@ def body():
 guard(body)
 """
 
-#: Each snippet asserts the closed-handler contract for one operation. The
-#: error type is substituted per builder because the timed-rotating binding
-#: maps the same enqueue failure to ``ValueError``.
-CLOSE_BORROW_CALLS = {
-    "close-handle": """
+#: ``handle()`` reaches a closed handler and reports it, rather than being
+#: rejected by the borrow rules. The timed-rotating binding reports handler
+#: errors as ``ValueError``, matching its overflow-timeout mapping, so both
+#: exception types name the closed handler.
+CLOSE_HANDLE_PROBE = """
         try:
             handler.handle("core", "INFO", "during-close")
-        except {error_type}:
-            pass
+        except (RuntimeError, ValueError) as err:
+            assert "closed" in str(err), f"unexpected rejection: {{err!r}}"
         else:
-            raise AssertionError("a closing handler accepted another record")
-""",
-    "close-flush": """
-        assert handler.flush() is False, (
-            "a flush during close must report that the worker is gone"
+            raise AssertionError(
+                "handle() succeeded after close() took the shutdown state"
+            )
+        assert blocked.is_alive(), "close returned before the worker was released"
+"""
+
+#: ``flush()`` reports the closed handler by returning ``False``.
+CLOSE_FLUSH_PROBE = """
+        results = [handler.flush()]
+        assert results == [False], (
+            f"flush() during close must report False, got {{results!r}}"
         )
-""",
-    # A second closer shares the first one's completion wait; it must return
-    # without raising once the worker stops or its own deadline expires.
-    "close-close": """
+"""
+
+#: A second ``close()`` shares the first one's completion wait. It must return
+#: without raising once the worker stops or its own deadline expires; it does
+#: not start new shutdown work.
+CLOSE_CLOSE_PROBE = """
         handler.close()
-""",
+"""
+
+#: Scenario bodies keyed by the operation they perform during an in-progress
+#: close.
+CLOSE_DURING_BODIES = {
+    "close-handle": _CLOSE_PROLOGUE + CLOSE_HANDLE_PROBE + _CLOSE_EPILOGUE,
+    "close-flush": _CLOSE_PROLOGUE + CLOSE_FLUSH_PROBE + _CLOSE_EPILOGUE,
+    "close-close": _CLOSE_PROLOGUE + CLOSE_CLOSE_PROBE + _CLOSE_EPILOGUE,
 }
