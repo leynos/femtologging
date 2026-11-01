@@ -224,10 +224,8 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to finish.
     ///
-    /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
-    /// close can start while another thread still holds the handler in a
-    /// detached flush call.
+    /// The GIL is released while waiting, and only a shared PyO3 borrow is
+    /// needed, so a close can run beside a detached flush call.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
@@ -370,7 +368,9 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
-        match self.tx.lock().clone() {
+        // Bind first: a guard in the `match` scrutinee lives through the send.
+        let tx = self.tx.lock().clone();
+        match tx {
             Some(tx) => {
                 self.warner.flush(|count| {
                     warn!("FemtoStreamHandler: {count} log records dropped in the last interval");

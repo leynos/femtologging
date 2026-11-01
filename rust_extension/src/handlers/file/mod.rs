@@ -267,9 +267,9 @@ impl FemtoFileHandler {
     }
 
     pub fn flush(&self) -> bool {
-        // Clone under the lock and release it before sending: a blocking send
-        // must not hold the lock that close needs to take the sender.
-        match self.tx.lock().clone() {
+        // Bind first: a guard in the `match` scrutinee lives through the send.
+        let tx = self.tx.lock().clone();
+        match tx {
             Some(tx) => self.perform_flush(&tx),
             None => false,
         }
