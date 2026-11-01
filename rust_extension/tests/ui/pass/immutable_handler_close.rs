@@ -4,7 +4,10 @@
 //! binding that is never declared `mut` must still close, and closing twice
 //! must remain type-correct because close is idempotent.
 
-use _femtologging_rs::{DefaultFormatter, FemtoFileHandler, FemtoStreamHandler};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoFileHandler, FemtoRotatingFileHandler, FemtoStreamHandler,
+    FemtoTimedRotatingFileHandler,
+};
 
 fn main() {
     // The helper is never called: this fixture proves the calls type-check
@@ -25,4 +28,21 @@ fn main() {
         file.close();
         stream.close();
     }
+
+    // The rotating handlers are not constructible from outside the crate, so
+    // their shared-reference signature is proven by taking references rather
+    // than building values. The cast is never invoked; it only requires the
+    // function item to have this exact `&self`-based close signature.
+    fn close_rotating_through_shared_references(
+        rotating: &FemtoRotatingFileHandler,
+        timed: &FemtoTimedRotatingFileHandler,
+    ) {
+        rotating.close();
+        rotating.close();
+        timed.close();
+        timed.close();
+    }
+
+    let _ = close_rotating_through_shared_references
+        as fn(&FemtoRotatingFileHandler, &FemtoTimedRotatingFileHandler);
 }
