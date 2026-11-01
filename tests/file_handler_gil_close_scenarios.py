@@ -1,4 +1,26 @@
-"""Scenario bodies for calls made while a file handler is closing."""
+"""Scenario bodies for calls made while a file handler is closing.
+
+``close()`` takes only a shared PyO3 borrow, so it can start while another
+thread is blocked inside ``handle()`` or ``flush()``. It takes the shutdown
+state and waits on the same worker-completion signal as every other closer, so
+a concurrent close neither raises nor corrupts the handler. Calls that arrive
+after the shutdown state has been taken observe a closed handler: ``handle()``
+reports the closure, ``flush()`` returns ``False``, and a second ``close()``
+shares the first one's completion wait.
+
+:func:`tests.file_handler_gil_scenarios.render_scenario` joins each body to the
+shared harness to produce a standalone child-interpreter program;
+:mod:`tests.file_handler_gil_support` runs that program under a timeout; and
+:mod:`tests.test_file_handler_gil_release` parametrizes it over the file,
+rotating, and timed-rotating builders.
+
+The probe uses :func:`sys.setswitchinterval` rather than a sleep. A one-second
+switch interval keeps the closing thread on the interpreter lock from the
+moment it signals that it is about to call ``close()`` into the binding itself.
+The probing thread can only wake once that binding detaches, by which point the
+shutdown state has been taken, so the observation does not depend on how
+quickly the shared build host schedules either thread.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +32,11 @@ CONCURRENT_CLOSE_BODY = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block())
     saturate(handler)
-    watchdog = start_watchdog()
     blocked = start_blocked(lambda: handler.handle("core", "INFO", "third"))
+    watchdog = start_watchdog_when_blocked(blocked)
     try:
         # ``handle`` is stuck on queue capacity, so the worker cannot complete.
-        time.sleep({handoff})
+        time.sleep({hold})
 
         # ``close`` must not raise: it takes the shutdown state and waits on
         # the shared completion signal, bounded by its one-second deadline.
@@ -38,8 +60,7 @@ guard(body)
 
 #: Closing takes the shutdown state before it waits, so a call that arrives
 #: while the close is in progress observes a closed handler rather than a
-#: borrow conflict. ``handle()`` reports the closure; ``flush()`` returns
-#: ``False`` because there is no worker left to acknowledge it.
+#: borrow conflict. Each probe below asserts that contract for one operation.
 CLOSE_BORROW_BODY = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block())
@@ -54,12 +75,18 @@ def body():
         except Exception as err:
             close_failures.append(err)
 
+    # With a long switch interval the closing thread keeps the interpreter lock
+    # from ``set()`` until its binding detaches, and the binding takes the
+    # shutdown state before detaching. This thread is waiting on the event with
+    # the lock released, so it can only resume once that state has been taken.
+    # The probe therefore observes an in-progress close, not a close that has
+    # merely been scheduled.
+    sys.setswitchinterval(1.0)
     blocked = start_blocked(close_handler)
     assert close_entered.wait(CHILD_WAIT), "the close call never started"
-    time.sleep(0.02)
-    assert blocked.is_alive(), "close returned before the worker was released"
     try:
 {operation_call}
+        assert blocked.is_alive(), "close returned before the worker was released"
     finally:
         RELEASE_WORKER.set()
 

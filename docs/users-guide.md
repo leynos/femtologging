@@ -65,8 +65,9 @@ your process exits.
 - When any queue is full under the default policy, the record is dropped. Each
   component emits rate-limited warnings and maintains drop counters
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
-  monitor pressure. A file handler whose policy is `"block"` or `"timeout:N"`
-  waits for room instead of dropping.
+  monitor pressure. A file handler whose policy is `"block"` waits for room
+  instead of dropping; with `"timeout:N"` it waits for room only until its
+  deadline, then drops the record.
 - Record metadata tracks the logger name, level, message text, timestamps,
   thread identity, optional structured exception (`exc_info`) and call stack
   (`stack_info`) payloads, and validated inline structured fields (`extra`).
@@ -355,13 +356,21 @@ Two consequences follow from that release, and both concern `"block"`:
 - `close()` does **not** cancel a `handle()` call that is already blocked.
   `close()` itself blocks for at most one second waiting for the worker to
   acknowledge shutdown and then abandons it, but the blocked `handle()` is
-  waiting on queue capacity and stays blocked. A concurrent `close()` does not
-  raise: it takes the shutdown state and waits on the same worker-completion
-  signal, so it returns once the blocked call is accepted and the worker stops,
-  or after its own one-second bound. Because the blocked call detaches the
-  GIL, other Python threads can call `handle()`, `flush()`, and `close()` on
-  the same object while it waits; calls that arrive after shutdown has begun
-  see a closed handler. Release the worker so the blocked call can return.
+  waiting on queue capacity and stays blocked. Restore worker progress and let
+  the blocked call finish before calling `close()`.
+
+Two states follow, and they describe different points in the shutdown:
+
+- While a `handle()` call is blocked, it holds a shared borrow of the handler
+  and its own clone of the sender. Another `handle()` or `flush()` call may
+  take its own shared borrow and start, although it may then wait on the same
+  queue. A `close()` takes the shutdown state and waits on the shared
+  completion signal, so it does not raise; it returns once the blocked call is
+  accepted and the worker stops, or after its own one-second bound.
+- Once a `close()` has taken the shutdown state, concurrent `handle()` calls
+  raise `RuntimeError`, `flush()` returns `False`, and a second `close()`
+  shares the first one's completion wait rather than starting new shutdown
+  work.
 
 Callers who need a wait that ends on its own must use `"timeout:N"`. They must
 also handle the exception raised when the deadline expires and the record is

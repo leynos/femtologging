@@ -332,6 +332,34 @@ For the complete parameter and error contract, see
 
 ______________________________________________________________________
 
+## File-handler calls release the interpreter lock
+
+Explicit Python calls to `handle()`, `flush()`, and `close()` on the file,
+rotating-file, and timed-rotating-file handlers now release the interpreter
+lock for the whole of any wait on queue capacity, on the flush acknowledgement,
+or on worker shutdown. Another Python thread keeps running while one thread is
+parked. No call signature changes; the difference is that code which
+accidentally relied on such a call excluding other threads must now provide its
+own synchronization.
+
+The behaviour that stays the same is the one that makes this safe to adopt:
+
+- `"block"` still waits for room for as long as the worker takes to make it,
+  which may be forever if the worker is stuck. Prefer `"timeout:N"` where a
+  bounded wait is acceptable; it drops the record when the deadline expires and
+  raises `RuntimeError` from the file and rotating bindings, or `ValueError`
+  from the timed-rotating binding.
+- A `close()` that is already in progress has taken the shutdown state.
+  Concurrent `handle()` calls raise `RuntimeError`, `flush()` returns `False`,
+  and a second `close()` shares the same completion wait. A blocked `handle()`
+  holds only a shared borrow, so a concurrent `close()` does not raise; it
+  waits on the same completion signal, bounded by its one-second deadline.
+- The handler destructor still performs shutdown with the interpreter lock
+  held. Call `close()` explicitly during shutdown to get the detached wait.
+
+For the full contract and the concurrency scenarios that pin it, see
+"Concurrency and the GIL for file handlers" in the user guide.
+
 ## Production wheels omit the timed-rotation test hooks
 
 The persistent `[tool.maturin]` feature set is now `["python"]` rather than

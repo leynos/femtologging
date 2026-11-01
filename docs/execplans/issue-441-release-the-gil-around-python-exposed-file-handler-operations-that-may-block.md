@@ -206,6 +206,43 @@ for this issue; no new public signature or dependency is introduced.
       "Host compile admission and the build-standard contract tests".
 - [x] Committed the host-isolation fix for the build-standard contract tests as
       `0725590` and the timed-rotating CodeScene directive as `3c92306`.
+- [x] Rebased onto the advanced `origin/main` at `f26b696` after the review
+      below. The only commit that became empty was the `typos.toml`
+      regeneration, whose content `f26b696` already contains; the remaining 22
+      commits replayed unchanged.
+- [x] Closed the post-rebase review findings: separated the two borrow states in
+      the user guide, corrected the overflow-policy exception mapping, added the
+      migration-guide section, expanded the close-scenario module docstring,
+      added the flush-acknowledgement scenario, made the close hand-off
+      deterministic with `sys.setswitchinterval`, and added a minimum-wait guard
+      to the progress oracle. See "Post-rebase CodeRabbit findings".
+- [x] Split the scenario bodies out of `tests/file_handler_gil_scenarios.py`
+      into
+      `tests/file_handler_gil_wait_scenarios.py`. The added flush-acknowledgement
+      scenario had pushed the module past the 400-line limit that Pylint's
+      `too-many-lines` check enforces; the harness and renderer stay in the
+      original module, which now composes `WAIT_BODIES` with the close bodies.
+- [x] Fixed a hosted-CI abort in `test_blocking_close_releases_the_gil` on
+      CPython 3.12 (child exit `-6`, no child output). The `close` scenario
+      parked the worker for longer than the binding's one-second shutdown wait,
+      so `close` timed out and detached the worker thread. That thread then
+      attached to Python to run the formatter while the child interpreter was
+      finalizing. PyO3 0.30 only guards against attaching during finalization
+      on CPython 3.13 and later (`#[cfg(Py_3_13)]` around the
+      `Py_IsFinalizing` check), so 3.12 reaches `PyGILState_Ensure` in the
+      finalizing interpreter and aborts. The scenario now releases the worker
+      after `CLOSE_HOLD_SECONDS` (0.6 s), which is inside the deadline, so the
+      call ends through the worker's acknowledgement and joins it. The window
+      under test stays above the 0.5 s minimum, and no detached worker
+      survives to the child's teardown. Reproduced on CPython 3.12.15 with a
+      standalone script: releasing the parked worker 1.2 s into the close
+      aborted 2 of 5 runs at interpreter exit, while releasing it at 0.6 s
+      aborted none of 20, and `tests/test_file_handler_gil_release.py` passed
+      all 27 scenarios under 3.12.15.
+- [x] Repaired the `render_scenario` doctest. The harness gained `import sys`
+      for the close probe, so the example that asserted the program starts with
+      `import threading` no longer held; it now checks that the harness and the
+      selected body both reach the rendered program.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -239,6 +276,15 @@ rejected the first and accepted the second. A pure-bytecode busy-wait would
 *not* have been a valid stand-in for the defect, because CPython's eval breaker
 drops the GIL every few milliseconds; only a call that blocks below the
 interpreter reproduces the freeze.
+
+The oracle was later hardened (see "Post-rebase CodeRabbit findings"): the
+watchdog now starts only after the blocking call has been alive for 50 ms. That
+changes which assertion fires first for a GIL-holding call, so the control was
+recalibrated against the same `ctypes` pair with the hardened oracle. The
+`PyDLL` call — which holds the GIL across the callee — was rejected by the
+settle guard, and the `CDLL` call — which releases it — was accepted with
+progress records inside the call's own window. The Rust-side control above
+still stands for the production code, which this hardening does not touch.
 
 ## Surprises & discoveries
 
@@ -404,6 +450,50 @@ relocated home needs no registry cache, and the three cases pass in about a
 second. Neither the repository configuration nor the assertions changed, and
 the failure was host-specific rather than caused by the GIL change.
 
+## Post-rebase CodeRabbit findings
+
+The review of `9655df1` accepted Tasks 1–4 and found no production defect,
+while the pre-merge table still reported one error and three warnings. Each was
+dispositioned against the current tree.
+
+| Row                         | Disposition                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module-Level Documentation  | Fixed. `tests/file_handler_gil_close_scenarios.py` now states that it provides reusable child-interpreter scenario bodies, which module renders them, which module runs them, and which test module parametrizes them.                                                                                                                              |
+| User-Facing Documentation   | Fixed. `docs/v0-2-0-migration-guide.md` gained a "File-handler calls release the interpreter lock" section covering direct calls, unbounded `"block"`, the per-binding timeout exception, the two borrow states, `Drop`, and explicit `close()`.                                                                                                    |
+| Testing (Compile-Time / Ui) | Partly fixed, partly adjudicated. `tests/ui/pass/pyo3_detach_ungil.rs` pins the accepted `Python<'_>` plus `py.detach` shape. A compile-fail fixture for capturing a `Bound<'_, PyString>` is not expressible on stable Rust: PyO3 has no stable negative impls, so `Ungil` is blanket-implemented for every `Send` type, and the capture compiles. |
+| Observability               | Adjudicated out of scope. The crate has no metrics or tracing subsystem to extend, and bounded handler telemetry is tracked separately by open issue [#551](https://github.com/leynos/femtologging/issues/551). Adding an ad-hoc metrics path here would pre-empt that design and widen a GIL-only change.                                          |
+
+The inline findings were also applied:
+
+- **Two borrow states.** `docs/users-guide.md` now describes a blocked
+  `handle()` holding a shared borrow and a waiting `close()` holding the
+  exclusive borrow as separate cases, and states that the rejected concurrent
+  `close()` does not start its one-second wait.
+- **Exception mapping.** `femtologging/overflow_policy.py` no longer claims
+  `drop()` always raises `RuntimeError`; the timed-rotating binding's
+  `ValueError` mapping is named explicitly for both `drop` and `timeout`.
+- **Flush acknowledgement coverage.** `saturate()` fills one command slot, and
+  the new `flush-ack` scenario builds with capacity 2, so the flush command is
+  enqueued at once and the caller waits on the worker's acknowledgement rather
+  than on queue capacity. The original `flush` scenario keeps its enqueue-slot
+  coverage, and its comment now says so.
+- **Close hand-off determinism.** The close-borrow probe raises
+  `sys.setswitchinterval(1.0)` before starting the closing thread. The closing
+  thread therefore keeps the interpreter lock from `Event.set()` into the
+  binding, and the probing thread, which waits with the lock released, can only
+  resume once that binding has detached with the exclusive borrow held. The 20
+  ms sleep is gone.
+- **Progress oracle.** The inline finding on `file_handler_gil_scenarios.py`
+  said the window recorded around the call does not prove overlap with the
+  actual wait. Two changes close that gap. First, the watchdog now starts only
+  after the blocking call has been alive for `SETTLE_SECONDS` (50 ms); the call
+  cannot return while its queue is full or its worker is parked, so it is
+  provably inside the binding before any record can be attributed to it. Second,
+  `assert_progress_during` rejects a call whose window is shorter than
+  `MIN_WAIT_SECONDS` (0.5 s); without that, a call that returned immediately
+  would collect progress records from its own brief window and pass vacuously.
+  `tests/file_handler_gil_support.py` explains the order.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -517,4 +607,6 @@ probable deadlock, and child failures include stderr.
 
 `docs/users-guide.md` (contract, concurrency overview, backpressure guidance,
 rotating sections), `docs/developers-guide.md` (a section near "Loom models"),
-and the `femtologging/overflow_policy.py` module docstring.
+`docs/v0-2-0-migration-guide.md` (a migration section for callers who relied on
+the lock as an implicit mutual exclusion), and the
+`femtologging/overflow_policy.py` module docstring.
