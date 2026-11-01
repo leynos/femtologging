@@ -410,6 +410,42 @@ configured filter IDs.
   project's limit. Gates on the repair: check-fmt, lint, typecheck,
   markdownlint, and nixie all passed; the test gate ran 789 pytest tests, 5
   skipped, 66 snapshots, and all four Rust feature lanes.
+- [x] (2026-10-28) Rebased the branch onto `main` at `33858df`, which brings in
+  the `manager.rs` module split from #544, and pushed. The rebase rewrote every
+  commit, so the push needed an explicit-SHA lease: `--force-with-lease` cannot
+  resolve a tracking ref when the destination is a URL rather than a named
+  remote, and reports `stale info` even when the lease holds. The pre-rebase
+  remote head `ee6ed75` is retained locally as tag
+  `backup/pr548-pre-rebase-ee6ed75`.
+- [x] (2026-10-28) Repaired two defects the rebase introduced silently. The
+  rebase reported no conflict for either file, so both were caught only by
+  running the gates afterwards. `tests/conftest.py` had a duplicated header
+  block — a second module docstring, a second `register_assert_rewrite`, an
+  unclosed `warnings.filterwarnings(` and a second `FileHandlerFactory` type
+  alias — left by commit `720adf4` during replays. `logger/mod.rs` had three
+  doubled blank lines and a stale re-export block naming `queue::FlushAckHandler`,
+  which #544 deleted. Repair: `5ceb650` for both, plus `797dab0` for the Ruff
+  `I001` import order that the `conftest.py` repair exposed. This is the
+  failure mode recorded in the "verify diff after clean rebase" note: a clean
+  rebase exit does not imply a correct merge.
+- [x] (2026-10-28) Completed the local gate evidence on head `797dab0`.
+  `make lint` passed in full, including `lint-rust-clippy` — clippy across all
+  15 lane invocations, the private-docs contract test, and the Whitaker Dylint
+  suite — which had no prior evidence because an earlier Ruff failure aborted
+  the target before clippy ran. `make test` lane 4
+  (`--features tracing-compat`) passed: 586 tests, 27 doctests, 0 failures.
+  `uv run pytest -v --doctest-modules` passed: 814 tests, 5 skipped, 66
+  snapshots.
+- [x] (2026-10-28) Recorded a self-inflicted failure worth keeping: running
+  pytest concurrently with the lane 4 cargo build made
+  `test_maturin_wheel_build_snapshot` fail with
+  `failed to write .../release/.fingerprint/.../invoked.timestamp: No such file
+  or directory`. Both processes write `rust_extension/target`, so the maturin
+  build and the lane 4 link step collide. It is the same signature as the
+  earlier trybuild failure attributed to admission contention, and it is now
+  understood rather than assumed: the gates must run strictly sequentially, as
+  the repository instructions state. Re-running pytest alone passed with zero
+  failures.
 
 ## Surprises & Discoveries
 
