@@ -1154,16 +1154,15 @@ potential future enhancement.
 
 ### 6.4. Interoperability with the Rust Logging Ecosystem
 
-To maximize adoption and utility, `femtologging` should integrate with existing
-popular logging facades and frameworks in Rust.
+Femtologging integrates with Rust logging facades so applications can route
+Rust records into the same handler queues used by Python logging.
 
 - log Crate Facade:
 
   The log crate is the most widely used logging facade in the Rust ecosystem.
   Many libraries use log::info!, log::warn!, etc., to emit log messages.
-  femtologging should implement the log::Log trait. This would allow
-  applications and libraries already using the log crate to seamlessly use
-  femtologging as their logging backend simply by initializing femtologging.
+  Femtologging implements `log::Log` and exposes `setup_rust_logging()` to
+  install its adapter as the process-wide logger.
 
 #### 6.4.1 Implementation Strategy for log::Log
 
@@ -1200,63 +1199,55 @@ follows for all other levels:
 | Warn         | Warn         | Direct mapping                          |
 | Error        | Error        | `log` has no `Critical`; map to `Error` |
 
-**Logger Resolution:**
+**Logger Resolution and Enablement:**
 
 The `log::Record::target()` field typically contains the Rust module path (e.g.,
-`my_app::network::client`). This maps naturally to femtologging's hierarchical
-logger system via `Manager::get_logger()`, which creates parent loggers
-automatically based on dotted names.
+`my_app::network::client`). The bridge normalizes `::` separators to dots and
+uses the resulting name as the exact target logger. It does not inherit levels
+from parent loggers.
 
-The implemented bridge normalizes Rust-style `::` separators to `.` before
-resolving the logger, preserving femtologging's dotted hierarchy semantics. If
-a target is invalid after normalization, the record is routed to the root
-logger rather than panicking.
+If the normalized name is a valid but unregistered target, `enabled()` uses the
+default new-logger threshold (`INFO`). If it is invalid, the check uses the
+registered root logger's threshold, or `INFO` when no root logger is
+registered. The later `log()` call resolves the logger through the
+Python-facing manager and retains its authoritative level check before dispatch.
 
-**Conceptual Implementation:**
+**Python-Free Threshold Check:**
 
-```rust
-pub struct FemtoLogAdapter;
+Each logger shares its live `AtomicU8` level with a separate threshold index.
+`enabled()` normalizes and validates the target, reads the exact logger level
+from that index, and compares it with the Rust record level. Unknown and
+invalid targets use the fallback rules above. It does not acquire the GIL,
+create a logger, call Python, or emit a diagnostic. Filters and handlers are
+not part of this early decision, so an enabled record may still be rejected or
+dropped during dispatch.
 
-impl log::Log for FemtoLogAdapter {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        let level = FemtoLevel::from(metadata.level());
-        Python::with_gil(|py| {
-            let logger = Manager::get_logger(py, metadata.target());
-            logger.borrow(py).is_enabled_for(level)
-        })
-    }
-
-    fn log(&self, record: &log::Record) {
-        Python::with_gil(|py| {
-            let logger = Manager::get_logger(py, record.target());
-            let femto_record = FemtoLogRecord::with_metadata(
-                record.target(),
-                &record.level().to_string(),
-                &record.args().to_string(),
-                RecordMetadata {
-                    module_path: record.module_path().unwrap_or_default().to_string(),
-                    filename: record.file().unwrap_or_default().to_string(),
-                    line_number: record.line().unwrap_or(0),
-                    ..Default::default()
-                },
-            );
-            logger.borrow(py).dispatch_record(femto_record);
-        })
-    }
-
-    fn flush(&self) {
-        Python::with_gil(|py| {
-            Manager::flush_all_handlers(py);
-        })
-    }
-}
-```
+The process-wide `log::max_level()` is a conservative macro prefilter. It is
+folded from the default threshold and all levels in the index, so it cannot
+prevent the adapter from receiving a level that any valid target can accept.
+The maximum is recomputed after adapter installation, logger-level changes,
+registry commits, and manager reset. The level update and maximum publication
+are serialized; registry updates take the manager lock before the index lock,
+while maximum refresh reads the index without taking the manager lock.
 
 **GIL Acquisition and Error Handling:**
 
-The `log::Log` trait methods (`enabled`, `log`, `flush`) require GIL
-acquisition to interact with femtologging's Python-integrated components. The
-expected failure behaviour is:
+Only `log()` and `flush()` need Python access. `log()` attaches to Python after
+the threshold check, resolves the target, checks the current level again, and
+then queues the record. File and stream handler `flush()` and `close()` calls
+detach their waits from the GIL. The `close()` bindings take only a shared PyO3
+object borrow: they extract owned shutdown state, release that borrow, and then
+detach, so another Python thread can use the handler while the worker exits.
+Because the shutdown state is shared, concurrent `close()` calls and a
+`close()` running beside a detached `flush()` both wait on the same completion
+broadcast; a closer that arrives after the worker has stopped returns at once,
+and a repeated close stays safe. Existing handler-specific timeouts remain
+authoritative, so a worker that never signals completion is reported and
+skipped rather than waited on indefinitely.
+
+These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
+uses no Python access and has no Python exception path. The expected failure
+behaviour is:
 
 | Scenario                          | Behaviour                                     |
 | --------------------------------- | --------------------------------------------- |
@@ -1279,11 +1270,14 @@ operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 
 **Python-facing lifecycle waits:** The Python bindings for the stream, file,
 rotating-file, and timed-rotating-file handlers detach from the GIL while they
-wait for their worker in `flush()` and `close()`. `close()` transfers the
-shutdown state to an owned value under a scoped mutable borrow, and that borrow
-ends before the detached wait. This keeps caller-side lifecycle waits distinct
-from worker-side I/O and lets both a queued Python callable formatter and a
-callback that re-enters the handler in its closed state make progress.
+wait for their worker in `flush()` and `close()`. `close()` copies the shared
+shutdown state under a scoped borrow, and that borrow ends before the detached
+wait. This keeps caller-side lifecycle waits distinct from worker-side I/O and
+lets both a queued Python callable formatter and a callback that re-enters the
+handler in its closed state make progress. Since the state is shared rather
+than taken exclusively, concurrent closes and a close beside a detached flush
+all observe the same completion, while the handler's own timeout still bounds
+each wait.
 
 **flush() Behaviour:**
 
@@ -1354,6 +1348,11 @@ classDiagram
         +flush_all_handlers(py)
     }
 
+    class ThresholdIndex {
+        +registered_logger_level(name)
+        +registered_logger_levels()
+    }
+
     class PythonLogger {
         +is_enabled_for(level)
         +dispatch_record(record)
@@ -1365,7 +1364,9 @@ classDiagram
 
     Log <|.. FemtoLogAdapter
     FemtoLogAdapter --> Manager
+    FemtoLogAdapter --> ThresholdIndex
     Manager --> PythonLogger
+    Manager --> ThresholdIndex
     FemtoLogAdapter --> FemtoLogRecord
     FemtoLogRecord --> FemtoLevel
     FemtoLogRecord --> RecordMetadata
@@ -1391,7 +1392,8 @@ sequenceDiagram
     FemtoLogCompat->>FemtoLogCompat: install_global_logger()
     FemtoLogCompat->>RustLog: set_logger(FemtoLogAdapter)
     RustLog-->>FemtoLogCompat: Result
-    FemtoLogCompat->>RustLog: set_max_level(Trace)
+    FemtoLogCompat->>ThresholdIndex: read registered levels and default
+    FemtoLogCompat->>RustLog: set_max_level(conservative maximum)
     FemtoLogCompat-->>PyO3Bridge: Ok or RuntimeError
     PyO3Bridge-->>PythonFemtoLogging: return
     PythonFemtoLogging-->>PythonApp: return

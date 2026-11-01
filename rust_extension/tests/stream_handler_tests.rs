@@ -111,7 +111,7 @@ fn stream_handler_flush_returns_false_on_worker_flush_error() {
 
 #[rstest]
 fn stream_handler_close_flushes_pending(
-    #[from(handler_tuple)] (buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+    #[from(handler_tuple)] (buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "close"));
     handler.close();
@@ -121,7 +121,7 @@ fn stream_handler_close_flushes_pending(
 
 #[rstest]
 fn stream_handler_flush_after_close(
-    #[from(handler_tuple)] (_buffer, mut handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
+    #[from(handler_tuple)] (_buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),
 ) {
     handler.close();
     assert!(!handler.flush());

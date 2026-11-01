@@ -139,7 +139,7 @@ fn build_from_worker_invokes_rotation_strategy() {
     };
     let calls = Arc::new(AtomicUsize::new(0));
     let rotation = CountingRotation::new(Arc::clone(&calls));
-    let mut handler = FemtoFileHandler::build_from_worker(
+    let handler = FemtoFileHandler::build_from_worker(
         writer,
         DefaultFormatter,
         handler_cfg,
@@ -219,20 +219,20 @@ fn build_from_worker_wires_handler_components() {
         overflow_policy: OverflowPolicy::Block,
     };
     let policy = handler_cfg.overflow_policy;
-    let mut handler = FemtoFileHandler::build_from_worker(
+    let handler = FemtoFileHandler::build_from_worker(
         writer,
         DefaultFormatter,
         handler_cfg,
         BuilderOptions::<SharedBuf>::default(),
     );
 
-    assert!(handler.tx.is_some());
-    assert!(handler.handle.is_some());
+    assert!(handler.tx.lock().is_some());
+    assert!(handler.handle.lock().is_some());
     assert_eq!(handler.overflow_policy, policy);
 
-    let tx = handler.tx.take().expect("tx missing");
-    let done_rx = handler.done_rx.clone();
-    let handle = handler.handle.take().expect("handle missing");
+    let tx = handler.tx.lock().take().expect("tx missing");
+    let completion = Arc::clone(&handler.completion);
+    let handle = handler.handle.lock().take().expect("handle missing");
 
     tx.send(FileCommand::Record(Box::new(FemtoLogRecord::new(
         "core",
@@ -243,9 +243,8 @@ fn build_from_worker_wires_handler_components() {
     drop(tx);
 
     assert!(
-        done_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .is_ok()
+        completion.wait(std::time::Duration::from_secs(1)),
+        "worker must signal completion after its terminal flush",
     );
     handle.join().expect("worker thread");
 
@@ -268,7 +267,7 @@ fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::
     };
     let options = BuilderOptions::<SharedBuf, FailingRotation>::new(FailingRotation, None);
     install_test_logger();
-    let mut handler =
+    let handler =
         FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
 
     handler.handle(FemtoLogRecord::new(

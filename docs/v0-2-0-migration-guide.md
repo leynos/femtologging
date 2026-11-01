@@ -201,6 +201,38 @@ they need values from the producer's captured context.
 
 ______________________________________________________________________
 
+## The Rust `log` bridge enablement decision is target-aware
+
+The Rust `log` bridge no longer decides enablement from a single process-wide
+threshold alone. `log::log_enabled!` now asks two questions: whether the
+process-wide maximum admits the level, and whether the record's own target
+accepts it. A target that is registered at `DEBUG` accepts `DEBUG` records even
+while another target is held at `ERROR`.
+
+Targets are resolved against the femtologging registry:
+
+- Rust's `module::path` form is normalized to a dotted femtologging name, so
+  `service::worker` is matched as `service.worker`.
+- A registered target uses its own current level. Levels are not inherited from
+  parent loggers.
+- A valid but unregistered target uses `INFO`.
+- An invalid target uses the registered `root` logger's level, or `INFO` when
+  no root logger is registered.
+
+Configuration and level changes apply to later enablement checks, without
+re-installing the bridge.
+
+The process-wide maximum remains a conservative prefilter. It is recomputed
+after logger level and registry changes, and it is never restrictive enough to
+suppress a record the bridge could dispatch. Because the `log` crate checks
+that maximum before evaluating a macro call's arguments, and asks the target
+check only afterwards, an argument for a target held below the maximum is still
+evaluated. Add an explicit `log::log_enabled!` guard when an argument is
+expensive. See the [`log` facade bridge](users-guide.md#rust-log-facade-bridge)
+in the users' guide for the complete behaviour.
+
+______________________________________________________________________
+
 ## Handler filters and formatter builders
 
 Handler builders now accept filter IDs with `with_filters([...])`. Register

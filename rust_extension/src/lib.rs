@@ -21,6 +21,14 @@ mod socket_handler;
 mod stream_handler;
 mod sync;
 
+// Feature-gated shutdown visibility: the heavy Loom lane schedules the
+// completion signal directly, which the ordinary API never returns.
+#[cfg(feature = "test-util")]
+#[doc(hidden)]
+pub mod shutdown;
+#[cfg(not(feature = "test-util"))]
+mod shutdown;
+
 // Feature-gated manager visibility
 #[cfg(feature = "test-util")]
 pub mod manager;
@@ -111,6 +119,9 @@ pub use http_handler::{
 };
 /// Re-export logging levels.
 pub use level::FemtoLevel;
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
+#[doc(hidden)]
+pub use log_compat::{FemtoLogAdapter, install_global_logger};
 pub use log_context::{
     LogContextError, LogContextGuard, pop_log_context, push_log_context, push_log_context_map,
     with_log_context,
@@ -119,6 +130,9 @@ pub use log_context::{
 pub use log_record::{FemtoLogRecord, RecordMetadata};
 /// Re-export the logger, its queued-record handle, and the pool-start error.
 pub use logger::{DispatcherError, FemtoLogger, QueuedRecord};
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
+#[doc(hidden)]
+pub use manager::get_logger as get_logger_for_log_compat;
 use manager::{get_logger as manager_get_logger, reset_manager};
 pub use socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,

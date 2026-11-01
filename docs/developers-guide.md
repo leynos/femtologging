@@ -133,7 +133,7 @@ compatibility tests validate the same maturin and PyO3 releases:
   editor integrations use the installed language server.
 - maturin is pinned to `1.13.3` in the development dependencies and CI build
   steps, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
-- PyO3 is pinned to `0.28.3` in `rust_extension/Cargo.toml`.
+- PyO3 is pinned to `0.30.1` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
   the crate declares no minimum supported Rust version.
@@ -159,6 +159,46 @@ For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
 changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
 fixtures.
+
+### Rust log bridge and handler waits
+
+With `log-compat`, each logger shares its live level atomic with a Python-free
+threshold index. `FemtoLogAdapter::enabled()` reads that index without the GIL,
+logger creation, or log emission. A registered normalized target uses its own
+level; unknown valid targets use the default `INFO` level; invalid targets use
+the root level or the default. Parent levels are not inherited, and this early
+check does not inspect filters or handlers.
+
+When a logger enters the registry, manager code holds `MANAGER` before taking
+the threshold-index write lock. The enablement lookup reads only the index.
+Global `log::max_level()` refreshes after successful bridge installation,
+logger level changes, staged configuration commits, and manager reset. Its
+calculation includes the default level, so the facade macro prefilter cannot
+hide a record accepted for an unknown target. A staged configuration commit
+refreshes it while still holding `MANAGER`, so no dispatch can observe the new
+index thresholds through a stale prefilter; the refresh takes only the index
+lock, which the manager-then-index ordering already permits.
+
+The root-level `FemtoLogAdapter`, install function, and logger lookup
+re-exports are hidden and require both `log-compat` and `test-util`. Keep
+benchmark-only access behind those feature gates. The Criterion benchmark can
+be run with:
+
+```shell
+cargo bench --manifest-path rust_extension/Cargo.toml --no-default-features \
+  --features log-compat --bench log_bridge
+```
+
+The Python-facing file and stream handler `flush()` and `close()` methods use
+PyO3's detached wait path. The `close()` wrappers need only a shared
+Python-object borrow: they copy the shutdown state into Rust-owned values,
+release that borrow, and then release the GIL while they wait for the worker.
+Concurrent `close()` calls, or a `close()` beside a detached `flush()`, do not
+contend for the handler. Every caller waits on the same completion broadcast,
+so one closer does not return early merely because another has already taken
+the shutdown state; the wait stays bounded by the handler's timeout. Preserve
+the handlers' existing timeouts and idempotent-close behaviour when changing
+this boundary.
 
 ### Dependabot grouping for the extension build
 
@@ -326,10 +366,11 @@ invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
 ### Loom models
 
-Six Loom models in `rust_extension/tests/heavy/` check the handler and logger
+Eight Loom models in `rust_extension/tests/heavy/` check the handler and logger
 workers: delivery through the stream handler's queue, routing through the
 logger to every attached handler exactly once, concurrent handler attachment,
-and concurrent writes and flushes through the file handler. Handler models run
+concurrent writes and flushes through the file handler, and the shared
+worker-completion signal that concurrent closers wait on. Handler models run
 the handler worker code with Loom's synchronization primitives. Logger models
 use a Loom-specific logger-owned shard rather than the process-wide production
 `Dispatcher`; dropping the logger sends `Job::Stop` and joins that worker
@@ -338,6 +379,12 @@ seam in `rust_extension/src/sync.rs`, which is `std::thread`,
 `crossbeam_channel` and `parking_lot` in an ordinary build and Loom's thread,
 locks and a small bounded channel under `--cfg loom`. Loom arrives only as a
 `cfg(loom)` target dependency.
+
+The completion models schedule registration against completion, a repeated
+completion, and a waiter that arrives after the worker has stopped. They use the
+`test-util` `is_completed` probe for the unfinished state, because Loom has no
+clock and its timed waits never expire; a model that waited on an unfinished
+completion would hang instead of failing.
 
 The workflow has two Loom steps, and the split is deliberate. "Compile Loom
 heavy tests" passes `--no-run` and proves the models build. "Run Loom models"
@@ -515,12 +562,20 @@ on worker threads. Their Python bindings release the GIL with
 `Python::detach()` before waiting for that worker in `flush()` and `close()`,
 so a Python callable formatter queued on the worker can run to completion
 instead of deadlocking against a producer that still holds the GIL. `close()`
-also releases the Python class borrow before the wait: it takes the shutdown
-state and owned worker handles while the borrow is held, then detaches and
-waits outside the borrow. A Python callback that re-enters the handler during
-shutdown therefore observes the closed state instead of blocking on a borrow
-held by the waiter. `tests/test_handler_close_reentry.py` is the regression
-test for that path.
+takes only a shared Python-object borrow: it copies the shutdown state and the
+owning worker handle out of the handler, releases the borrow, then detaches and
+waits outside it. A Python callback that re-enters the handler during shutdown
+therefore observes the closed state instead of blocking on a borrow held by the
+waiter. `tests/test_handler_close_reentry.py` is the regression test for that
+path.
+
+Because the shutdown state is shared rather than moved out by an exclusive
+borrow, several threads may close the same handler, and a close may start while
+a detached flush is still running. Each closer waits on one completion
+broadcast: every caller observes the worker's exit, and a closer that arrives
+after the worker has already stopped returns without waiting out its timeout. A
+repeated `close()` is therefore safe and still returns only once the worker has
+stopped.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush

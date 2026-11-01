@@ -474,6 +474,26 @@ Warnings from femtologging's own Rust targets are written to stderr when this
 bridge is installed. They are kept out of the handler pipeline to prevent a
 warning from recursively entering the logger that emitted it.
 
+The bridge's `enabled()` check applies the target logger's current level
+threshold. The `log` crate reaches it only after the process-wide maximum has
+admitted the level and the macro's arguments have been evaluated, so an
+expensive argument for a target held below that maximum still runs; add a
+`log::log_enabled!` guard for the target when that matters. Rust targets using
+`module::path` are normalized to femtologging's dotted `module.path` names. A
+registered target uses its own live logger level; an unknown valid target uses
+the default new-logger level (`INFO`). An invalid target falls back to the root
+logger's level when a root logger is registered, or to `INFO` otherwise. Target
+levels are not inherited from parent loggers.
+
+This check considers logger levels only: it does not inspect filters or
+handlers, so `enabled()` returning `true` means the target level accepts the
+record, not that a handler will deliver it. The prefilter does not attach to
+Python, create a logger, or emit a log message. The process-wide
+`log::max_level()` is a conservative macro prefilter, recomputed when logger
+levels or the registry change. Its threshold is derived from all registered
+logger levels plus the default level for unknown targets, so it does not
+suppress a record the bridge would dispatch.
+
 Users building the extension from source may disable the bridge with
 `cargo build --no-default-features`, or re-enable it explicitly with
 `--features log-compat`.

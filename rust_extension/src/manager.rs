@@ -65,11 +65,23 @@ pub(crate) use runtime_state::{LoggerAttachmentState, RuntimeStateSnapshot};
 #[cfg(all(test, feature = "python"))]
 pub(crate) use registry::lookup_existing_logger;
 // Bridge saturation tests use the named count to assert the cap directly.
-#[cfg(all(test, any(feature = "log-compat", feature = "tracing-compat")))]
+// Those tests are excluded under `--cfg loom`, so the re-export is too.
+#[cfg(all(
+    test,
+    not(loom),
+    any(feature = "log-compat", feature = "tracing-compat")
+))]
 pub(crate) use registry::named_logger_count_for_test;
 
 #[cfg(feature = "log-compat")]
 pub(crate) use registry::flush_all_handlers;
+
+// The `log` bridge reads live thresholds and validates a target without
+// taking the manager lock or attaching to Python.
+#[cfg(feature = "log-compat")]
+pub(crate) use registry::{registered_logger_level, registered_logger_levels};
+#[cfg(feature = "log-compat")]
+pub(crate) use validation::is_valid_logger_name;
 
 #[cfg(test)]
 mod manager_tests;

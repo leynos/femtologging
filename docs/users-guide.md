@@ -294,10 +294,13 @@ fields with safe defaults does not require a version bump.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
   Always close the handler when the application shuts down. `close()` is
   idempotent and safe to call multiple times; only the first call performs
-  shutdown work.
-- In Rust, `close()` requires exclusive mutable access (`&mut self`). If the
-  handler is shared across threads, synchronize close calls externally (for
-  example with a mutex) instead of invoking `close()` concurrently.
+  shutdown work, and every call waits for the worker to stop.
+- In Rust, `close()` takes `&self` and may be called concurrently on a shared
+  handler, including while another thread flushes it. Every closer observes the
+  same completion signal, so none returns while the worker is still writing
+  queued records, and a closer that arrives after the worker has stopped
+  returns immediately. The wait remains bounded by the handler's timeout: a
+  worker that never signals completion is reported and skipped.
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Pass a callable, a `FormatterBuilder`, or a named
@@ -317,7 +320,8 @@ fields with safe defaults does not require a version bump.
   reason.
 - `handler.close()` follows the same contract as `FemtoFileHandler`: it is
   idempotent, only the first call performs shutdown work, and concurrent close
-  calls must be synchronized by the caller.
+  calls share one worker-completion wait rather than needing caller-side
+  synchronization.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 
@@ -928,6 +932,45 @@ For upgrade steps covering handler filters and formatter builders, see the
   messages before logging.
 - `reset_manager()` is a destructive operation intended for tests. Do not call
   it while other threads might still hold references to existing loggers.
+
+## Rust log facade bridge
+
+Call `setup_rust_logging()` during application start-up to route Rust
+`log`-crate records through femtologging's handlers:
+
+<!-- tested-example: rust-log-bridge-setup -->
+```python
+import femtologging
+
+femtologging.setup_rust_logging()
+```
+
+The bridge installs one process-wide Rust logger. It raises `RuntimeError` if
+another global logger is already installed. Rust targets such as
+`service::worker` are normalized to the femtologging name `service.worker`. A
+registered target uses its own current level; levels are not inherited from
+parent loggers. An unknown valid target uses `INFO`. An invalid target uses the
+registered `root` logger's level, or `INFO` when no root logger is registered.
+Changes to logger levels and configuration take effect for later enablement
+checks.
+
+`log::max_level()` is a conservative process-wide prefilter used by Rust
+logging macros. It includes the levels of registered loggers and the `INFO`
+default used for unknown valid targets, and it is recomputed after logger level
+or registry changes. The maximum is never restrictive enough to suppress a
+record that the bridge could dispatch. It can allow a level through to the
+adapter for a target that rejects it; the target-specific enablement check then
+rejects the record before its arguments are formatted.
+
+The `log` crate filters a macro call on the process-wide maximum before it
+evaluates that call's arguments, and asks the bridge's target check only after
+them. Arguments for a target held below the process-wide maximum are therefore
+still evaluated. Add a `log::log_enabled!` guard for the target when an
+argument is expensive. The target check does not inspect filters or handlers:
+an enabled record can still be rejected or dropped during dispatch. It does not
+create a logger or enter Python while checking the threshold. See the
+[Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
+behaviour and build-feature details.
 
 ## Journald and OpenTelemetry roadmap notes
 
