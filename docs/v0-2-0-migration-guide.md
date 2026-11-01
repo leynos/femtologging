@@ -281,6 +281,8 @@ For the complete parameter and error contract, see
 
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
 
+______________________________________________________________________
+
 ## Deadline-aware Rust handler flushing
 
 `FemtoLogger::flush_handlers()` now applies one two-second deadline to marker
