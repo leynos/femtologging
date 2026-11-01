@@ -11,11 +11,16 @@ import contextvars
 import threading
 import typing as typ
 
+import pytest
+
 from femtologging import FemtoLogger
 from tests.logger_support import (
+    FLUSH_TEST_HOOKS_AVAILABLE,
     CollectingHandler,
+    HandlerFlushGate,
     MutableHandler,
     RecordCollectingHandler,
+    handler_payloads,
     raise_exception,
 )
 
@@ -109,6 +114,38 @@ def test_handle_record_fallback_to_handle() -> None:
     assert handler.records == [("core", "INFO", "test")], (
         f"legacy handle() fallback captured {handler.records!r}"
     )
+
+
+@pytest.mark.parametrize(
+    "handler_type",
+    [RecordCollectingHandler, CollectingHandler],
+    ids=["handle_record", "legacy_handle"],
+)
+def test_flush_handlers_releases_gil_for_python_handlers(
+    handler_type: type[RecordCollectingHandler] | type[CollectingHandler],
+) -> None:
+    """Flush immediately delivers records to either Python handler protocol."""
+    if not FLUSH_TEST_HOOKS_AVAILABLE:
+        pytest.skip("flush synchronization regression requires the test-util feature")
+
+    logger_name = "python.handlers"
+    logger = FemtoLogger(logger_name)
+    handler = handler_type()
+    messages = ["first", "second", "third"]
+    expected_payloads = [(logger_name, "INFO", message) for message in messages]
+
+    try:
+        with HandlerFlushGate(handler, logger):
+            logger.add_handler(handler)
+            for message in messages:
+                logger.info(message)
+
+            # Enqueue, then flush before inspecting; polling first masks the defect.
+            assert logger.flush_handlers(), "logger worker did not flush"
+            payloads = handler_payloads(handler)
+            assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
+    finally:
+        logger.remove_handler(handler)
 
 
 type _ContextHandlerPairFactory = cabc.Callable[
