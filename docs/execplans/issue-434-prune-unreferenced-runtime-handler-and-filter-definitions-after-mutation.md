@@ -423,11 +423,11 @@ configured filter IDs.
   block — a second module docstring, a second `register_assert_rewrite`, an
   unclosed `warnings.filterwarnings(` and a second `FileHandlerFactory` type
   alias — left by commit `720adf4` during replays. `logger/mod.rs` had three
-  doubled blank lines and a stale re-export block naming `queue::FlushAckHandler`,
-  which #544 deleted. Repair: `5ceb650` for both, plus `797dab0` for the Ruff
-  `I001` import order that the `conftest.py` repair exposed. This is the
-  failure mode recorded in the "verify diff after clean rebase" note: a clean
-  rebase exit does not imply a correct merge.
+  doubled blank lines and a stale re-export block naming
+  `queue::FlushAckHandler`, which #544 deleted. Repair: `5ceb650` for both, plus
+  `797dab0` for the Ruff `I001` import order that the `conftest.py` repair
+  exposed. This is the failure mode recorded in the "verify diff after clean
+  rebase" note: a clean rebase exit does not imply a correct merge.
 - [x] (2026-10-28) Completed the local gate evidence on head `797dab0`.
   `make lint` passed in full, including `lint-rust-clippy` — clippy across all
   15 lane invocations, the private-docs contract test, and the Whitaker Dylint
@@ -439,13 +439,13 @@ configured filter IDs.
 - [x] (2026-10-28) Recorded a self-inflicted failure worth keeping: running
   pytest concurrently with the lane 4 cargo build made
   `test_maturin_wheel_build_snapshot` fail with
-  `failed to write .../release/.fingerprint/.../invoked.timestamp: No such file
-  or directory`. Both processes write `rust_extension/target`, so the maturin
-  build and the lane 4 link step collide. It is the same signature as the
-  earlier trybuild failure attributed to admission contention, and it is now
-  understood rather than assumed: the gates must run strictly sequentially, as
-  the repository instructions state. Re-running pytest alone passed with zero
-  failures.
+  `failed to write …/release/.fingerprint/…/invoked.timestamp: No such file
+  or directory`.
+  Both processes write `rust_extension/target`, so the maturin build and the
+  lane 4 link step collide. It is the same signature as the earlier trybuild
+  failure attributed to admission contention, and it is now understood rather
+  than assumed: the gates must run strictly sequentially, as the repository
+  instructions state. Re-running pytest alone passed with zero failures.
 
 ## Surprises & Discoveries
 
