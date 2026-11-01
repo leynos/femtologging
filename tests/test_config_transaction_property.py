@@ -16,7 +16,9 @@ from femtologging import (
 from femtologging._rust_compat import _runtime_attachment_state_for_test
 
 type AttachmentState = tuple[tuple[str, ...], tuple[str, ...]] | None
-type LoggerState = tuple[tuple[int, ...], AttachmentState]
+type LoggerState = tuple[
+    tuple[int, ...], tuple[int, ...], str, bool, bool, AttachmentState
+]
 
 _LOGGER_NAMES = ("api", "api.worker", "batch", "batch.worker")
 _HANDLER_ID = "stderr"
@@ -32,9 +34,40 @@ def _attachment_state(name: str) -> AttachmentState:
 
 
 def _logger_state(name: str) -> LoggerState:
-    """Capture handler identity and attachment metadata for *name*."""
+    """Capture identity, scalar settings, and attachment metadata for *name*."""
     logger = get_logger(name)
-    return tuple(logger.handler_ptrs_for_test()), _attachment_state(name)
+    return (
+        tuple(logger.handler_ptrs_for_test()),
+        tuple(logger.filter_ptrs_for_test()),
+        logger.level,
+        logger.propagate,
+        logger.disabled,
+        _attachment_state(name),
+    )
+
+
+def _with_invalid_logger(
+    builder: ConfigBuilder, kind: str
+) -> tuple[ConfigBuilder, type[Exception], str]:
+    """Add an invalid logger scenario and return its expected error."""
+    match kind:
+        case "handler":
+            logger = LoggerConfigBuilder().with_handlers(["missing"])
+            return builder.with_logger("broken", logger), KeyError, "missing"
+        case "filter":
+            logger = LoggerConfigBuilder().with_filters(["missing"])
+            return builder.with_logger("broken", logger), KeyError, "missing"
+        case "name":
+            # ConfigBuilder wraps the manager's invalid-name ValueError in its
+            # public RuntimeError contract.
+            return (
+                builder.with_logger("broken..name", LoggerConfigBuilder()),
+                RuntimeError,
+                "consecutive dots",
+            )
+        case _:
+            message = f"unknown invalid_reference: {kind!r}"
+            raise ValueError(message)
 
 
 # This stateful property resets global workers between examples. It checks
@@ -49,7 +82,7 @@ def _logger_state(name: str) -> LoggerState:
     ),
     attached_names=st.frozensets(st.sampled_from(_LOGGER_NAMES)),
     disable_existing_loggers=st.booleans(),
-    invalid_reference=st.sampled_from(("handler", "filter")),
+    invalid_reference=st.sampled_from(("handler", "filter", "name")),
 )
 def test_failed_reconfiguration_preserves_generated_logger_state(
     logger_order: list[str],
@@ -86,22 +119,18 @@ def test_failed_reconfiguration_preserves_generated_logger_state(
             .with_root_logger(LoggerConfigBuilder().with_level("ERROR"))
             .with_disable_existing_loggers(disable_existing_loggers)
         )
-        if invalid_reference == "handler":
-            failed = failed.with_logger(
-                "broken", LoggerConfigBuilder().with_handlers(["missing"])
-            )
-        else:
-            failed = failed.with_logger(
-                "broken", LoggerConfigBuilder().with_filters(["missing"])
-            )
+        failed, expected_error, expected_match = _with_invalid_logger(
+            failed, invalid_reference
+        )
 
-        with pytest.raises(KeyError, match="missing"):
+        with pytest.raises(expected_error, match=expected_match):
             failed.build_and_init()
 
         after = {name: _logger_state(name) for name in logger_order}
         assert after == before, (
             "a failed configuration must preserve each generated logger's "
-            "handler identity and runtime attachment metadata"
+            "handler and filter identity, level, propagation, disabled flag, "
+            "and runtime attachment metadata"
         )
     finally:
         femtologging.reset_manager()

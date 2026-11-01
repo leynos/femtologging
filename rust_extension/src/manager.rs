@@ -17,9 +17,14 @@
 //! and [`registry`] owns the map and the cap — while this module re-exports
 //! them as the one path callers already use.
 
+#[cfg(feature = "python")]
+mod configuration;
+
 mod registry;
+
 #[cfg(feature = "python")]
 mod runtime_state;
+
 mod validation;
 
 pub use registry::{get_logger, reset_manager};
@@ -56,8 +61,7 @@ pub(crate) use validation::describe_name;
 
 #[cfg(feature = "python")]
 pub(crate) use registry::{
-    commit_staged_loggers, disable_existing_loggers, ensure_registry_capacity,
-    replace_runtime_state, snapshot_runtime_state, stage_loggers,
+    ensure_registry_capacity, replace_runtime_state, snapshot_runtime_state, stage_loggers,
 };
 #[cfg(feature = "python")]
 pub(crate) use runtime_state::{LoggerAttachmentState, RuntimeStateSnapshot};
@@ -73,6 +77,25 @@ pub(crate) use registry::flush_all_handlers;
 
 #[cfg(test)]
 mod manager_tests;
+
 #[cfg(all(test, feature = "python"))]
 #[path = "manager/manager_tests_capacity.rs"]
 mod manager_tests_capacity;
+
+#[cfg(feature = "python")]
+pub(crate) use configuration::{
+    DisplacedAttachments, PreparedConfiguration, PreparedLogger, commit_configuration,
+};
+
+/// Return all registered logger names for transaction tests.
+#[cfg(all(test, feature = "python"))]
+pub(crate) fn registered_logger_names_for_test() -> Vec<String> {
+    let mut names = registry::MANAGER
+        .read()
+        .loggers
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}

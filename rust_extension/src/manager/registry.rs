@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 mod config;
 
 #[cfg(feature = "python")]
-pub(crate) use config::{commit_staged_loggers, stage_loggers};
+pub(crate) use config::{register_missing_ancestors, stage_loggers};
 
 #[cfg(feature = "python")]
 use super::runtime_state::{
@@ -310,36 +310,28 @@ pub(crate) fn snapshot_runtime_state() -> RuntimeStateSnapshot {
 ///
 /// Keeping the replacement under one write lock prevents readers from seeing
 /// a mixture of the old and new configuration.
+///
+/// Returns the displaced snapshot rather than dropping it here: handler
+/// destruction may flush output or join a worker thread, so the caller
+/// releases it after the lock, and a Python caller also releases the GIL
+/// first.
 #[cfg(feature = "python")]
 pub(crate) fn replace_runtime_state(
     handler_registry: SharedHandlers,
     handler_filter_ids: BTreeMap<String, Vec<String>>,
     filter_registry: SharedFilters,
     logger_states: BTreeMap<String, LoggerAttachmentState>,
-) {
+) -> RuntimeStateSnapshot {
     let mut mgr = MANAGER.write();
-    mgr.runtime = RuntimeStateSnapshot {
-        handler_registry,
-        handler_filter_ids,
-        filter_registry,
-        logger_states,
-    };
-}
-
-/// Disable existing loggers not mentioned in the provided keep list.
-///
-/// Iterates through all loggers and clears handlers and filters for any
-/// whose name is absent from `keep_names`.
-#[cfg(feature = "python")]
-pub fn disable_existing_loggers(py: Python<'_>, keep_names: &HashSet<String>) {
-    let mgr = MANAGER.read();
-    for (name, logger) in &mgr.loggers {
-        if name != ROOT_LOGGER_NAME && !keep_names.contains(name) {
-            let logger_ref = logger.borrow(py);
-            logger_ref.clear_handlers();
-            logger_ref.clear_filters();
-        }
-    }
+    std::mem::replace(
+        &mut mgr.runtime,
+        RuntimeStateSnapshot {
+            handler_registry,
+            handler_filter_ids,
+            filter_registry,
+            logger_states,
+        },
+    )
 }
 
 /// Flush every registered logger for the Rust `log` bridge; ignore failures.

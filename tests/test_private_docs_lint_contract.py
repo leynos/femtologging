@@ -93,6 +93,8 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+# Two lane-driver runs can wait on shared Rust compile admission, with finite
+# subprocess and overall bounds that allow both feature matrices to complete.
 @pytest.mark.timeout(_CONTRACT_TIMEOUT_SECONDS)
 def test_private_docs_deny_is_exercised_by_make_clippy_lanes() -> None:
     """The lint rejects missing docs and accepts docs through Make's lane driver."""

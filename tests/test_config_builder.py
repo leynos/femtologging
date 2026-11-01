@@ -15,7 +15,6 @@ from femtologging import (
     RotatingFileHandlerBuilder,
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
-    get_logger,
 )
 from femtologging import config as config_module
 
@@ -271,75 +270,6 @@ def test_unsupported_handler_builder_type_preserves_extraction_error() -> None:
         "RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder, "
         "SocketHandlerBuilder, or HTTPHandlerBuilder (got Python type: object)"
     ), "unsupported handler builders should preserve the extraction error"
-
-
-def test_disable_existing_loggers_clears_unmentioned(
-    new_info_stderr_builder: BuilderFactory,
-) -> None:
-    """Loggers not present in new config are disabled."""
-    builder = new_info_stderr_builder().with_logger(
-        "stale", LoggerConfigBuilder().with_handlers([HANDLER_ID])
-    )
-    builder.build_and_init()
-
-    stale = get_logger("stale")
-    assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
-
-    disable_existing = True
-    rebuild = (
-        ConfigBuilder()
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_disable_existing_loggers(disable_existing)
-    )
-    rebuild.build_and_init()
-
-    stale = get_logger("stale")
-    assert not stale.handler_ptrs_for_test(), (
-        "stale logger should be disabled once it is absent from the new config"
-    )
-
-
-@pytest.mark.parametrize(
-    "ancestors",
-    [
-        ["parent"],
-        ["grandparent", "grandparent.parent"],
-    ],
-    ids=["parent", "grandparent"],
-)
-def test_disable_existing_loggers_keeps_ancestors(
-    new_info_stderr_builder: BuilderFactory, ancestors: list[str]
-) -> None:
-    """Ancestor loggers remain active when their descendants are configured."""
-    builder = new_info_stderr_builder()
-    for name in ancestors:
-        builder = builder.with_logger(
-            name, LoggerConfigBuilder().with_handlers([HANDLER_ID])
-        )
-    builder.build_and_init()
-
-    initial_handlers = {
-        name: get_logger(name).handler_ptrs_for_test() for name in ancestors
-    }
-
-    child_name = f"{ancestors[-1]}.child"
-    disable_existing = True
-    rebuild = (
-        new_info_stderr_builder()
-        .with_logger(child_name, LoggerConfigBuilder().with_handlers([HANDLER_ID]))
-        .with_disable_existing_loggers(disable_existing)
-    )
-    rebuild.build_and_init()
-
-    child = get_logger(child_name)
-    assert len(child.handler_ptrs_for_test()) == 1, (
-        f"newly configured logger {child_name!r} should have exactly one handler"
-    )
-    for name in ancestors:
-        assert get_logger(name).handler_ptrs_for_test() == initial_handlers[name], (
-            f"ancestor logger {name!r} should retain its handler when a "
-            "descendant is configured"
-        )
 
 
 @pytest.mark.parametrize(

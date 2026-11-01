@@ -15,7 +15,8 @@ use pyo3::Python;
 use serial_test::serial;
 
 use super::registry::{
-    MANAGER, ensure_registry_capacity, get_logger, new_logger_names, stage_loggers,
+    MANAGER, ensure_registry_capacity, get_logger, new_logger_names, register_missing_ancestors,
+    stage_loggers,
 };
 use super::{MAX_LOGGERS, reset_manager};
 
@@ -129,6 +130,56 @@ fn staging_refuses_more_distinct_names_than_the_registry_can_hold() {
         assert!(
             MANAGER.read().loggers.is_empty(),
             "a refused staged set must not change the registry"
+        );
+    });
+}
+
+/// The commit registers missing ancestors and leaves staged names to its caller.
+#[test]
+#[serial]
+fn a_commit_registers_missing_ancestors_but_not_staged_names() {
+    Python::attach(|py| {
+        reset_manager();
+        {
+            let mut mgr = MANAGER.write();
+            register_missing_ancestors(py, &mut mgr, std::iter::once("a.b.c"), |name| {
+                name == "a.b.c"
+            })
+            .expect("the chain fits the empty registry");
+        }
+
+        assert_eq!(
+            super::registered_logger_names_for_test(),
+            vec!["a", "a.b"],
+            "the commit must create the unconfigured ancestors and leave the \
+             configured name for the caller's staged logger object",
+        );
+    });
+}
+
+/// A commit over the cap is refused before it registers anything.
+#[test]
+#[serial]
+fn a_commit_over_the_cap_registers_nothing() {
+    Python::attach(|py| {
+        reset_manager();
+        let requested: Vec<String> = (0..=MAX_LOGGERS)
+            .map(|index| format!("committed-{index}"))
+            .collect();
+
+        let mut mgr = MANAGER.write();
+        let result =
+            register_missing_ancestors(py, &mut mgr, requested.iter().map(String::as_str), |_| {
+                true
+            });
+
+        assert!(
+            result.is_err(),
+            "a commit whose planned chains exceed the cap must be refused"
+        );
+        assert!(
+            mgr.loggers.is_empty(),
+            "a refused commit must not leave a partly registered chain"
         );
     });
 }
