@@ -229,6 +229,28 @@ builder and either a direct `FormatterBuilder` or a registered formatter.
 
 ______________________________________________________________________
 
+## Bounded exception-payload filtering
+
+`filter_frames()` keeps its existing call pattern and adds optional keyword-only
+`max_exception_depth` and `max_exception_nodes` limits. Existing calls remain
+source-compatible. The defaults are 1,000 exception-graph edges below the root
+and 10,000 payload occurrences, including the root.
+
+Externally supplied or mutated exception payloads that contain cycles now raise
+`ValueError` with the cycle path. Malformed frame data or exception edges raise
+`TypeError`. A legitimate graph deeper than the default depth or larger than
+the node budget also raises `ValueError`; callers that intentionally pass such
+graphs can set larger limits or sanitize the payload before filtering. Negative
+or oversized integer limits raise `OverflowError`. Stack payloads continue to
+use the existing frame filters and ignore exception-graph limits.
+
+For the complete parameter and error contract, see
+[the users guide section on frame filtering][user-filtering].
+
+[user-filtering]: users-guide.md#filtering-frames-from-python-payloads
+
+______________________________________________________________________
+
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,

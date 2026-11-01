@@ -5,6 +5,15 @@ use pyo3::types::{PyDict, PyList};
 use rstest::rstest;
 use serial_test::serial;
 
+#[path = "frame_filter_py_compat_tests.rs"]
+mod compatibility;
+#[path = "frame_filter_py_graph_tests.rs"]
+mod exception_graph;
+#[path = "frame_filter_py_test_helpers.rs"]
+mod test_helpers;
+
+use self::test_helpers::{TestFilterOptions, filter_frames_with_defaults};
+
 fn make_stack_payload_dict<'py>(
     py: Python<'py>,
     filenames: &[&str],
@@ -42,13 +51,15 @@ fn filter_and_extract_frames<'py>(
     max_depth: Option<usize>,
     exclude_logging: bool,
 ) -> PyResult<Bound<'py, PyList>> {
-    let result = filter_frames(
+    let result = filter_frames_with_defaults(
         py,
         payload,
-        exclude_filenames,
-        exclude_functions,
-        max_depth,
-        exclude_logging,
+        TestFilterOptions {
+            exclude_filenames,
+            exclude_functions,
+            max_depth,
+            exclude_logging,
+        },
     )?;
     let result_dict = result.cast_bound::<PyDict>(py)?;
     let frames = result_dict
@@ -160,8 +171,15 @@ fn filter_exception_payload_detects_type() {
 
         assert!(is_exception_payload(&payload).expect("is_exception_payload failed"));
 
-        let result =
-            filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
+        let result = filter_frames_with_defaults(
+            py,
+            &payload,
+            TestFilterOptions {
+                exclude_logging: true,
+                ..TestFilterOptions::default()
+            },
+        )
+        .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");
@@ -198,8 +216,15 @@ fn filter_exception_payload_with_cause() {
             .set_item("cause", cause)
             .expect("failed to set cause");
 
-        let result =
-            filter_frames(py, &payload, None, None, None, true).expect("filter_frames failed");
+        let result = filter_frames_with_defaults(
+            py,
+            &payload,
+            TestFilterOptions {
+                exclude_logging: true,
+                ..TestFilterOptions::default()
+            },
+        )
+        .expect("filter_frames failed");
         let result_dict = result
             .cast_bound::<PyDict>(py)
             .expect("result is not a dict");
@@ -281,13 +306,13 @@ fn filter_exception_payload_exclude_functions() {
             .set_item("function", "_internal_helper")
             .expect("failed to set function");
 
-        let result = filter_frames(
+        let result = filter_frames_with_defaults(
             py,
             &payload,
-            None,
-            Some(vec!["_internal".to_string()]),
-            None,
-            false,
+            TestFilterOptions {
+                exclude_functions: Some(vec!["_internal".to_string()]),
+                ..TestFilterOptions::default()
+            },
         )
         .expect("filter_frames failed");
         let result_dict = result
@@ -338,7 +363,7 @@ fn filter_malformed_payload_raises_type_error(
             _ => panic!("Unknown scenario"),
         }
 
-        let result = filter_frames(py, &payload, None, None, None, false);
+        let result = filter_frames_with_defaults(py, &payload, TestFilterOptions::default());
         let err = result.expect_err(&format!(
             "scenario '{}' should fail with error containing '{}'",
             scenario, expected_error_fragment
@@ -359,31 +384,4 @@ fn get_logging_patterns_returns_expected() {
     let patterns = get_logging_infrastructure_patterns();
     assert!(patterns.contains(&"femtologging"));
     assert!(patterns.contains(&"logging/__init__"));
-}
-
-#[rstest]
-#[serial]
-fn filter_exception_payload_preserves_extra_keys() {
-    Python::attach(|py| {
-        let payload = make_exception_payload_dict(py, &["main.py"]).expect("payload should build");
-        payload
-            .set_item("custom_field", "preserved_value")
-            .expect("failed to set custom_field");
-        payload
-            .set_item("thread_id", 12345)
-            .expect("failed to set thread_id");
-
-        let result =
-            filter_frames(py, &payload, None, None, None, false).expect("filter_frames failed");
-        let result_dict = result
-            .cast_bound::<PyDict>(py)
-            .expect("result is not a dict");
-
-        // Check custom fields are preserved
-        let custom_field = extract_dict_value!(result_dict, "custom_field", String);
-        assert_eq!(custom_field, "preserved_value");
-
-        let thread_id = extract_dict_value!(result_dict, "thread_id", i32);
-        assert_eq!(thread_id, 12345);
-    });
 }
