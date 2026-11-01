@@ -1235,10 +1235,15 @@ while maximum refresh reads the index without taking the manager lock.
 Only `log()` and `flush()` need Python access. `log()` attaches to Python after
 the threshold check, resolves the target, checks the current level again, and
 then queues the record. File and stream handler `flush()` and `close()` calls
-detach their waits from the GIL. The `close()` bindings first extract owned
-shutdown state and release the mutable PyO3 object borrow before detaching, so
-another Python thread can use the handler while the worker exits. Existing
-handler-specific timeouts and idempotent-close behaviour remain authoritative.
+detach their waits from the GIL. The `close()` bindings take only a shared PyO3
+object borrow: they extract owned shutdown state, release that borrow, and then
+detach, so another Python thread can use the handler while the worker exits.
+Because the shutdown state is shared, concurrent `close()` calls and a
+`close()` running beside a detached `flush()` both wait on the same completion
+broadcast; a closer that arrives after the worker has stopped returns at once,
+and a repeated close stays safe. Existing handler-specific timeouts remain
+authoritative, so a worker that never signals completion is reported and
+skipped rather than waited on indefinitely.
 
 These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
 uses no Python access and has no Python exception path. The expected failure
@@ -1265,11 +1270,14 @@ operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 
 **Python-facing lifecycle waits:** The Python bindings for the stream, file,
 rotating-file, and timed-rotating-file handlers detach from the GIL while they
-wait for their worker in `flush()` and `close()`. `close()` transfers the
-shutdown state to an owned value under a scoped mutable borrow, and that borrow
-ends before the detached wait. This keeps caller-side lifecycle waits distinct
-from worker-side I/O and lets both a queued Python callable formatter and a
-callback that re-enters the handler in its closed state make progress.
+wait for their worker in `flush()` and `close()`. `close()` copies the shared
+shutdown state under a scoped borrow, and that borrow ends before the detached
+wait. This keeps caller-side lifecycle waits distinct from worker-side I/O and
+lets both a queued Python callable formatter and a callback that re-enters the
+handler in its closed state make progress. Since the state is shared rather
+than taken exclusively, concurrent closes and a close beside a detached flush
+all observe the same completion, while the handler's own timeout still bounds
+each wait.
 
 **flush() Behaviour:**
 

@@ -6,7 +6,11 @@ fn compile_time_ui() {
     test_cases.pass("tests/ui/pass/queued_record_context.rs");
     test_cases.pass("tests/ui/pass/file_test_support.rs");
     test_cases.pass("tests/ui/pass/handler_formatter_builder.rs");
+    test_cases.pass("tests/ui/pass/immutable_handler_close.rs");
     test_cases.pass("tests/ui/pass/femto_logger_fallible_construction.rs");
+    // The bridge re-exports exist only where the feature gating exposes them.
+    #[cfg(all(feature = "log-compat", feature = "test-util"))]
+    test_cases.pass("tests/ui/pass/log_bridge_reexports.rs");
     // The wrapper case needs a Python-linked rlib, which extension-module
     // builds intentionally omit. It runs in the no-extension feature lanes.
     #[cfg(not(feature = "extension-module"))]

@@ -99,3 +99,8 @@ required-features = ["log-compat"]
 name = "log_compat_max_level"
 path = "tests/log_compat_max_level.rs"
 required-features = ["log-compat"]
+
+[[test]]
+name = "log_bridge_config_tests"
+path = "tests/log_bridge_config_tests.rs"
+required-features = ["log-compat"]

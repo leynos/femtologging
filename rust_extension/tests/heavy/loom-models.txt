@@ -3,6 +3,8 @@
 # here, fails the lane; see scripts/run_loom_models.py.
 loom_file_flush::loom_file_handler_flush_concurrent
 loom_push::loom_stream_push_delivery
+loom_shutdown_completion::loom_shutdown_completion_reports_only_finished_state
+loom_shutdown_completion::loom_shutdown_completion_wakes_every_concurrent_waiter
 loom_topologies::loom_concurrent_handler_addition
 loom_topologies::loom_multiple_loggers_multiple_handlers
 loom_topologies::loom_shared_handler_multi_loggers

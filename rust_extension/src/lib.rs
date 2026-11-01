@@ -17,10 +17,17 @@ mod level;
 mod log_context;
 mod log_record;
 mod logger;
-mod shutdown;
 mod socket_handler;
 mod stream_handler;
 mod sync;
+
+// Feature-gated shutdown visibility: the heavy Loom lane schedules the
+// completion signal directly, which the ordinary API never returns.
+#[cfg(feature = "test-util")]
+#[doc(hidden)]
+pub mod shutdown;
+#[cfg(not(feature = "test-util"))]
+mod shutdown;
 
 // Feature-gated manager visibility
 #[cfg(feature = "test-util")]

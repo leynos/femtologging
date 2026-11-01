@@ -294,10 +294,13 @@ fields with safe defaults does not require a version bump.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
   Always close the handler when the application shuts down. `close()` is
   idempotent and safe to call multiple times; only the first call performs
-  shutdown work.
-- In Rust, `close()` requires exclusive mutable access (`&mut self`). If the
-  handler is shared across threads, synchronize close calls externally (for
-  example with a mutex) instead of invoking `close()` concurrently.
+  shutdown work, and every call waits for the worker to stop.
+- In Rust, `close()` takes `&self` and may be called concurrently on a shared
+  handler, including while another thread flushes it. Every closer observes the
+  same completion signal, so none returns while the worker is still writing
+  queued records, and a closer that arrives after the worker has stopped
+  returns immediately. The wait remains bounded by the handler's timeout: a
+  worker that never signals completion is reported and skipped.
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Pass a callable, a `FormatterBuilder`, or a named
@@ -317,7 +320,8 @@ fields with safe defaults does not require a version bump.
   reason.
 - `handler.close()` follows the same contract as `FemtoFileHandler`: it is
   idempotent, only the first call performs shutdown work, and concurrent close
-  calls must be synchronized by the caller.
+  calls share one worker-completion wait rather than needing caller-side
+  synchronization.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 

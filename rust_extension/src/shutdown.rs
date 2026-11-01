@@ -18,8 +18,10 @@ use crate::sync::{Mutex, Receiver, Sender, bounded, recv_timeout};
 /// Shared completion state for one worker thread.
 ///
 /// Created before the worker is spawned, signalled by the worker as it exits,
-/// and consulted by every closer.
-pub(crate) struct ShutdownCompletion {
+/// and consulted by every closer. The type is public only in `test-util`
+/// builds, where the heavy Loom lane drives registration against completion
+/// directly; production code never returns it.
+pub struct ShutdownCompletion {
     /// Completion flag and the waiters still to be woken.
     state: Mutex<CompletionState>,
 }
@@ -42,7 +44,7 @@ impl ShutdownCompletion {
     /// let completion = ShutdownCompletion::new();
     /// assert!(!completion.wait(Duration::from_millis(1)));
     /// ```
-    pub(crate) fn new() -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(CompletionState::default()),
         })
@@ -79,7 +81,7 @@ impl ShutdownCompletion {
     /// completion.complete();
     /// assert!(completion.wait(Duration::from_millis(1)));
     /// ```
-    pub(crate) fn complete(&self) {
+    pub fn complete(&self) {
         let mut state = self.state.lock();
         state.finished = true;
         for waiter in state.waiters.drain(..) {
@@ -96,8 +98,27 @@ impl ShutdownCompletion {
     /// ```ignore
     /// assert!(!completion.wait(Duration::from_millis(1)));
     /// ```
-    pub(crate) fn wait(&self, timeout: Duration) -> bool {
+    pub fn wait(&self, timeout: Duration) -> bool {
         recv_timeout(&self.register(), timeout).is_ok()
+    }
+
+    /// Report whether the worker has already signalled completion.
+    ///
+    /// The model-checking lane needs to observe an *unfinished* completion
+    /// without blocking, which [`wait`](Self::wait) cannot do: Loom has no
+    /// clock, so its timed waits never expire.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let completion = ShutdownCompletion::new();
+    /// assert!(!completion.is_completed());
+    /// completion.complete();
+    /// assert!(completion.is_completed());
+    /// ```
+    #[cfg(feature = "test-util")]
+    pub fn is_completed(&self) -> bool {
+        self.state.lock().finished
     }
 }
 
