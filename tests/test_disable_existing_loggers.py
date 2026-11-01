@@ -84,8 +84,12 @@ def test_disabled_logger_cannot_reach_configured_root_handler(
     rebuild.build_and_init()
 
     assert omitted.disabled, "the omitted logger should be disabled"
+    disabled_drops = omitted.get_disabled_drops()
     assert omitted.log("ERROR", "must not escape") is None, (
         "a disabled logger must reject the record instead of dispatching it"
+    )
+    assert omitted.get_disabled_drops() == disabled_drops + 1, (
+        "the rejected record should be counted as disabled traffic"
     )
     assert omitted.flush_handlers(), "the omitted logger should flush its (empty) queue"
     assert get_logger("root").flush_handlers(), "the root handler should flush"

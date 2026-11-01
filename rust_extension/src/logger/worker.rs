@@ -42,6 +42,7 @@ use super::pid_reservation::PidReservation;
 /// drop is what ends it.
 #[cfg(not(loom))]
 type ShardHandle = &'static Shard;
+
 /// A Loom model owns its shard so its worker ends with that model iteration.
 #[cfg(loom)]
 type ShardHandle = std::sync::Arc<Shard>;
@@ -221,6 +222,18 @@ impl FemtoLogger {
         Ok(Self::from_shard(name, parent, std::sync::Arc::new(shard)))
     }
 
+    /// Create a logger whose producer formatter a test supplies.
+    ///
+    /// A logger's formatter is fixed at construction, so a test that must
+    /// observe whether the producer path reached formatting needs this seam
+    /// rather than a public setter.
+    #[cfg(all(test, feature = "python", not(loom)))]
+    pub(crate) fn with_formatter_for_test(name: String, formatter: SharedFormatter) -> Self {
+        let mut logger = Self::with_parent(name, None).expect("test dispatcher should start");
+        logger.formatter = formatter;
+        logger
+    }
+
     /// Create a logger with a test-controlled context snapshot provider.
     #[cfg(all(feature = "python", test, not(loom)))]
     pub(super) fn with_context_snapshot_provider(
@@ -292,6 +305,7 @@ impl FemtoLogger {
             filters: std::sync::Arc::new(RwLock::new(Vec::new())),
             dropped_records: std::sync::atomic::AtomicU64::new(0),
             context_dropped_records: std::sync::atomic::AtomicU64::new(0),
+            disabled_dropped_records: std::sync::atomic::AtomicU64::new(0),
             drop_warner: RateLimitedWarner::default(),
             #[cfg(feature = "python")]
             context_snapshot_provider,

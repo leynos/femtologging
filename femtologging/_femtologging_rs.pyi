@@ -110,6 +110,15 @@ class FemtoLogger:
     def get_context_dropped(self) -> int:
         """Return records dropped because Rust context validation failed."""
         ...
+    def get_disabled_drops(self) -> int:
+        """Return records refused because configuration disabled the logger.
+
+        The counter rises only for records aimed at a logger that
+        ``disable_existing_loggers`` has disabled. A later configuration that
+        names the logger re-enables it and stops the rise.
+
+        """
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
