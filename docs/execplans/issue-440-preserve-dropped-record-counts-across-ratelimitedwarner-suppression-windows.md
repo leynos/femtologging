@@ -278,6 +278,22 @@ suite that fails if any drop is discarded or handed off more than once.
       `callback_runs_after_releasing_the_drain_lock` now has its second caller
       flush instead of warn, because the suppression pre-check would otherwise
       return before the drain lock was ever tested.
+- [x] (2026-11-01) Rebased the twelve issue commits onto `origin/main` at
+      `6180cd5`, whose new build-standard test neutralizes the host Cargo
+      wrapper and therefore unblocks the three pytest cases recorded above.
+      The repository's user-wide `weave` semantic merge driver produced a
+      clean rebase that silently corrupted `stream_handler.rs`: three
+      three-blank-line runs, a de-indented doc-comment line, and a trailing
+      `// weave:` marker. The rebase was replayed with a plain textual driver
+      (`merge.weave.driver='git merge-file %A %O %B'`) and its two real
+      conflicts resolved by hand; every overlapping file was then verified
+      against an independent three-way merge.
+- [x] (2026-11-01) Main's `take_shutdown`/`shutdown.rs` refactor plus this
+      branch's helper pushed `stream_handler.rs` to 406 lines, over the
+      repository's 400-line limit. The worker command, its three I/O helpers
+      and `run_stream_worker` moved to `stream_handler/worker.rs`, matching
+      the `http_handler/worker.rs` and `socket_handler/worker.rs` layout; the
+      handler file is now 346 lines.
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
 - [ ] Pushed and draft PR opened.
 
