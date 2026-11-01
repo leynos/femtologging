@@ -65,9 +65,18 @@ per-interpreter rather than ABI3. The Linux x86_64 leg also builds exactly one
 sdist through the maturin backend. Pull-request CI calls this workflow;
 `verify-wheel-install` checks sdist cardinality, inspects the sdist contents,
 installs a native wheel and installs a rebuilt sdist into fresh environments.
-Both isolated sdist builds constrain maturin to the workflow's
-`MATURIN_VERSION`, keeping their backend aligned with the wheel builder. Python
-3.15, free-threaded and Windows arm64 wheels are not in this matrix.
+Each building job also probes the wheels it just produced, before it uploads
+them: the Linux legs install and import every wheel inside a manylinux image
+that carries the interpreters it built for, under QEMU emulation on aarch64,
+and the macOS and Windows legs probe on the runner that built them. A failed
+probe stops the upload, so a wheel that cannot install or import never reaches
+an artefact. `scripts/probe_manylinux_wheels.sh` and
+`scripts/probe_host_wheels.sh` hold that logic; both run
+`scripts/release_wheel_probe.py` from an empty directory so the checkout cannot
+satisfy the import they prove. Both isolated sdist builds constrain maturin to
+the workflow's `MATURIN_VERSION`, keeping their backend aligned with the wheel
+builder. Python 3.15, free-threaded and Windows arm64 wheels are not in this
+matrix.
 
 Linux builds and wheel verification use the existing `ubicloud-standard-4` lane
 for pushes, same-repository pull requests and release tags. Fork and Dependabot
@@ -120,10 +129,10 @@ default = ["extension-module", "python", "log-compat", "tracing-compat"]
 ```
 
 `test-util` is a separate, non-default feature. The persistent
-`[tool.maturin].features = ["python"]` setting is the production package
-configuration, so release wheels and the sdist exclude `test-util`. The probe in
-`scripts/release_wheel_probe.py` checks that production wheels omit the
-timed-rotation test hooks.
+`features = ["python"]` setting in the `[tool.maturin]` table is the production
+package configuration, so release wheels and the sdist exclude `test-util`. The
+probe in `scripts/release_wheel_probe.py` checks that production wheels omit
+the timed-rotation test hooks.
 
 Coverage enables `test-util` through `.github/uv-test-util.toml`, selected with
 an absolute `UV_CONFIG_FILE`. Development and heavy-test builds explicitly pass
