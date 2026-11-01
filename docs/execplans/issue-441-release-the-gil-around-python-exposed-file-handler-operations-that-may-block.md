@@ -25,9 +25,11 @@ Observable outcomes:
 - `handler.handle(...)` under `policy="block"` no longer starves a second
   Python thread.
 - `handler.flush()` and `handler.close()` release the lock across their waits.
-- While detached `close()` waits with its exclusive PyO3 borrow, concurrent
-  `handle()`, `flush()`, and a second `close()` call on the same object raise
-  `RuntimeError`.
+- A started `close()` releases its Python borrow before it waits, so calls
+  made during the wait observe a closed handler: `handle()` raises, `flush()`
+  returns `False`, and a second `close()` is a no-op.
+- A blocked `handle()` still holds its shared borrow, so a concurrent `close()`
+  raises `RuntimeError` instead of starting its shutdown wait.
 - The rotating and timed-rotating wrappers inherit the same contract.
 - Python tests, isolated in subprocesses, demonstrate a second thread making
   progress while a direct `handle()` call is blocked.
@@ -47,9 +49,10 @@ Observable outcomes:
 
 ## Tolerances (exception triggers)
 
-- If detaching changes observable Python behaviour beyond the PyO3 borrow
-  errors during an active exclusive `close()` call, stop and re-plan. The
-  borrow errors must be documented and tested.
+- If detaching changes observable Python behaviour beyond the two documented
+  borrow states — a blocked `handle()` refusing `close()`, and a started
+  `close()` exposing a closed handler to later calls — stop and re-plan. Both
+  states must be documented and tested.
 - If the Loom lane cannot be kept green without weakening a model, stop and
   raise it rather than weakening the model.
 
@@ -97,9 +100,10 @@ for this issue; no new public signature or dependency is introduced.
   one-second flush and close deadlines, and `Drop` remain unchanged. The
   scenarios check timeout failure, accepted-record output, `flush() == False`
   after its deadline, and the `RuntimeError` from a concurrent Python `close()`
-  while a blocked call retains its shared PyO3 borrow. They also check that
-  `handle()`, `flush()`, and a second `close()` fail with `RuntimeError` while
-  detached `close()` holds the exclusive PyO3 borrow.
+  while a blocked call retains its shared PyO3 borrow. They also check that a
+  `close()` started while the worker is parked exposes a closed handler:
+  `handle()` raises, `flush()` returns `False`, and a second `close()` is a
+  no-op.
 - **External interface assumptions:** the version-matched PyO3 0.30.1 API
   documents `Python::detach` and its `Ungil` bound at
   <https://docs.rs/pyo3/0.30.1/pyo3/marker/struct.Python.html#method.detach>.
@@ -456,6 +460,49 @@ its refusal to `RuntimeError`. The same run showed that
 scenario and both guides now state that instead of claiming `RuntimeError` for
 every binding. All 27 focused concurrency cases pass on the rebased tree.
 
+## Rebase onto `origin/main` at `6586148` and publication
+
+The reviewed candidate `40567ff` was rebased again after `origin/main` gained
+`6586148` (#553, bounded exception-graph traversal in `filter_frames()`). The
+replay re-applied 24 commits with `zdiff3` and produced `887c5a8`. One conflict
+appeared, in `docs/v0-2-0-migration-guide.md`: upstream added "Bounded
+exception-payload filtering" at the same place as this branch's "File-handler
+calls release the interpreter lock". Both sections were kept, separated by the
+document's horizontal rule; the rest of the replay applied cleanly.
+
+The rebase was verified before publication:
+
+- `range-diff` shows the same 24 commits with the same subjects and no dropped
+  or empty commit.
+- `git diff --check` is clean and no conflict marker remains.
+- The seven implementation and test files the negative control exercised
+  (`file/mod.rs`, `rotating/python.rs`, `timed_rotating/python.rs`,
+  `file_handler_gil_scenarios.py`, `file_handler_gil_close_scenarios.py`,
+  `file_handler_gil_support.py`, `test_file_handler_gil_release.py`) are
+  byte-identical between `40567ff` and `887c5a8`, so the recorded negative
+  control still describes the published tree.
+
+`887c5a8` was force-pushed over SSH with a lease bound to the previous remote
+head `40567ff`; `HEAD`, `refs/remotes/origin/<branch>` and `ls-remote` all
+report the same commit, and the branch upstream is the named remote branch.
+
+Two notifications were posted through the manual-comment token pool, which is
+the configured route for non-lifecycle comments:
+
+- The negative-control reply in the review thread,
+  <https://github.com/leynos/femtologging/pull/550#discussion_r4436821908>,
+  answering the request to restore GIL-holding waits and report the failures.
+- The ExecPlan assessment follow-up,
+  <https://github.com/leynos/femtologging/pull/550#issuecomment-6562066486>,
+  recording the three corrections, the #546 reconciliation, the pre-merge row
+  dispositions and the new base/head.
+
+The PR body was updated with the review follow-ups and the rebased candidate.
+The absent CI runs that had puzzled the earlier attempts are explained: both
+pushes before the rebase left the PR `CONFLICTING`, and GitHub creates no
+`pull_request` workflow run for a pull request that cannot be merged. The run on
+`887c5a8` started normally as soon as the conflict was gone.
+
 ## Host compile admission and the build-standard contract tests
 
 The first `make test` on the rebased candidate failed three cases in
@@ -504,9 +551,10 @@ dispositioned against the current tree.
 The inline findings were also applied:
 
 - **Two borrow states.** `docs/users-guide.md` now describes a blocked
-  `handle()` holding a shared borrow and a waiting `close()` holding the
-  exclusive borrow as separate cases, and states that the rejected concurrent
-  `close()` does not start its one-second wait.
+  `handle()` holding a shared borrow — so a concurrent `close()` raises
+  `RuntimeError` without starting its one-second wait — and a started `close()`
+  releasing its borrow before it waits, so later calls reach a closed handler
+  instead of being rejected.
 - **Exception mapping.** `femtologging/overflow_policy.py` no longer claims
   `drop()` always raises `RuntimeError`; the timed-rotating binding's
   `ValueError` mapping is named explicitly for both `drop` and `timeout`.
@@ -519,8 +567,9 @@ The inline findings were also applied:
   `sys.setswitchinterval(1.0)` before starting the closing thread. The closing
   thread therefore keeps the interpreter lock from `Event.set()` into the
   binding, and the probing thread, which waits with the lock released, can only
-  resume once that binding has detached with the exclusive borrow held. The 20
-  ms sleep is gone.
+  resume once that binding has taken the shutdown state and detached for its
+  wait. The 20 ms sleep is gone. This remains a test-synchronization
+  assumption, not a production guarantee.
 - **Progress oracle.** The inline finding on `file_handler_gil_scenarios.py`
   said the window recorded around the call does not prove overlap with the
   actual wait. Two changes close that gap. First, the watchdog now starts only
@@ -549,10 +598,13 @@ The inline findings were also applied:
   the Rust error, and each binding constructs its existing Python exception
   after the GIL is reacquired. In particular, the timed-rotating wrapper's
   `ValueError` mapping is not normalized as part of this GIL-only change.
-- **Keep PyO3 borrow errors during detached close explicit.** `close()` holds
-  its exclusive object borrow while waiting without the GIL. Concurrent
-  `handle()`, `flush()`, or `close()` calls on that object raise
-  `RuntimeError`; the user guide and subprocess tests pin this behaviour.
+- **Keep the shutdown hand-off explicit.** `close()` takes the shutdown state
+  under a short borrow, then releases the borrow and detaches for the wait.
+  Calls made during the wait observe a closed handler — `handle()` raises,
+  `flush()` returns `False`, and a second `close()` is a no-op — while a blocked
+  `handle()` still holds its shared borrow, so `close()` raises `RuntimeError`
+  instead of starting its wait. The user guide and subprocess tests pin both
+  states.
 - **Assert the *shape* of the wait, not a wall-clock threshold.** The first
   draft asserted only that a progress event fired before the blocked thread was
   joined. That passes for a GIL-holding binding whenever the wait ends on its
