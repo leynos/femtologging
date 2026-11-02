@@ -460,6 +460,22 @@ configured filter IDs.
   gate with `nohup setsid`, write its exit status to a separate file, and poll
   that file: the gate then survives the ceiling and only the exit status has to
   be re-read.
+- [x] (2026-11-02) Closed the review round on head `39e006f`. All four review
+  threads were dispositioned and CodeRabbit answered each one in turn,
+  confirming the finding fixed at that head. Those answers arrived on the
+  prior head, so the dispositions are carried forward as evidence for the
+  behaviour, not as an approval of the later head. One of the four answers
+  raised a genuine documentation defect, handled in the next entry.
+- [x] (2026-11-02) Corrected the `DeferredDrop::release` doc comment at
+  `rust_extension/src/config/mod.rs`. It claimed the deferred decrefs run with
+  neither the GIL nor the transaction guard held. That is wrong: PyO3's
+  `SuspendAttach::drop` calls `PyEval_RestoreThread` and only then
+  `POOL.drop_deferred_references`, so the decrefs have the GIL back. The
+  property the comment exists to protect is unchanged and still true — the
+  guard is released before `release(py)` is called and is not reacquired, so a
+  finalizer that re-enters configuration finds it free. Verified against the
+  vendored PyO3 source rather than taken on the reviewer's word, because the
+  comment describes an ordering the deadlock regression test depends on.
 
 ## Surprises & Discoveries
 
