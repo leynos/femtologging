@@ -237,7 +237,7 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Malformed JSON propagates as a `serde_json::Error` inside the boxed error, and
+Malformed JSON propagates as `serde_json::Error` inside the boxed error, and
 version validation runs only after a successful parse.
 
 When consuming payloads in Python from external sources, compare
