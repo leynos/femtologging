@@ -84,12 +84,24 @@ fn is_enabled_by_global_max(level: log::Level) -> bool {
     log::max_level() >= level.to_level_filter()
 }
 
-/// Resolve a normalized target's threshold, using root or the default as fallback.
+/// Resolve a normalized target's threshold, predicting what dispatch will use.
+///
+/// A registered target answers from its live threshold. An absent target that
+/// the registry can still admit will be created at [`DEFAULT_LOGGER_LEVEL`], so
+/// that is the threshold to filter by. An absent target the registry cannot
+/// admit is one [`resolve_logger`] routes to `"root"`, so the root threshold is
+/// the one that will actually be applied; using the default there would drop
+/// records root accepts whenever root is configured wider than `INFO`.
+///
+/// The capacity question is [`manager::logger_registration_fits`], the same
+/// predicate [`manager::get_logger`] refuses on, so filtering here and routing
+/// at dispatch cannot disagree about whether a logger would be created.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// assert_eq!(effective_logger_level("unknown.target"), DEFAULT_LOGGER_LEVEL);
+/// // A target that still fits becomes a logger at the default level.
+/// assert_eq!(effective_logger_level("brand.new.target"), DEFAULT_LOGGER_LEVEL);
 /// ```
 fn effective_logger_level(target: &str) -> FemtoLevel {
     let normalized = normalize_target(target);
@@ -98,7 +110,13 @@ fn effective_logger_level(target: &str) -> FemtoLevel {
     } else {
         "root"
     };
-    manager::registered_logger_level(logger_name).unwrap_or(DEFAULT_LOGGER_LEVEL)
+    if let Some(level) = manager::registered_logger_level(logger_name) {
+        return level;
+    }
+    if manager::logger_registration_fits(logger_name) {
+        return DEFAULT_LOGGER_LEVEL;
+    }
+    manager::registered_logger_level("root").unwrap_or(DEFAULT_LOGGER_LEVEL)
 }
 
 /// Compare a Rust record level with the target logger's femtologging threshold.
@@ -117,9 +135,11 @@ impl log::Log for FemtoLogAdapter {
     /// Return whether the target's current level threshold accepts this record.
     ///
     /// Target names are normalized from Rust's `module::path` form to dotted
-    /// femtologging names. Unknown valid targets use the default logger level;
-    /// invalid names use the registered root logger level when available, then
-    /// the default. This check does not inherit parent levels or consult
+    /// femtologging names. An unknown valid target uses the default logger
+    /// level while the registry can still admit it, and the root threshold once
+    /// it cannot, because dispatch would fall back to root; invalid names use
+    /// the registered root logger level when available, then the default. This
+    /// check does not inherit parent levels or consult
     /// filters and handlers, and it never creates a logger or accesses Python.
     /// A `true` result means the level threshold accepts the record; filters
     /// and handlers may still drop it during dispatch.

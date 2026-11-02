@@ -48,7 +48,8 @@ pub(crate) use capacity::ROOT_LOGGER_NAME;
 #[cfg(feature = "python")]
 pub(crate) use capacity::ensure_registry_capacity;
 pub(crate) use capacity::{
-    named_logger_count, new_logger_names, registry_full_error, registry_has_room_for,
+    named_logger_count, new_logger_names, registration_fits, registry_full_error,
+    registry_has_room_for,
 };
 #[cfg(test)]
 pub(crate) use capacity::{named_logger_count_for_test, registry_has_room_for_test};
@@ -111,6 +112,28 @@ pub(crate) fn registered_logger_level(name: &str) -> Option<FemtoLevel> {
         .read()
         .get(name)
         .map(|level| FemtoLogger::level_from_raw(level.load(Ordering::Relaxed)))
+}
+
+/// Return whether [`get_logger`] would admit `name` right now.
+///
+/// The Rust `log` bridge cannot call [`get_logger`]: it has no Python token,
+/// and creating loggers from a facade macro would be a surprising side effect.
+/// It can, however, apply the same capacity rule the insertion path applies.
+/// That is what lets `enabled()` predict dispatch exactly — an absent target
+/// that fits becomes a logger at the default level, while one the registry
+/// cannot admit is the case the bridges fall back to `"root"` for.
+///
+/// Takes the manager read lock and never the level index, so it does not
+/// invert the registry writer's manager-then-index ordering.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(logger_registration_fits("brand.new.target"));
+/// ```
+#[cfg(feature = "log-compat")]
+pub(crate) fn logger_registration_fits(name: &str) -> bool {
+    capacity::registration_fits(&MANAGER.read(), name)
 }
 
 /// Snapshot registered levels for conservative facade maximum calculation.
@@ -196,16 +219,19 @@ pub fn get_logger(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
     // excluded so it can be created last and returned directly rather than
     // looked up again, and so nothing here depends on the planner's ordering
     // invariant to avoid a panic.
-    let ancestors: Vec<String> = new_logger_names(&mgr, std::iter::once(name))
+    let planned = new_logger_names(&mgr, std::iter::once(name));
+    // One check for the whole chain, and the same predicate the `log` bridge
+    // consults: the bridge has to know whether dispatch would create this
+    // logger at the default level or fall back to root. A refusal must not
+    // leave a partly created hierarchy behind, which it would if the bound
+    // were tested per insertion.
+    if !registration_fits(&mgr, name) {
+        return Err(registry_full_error());
+    }
+    let ancestors: Vec<String> = planned
         .into_iter()
         .filter(|candidate| candidate != name)
         .collect();
-    // One check for the whole chain: a refusal must not leave a partly created
-    // hierarchy behind, which it would if the bound were tested per insertion.
-    // The `+ 1` is the requested name itself, which the filter above removed.
-    if !registry_has_room_for(named_logger_count(&mgr), ancestors.len() + 1) {
-        return Err(registry_full_error());
-    }
 
     for candidate in ancestors {
         let parent_name = calculate_parent_name(&candidate);

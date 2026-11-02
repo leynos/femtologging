@@ -110,6 +110,99 @@ fn an_ancestor_is_counted_before_its_descendant() {
     });
 }
 
+#[cfg(feature = "log-compat")]
+mod full_registry_bridge {
+    //! Bridge filtering at the registry's capacity boundary.
+    //!
+    //! A target the registry cannot admit is filtered by root's live threshold.
+    //! This is the branch [`get_logger`](super::super::registry::get_logger)
+    //! refuses on, and the Rust `log` bridge has to predict it without Python:
+    //! while a target still fits, dispatch would create it at the default
+    //! level; once the registry is full, dispatch falls back to root instead.
+    //! Filtering by the default in that second case would drop records root
+    //! accepts whenever root is configured wider than `INFO`, which is exactly
+    //! what issue #437 is about.
+
+    use log::{Log, Metadata};
+    use pyo3::Python;
+    use serial_test::serial;
+
+    use super::super::registry::{MANAGER, get_logger, reset_manager};
+    use super::super::{MAX_LOGGERS, logger_registration_fits};
+    use crate::FemtoLogAdapter;
+    use crate::level::FemtoLevel;
+
+    /// Build a `DEBUG` record aimed at `target`.
+    fn debug_record(target: &str) -> Metadata<'_> {
+        Metadata::builder()
+            .level(log::Level::Debug)
+            .target(target)
+            .build()
+    }
+
+    #[test]
+    #[serial]
+    fn unregistrable_targets_filter_by_root_and_registrable_ones_keep_the_default() {
+        Python::attach(|py| {
+            reset_manager();
+            log::set_max_level(log::LevelFilter::Trace);
+            let adapter = FemtoLogAdapter;
+            let target = "brand.new.target";
+
+            let root = get_logger(py, "root").expect("root is always registrable");
+            root.borrow(py).set_level(FemtoLevel::Debug);
+
+            // Nothing is registered for the target, but it still fits, so
+            // dispatch would create it at the default level rather than send
+            // it to root's wider threshold.
+            assert!(logger_registration_fits(target));
+            assert!(
+                !Log::enabled(&adapter, &debug_record(target)),
+                "a target that would be created at the default level must not \
+                 be filtered by root's wider threshold",
+            );
+
+            // Reach the bound with aliases of the one live logger. The policy
+            // asks only whether a key is present and how many keys there are,
+            // so this exercises the real capacity state without building ten
+            // thousand loggers, each of which owns a dispatch worker.
+            {
+                let mut mgr = MANAGER.write();
+                for index in 0..MAX_LOGGERS {
+                    mgr.loggers
+                        .insert(format!("saturated-{index}"), root.clone_ref(py));
+                }
+            }
+
+            assert!(
+                !logger_registration_fits(target),
+                "a three-name chain cannot fit once the cap is reached",
+            );
+            assert!(
+                Log::enabled(&adapter, &debug_record(target)),
+                "an unregistrable target is routed to root, so root's live \
+                 threshold must decide whether its records are enabled",
+            );
+            assert!(
+                logger_registration_fits("root"),
+                "the fallback destination is exempt from the cap and must \
+                 always remain admissible",
+            );
+            assert!(
+                !Log::enabled(
+                    &adapter,
+                    &Metadata::builder()
+                        .level(log::Level::Trace)
+                        .target(target)
+                        .build(),
+                ),
+                "root's threshold still rejects levels it does not accept",
+            );
+        });
+        reset_manager();
+    }
+}
+
 /// A configuration over the cap is rejected before its logger objects are staged.
 #[test]
 #[serial]

@@ -481,9 +481,11 @@ expensive argument for a target held below that maximum still runs; add a
 `log::log_enabled!` guard for the target when that matters. Rust targets using
 `module::path` are normalized to femtologging's dotted `module.path` names. A
 registered target uses its own live logger level; an unknown valid target uses
-the default new-logger level (`INFO`). An invalid target falls back to the root
-logger's level when a root logger is registered, or to `INFO` otherwise. Target
-levels are not inherited from parent loggers.
+the default new-logger level (`INFO`) while the registry can still admit it, and
+the root logger's level once it cannot, because dispatch then falls back to
+root. An invalid target falls back to the root logger's level when a root
+logger is registered, or to `INFO` otherwise. Target levels are not inherited
+from parent loggers.
 
 This check considers logger levels only: it does not inspect filters or
 handlers, so `enabled()` returning `true` means the target level accepts the

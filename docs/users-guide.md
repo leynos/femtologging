@@ -949,10 +949,12 @@ The bridge installs one process-wide Rust logger. It raises `RuntimeError` if
 another global logger is already installed. Rust targets such as
 `service::worker` are normalized to the femtologging name `service.worker`. A
 registered target uses its own current level; levels are not inherited from
-parent loggers. An unknown valid target uses `INFO`. An invalid target uses the
-registered `root` logger's level, or `INFO` when no root logger is registered.
-Changes to logger levels and configuration take effect for later enablement
-checks.
+parent loggers. An unknown valid target uses `INFO` while the logger registry
+can still admit it. Once the registry is full, such a target is routed to the
+`root` logger instead, so enablement checks use the root level. An invalid
+target uses the registered `root` logger's level, or `INFO` when no root logger
+is registered. Changes to logger levels and configuration take effect for later
+enablement checks.
 
 `log::max_level()` is a conservative process-wide prefilter used by Rust
 logging macros. It includes the levels of registered loggers and the `INFO`

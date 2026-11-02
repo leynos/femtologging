@@ -165,9 +165,16 @@ fixtures.
 With `log-compat`, each logger shares its live level atomic with a Python-free
 threshold index. `FemtoLogAdapter::enabled()` reads that index without the GIL,
 logger creation, or log emission. A registered normalized target uses its own
-level; unknown valid targets use the default `INFO` level; invalid targets use
-the root level or the default. Parent levels are not inherited, and this early
-check does not inspect filters or handlers.
+level; unknown valid targets use the default `INFO` level while the registry
+can still admit them, and the root level once it cannot, because dispatch then
+falls back to root; invalid targets use the root level or the default. Parent
+levels are not inherited, and this early check does not inspect filters or
+handlers.
+
+The capacity question is answered by the same predicate `get_logger` refuses
+on, so filtering and routing agree about whether a logger would be created.
+That predicate takes the manager read lock, always after the threshold-index
+lookup has released it.
 
 When a logger enters the registry, manager code holds `MANAGER` before taking
 the threshold-index write lock. The enablement lookup reads only the index.

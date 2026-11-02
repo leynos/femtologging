@@ -76,10 +76,13 @@ pub(crate) use registry::named_logger_count_for_test;
 #[cfg(feature = "log-compat")]
 pub(crate) use registry::flush_all_handlers;
 
-// The `log` bridge reads live thresholds and validates a target without
-// taking the manager lock or attaching to Python.
+// The `log` bridge reads live thresholds, validates a target and predicts
+// registry admission without attaching to Python. The admission check takes
+// the manager's read lock; the threshold lookups take only the level index.
 #[cfg(feature = "log-compat")]
-pub(crate) use registry::{registered_logger_level, registered_logger_levels};
+pub(crate) use registry::{
+    logger_registration_fits, registered_logger_level, registered_logger_levels,
+};
 #[cfg(feature = "log-compat")]
 pub(crate) use validation::is_valid_logger_name;
 

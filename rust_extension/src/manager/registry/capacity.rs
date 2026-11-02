@@ -94,6 +94,30 @@ fn chain_of(name: &str) -> impl Iterator<Item = &str> {
     .take_while(|current| *current != ROOT_LOGGER_NAME)
 }
 
+/// Count the names in `name`'s chain that `mgr` does not already hold.
+///
+/// The chain is the unit of registration, so this is the number of slots a
+/// request for `name` would consume. It counts without allocating, which lets
+/// the Rust `log` bridge ask the same question on every enablement check; that
+/// bridge must not build a logger or attach to Python just to decide whether
+/// one could be built later.
+pub(crate) fn missing_logger_count(mgr: &Manager, name: &str) -> usize {
+    chain_of(name)
+        .filter(|candidate| !has_logger(mgr, candidate))
+        .count()
+}
+
+/// Return whether the registry can admit `name` together with its ancestors.
+///
+/// This is the decision every admission path shares:
+/// [`get_logger`](super::get_logger), the staged configuration commit, and the
+/// `log` bridge's enablement check. A target that fits will become a logger at
+/// the default level; one that does not is what the bridges fall back to
+/// `"root"` for, so filtering and routing must agree on this answer.
+pub(crate) fn registration_fits(mgr: &Manager, name: &str) -> bool {
+    registry_has_room_for(named_logger_count(mgr), missing_logger_count(mgr, name))
+}
+
 /// Return the names in `names`' chains that a commit would newly register.
 ///
 /// Ancestors are included: registering `"a.b.c"` also registers `"a"` and
