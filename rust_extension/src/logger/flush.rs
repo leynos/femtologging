@@ -88,6 +88,28 @@ impl FlushOutcome {
 }
 
 impl FemtoLogger {
+    /// Flush all handlers attached to this logger.
+    ///
+    /// One deadline spans dispatch resolution, marker, snapshot, acknowledgement
+    /// and handler flushes; built-ins keep shorter timeouts. Legacy handlers
+    /// fail closed; overrides must honour the deadline. Python calls release
+    /// the GIL, native callers do not. Failure returns `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use _femtologging_rs::FemtoLogger;
+    ///
+    /// let logger = FemtoLogger::new("example".into()).expect("logger starts");
+    /// let _ = logger.flush_handlers();
+    /// ```
+    pub fn flush_handlers(&self) -> bool {
+        self.flush_handlers_blocking().finish(
+            &self.flush_diagnostics,
+            FlushFailureStage::CallerReturnDeadlineExceeded,
+        )
+    }
+
     /// Flush every attached handler against one absolute deadline.
     pub(super) fn flush_handlers_blocking(&self) -> FlushOutcome {
         let timing = FlushDeadline::system(Duration::from_millis(LOGGER_FLUSH_TIMEOUT_MS));

@@ -21,13 +21,14 @@ pub(crate) mod policy;
 pub(crate) mod test_support;
 mod validations;
 mod worker;
+mod worker_shutdown;
 
 use std::{
     fs::File,
     io::{self, BufWriter, Seek, Write},
     path::Path,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use pyo3::prelude::*;
@@ -50,35 +51,7 @@ pub(crate) use validations::{
     validate_capacity_nonzero, validate_flush_interval_nonzero, validate_params,
 };
 pub(crate) use worker::{NoRotation, RotationStrategy};
-
-/// Owns the worker state needed to finish a handler shutdown after its Python
-/// object borrow has been released.
-pub(super) struct WorkerShutdown {
-    /// Worker thread handle retained for joining after completion.
-    handle: Option<JoinHandle<()>>,
-    /// Broadcast completion every closer waits on, so a closer that does not
-    /// own the join handle still observes worker shutdown.
-    completion: Arc<ShutdownCompletion>,
-}
-
-impl WorkerShutdown {
-    /// Wait for worker completion and join it when it reports a clean exit.
-    ///
-    /// Every caller waits on the shared completion, including one that finds
-    /// no join handle left: another closer may still be joining a worker that
-    /// has not finished writing its queued records.
-    pub(super) fn wait(self) {
-        if !self.completion.wait(Duration::from_secs(1)) {
-            log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-            return;
-        }
-        if let Some(handle) = self.handle
-            && handle.join().is_err()
-        {
-            log::warn!("FemtoFileHandler: worker thread panicked");
-        }
-    }
-}
+pub(in crate::handlers) use worker_shutdown::WorkerShutdown;
 
 /// File-based logging handler exposed to Python.
 ///
