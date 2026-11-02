@@ -58,12 +58,13 @@ def body():
 guard(body)
 """
 
-#: ``flush()`` also holds its shared borrow for its whole wait -- here on the
-#: worker's acknowledgement -- so a concurrent ``close()`` is rejected just as
-#: it is while ``handle()`` waits on queue capacity. A capacity of 2 leaves a
-#: command slot free for the flush itself, and the worker is released well
-#: inside the flush deadline, so the wait under test is the acknowledgement
-#: rather than the one-second enqueue timeout.
+#: ``flush()`` also holds only a shared borrow for its whole wait -- here on
+#: the worker's acknowledgement -- so a concurrent ``close()`` starts just as
+#: it does while ``handle()`` waits on queue capacity. ``close()`` takes the
+#: shutdown state and waits on the shared completion signal without raising;
+#: the in-flight flush still completes once the worker is released. A capacity
+#: of 2 leaves a command slot free for the flush itself, so the wait under test
+#: is the acknowledgement rather than the one-second enqueue timeout.
 CONCURRENT_CLOSE_FLUSH_BODY = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block(), capacity=2)
@@ -71,23 +72,27 @@ def body():
     saturate(handler)
     blocked = start_blocked(lambda: results.append(handler.flush()))
     watchdog = start_watchdog_when_blocked(blocked)
-    try:
-        # ``flush`` is still waiting for the worker's acknowledgement, so its
-        # shared borrow is active when ``close`` asks for the exclusive one.
-        time.sleep({close_hold})
+    close_failures = []
 
+    def close_handler():
         try:
             handler.close()
-        except RuntimeError:
-            pass
-        else:
-            raise AssertionError(
-                "close() took the handler while flush() was in flight"
-            )
+        except Exception as err:
+            close_failures.append(err)
+
+    # ``flush`` is still waiting for the worker's acknowledgement, so its
+    # shared borrow is active when ``close`` starts. ``close`` must wait for
+    # the worker rather than rejecting the handler.
+    closer = start_blocked(close_handler)
+    try:
+        time.sleep({close_hold})
+        assert closer.is_alive(), "close returned before the worker was released"
     finally:
         RELEASE_WORKER.set()
 
     join_blocked(blocked)
+    join_blocked(closer)
+    assert not close_failures, f"close() failed unexpectedly: {{close_failures!r}}"
     assert_progress_during("flush", watchdog)
     assert results == [True], f"the flush unexpectedly reported {{results!r}}"
     handler.close()

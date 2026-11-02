@@ -27,9 +27,10 @@ Observable outcomes:
 - `handler.flush()` and `handler.close()` release the lock across their waits.
 - A started `close()` releases its Python borrow before it waits, so calls
   made during the wait observe a closed handler: `handle()` raises, `flush()`
-  returns `False`, and a second `close()` is a no-op.
-- A blocked `handle()` still holds its shared borrow, so a concurrent `close()`
-  raises `RuntimeError` instead of starting its shutdown wait.
+  returns `False`, and a second `close()` shares the same completion wait.
+- A blocked `handle()` still holds its shared borrow, but `close()` needs only
+  a shared borrow too, so a concurrent `close()` starts, takes the shutdown
+  state and waits on the shared completion signal instead of raising.
 - The rotating and timed-rotating wrappers inherit the same contract.
 - Python tests, isolated in subprocesses, demonstrate a second thread making
   progress while a direct `handle()` call is blocked.
@@ -50,9 +51,9 @@ Observable outcomes:
 ## Tolerances (exception triggers)
 
 - If detaching changes observable Python behaviour beyond the two documented
-  borrow states — a blocked `handle()` refusing `close()`, and a started
-  `close()` exposing a closed handler to later calls — stop and re-plan. Both
-  states must be documented and tested.
+  borrow states — a blocked `handle()` sharing its borrow with a concurrent
+  `close()`, and a started `close()` exposing a closed handler to later calls —
+  stop and re-plan. Both states must be documented and tested.
 - If the Loom lane cannot be kept green without weakening a model, stop and
   raise it rather than weakening the model.
 
@@ -99,11 +100,12 @@ for this issue; no new public signature or dependency is introduced.
 - **Backpressure and shutdown contract:** the existing Rust implementations,
   one-second flush and close deadlines, and `Drop` remain unchanged. The
   scenarios check timeout failure, accepted-record output, `flush() == False`
-  after its deadline, and the `RuntimeError` from a concurrent Python `close()`
-  while a blocked call retains its shared PyO3 borrow. They also check that a
+  after its deadline, and that a concurrent Python `close()` starts while a
+  blocked call retains its shared PyO3 borrow, takes the shutdown state and
+  waits on the shared completion signal without raising. They also check that a
   `close()` started while the worker is parked exposes a closed handler:
-  `handle()` raises, `flush()` returns `False`, and a second `close()` is a
-  no-op.
+  `handle()` raises, `flush()` returns `False`, and a second `close()` shares
+  the same completion wait.
 - **External interface assumptions:** the version-matched PyO3 0.30.1 API
   documents `Python::detach` and its `Ungil` bound at
   <https://docs.rs/pyo3/0.30.1/pyo3/marker/struct.Python.html#method.detach>.
@@ -258,6 +260,26 @@ for this issue; no new public signature or dependency is introduced.
       `make markdownlint` (4 s), `make nixie` (0 s), `make lint` (3 651 s),
       `make typecheck` (676 s) and `make test` (16 064 s) all exited 0;
       `make test` reported 911 passed, 5 skipped and 66 snapshots passed.
+- [x] Rebased `6602359` onto `origin/main` at `9e6640de` (#545, the
+      interior-mutability close redesign) and reconciled the close contract.
+      All 27 commits replayed to `3694851`; the exclusive-borrow narrative in
+      the user guide, migration guide, module docstrings, tests and this plan
+      was rewritten to the shared-completion contract. See "Rebase onto
+      `origin/main` at `9e6640de` and reconciliation with #545".
+- [x] Split the Python bindings out of
+      `rust_extension/src/handlers/file/mod.rs` into `file/python.rs`. The
+      rebase merged #545's shared-borrow close into the binding file and pushed
+      it to 403 lines, over the 400-line `module-max-lines` limit. The move
+      mirrors `rotating/python.rs` and `timed_rotating/python.rs`; `mod.rs` is
+      now 292 lines and the new module 126.
+- [x] Rewrote the `concurrent-close-flush` scenario to the shared-borrow
+      contract. It had still asserted that a `close()` beside an in-flight
+      `flush()` raises `RuntimeError`; it now runs the close on its own thread,
+      asserts that it returns without raising, and releases the worker so the
+      in-flight flush still reports `True`. The matching test was renamed to
+      `test_close_while_flush_is_in_flight_returns_without_raising`. The
+      `FemtoLogRecord` import moved from `file/mod.rs` to `file/tests.rs`,
+      which is its only non-binding user, clearing an unused-import warning.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -321,9 +343,10 @@ still stands for the production code, which this hardening does not touch.
   token PyO3 already handed them. Nothing in the bindings calls
   `Python::attach`.
 - `Python::detach` does **not** release the pyclass borrow flag. A blocked
-  `handle()` therefore holds its shared borrow for the whole wait, and a
-  concurrent `close()` fails its exclusive borrow with `RuntimeError`. That is
-  safe rather than a defect, and Task 3 pins it as a contract.
+  `handle()` therefore holds its shared borrow for the whole wait. Under the
+  final design `close()` also needs only a shared borrow, so it starts, takes
+  the shutdown state and waits on the shared completion signal rather than
+  being rejected. Task 3 pins that contract.
 - A Loom model cannot observe the GIL at all: the model replaces both the
   channel and the thread, so there is no interpreter holding a lock to release.
   The regression evidence has to come from Python, which is why Task 3 spawns
@@ -444,14 +467,14 @@ a close can wait outside the Python borrow.
 The replay kept the issue's unique contribution and adopted the landed design
 rather than reverting it:
 
-| Area                            | Resolution                                                                                                                                                                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handle()` detach               | Kept from this branch; #546 did not detach `handle()`, which is the operation issue #441 is about.                                                                                                                                                      |
-| `flush()` detach                | Upstream's form retained; this branch's identical detach was dropped.                                                                                                                                                                                   |
-| `close()` detach                | Upstream's `Py<Self>`/`take_shutdown()`/`detach` form retained. This branch's `&mut self` form is gone because upstream's releases the borrow before waiting.                                                                                           |
-| Close-borrow contract           | Rewritten. A waiting close no longer rejects concurrent calls: `handle()` reaches the closed handler and raises, `flush()` returns `False`, and a second `close()` is a no-op. The user guide, migration guide, module docstrings and tests now say so. |
-| Blocked-`handle()` vs `close()` | Unchanged: a blocked `handle()` still holds its shared borrow, so a concurrent `close()` still raises `RuntimeError`. That scenario is retained.                                                                                                        |
-| Developers' guide               | The flush/close section from #546 is kept; this branch's section was narrowed to `handle()` and the shared `Ungil` mechanics, and its test-oracle description was corrected.                                                                            |
+| Area                            | Resolution                                                                                                                                                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handle()` detach               | Kept from this branch; #546 did not detach `handle()`, which is the operation issue #441 is about.                                                                                                                                                                           |
+| `flush()` detach                | Upstream's form retained; this branch's identical detach was dropped.                                                                                                                                                                                                        |
+| `close()` detach                | Upstream's `Py<Self>`/`take_shutdown()`/`detach` form retained. This branch's `&mut self` form is gone because upstream's releases the borrow before waiting.                                                                                                                |
+| Close-borrow contract           | Rewritten. A waiting close no longer rejects concurrent calls: `handle()` reaches the closed handler and raises, `flush()` returns `False`, and a second `close()` shares the same completion wait. The user guide, migration guide, module docstrings and tests now say so. |
+| Blocked-`handle()` vs `close()` | Superseded by the rebase onto `9e6640de`: both calls take only a shared borrow, so a concurrent `close()` no longer raises. See "Rebase onto `origin/main` at `9e6640de` and reconciliation with #545".                                                                      |
+| Developers' guide               | The flush/close section from #546 is kept; this branch's section was narrowed to `handle()` and the shared `Ungil` mechanics, and its test-oracle description was corrected.                                                                                                 |
 
 Conflicts appeared in the three Rust binding files and none in the tests or
 documentation, which merged textually. Three commits needed manual resolution:
@@ -514,6 +537,43 @@ pushes before the rebase left the PR `CONFLICTING`, and GitHub creates no
 `pull_request` workflow run for a pull request that cannot be merged. The run on
 `887c5a8` started normally as soon as the conflict was gone.
 
+## Rebase onto `origin/main` at `9e6640de` and reconciliation with #545
+
+`origin/main` advanced to `9e6640de`, which includes #545: the file-handler
+close path was redesigned around interior mutability. `close()` now takes
+`&self`, takes the shutdown state under a mutex, and waits on a shared
+`Arc<ShutdownCompletion>` broadcast, so every closer observes the same
+completion signal and a close can start while another thread is detached in a
+flush. That design supersedes this branch's earlier exclusive-borrow close,
+which had used `try_borrow_mut` and mapped its refusal to
+`RuntimeError("Cannot close the handler while another call is using it")`.
+
+The branch was replayed from `OLD_BASE` `6586148` onto `TARGET` `9e6640de` with
+`zdiff3` and the built-in merge backend (Weave bypassed with
+`-c core.attributesFile=/dev/null`). All 27 commits replayed; `OLD_HEAD`
+`6602359` became `3694851`. Conflicts appeared in the three Rust binding files
+and in the user guide, migration guide, and the two close-scenario test modules.
+
+Resolution principle: keep #545's mechanism and this branch's purpose (release
+the GIL around the wait), and rewrite every claim that a concurrent `close()`
+raises. The resulting contract is:
+
+- `close()` takes only a shared PyO3 borrow, so it starts while a `handle()` or
+  `flush()` call is blocked. It takes the shutdown state and waits on the
+  shared completion signal, bounded by its one-second deadline; it does not
+  raise.
+- Once the shutdown state is taken, `handle()` raises `RuntimeError`
+  (`ValueError` from the timed-rotating binding), `flush()` returns `False`,
+  and a second `close()` shares the first one's completion wait.
+- A blocked `handle()` holds its own clone of the sender, so `close()` cannot
+  end that wait; the worker must make room.
+
+The `concurrent-close` scenario now asserts that `close()` returns without
+raising and that a later `handle()` reports the closed handler. The
+`close-handle`, `close-flush` and `close-close` scenarios assert the
+closed-handler observations. The stale "Common errors and fixes" row for the
+removed `RuntimeError` was deleted.
+
 ## Host compile admission and the build-standard contract tests
 
 The first `make test` on the rebased candidate failed three cases in
@@ -565,7 +625,9 @@ The inline findings were also applied:
   `handle()` holding a shared borrow — so a concurrent `close()` raises
   `RuntimeError` without starting its one-second wait — and a started `close()`
   releasing its borrow before it waits, so later calls reach a closed handler
-  instead of being rejected.
+  instead of being rejected. (Superseded by the rebase onto `9e6640de`: both
+  calls take only a shared borrow, so a concurrent `close()` no longer raises.
+  See "Rebase onto `origin/main` at `9e6640de` and reconciliation with #545".)
 - **Exception mapping.** `femtologging/overflow_policy.py` no longer claims
   `drop()` always raises `RuntimeError`; the timed-rotating binding's
   `ValueError` mapping is named explicitly for both `drop` and `timeout`.
@@ -640,12 +702,13 @@ that run completes.
   after the GIL is reacquired. In particular, the timed-rotating wrapper's
   `ValueError` mapping is not normalized as part of this GIL-only change.
 - **Keep the shutdown hand-off explicit.** `close()` takes the shutdown state
-  under a short borrow, then releases the borrow and detaches for the wait.
-  Calls made during the wait observe a closed handler — `handle()` raises,
-  `flush()` returns `False`, and a second `close()` is a no-op — while a blocked
-  `handle()` still holds its shared borrow, so `close()` raises `RuntimeError`
-  instead of starting its wait. The user guide and subprocess tests pin both
-  states.
+  under a short shared borrow, then releases the borrow and detaches for the
+  wait. Calls made during the wait observe a closed handler — `handle()` raises,
+  `flush()` returns `False`, and a second `close()` shares the same completion
+  wait. A blocked `handle()` or `flush()` also holds only a shared borrow, so a
+  concurrent `close()` starts, takes the shutdown state and waits on the shared
+  completion signal instead of raising. The user guide and subprocess tests pin
+  both states.
 - **Assert the *shape* of the wait, not a wall-clock threshold.** The first
   draft asserted only that a progress event fired before the blocked thread was
   joined. That passes for a GIL-holding binding whenever the wait ends on its
@@ -716,12 +779,12 @@ In `rust_extension/src/handlers/file/mod.rs`:
   before the detached section; wrap only the core `handle` call in
   `py.detach(...)`; map the error to `PyRuntimeError` afterwards.
 - `py_flush`: add `py: Python<'_>` and return `py.detach(|| self.flush())`.
-- `py_close`: take `slf: Py<Self>`, take the exclusive borrow with
-  `try_borrow_mut` for long enough to `take_shutdown()`, and release it before
-  `py.detach(move || shutdown.wait())`. A waiting `handle()` or `flush()` holds
-  a shared borrow, so the refusal is mapped to `RuntimeError` instead of
-  starting the shutdown wait; once a close has taken the shutdown state, later
-  calls observe the closed handler.
+- `py_close`: take `slf: Py<Self>`, take a shared borrow for long enough to
+  `take_shutdown()`, and release it before
+  `py.detach(move || shutdown.wait())`. A waiting `handle()` or `flush()` also
+  holds only a shared borrow, so the close is not rejected; it takes the
+  shutdown state and waits on the shared completion signal. Once a close has
+  taken that state, later calls observe the closed handler.
 - Do not add a Loom cfg guard: these methods consume the `Python<'_>` token
   supplied by PyO3 and do not attach to Python from a Loom thread. Keep the
   existing Loom feature lane compiling.

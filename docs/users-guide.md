@@ -320,7 +320,7 @@ fields with safe defaults does not require a version bump.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
   Always close the handler when the application shuts down. `close()` is
   idempotent and safe to call multiple times; only the first call performs
-shutdown work, and every call waits for the worker to stop. Prefer calling
+  shutdown work, and every call waits for the worker to stop. Prefer calling
   `close()` explicitly: the destructor performs the same shutdown, but it runs
   with the interpreter lock held, so it cannot offer the GIL release described
   below.
@@ -353,10 +353,10 @@ Two consequences follow from that release, and both concern `"block"`:
   draining — a stalled filesystem, a full disk, a formatting callable that
   never returns — the calling thread waits for as long as that lasts.
 - `close()` does **not** cancel a `handle()` call that is already blocked.
-  `close()` takes the shutdown state and waits on the shared completion
-  signal, but the blocked `handle()` holds its own clone of the sender and
-  stays blocked until the worker makes room. Restore worker progress and let
-  the blocked call finish before calling `close()`.
+  `close()` takes the shutdown state and waits on the shared completion signal,
+  but the blocked `handle()` holds its own clone of the sender and stays
+  blocked until the worker makes room. Restore worker progress and let the
+  blocked call finish before calling `close()`.
 
 Two states follow, and they describe different points in the shutdown:
 
@@ -370,11 +370,10 @@ Two states follow, and they describe different points in the shutdown:
   bound.
 - Once a `close()` has taken the shutdown state, concurrent `handle()` calls
   raise `RuntimeError`, `flush()` returns `False`, and a second `close()`
-  shares the first one's completion wait rather than starting new shutdown
-  work. `FemtoTimedRotatingFileHandler` reports the closed handler from
-  `handle()` as `ValueError`, like its other handler errors. This keeps a
-  worker formatter that re-enters the handler safe while shutdown is in
-  progress.
+  shares the first one's completion wait rather than starting new shutdown work.
+  `FemtoTimedRotatingFileHandler` reports the closed handler from `handle()` as
+  `ValueError`, like its other handler errors. This keeps a worker formatter
+  that re-enters the handler safe while shutdown is in progress.
 
 Callers who need a wait that ends on its own must use `"timeout:N"`. They must
 also handle the exception raised when the deadline expires and the record is
