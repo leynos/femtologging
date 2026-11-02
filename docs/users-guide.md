@@ -353,19 +353,21 @@ Two consequences follow from that release, and both concern `"block"`:
   draining — a stalled filesystem, a full disk, a formatting callable that
   never returns — the calling thread waits for as long as that lasts.
 - `close()` does **not** cancel a `handle()` call that is already blocked.
-  `close()` itself blocks for at most one second waiting for the worker to
-  acknowledge shutdown and then abandons it, but the blocked `handle()` is
-  waiting on queue capacity and stays blocked. Restore worker progress and let
+  `close()` takes the shutdown state and waits on the shared completion
+  signal, but the blocked `handle()` holds its own clone of the sender and
+  stays blocked until the worker makes room. Restore worker progress and let
   the blocked call finish before calling `close()`.
 
 Two states follow, and they describe different points in the shutdown:
 
-- While a `handle()` call is blocked, it holds a shared borrow of the handler
-  and its own clone of the sender. Another `handle()` or `flush()` call may
-  take its own shared borrow and start, although it may then wait on the same
-  queue. A `close()` takes the shutdown state and waits on the shared
-  completion signal, so it does not raise; it returns once the blocked call is
-  accepted and the worker stops, or after its own one-second bound.
+- While a `handle()` or `flush()` call is waiting — blocked on queue capacity
+  or waiting for a flush acknowledgement — it holds a shared borrow of the
+  handler and, for `handle()`, its own clone of the sender. Another `handle()`
+  or `flush()` call may take its own shared borrow and start, although it may
+  then wait on the same queue. A `close()` takes the shutdown state and waits
+  on the shared completion signal, so it does not raise; it returns once the
+  blocked call is accepted and the worker stops, or after its own one-second
+  bound.
 - Once a `close()` has taken the shutdown state, concurrent `handle()` calls
   raise `RuntimeError`, `flush()` returns `False`, and a second `close()`
   shares the first one's completion wait rather than starting new shutdown
