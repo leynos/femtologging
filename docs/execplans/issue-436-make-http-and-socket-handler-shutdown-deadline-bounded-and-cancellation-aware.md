@@ -432,7 +432,7 @@ Trace links, from issue #436 to milestone:
   `somaxconn`, so a std listener cannot present the saturated backlog the
   suggested regression test needs. The narrowest honest contract - check the
   deadline before starting, never start after it - is implemented and the
-  residual is documented, which is the exception the finding authorised.
+  residual is documented, which is the exception the finding authorized.
 - (2026-11-02) Both paused-wait tests park the worker inside the wait hook
   while the product deadline runs, so the acknowledgement needs two thread
   hand-offs after the resume; at the product's 200 ms budget that can lose on a
