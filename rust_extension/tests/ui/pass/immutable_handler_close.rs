@@ -11,8 +11,8 @@ use _femtologging_rs::{
 
 fn main() {
     // The helper is never called: this fixture proves the calls type-check
-    // without touching the filesystem.
-    #[allow(dead_code)]
+    // without touching the filesystem. Binding it to `_` marks it as used
+    // without invoking it.
     fn close_through_shared_references() {
         let file = FemtoFileHandler::new("immutable-close.log")
             .expect("the probe file should open for writing");
@@ -28,6 +28,8 @@ fn main() {
         file.close();
         stream.close();
     }
+
+    let _ = close_through_shared_references as fn();
 
     // The rotating handlers are not constructible from outside the crate, so
     // their shared-reference signature is proven by taking references rather
