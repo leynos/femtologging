@@ -742,11 +742,13 @@ recomputes the planned names and their missing dotted ancestors, rechecks
 preparation is counted, and builds every missing ancestor object before
 inserting any. A refusal therefore raises the registry-limit `RuntimeError`
 without mutating anything, and all of this happens before the first live-logger
-change. The commit then adopts each staged logger, replacing handlers and
-filters, applying level and propagate, and calling `set_disabled(false)` only
-on the loggers the configuration names explicitly. A logger registered by
-another caller between preparation and commit is adopted instead, and the
-unused staged object is retained for teardown.
+change. The refusal path also releases the manager lock and then the GIL before
+the staged loggers and registries are dropped, because their handlers may flush
+or join a worker during teardown. The commit then adopts each staged logger,
+replacing handlers and filters, applying level and propagate, and calling
+`set_disabled(false)` only on the loggers the configuration names explicitly. A
+logger registered by another caller between preparation and commit is adopted
+instead, and the unused staged object is retained for teardown.
 
 When `disable_existing_loggers` is on, the commit then disables every
 registered logger outside `root` and the keep set, clearing each disabled

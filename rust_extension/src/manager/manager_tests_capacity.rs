@@ -9,16 +9,31 @@
 //! the exempt root — rather than the boundary, which the pure arithmetic
 //! tests in [`super`] cover.
 
-use std::collections::HashSet;
+use std::{
+    any::Any,
+    collections::{BTreeMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use pyo3::Python;
 use serial_test::serial;
+
+use crate::{
+    handler::{FemtoHandlerTrait, HandlerError},
+    log_record::FemtoLogRecord,
+    logger::HandlerAttachment,
+};
 
 use super::registry::{
     MANAGER, ensure_registry_capacity, get_logger, new_logger_names, register_missing_ancestors,
     stage_loggers,
 };
-use super::{MAX_LOGGERS, reset_manager};
+use super::{
+    MAX_LOGGERS, PreparedConfiguration, PreparedLogger, commit_configuration, reset_manager,
+};
 
 fn names(values: &[&str]) -> HashSet<String> {
     values.iter().map(|name| (*name).to_string()).collect()
@@ -273,6 +288,98 @@ fn a_commit_over_the_cap_registers_nothing() {
         assert!(
             mgr.loggers.is_empty(),
             "a refused commit must not leave a partly registered chain"
+        );
+    });
+}
+
+/// Handler that records whether the manager lock was free when it was dropped.
+struct LockProbeHandler {
+    /// Set to true when `Drop` could take the manager write lock.
+    lock_was_free: Arc<AtomicBool>,
+}
+
+impl Drop for LockProbeHandler {
+    fn drop(&mut self) {
+        // `try_write` fails while the committing thread still holds the lock,
+        // which is exactly the state the refusal path must avoid: a handler
+        // that flushes or joins a worker would otherwise wait on a lock its
+        // own thread is holding.
+        let acquired = MANAGER.try_write();
+        self.lock_was_free
+            .store(acquired.is_some(), Ordering::SeqCst);
+    }
+}
+
+impl FemtoHandlerTrait for LockProbeHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// A refused commit releases the manager lock before dropping staged handlers.
+#[test]
+#[serial]
+fn a_refused_commit_drops_staged_handlers_after_unlocking() {
+    Python::attach(|py| {
+        reset_manager();
+        let staged = stage_loggers(py, std::iter::once("probe"))
+            .expect("one staged logger fits an empty registry");
+        let probe_logger = staged
+            .get("probe")
+            .expect("the staged map holds the requested name")
+            .clone_ref(py);
+
+        let lock_was_free = Arc::new(AtomicBool::new(false));
+        let probe_plan = PreparedLogger {
+            name: "refused-0".to_string(),
+            logger: probe_logger.clone_ref(py),
+            handlers: vec![HandlerAttachment::new(Arc::new(LockProbeHandler {
+                lock_was_free: lock_was_free.clone(),
+            }))],
+            filters: Vec::new(),
+            handler_ids: Vec::new(),
+            filter_ids: Vec::new(),
+            level: None,
+            propagate: None,
+        };
+        // One more distinct name than the registry can hold, so the commit is
+        // refused after staging but before any plan is applied.
+        let remaining = (1..=MAX_LOGGERS).map(|index| PreparedLogger {
+            name: format!("refused-{index}"),
+            logger: probe_logger.clone_ref(py),
+            handlers: Vec::new(),
+            filters: Vec::new(),
+            handler_ids: Vec::new(),
+            filter_ids: Vec::new(),
+            level: None,
+            propagate: None,
+        });
+        let loggers: Vec<PreparedLogger> = std::iter::once(probe_plan).chain(remaining).collect();
+
+        let result = commit_configuration(
+            py,
+            PreparedConfiguration {
+                loggers,
+                disable_existing: false,
+                keep_names: HashSet::new(),
+                handler_registry: BTreeMap::new(),
+                handler_filter_ids: BTreeMap::new(),
+                filter_registry: BTreeMap::new(),
+            },
+        );
+
+        assert!(result.is_err(), "a commit over the cap must be refused");
+        assert!(
+            lock_was_free.load(Ordering::SeqCst),
+            "staged handlers must be dropped after the manager lock is released",
+        );
+        assert!(
+            MANAGER.read().loggers.is_empty(),
+            "a refused commit must not register anything",
         );
     });
 }

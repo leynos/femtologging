@@ -124,6 +124,10 @@ struct LoggerStateUpdate {
 /// Omitted targets are disabled before their attachments are cleared. The live
 /// registry is consulted under the lock so registrations between preparation
 /// and commit are included.
+///
+/// A refusal releases the manager lock and then the GIL before the staged
+/// loggers and registries are dropped: their handlers may flush or join a
+/// worker during teardown, and that worker may need either.
 #[cfg(feature = "python")]
 pub(crate) fn commit_configuration(
     py: Python<'_>,
@@ -141,9 +145,20 @@ pub(crate) fn commit_configuration(
     } = prepared;
 
     let planned: HashSet<&str> = loggers.iter().map(|plan| plan.name.as_str()).collect();
-    register_missing_ancestors(py, &mut manager, planned.iter().copied(), |name| {
+    let refusal = register_missing_ancestors(py, &mut manager, planned.iter().copied(), |name| {
         planned.contains(name)
-    })?;
+    })
+    .err();
+    drop(planned);
+    if let Some(error) = refusal {
+        // The staged loggers and registries own handlers whose drop can flush
+        // or join a worker. Release the manager lock, then the GIL, before
+        // those resources are torn down; dropping them under either would
+        // deadlock a worker that needs the lock or the interpreter.
+        drop(manager);
+        py.detach(move || drop((loggers, handler_registry, filter_registry)));
+        return Err(error);
+    }
 
     let mut logger_states = BTreeMap::new();
     for plan in loggers {
