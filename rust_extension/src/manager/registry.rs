@@ -47,10 +47,13 @@ pub(crate) use capacity::REGISTRY_FULL_MARKER;
 pub(crate) use capacity::ROOT_LOGGER_NAME;
 #[cfg(feature = "python")]
 pub(crate) use capacity::ensure_registry_capacity;
-pub(crate) use capacity::{
-    named_logger_count, new_logger_names, registration_fits, registry_full_error,
-    registry_has_room_for,
-};
+pub(crate) use capacity::{new_logger_names, registration_fits, registry_full_error};
+// Staged configuration (behind `python`) and the pure-arithmetic tests are the
+// only consumers of these two; `get_logger` and the bridge ask
+// `registration_fits` instead, so an unfeatured library build has no use for
+// them and must not re-export them.
+#[cfg(any(feature = "python", test))]
+pub(crate) use capacity::{named_logger_count, registry_has_room_for};
 #[cfg(test)]
 pub(crate) use capacity::{named_logger_count_for_test, registry_has_room_for_test};
 
