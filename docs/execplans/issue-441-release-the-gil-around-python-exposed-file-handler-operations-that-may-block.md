@@ -247,6 +247,17 @@ for this issue; no new public signature or dependency is introduced.
       for the close probe, so the example that asserted the program starts with
       `import threading` no longer held; it now checks that the harness and the
       selected body both reach the rendered program.
+- [x] Addressed the five findings from the review of `ddf9984` and pushed
+      `385e48e`: the ExecPlan's `py_close` and Task 3 bullets now match the
+      shipped design, the users' guide no longer claims a refused `close()`
+      performs its shutdown wait, `flush()` is named in the borrow rules and
+      the migration guide, the v0.2.0 guide follows the documentation style
+      guide, and the `run_scenario` doctest writes into a temporary directory.
+      A new `concurrent-close-flush` scenario pins the flush borrow for all
+      three builders. On `385e48e`, `make check-fmt` (2 s),
+      `make markdownlint` (4 s), `make nixie` (0 s), `make lint` (3 651 s),
+      `make typecheck` (676 s) and `make test` (16 064 s) all exited 0;
+      `make test` reported 911 passed, 5 skipped and 66 snapshots passed.
 
 ## Negative control (evidence that the tests detect the defect)
 
