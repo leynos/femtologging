@@ -109,9 +109,9 @@ impl DeferredDrop {
     /// blocks in `send` and then joins that worker, which would freeze every
     /// Python thread for as long as the queue takes to drain. Releasing the last
     /// `Py` off the interpreter is safe — PyO3 queues the decref and runs it as
-    /// this `detach` re-attaches, by which time the thread holds neither the GIL
-    /// nor the transaction guard, so a finalizer that re-enters configuration
-    /// still finds the guard free.
+    /// this `detach` re-attaches, so the decref has the GIL back but not the
+    /// transaction guard, and a finalizer that re-enters configuration still
+    /// finds the guard free.
     pub(crate) fn release(self, py: Python<'_>) {
         py.detach(move || {
             for detached in self.detached {
