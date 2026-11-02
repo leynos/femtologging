@@ -870,11 +870,14 @@ Trace links, from issue #436 to milestone:
   `rust_extension/src/stream_handler.rs` - and all three replayed without a
   conflict. The stream handler keeps main's `StreamShutdown` completion model
   *and* this branch's `Python::try_attach` drop guard, which now calls the new
-  `&self` `close`; the attribute helper `Python` reaches via `pyo3::prelude::*`
-  is unchanged, so the guard compiles against the merged module. The guide
-  keeps main's rewritten stdlib-adapter and file-handler prose and this
-  branch's socket and HTTP close contracts. `git range-diff` reports every
-  replayed commit as `=`, and `git diff --check` is clean.
+  `&self` `close`. The merge put the file at 405 lines, past the 400-line
+  module budget, because `main` had already grown it to exactly the limit for a
+  reason of its own; the guard moved into `stream_handler/shutdown.rs`, beside
+  the shutdown operation it drives, leaving the handler at 394 lines rather
+  than trimming a comment or suppressing the lint. The guide keeps main's
+  rewritten stdlib-adapter and file-handler prose and this branch's socket and
+  HTTP close contracts. `git range-diff` reports every replayed commit as `=`,
+  and `git diff --check` is clean.
 
 ## Outcomes & retrospective
 
