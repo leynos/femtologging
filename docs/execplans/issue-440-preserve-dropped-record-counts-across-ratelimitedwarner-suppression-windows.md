@@ -968,3 +968,29 @@ and lint-contract overlaps, adapted the logger flush messages to main's current
 wording, and fixed the non-Python `warn!` import. Prior gate evidence binds to
 the pre-rebase candidate and is retained as history only; the tip must pass a
 fresh sequential gate run before review.
+
+2026-11-01: the fresh sequential gate run on `da4f859` completed. `make fmt`,
+`make check-fmt`, `make markdownlint`, `make nixie`, `make lint` (708 s) and
+`make typecheck` (110 s) passed. All four `make test` cargo lanes passed:
+no-default-features (2988 s), `python` (3807 s), `log-compat` (6025 s) and
+`tracing-compat` (2558 s). The whole-suite pytest step passed with 856 passed
+and 5 skipped, including every `tests/test_build_standard_contract.py` case
+that failed before the rebase; main's wrapper-neutralizing fixture removed the
+host-configuration conflict. The ignored heavy suites passed in all four
+feature sets (`prop_rate_limited_warner_conserves_drops` and
+`prop_stream_handler_writes`), and the ignored capture-logger binary passed in
+both the no-default-features and `python` sets.
+
+The lane runs were executed directly rather than through `scrutineer`: the
+subagent repeatedly relaunched and then killed its own lane processes, because
+each foreground tool call is capped at two minutes and each trybuild fixture
+needs far longer under the shared compile queue. The lanes were therefore run
+detached with `setsid`, one at a time, each writing its own `.status` file.
+Logs are `/tmp/test-lane{1,2,3,4}-*-issue-440-*.out`,
+`/tmp/test-pytest-issue-440-20261101T114953Z.out` and
+`/tmp/test-ignored-issue-440-20261101T120628Z.out`.
+
+The branch is two commits behind `origin/main` (`9e6640d`), both of which change
+`log_compat` and frame filtering. Rebasing would invalidate the gate evidence
+above, and the branch touches none of those files, so the gated tip is the
+review candidate and CI validates the merge.
