@@ -207,7 +207,7 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
             found,
             max_supported,
         }) => {
-            // Degrade safely: keep raw payload and skip schema-dependent logic.
+            // Reject too-new payloads explicitly.
             eprintln!(
                 "payload schema {} is newer than supported {}",
                 found, max_supported
