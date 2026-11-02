@@ -42,7 +42,7 @@ impl PyTimedRotatingFileHandler {
     }
 
     /// Transfers the nested file handler's worker shutdown state.
-    fn take_shutdown(&mut self) -> WorkerShutdown {
+    fn take_shutdown(&self) -> WorkerShutdown {
         self.inner.inner.take_shutdown()
     }
 }
@@ -270,11 +270,13 @@ impl PyTimedRotatingFileHandler {
     /// state.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread.
+    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
+    /// close can start while another thread still holds the handler in a
+    /// detached flush call.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
-            let mut handler = slf.borrow_mut(py);
+            let handler = slf.borrow(py);
             handler.take_shutdown()
         };
         py.detach(move || shutdown.wait());

@@ -265,7 +265,7 @@ mod tests {
         let builder = FileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_formatter(PrefixFormatter)
             .with_flush_after_records(NonZeroU64::new(1).expect("1 is non-zero"));
-        let mut handler = builder
+        let handler = builder
             .build_inner()
             .expect("build_inner must support custom formatter instances");
         handler

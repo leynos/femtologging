@@ -53,10 +53,15 @@ pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{LoggerBudget, Shard};
 
 pub use py_handler::{PyHandler, validate_handler};
-#[cfg(all(feature = "python", test))]
+// The consuming unit tests are excluded under `--cfg loom`, so the re-export
+// must be too or `-D unused-imports` fails the Loom Clippy lane.
+#[cfg(all(feature = "python", test, not(loom)))]
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
+
+/// Threshold applied to loggers when the manager creates them.
+pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -68,8 +73,8 @@ pub struct FemtoLogger {
     parent: Option<String>,
     /// Formatter shared by records emitted through this logger.
     formatter: SharedFormatter,
-    /// Current severity threshold, stored atomically for concurrent logging.
-    level: AtomicU8,
+    /// Atomically readable level threshold shared with the manager's level index.
+    level: Arc<AtomicU8>,
     /// Whether accepted records are also sent to the parent logger.
     propagate: AtomicBool,
     /// Lock-protected live handlers; each queued record owns the snapshot it captured.
@@ -140,10 +145,14 @@ impl FemtoLogger {
     /// Update the logger's minimum level.
     ///
     /// `level` accepts "TRACE", "DEBUG", "INFO", "WARN", "ERROR", or
-    /// "CRITICAL". The update is thread‑safe because the level is stored in an
-    /// `AtomicU8`.
+    /// "CRITICAL". The update is thread-safe because the level is stored in a
+    /// shared `AtomicU8`. With `log-compat`, it also refreshes the facade's
+    /// conservative process-wide maximum level.
     #[pyo3(text_signature = "(self, level)")]
     pub fn set_level(&self, level: FemtoLevel) {
+        #[cfg(feature = "log-compat")]
+        crate::log_compat::update_logger_level(&self.level, level);
+        #[cfg(not(feature = "log-compat"))]
         self.level.store(u8::from(level), Ordering::Relaxed);
     }
 

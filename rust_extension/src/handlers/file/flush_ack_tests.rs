@@ -188,7 +188,7 @@ fn flush_waits_for_its_own_acknowledgement() {
         .expect("second flush worker thread must complete cleanly");
 
     writer.release_all_flushes();
-    let Ok(mut handler) = Arc::try_unwrap(handler) else {
+    let Ok(handler) = Arc::try_unwrap(handler) else {
         panic!("flush test must release all handler references before shutdown");
     };
     handler.close();

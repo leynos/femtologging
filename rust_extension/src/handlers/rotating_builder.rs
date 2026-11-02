@@ -253,7 +253,7 @@ mod tests {
         let dir = tempdir().expect("tempdir must create a temporary directory");
         let path = dir.path().join("test.log");
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned());
-        let mut handler = builder
+        let handler = builder
             .build_inner()
             .expect("build_inner must succeed for defaults");
         assert_eq!(handler.rotation_limits(), (0, 0));
@@ -269,7 +269,7 @@ mod tests {
             .with_flush_after_records(NonZeroU64::new(2).expect("2 is non-zero"))
             .with_max_bytes(1024)
             .with_backup_count(3);
-        let mut handler = builder
+        let handler = builder
             .build_inner()
             .expect("build_inner must succeed for valid rotation config");
         assert_eq!(handler.rotation_limits(), (1024, 3));
@@ -283,7 +283,7 @@ mod tests {
         let builder = RotatingFileHandlerBuilder::new(path.to_string_lossy().into_owned())
             .with_formatter(SuffixFormatter)
             .with_capacity(8);
-        let mut handler = builder
+        let handler = builder
             .build_inner()
             .expect("build_inner must accept formatter instances");
         handler.flush();

@@ -377,8 +377,8 @@ impl FemtoTimedRotatingFileHandler {
         to self.inner {
             /// Flush any queued log records.
             pub fn flush(&self) -> bool;
-            /// Close the handler, waiting for the worker thread to shut down.
-            pub fn close(&mut self);
+            /// Close the handler; concurrent callers share one completion wait.
+            pub fn close(&self);
         }
     }
 }

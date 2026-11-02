@@ -20,11 +20,15 @@ fn log_target_record(target: &str, level: log::Level, args: Arguments<'_>) {
 }
 
 fn log_valid_targets() {
+    // The target-aware `enabled()` check thresholds an unregistered target at
+    // the default logger level, so `Info` is the lowest level that reaches
+    // `log()` and registers the target. A `Debug` record would be filtered out
+    // before dispatch and leave the registry empty.
     for index in 0..MAX_LOGGERS {
         let target = format!("log-bridge-{index}");
         log_target_record(
             &target,
-            log::Level::Debug,
+            log::Level::Info,
             format_args!("lookup target {index}"),
         );
     }

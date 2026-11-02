@@ -13,6 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use pyo3::prelude::*;
 
+#[cfg(feature = "log-compat")]
+use super::index_logger_level;
 use super::{
     MANAGER, calculate_parent_name, named_logger_count, new_logger_names, registry_full_error,
     registry_has_room_for,
@@ -86,9 +88,11 @@ pub(crate) fn commit_staged_loggers(
     {
         let parent_name = calculate_parent_name(&name);
         let logger = Py::new(py, FemtoLogger::with_parent(name.clone(), parent_name)?)?;
+        #[cfg(feature = "log-compat")]
+        index_logger_level(py, &name, &logger);
         mgr.loggers.insert(name, logger);
     }
-    Ok(staged
+    let committed: BTreeMap<String, Py<FemtoLogger>> = staged
         .into_iter()
         .map(|(name, logger)| {
             let committed = mgr
@@ -96,7 +100,19 @@ pub(crate) fn commit_staged_loggers(
                 .entry(name.clone())
                 .or_insert(logger)
                 .clone_ref(py);
+            #[cfg(feature = "log-compat")]
+            index_logger_level(py, &name, &committed);
             (name, committed)
         })
-        .collect())
+        .collect();
+    // The facade maximum is derived state over the index, so recompute it
+    // before releasing the registry lock. A dispatch that observes the new
+    // index thresholds must also observe the widened prefilter; refreshing
+    // afterwards would leave a window in which an enabled level is filtered
+    // out. Holding the manager lock here is safe: the refresh reads only the
+    // index, which the established manager-then-index order already permits.
+    #[cfg(feature = "log-compat")]
+    crate::log_compat::refresh_global_max_level();
+    drop(mgr);
+    Ok(committed)
 }

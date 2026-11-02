@@ -148,7 +148,7 @@ fn rotation_runs_on_worker_thread() {
     };
     let options = BuilderOptions::new(strategy, None);
     let inner = FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options);
-    let mut handler = FemtoRotatingFileHandler::new_with_rotation_limits(inner, 24, 1);
+    let handler = FemtoRotatingFileHandler::new_with_rotation_limits(inner, 24, 1);
 
     let producer_id = thread::current().id();
     handler
@@ -192,7 +192,7 @@ fn rotation_keeps_producers_non_blocking() {
         overflow_policy: OverflowPolicy::Drop,
     };
     let options = BuilderOptions::new(strategy, None);
-    let mut handler = FemtoRotatingFileHandler::new_with_rotation_limits(
+    let handler = FemtoRotatingFileHandler::new_with_rotation_limits(
         FemtoFileHandler::build_from_worker(writer, DefaultFormatter, handler_cfg, options),
         20,
         1,

@@ -26,6 +26,7 @@ use std::{
     fs::File,
     io::{self, BufWriter, Seek, Write},
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -34,7 +35,8 @@ use pyo3::prelude::*;
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
-use crate::sync::{JoinHandle, Receiver, Sender, bounded};
+use crate::shutdown::ShutdownCompletion;
+use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -54,21 +56,26 @@ pub(crate) use worker::{NoRotation, RotationStrategy};
 pub(super) struct WorkerShutdown {
     /// Worker thread handle retained for joining after completion.
     handle: Option<JoinHandle<()>>,
-    /// Completion signal used to bound the wait before joining.
-    done_rx: Receiver<()>,
+    /// Broadcast completion every closer waits on, so a closer that does not
+    /// own the join handle still observes worker shutdown.
+    completion: Arc<ShutdownCompletion>,
 }
 
 impl WorkerShutdown {
     /// Wait for worker completion and join it when it reports a clean exit.
+    ///
+    /// Every caller waits on the shared completion, including one that finds
+    /// no join handle left: another closer may still be joining a worker that
+    /// has not finished writing its queued records.
     pub(super) fn wait(self) {
-        if let Some(handle) = self.handle {
-            if self.done_rx.recv_timeout(Duration::from_secs(1)).is_err() {
-                log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-                return;
-            }
-            if handle.join().is_err() {
-                log::warn!("FemtoFileHandler: worker thread panicked");
-            }
+        if !self.completion.wait(Duration::from_secs(1)) {
+            log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
+            return;
+        }
+        if let Some(handle) = self.handle
+            && handle.join().is_err()
+        {
+            log::warn!("FemtoFileHandler: worker thread panicked");
         }
     }
 }
@@ -80,13 +87,17 @@ impl WorkerShutdown {
 #[pyclass]
 pub struct FemtoFileHandler {
     /// Sends records and lifecycle commands to the worker; `None` means the
-    /// handler has begun closing and can no longer accept new commands.
-    tx: Option<Sender<FileCommand>>,
+    /// handler has begun closing and can no longer accept new commands. Shared
+    /// so a closer never needs an exclusive borrow while a detached flush call
+    /// still holds a shared one.
+    tx: Mutex<Option<Sender<FileCommand>>>,
     /// Owns the worker join handle so shutdown waits for buffered writes and
     /// rotation work to finish.
-    handle: Option<JoinHandle<()>>,
-    /// Receives the worker's final completion signal after its terminal flush.
-    done_rx: Receiver<()>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+    /// Broadcast completion signalled after the worker's terminal flush, so
+    /// every closer waits for the same shutdown even when another closer has
+    /// already taken the join handle.
+    completion: Arc<ShutdownCompletion>,
     /// Selects the producer-side queue behaviour when delivery cannot proceed.
     overflow_policy: OverflowPolicy,
 }
@@ -180,11 +191,13 @@ impl FemtoFileHandler {
     /// completion before joining the worker when it reports that it has exited.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread.
+    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
+    /// close can start while another thread still holds the handler in a
+    /// detached flush call.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
-            let mut handler = slf.borrow_mut(py);
+            let handler = slf.borrow(py);
             handler.take_shutdown()
         };
         py.detach(move || shutdown.wait());
@@ -254,8 +267,10 @@ impl FemtoFileHandler {
     }
 
     pub fn flush(&self) -> bool {
-        match &self.tx {
-            Some(tx) => self.perform_flush(tx),
+        // Bind first: a guard in the `match` scrutinee lives through the send.
+        let tx = self.tx.lock().clone();
+        match tx {
+            Some(tx) => self.perform_flush(&tx),
             None => false,
         }
     }
@@ -289,24 +304,31 @@ impl FemtoFileHandler {
     /// Close the handler and wait for the worker to stop.
     ///
     /// This method is idempotent. Calling it multiple times is safe; only the
-    /// first call performs shutdown work.
+    /// first call starts shutdown work, and every call waits for the worker to
+    /// finish before returning so a caller never leaves records unwritten.
     ///
     /// Threading
     /// ---------
-    /// The method requires `&mut self`, so callers must ensure exclusive access
-    /// when invoking it. Concurrent calls from multiple threads must be
-    /// synchronized externally (for example, with a `Mutex`).
-    pub fn close(&mut self) {
+    /// The method takes `&self` and may be called concurrently. The first call
+    /// takes the worker state; every call waits for the same completion
+    /// broadcast, so a caller never returns while the worker is still writing
+    /// queued records.
+    pub fn close(&self) {
         self.take_shutdown().wait();
     }
 
     /// Marks the handler closed and transfers worker state to the shutdown
     /// operation so it can wait without borrowing the Python object.
-    pub(super) fn take_shutdown(&mut self) -> WorkerShutdown {
-        self.tx.take();
+    pub(super) fn take_shutdown(&self) -> WorkerShutdown {
+        // Each lock is released before `wait`: holding it would block another
+        // closer for the whole shutdown, and holding both would invite a
+        // lock-order inversion with the worker's own teardown.
+        let tx = self.tx.lock().take();
+        drop(tx);
+        let handle = self.handle.lock().take();
         WorkerShutdown {
-            handle: self.handle.take(),
-            done_rx: self.done_rx.clone(),
+            handle,
+            completion: Arc::clone(&self.completion),
         }
     }
 
@@ -331,11 +353,11 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (tx, done_rx, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
+        let (tx, completion, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
-            tx: Some(tx),
-            handle: Some(handle),
-            done_rx,
+            tx: Mutex::new(Some(tx)),
+            handle: Mutex::new(Some(handle)),
+            completion,
             overflow_policy,
         }
     }

@@ -108,7 +108,7 @@ fn femto_file_handler_flush_and_close_idempotency() {
         flush_interval: 0,
         overflow_policy: OverflowPolicy::Block,
     };
-    let mut handler = FemtoFileHandler::build_from_worker(
+    let handler = FemtoFileHandler::build_from_worker(
         writer,
         DefaultFormatter,
         handler_cfg,
