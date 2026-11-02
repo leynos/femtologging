@@ -864,6 +864,17 @@ Trace links, from issue #436 to milestone:
   connect is now given the shared connection deadline, though `std` offers no
   timed Unix connect, so the residual is documented in the users' guide beside
   the resolver exception rather than claimed fixed.
+- 2026-11-02: Rebased onto `origin/main` at `9e6640d` from the boundary
+  `f26b696`, replaying ten commits. Only three paths were changed on both sides
+  - `docs/users-guide.md`, `rust_extension/src/lib.rs` and
+  `rust_extension/src/stream_handler.rs` - and all three replayed without a
+  conflict. The stream handler keeps main's `StreamShutdown` completion model
+  *and* this branch's `Python::try_attach` drop guard, which now calls the new
+  `&self` `close`; the attribute helper `Python` reaches via `pyo3::prelude::*`
+  is unchanged, so the guard compiles against the merged module. The guide
+  keeps main's rewritten stdlib-adapter and file-handler prose and this
+  branch's socket and HTTP close contracts. `git range-diff` reports every
+  replayed commit as `=`, and `git diff --check` is clean.
 
 ## Outcomes & retrospective
 
