@@ -78,9 +78,13 @@ fn flush_draining_a_due_call_does_not_claim_its_interval() {
 
         let mut flush_counts = Vec::new();
         warner.flush(|count| flush_counts.push(count));
+        // Release the paused warning thread before asserting: a failed
+        // assertion would otherwise unwind past the barrier and leave
+        // `thread::scope` joining a thread that can never resume, turning a
+        // regression into a hung test run instead of a failure.
+        clock.resume.wait();
         assert_eq!(flush_counts, vec![1]);
         assert_eq!(warner.pending_drops(), 0);
-        clock.resume.wait();
     });
 
     assert!(

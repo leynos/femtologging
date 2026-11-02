@@ -994,3 +994,23 @@ The branch is two commits behind `origin/main` (`9e6640d`), both of which change
 `log_compat` and frame filtering. Rebasing would invalidate the gate evidence
 above, and the branch touches none of those files, so the gated tip is the
 review candidate and CI validates the merge.
+
+2026-11-02: CodeRabbit reviewed the gated tip and raised three findings, all
+accepted and fixed:
+
+- A concurrency test asserted before releasing the clock barrier, so a failure
+  would unwind past the release and leave `thread::scope` joining a thread that
+  could never resume; the release now happens before the assertions.
+- `FemtoStreamHandler` flushed pending drops only in `close()`, but the Python
+  `close()` path calls `take_shutdown()` directly and the object stays alive
+  afterwards, so `Drop` never ran to report them. The flush moved into
+  `take_shutdown()`, with a unit test that asserts the pending count reaches
+  zero there.
+- `FemtoLogger::flush_handlers_blocking()` flushed the drop warners before
+  waiting for the dispatch queue to drain, so a record refused during the wait
+  was recorded after the flush and left pending. The warners are now flushed
+  last, with a regression test that refuses a record mid-drain and asserts the
+  same flush reports both drops.
+
+The tip must pass the deterministic gates again before the next review round,
+because this review changed code after the `da4f859` gate run.

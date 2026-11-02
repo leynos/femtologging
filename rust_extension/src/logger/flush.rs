@@ -73,7 +73,6 @@ impl FemtoLogger {
     /// its span when it is created, before the drain, so an external
     /// subscriber sees the wait as part of the operation.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
-        self.flush_drop_warners();
         let observer = production_flush_observer();
         let outcome =
             measure_flush_attempt(&crate::monotonic_clock::SystemClock, &observer, || {
@@ -100,15 +99,19 @@ impl FemtoLogger {
     }
 
     /// Classify one flush attempt by its terminal outcome.
+    ///
+    /// The drop warners are reported last, so a record refused while the queue
+    /// drained is included in the same flush. Reported first, it would have
+    /// been recorded after the report and left pending on a flush that is
+    /// documented to say what has been lost.
     fn flush_handlers_inner(&self) -> FlushOutcome {
-        if let Some(failure) = FlushOutcome::from_drain(self.wait_for_dispatch_to_drain()) {
-            return failure;
-        }
-        if self.flush_configured_handlers() {
-            FlushOutcome::Success
-        } else {
-            FlushOutcome::HandlerFailure
-        }
+        let outcome = match FlushOutcome::from_drain(self.wait_for_dispatch_to_drain()) {
+            Some(failure) => failure,
+            None if self.flush_configured_handlers() => FlushOutcome::Success,
+            None => FlushOutcome::HandlerFailure,
+        };
+        self.flush_drop_warners();
+        outcome
     }
 
     /// Wait for the logger's shard to finish the records queued ahead.

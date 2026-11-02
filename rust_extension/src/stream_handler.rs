@@ -278,18 +278,19 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker to finish its queued work.
     ///
-    /// Concurrent callers all wait for the same completion. Any drops still
-    /// pending are reported first: once the handler is closed nothing warns on
-    /// its behalf, so a batch left pending by an active interval would go with
-    /// it unreported.
+    /// Concurrent callers all wait for the same completion.
     pub fn close(&self) {
-        self.warner.flush(warn_dropped);
         self.take_shutdown().wait();
     }
 
     /// Marks the handler closed and transfers worker state to a shutdown
     /// operation that can wait after the Python object borrow is released.
+    ///
+    /// Pending drops are reported here rather than in [`Self::close`], because
+    /// the Python `close()` path calls this directly and the object stays alive
+    /// afterwards, so `Drop` never runs to report them.
     fn take_shutdown(&self) -> StreamShutdown {
+        self.warner.flush(warn_dropped);
         let tx = self.tx.lock().take();
         drop(tx);
         let handle = self.handle.lock().take();
@@ -393,5 +394,30 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the stream handler's shutdown reporting.
+
+    use super::*;
+
+    /// The Python `close()` path calls `take_shutdown` directly, so the flush
+    /// must live there: the Python object stays alive after `handler.close()`,
+    /// and nothing else reports what was still pending.
+    #[test]
+    fn take_shutdown_reports_pending_drops() {
+        let handler = FemtoStreamHandler::new(io::sink(), DefaultFormatter);
+        handler.warner.record_drop();
+        assert_eq!(handler.warner.pending_drops(), 1);
+
+        let shutdown = handler.take_shutdown();
+        assert_eq!(
+            handler.warner.pending_drops(),
+            0,
+            "shutdown must report the drops still pending",
+        );
+        shutdown.wait();
     }
 }
