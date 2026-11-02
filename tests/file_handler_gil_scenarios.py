@@ -19,6 +19,7 @@ import typing as typ
 from .file_handler_gil_close_scenarios import (
     CLOSE_DURING_BODIES,
     CONCURRENT_CLOSE_BODY,
+    CONCURRENT_CLOSE_FLUSH_BODY,
 )
 from .file_handler_gil_wait_scenarios import (
     BLOCK_HOLD_SECONDS,
@@ -265,6 +266,7 @@ _ERROR_TYPES = {
 _BODIES = {
     **WAIT_BODIES,
     "concurrent-close": CONCURRENT_CLOSE_BODY,
+    "concurrent-close-flush": CONCURRENT_CLOSE_FLUSH_BODY,
     **CLOSE_DURING_BODIES,
 }
 

@@ -581,6 +581,36 @@ The inline findings were also applied:
   would collect progress records from its own brief window and pass vacuously.
   `tests/file_handler_gil_support.py` explains the order.
 
+## Review follow-up after `ddf9984`
+
+The review of `ddf9984` requested five documentation corrections. All five were
+valid against the source and are applied in the follow-up commit.
+
+- **Stale plan text.** Task 1 and Task 3 now describe the shipped `py_close`
+  flow and the four test modules, rather than the superseded
+  `self.close()`-inside-`detach` design and a single test module.
+- **`close()` contradiction.** The users' guide no longer claims that a
+  `close()` concurrent with a blocked `handle()` performs its one-second
+  shutdown wait. It now says the borrow refusal raises `RuntimeError` and the
+  wait never starts.
+- **`flush()` and the borrow.** An in-flight `flush()` holds the same shared
+  borrow as a blocked `handle()`, so a concurrent `close()` is refused for
+  both. The users' guide and the migration guide now say so and tell callers to
+  serialize `close()` against both calls. A new `concurrent-close-flush`
+  scenario pins it for the file, rotating, and timed-rotating builders.
+- **Migration-guide structure.** `docs/v0-2-0-migration-guide.md` now has the
+  sections the documentation style guide requires: "Who should read this",
+  "Impact at a glance", numbered task sections, "What does not need to change",
+  "Migration checklist", and "Common errors and fixes". The interpreter-lock
+  change is classified "Review if enabled".
+- **Doctest side effect.** The `run_scenario` example now writes into a
+  `tempfile.TemporaryDirectory()` instead of the repository root, so
+  `pytest --doctest-modules` still executes it without leaving `timeout.log`
+  behind.
+
+The follow-up head's gate and hosted-CI results are recorded in `Progress` once
+that run completes.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -675,7 +705,12 @@ In `rust_extension/src/handlers/file/mod.rs`:
   before the detached section; wrap only the core `handle` call in
   `py.detach(...)`; map the error to `PyRuntimeError` afterwards.
 - `py_flush`: add `py: Python<'_>` and return `py.detach(|| self.flush())`.
-- `py_close`: add `py: Python<'_>` and run `self.close()` inside `py.detach`.
+- `py_close`: take `slf: Py<Self>`, take the exclusive borrow with
+  `try_borrow_mut` for long enough to `take_shutdown()`, and release it before
+  `py.detach(move || shutdown.wait())`. A waiting `handle()` or `flush()` holds
+  a shared borrow, so the refusal is mapped to `RuntimeError` instead of
+  starting the shutdown wait; once a close has taken the shutdown state, later
+  calls observe the closed handler.
 - Do not add a Loom cfg guard: these methods consume the `Python<'_>` token
   supplied by PyO3 and do not attach to Python from a Loom thread. Keep the
   existing Loom feature lane compiling.
@@ -688,10 +723,18 @@ and exception construction stay on the GIL side. Audit builders only.
 
 ### Task 3 — concurrency regression tests
 
-A new Python test module running scenarios with
+Five modules share the work. `tests/file_handler_gil_scenarios.py` joins a
+scenario body to the shared child-interpreter harness and renders a standalone
+program; `tests/file_handler_gil_wait_scenarios.py` and
+`tests/file_handler_gil_close_scenarios.py` hold the bodies;
+`tests/file_handler_gil_support.py` runs each program with
 `subprocess.run([sys.executable, "-c", script], timeout=...)` so a GIL deadlock
 fails the test rather than hanging the suite. Timeout assertions name the
 probable deadlock, and child failures include stderr.
+`tests/test_file_handler_gil_release.py` parametrizes every scenario over the
+file, rotating, and timed-rotating builders. The scenarios pin both the GIL
+release (the watchdog must record progress inside each wait) and the two borrow
+states around `close()`.
 
 ### Task 4 — documentation
 

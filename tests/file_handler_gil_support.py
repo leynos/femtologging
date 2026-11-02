@@ -100,10 +100,14 @@ def run_scenario(builder_name: str, body_name: str, path: Path) -> None:
 
     Examples
     --------
-    Run the bounded enqueue scenario in a fresh interpreter:
+    Run the bounded enqueue scenario in a fresh interpreter. The output path
+    lives in a temporary directory, so the example leaves nothing behind when
+    ``pytest --doctest-modules`` executes it:
 
+    >>> import tempfile
     >>> from pathlib import Path
-    >>> run_scenario("file", "handle-timeout", Path("timeout.log"))
+    >>> with tempfile.TemporaryDirectory() as scratch:
+    ...     run_scenario("file", "handle-timeout", Path(scratch) / "timeout.log")
     """
     _run_scenario(
         render_scenario(builder_name, body_name, path),

@@ -58,6 +58,45 @@ def body():
 guard(body)
 """
 
+#: ``flush()`` also holds its shared borrow for its whole wait -- here on the
+#: worker's acknowledgement -- so a concurrent ``close()`` is rejected just as
+#: it is while ``handle()`` waits on queue capacity. A capacity of 2 leaves a
+#: command slot free for the flush itself, and the worker is released well
+#: inside the flush deadline, so the wait under test is the acknowledgement
+#: rather than the one-second enqueue timeout.
+CONCURRENT_CLOSE_FLUSH_BODY = """
+def body():
+    handler = build_handler({path!r}, OverflowPolicy.block(), capacity=2)
+    results = []
+    saturate(handler)
+    blocked = start_blocked(lambda: results.append(handler.flush()))
+    watchdog = start_watchdog_when_blocked(blocked)
+    try:
+        # ``flush`` is still waiting for the worker's acknowledgement, so its
+        # shared borrow is active when ``close`` asks for the exclusive one.
+        time.sleep({close_hold})
+
+        try:
+            handler.close()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(
+                "close() took the handler while flush() was in flight"
+            )
+    finally:
+        RELEASE_WORKER.set()
+
+    join_blocked(blocked)
+    assert_progress_during("flush", watchdog)
+    assert results == [True], f"the flush unexpectedly reported {{results!r}}"
+    handler.close()
+
+
+guard(body)
+"""
+
+
 #: Shared prologue for the three "operation during close" bodies. The closing
 #: thread takes the shutdown state and then detaches; with a long switch
 #: interval the probing thread can only resume after that, so the operation it
