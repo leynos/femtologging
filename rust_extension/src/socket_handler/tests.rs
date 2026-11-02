@@ -215,6 +215,11 @@ mod close;
 #[path = "drain_tests.rs"]
 mod drain;
 
+// Contracts for the write path of a frame that is already in flight when the
+// shutdown deadline arrives.
+#[path = "slow_collector_tests.rs"]
+mod slow_collector;
+
 #[path = "unit_tests.rs"]
 mod unit;
 

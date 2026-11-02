@@ -405,6 +405,22 @@ socket_handler = (
   discarded, and the count is warned about. The same bound applies when the
   handler is dropped without an explicit `close()`, and the wait runs with the
   GIL released.
+- One record is written in steps, and the remaining budget is recomputed
+  between them. A frame larger than the socket send buffer therefore stops at
+  the deadline with a warning that reports how many bytes were written, instead
+  of spending one socket timeout per buffer-sized chunk. A partial frame leaves
+  the collector with a truncated record, which is the same outcome as a record
+  that arrived after the deadline: the connection is not reused afterwards.
+- Two operations are outside the cooperative cancellation above, and a `close`
+  against either one is answered by detaching the worker rather than joining
+  it. A Unix domain socket connect that finds a full listener backlog blocks
+  until a slot frees or the listener closes, and the standard library offers no
+  timed or non-blocking constructor for it; the deadline is checked before the
+  attempt, so no connect begins once it has passed, but an attempt already
+  blocked is not interrupted. Hostname resolution for a TCP transport has the
+  same limitation for the same reason. In both cases `close()` still returns
+  inside its budget, and the detached worker leaves as soon as its blocking
+  call returns or fails.
 
 ### FemtoHTTPHandler
 

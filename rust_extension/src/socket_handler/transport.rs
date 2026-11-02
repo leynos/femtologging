@@ -103,14 +103,35 @@ impl ActiveConnection {
         }
     }
 
-    /// Write a full buffer to the socket.
-    pub fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        match self {
-            ActiveConnection::PlainTcp(stream) => stream.write_all(buf),
-            ActiveConnection::Tls(stream) => stream.write_all(buf),
+    /// Write as much of `buf` as one socket call accepts, reporting the count.
+    ///
+    /// The caller owns the progress loop, because a single `write_all` cannot
+    /// bound itself: the socket timeout applies to each call, and a collector
+    /// that reads slowly lets a frame larger than the send buffer take as many
+    /// of those timeouts as it needs. A partial count - including `Ok(0)`, which
+    /// this turns into `WriteZero` - is what tells that loop to reconsider the
+    /// remaining budget before it continues.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let written = connection.write_some(b"frame")?;
+    /// assert!(written <= 5);
+    /// ```
+    pub fn write_some(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = match self {
+            ActiveConnection::PlainTcp(stream) => stream.write(buf),
+            ActiveConnection::Tls(stream) => stream.write(buf),
             #[cfg(unix)]
-            ActiveConnection::Unix(stream) => stream.write_all(buf),
+            ActiveConnection::Unix(stream) => stream.write(buf),
+        }?;
+        if written == 0 && !buf.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "the connection accepted no bytes of a non-empty frame",
+            ));
         }
+        Ok(written)
     }
 
     /// Flush the underlying writer.
@@ -122,6 +143,94 @@ impl ActiveConnection {
             ActiveConnection::Unix(stream) => stream.flush(),
         }
     }
+}
+
+/// Sending one complete frame on an [`ActiveConnection`] under a deadline.
+///
+/// Deliberately not a method on the connection: what a frame write has to
+/// decide between calls is not a property of the socket. It needs the
+/// handler's configured budget, the shutdown signal, and the time the write
+/// began, and all three belong to the worker rather than to the transport.
+pub(super) struct FrameWriter<'a> {
+    /// Connection the frame is written to.
+    pub connection: &'a mut ActiveConnection,
+    /// Configured upper bound on one write call; re-clamped per call.
+    pub write_timeout: Duration,
+    /// Stop and budget source consulted before every call.
+    pub signal: &'a ShutdownSignal,
+    /// When the first byte of this frame was attempted.
+    pub started: Instant,
+}
+
+impl FrameWriter<'_> {
+    /// Write every byte of `frame`, or stop at the first point no budget remains.
+    ///
+    /// Neither the configured timeout nor the shutdown budget bounds a whole
+    /// frame on its own: both are per-call ceilings, and a slow collector turns
+    /// one frame into many calls. So each call gets what is left of both, and
+    /// the loop recomputes that remainder after every partial write rather than
+    /// letting a chain of them run for an unbounded multiple of the timeout.
+    ///
+    /// A spent budget returns `TimedOut` with the progress made so far in the
+    /// message, which is the difference between a collector that is slow and
+    /// one that has stopped reading. That error is not a failure of the
+    /// connection: the bytes already written are exactly what the collector
+    /// saw, and the worker treats the record as a shutdown drop.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut writer = FrameWriter { connection: &mut conn, write_timeout, signal, started };
+    /// writer.write_frame(b"framed")?;
+    /// ```
+    pub(super) fn write_frame(&mut self, frame: &[u8]) -> io::Result<()> {
+        let mut written = 0_usize;
+        while written < frame.len() {
+            let Some(budget) = self.remaining_budget() else {
+                return Err(frame_budget_spent(written, frame.len()));
+            };
+            self.connection.set_write_timeout(budget)?;
+            written += self.connection.write_some(&frame[written..])?;
+        }
+        // `flush` can block on the same send queue, so it is the last step and
+        // gets its own fresh clamp: the loop above may already have spent the
+        // budget the frame began with.
+        let Some(budget) = self.remaining_budget() else {
+            return Err(frame_budget_spent(written, frame.len()));
+        };
+        self.connection.set_write_timeout(budget)?;
+        self.connection.flush()
+    }
+
+    /// What remains of the call budget, or `None` when nothing may start.
+    ///
+    /// Two ceilings apply, and neither can outlast the other. The shutdown
+    /// signal's clamp says what the handler's deadline leaves; the frame's own
+    /// elapsed time says what the configured write timeout leaves. A running
+    /// signal contributes no deadline of its own, so the frame's timeout is the
+    /// only ceiling then - which is the ordinary case.
+    fn remaining_budget(&self) -> Option<Duration> {
+        let within_frame = self
+            .write_timeout
+            .checked_sub(self.started.elapsed())
+            .filter(|left| !left.is_zero())?;
+        self.signal.clamp(within_frame)
+    }
+}
+
+/// The error produced when a frame write runs out of budget part-way through.
+///
+/// `TimedOut`, the same kind [`budget_spent`] uses, so the worker's existing
+/// handling applies; the message carries the progress because "wrote 1 MiB of
+/// 4 MiB" and "wrote nothing" are different collectors to go and look at.
+fn frame_budget_spent(written: usize, total: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "shutdown budget spent after writing {written} of {total} frame bytes; \
+             the collector is not keeping up"
+        ),
+    )
 }
 
 /// What one step of a connection attempt may spend.
@@ -185,7 +294,9 @@ pub fn connect_transport(
     let deadline = Instant::now() + connect_timeout;
     match transport {
         SocketTransport::Tcp(config) => connect_tcp_transport(config, deadline, signal),
-        SocketTransport::Unix(config) => connect_unix_transport(config, signal),
+        // The deadline is passed on even though the Windows arm cannot use it:
+        // one shared shape is what keeps the two arms from drifting apart.
+        SocketTransport::Unix(config) => connect_unix_transport(config, deadline, signal),
     }
 }
 
@@ -203,19 +314,30 @@ fn connect_tcp_transport(
     }
 }
 
-/// Connect a Unix socket unless shutdown has already aborted the attempt.
+/// Connect a Unix socket, refusing to start without budget left.
+///
+/// The deadline is consulted before the attempt and not during it. A Unix
+/// stream connect that finds a full listener backlog blocks until a slot frees
+/// or the listener closes, and `std` exposes no timed or non-blocking
+/// constructor for it: the only ways to bound one are a raw non-blocking
+/// socket with a retry loop, or a helper thread. Both are outside what this
+/// change may add, so what is guaranteed here is the narrower contract: no
+/// attempt begins once the deadline has passed, and the caller is told so.
+///
+/// The consequence is recorded in the users' guide beside the resolver
+/// exception, and it is why `close` detaches a worker rather than joining one.
 ///
 /// Example: a live signal connects to the configured socket path.
 #[cfg(unix)]
 fn connect_unix_transport(
     config: &UnixTransport,
+    deadline: Instant,
     signal: &ShutdownSignal,
 ) -> io::Result<ActiveConnection> {
-    if signal.is_aborted() {
-        Err(budget_spent())
-    } else {
-        UnixStream::connect(&config.path).map(ActiveConnection::Unix)
+    if step_budget(signal, deadline).is_none() {
+        return Err(budget_spent());
     }
+    UnixStream::connect(&config.path).map(ActiveConnection::Unix)
 }
 
 /// Return the platform's unsupported error for Unix socket transports.
@@ -224,9 +346,10 @@ fn connect_unix_transport(
 #[cfg(not(unix))]
 fn connect_unix_transport(
     config: &UnixTransport,
+    deadline: Instant,
     signal: &ShutdownSignal,
 ) -> io::Result<ActiveConnection> {
-    let _ = (config, signal);
+    let _ = (config, deadline, signal);
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "unix domain sockets are not supported on this platform",

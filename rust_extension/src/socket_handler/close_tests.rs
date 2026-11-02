@@ -45,6 +45,26 @@ const CLOSE_ALLOWANCE: Duration = Duration::from_millis(700);
 /// The message `abandon_worker` logs, and the marker both close tests turn on.
 const ABANDON_MARKER: &str = "abandoning it rather than blocking the caller";
 
+/// The budget for a close against a worker that can answer it.
+///
+/// Deliberately not a product value. The healthy-close test asserts *which*
+/// path `close` took, and it establishes the worker is idle before asking, so
+/// the only time this budget covers is waking an idle thread and having it
+/// reply. The other close tests supply the bound: they assert a close returns
+/// inside 700ms against a worker that cannot answer at all.
+///
+/// It is generous because this test must not fail on a loaded host. It used to
+/// be a product-sized budget, and it then failed intermittently for a real
+/// reason that took a thread dump to find: `close` published the shutdown
+/// signal before queueing the shutdown command, so a worker that woke on the
+/// signal could leave the loop without ever reading that command, and the
+/// command's unread acknowledgement sender kept the handler waiting out the
+/// whole budget. That is fixed in `request_shutdown`, and the test now has
+/// room to wait for a genuinely idle worker without hiding the bug again: an
+/// unconditional `abandon_worker` still logs its warning immediately and still
+/// fails here.
+const HEALTHY_CLOSE_BUDGET_MS: u64 = 5_000;
+
 /// Build a handler whose worker blocks in a TLS handshake with a stalled peer.
 fn build_stuck_handler(addr: SocketAddr, capacity: usize) -> FemtoSocketHandler {
     let config = SocketHandlerConfig {
@@ -241,9 +261,7 @@ fn a_close_whose_worker_answers_does_not_report_abandoning_it(
     crate::handlers::file::test_support::install_test_logger();
     let mut handler = SocketHandlerBuilder::new()
         .with_tcp(addr.ip().to_string(), addr.port())
-        // Leave an idle worker enough scheduling room to acknowledge shutdown
-        // on a loaded host; other close tests exercise the one-second bound.
-        .with_write_timeout_ms(5_000)
+        .with_write_timeout_ms(HEALTHY_CLOSE_BUDGET_MS)
         .build_inner()
         .expect("build handler");
     send_info_record(&mut handler, "healthy close").expect("record should be queued");

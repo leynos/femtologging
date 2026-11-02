@@ -41,6 +41,33 @@ const CLOSE_BUDGET: Duration = Duration::from_millis(200);
 const CLOSE_ALLOWANCE: Duration = Duration::from_millis(700);
 /// The backoff deadline the worker would run to if nothing stopped it.
 const BACKOFF_DEADLINE: Duration = Duration::from_secs(30);
+/// The close budget for a test that parks the worker at a wait boundary.
+///
+/// The pause hook exists so the test knows the worker is inside its retry
+/// delay before the close is issued, but it holds the worker there while the
+/// product deadline runs. Waking the worker after the test has observed the
+/// shutdown takes two thread hand-offs, and on a loaded host that is
+/// scheduling latency rather than handler behaviour. A budget sized for the
+/// product would make this test measure the host, so it is an order of
+/// magnitude larger; the assertion that a regression is still caught comes
+/// from `PAUSED_CLOSE_ALLOWANCE` staying well under the retry delay, and from
+/// the abandonment warning the abused path would log.
+const PAUSED_CLOSE_BUDGET: Duration = Duration::from_secs(5);
+/// What a close against a parked worker may take.
+///
+/// Above its budget so a loaded host cannot fail a correct close at the
+/// deadline, and still far below the retry delay an unbounded close would wait
+/// out. That delay is [`PAUSED_RETRY_DELAY`]: keeping the two independent is
+/// what lets the allowance be generous against host load without erasing the
+/// difference between an interrupted close and one that sat out the delay.
+const PAUSED_CLOSE_ALLOWANCE: Duration = Duration::from_secs(7);
+/// The retry delay the paused test parks the worker in.
+///
+/// The discriminator: a close that did not interrupt the delay would wait this
+/// out. A loaded host can delay a correct close's hand-offs by seconds, so a
+/// five-second delay left too little room between "the handler interrupted
+/// the wait" and "the host was busy" once the allowance had to be widened.
+const PAUSED_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 /// Spawn a server that answers every request with `status`, for as long as the
 /// test runs, and reports each request it answered.
@@ -105,12 +132,26 @@ fn spawn_stalled_server(listener: TcpListener) -> io::Result<(SocketAddr, mpsc::
 /// Build a handler with a short budget and a backoff deadline far longer than
 /// the test is willing to wait.
 fn build_retrying_handler(addr: SocketAddr, capacity: usize, delay: Duration) -> FemtoHTTPHandler {
+    build_retrying_handler_with_budget(addr, capacity, delay, CLOSE_BUDGET)
+}
+
+/// Build a retrying handler whose close budget is chosen by the caller.
+///
+/// The budget is separate from the backoff delay because the two answer
+/// different questions: the delay says how long the worker would keep retrying,
+/// and the budget says how long the caller is willing to wait for it to stop.
+fn build_retrying_handler_with_budget(
+    addr: SocketAddr,
+    capacity: usize,
+    delay: Duration,
+    close_budget: Duration,
+) -> FemtoHTTPHandler {
     let config = HTTPHandlerConfig {
         url: format!("http://{addr}/log"),
         method: HTTPMethod::POST,
         capacity,
-        connect_timeout: CLOSE_BUDGET,
-        write_timeout: CLOSE_BUDGET,
+        connect_timeout: close_budget,
+        write_timeout: close_budget,
         backoff: BackoffPolicy {
             base: delay,
             cap: delay,
@@ -170,13 +211,22 @@ fn a_retryable_endpoint_does_not_outlast_the_close_budget(
 /// The five-second delay keeps the worker there until close starts, and the
 /// pause hook holds it at the wait boundary until the test observes shutdown.
 /// This makes the ordering deterministic even when the test thread is delayed.
+///
+/// The close budget is larger than the product one for that reason: the hook
+/// parks the worker while the deadline runs, so the woken worker has to
+/// acknowledge across two thread hand-offs. Sizing the budget for the product
+/// would assert the host's scheduler instead of the handler's behaviour. The
+/// contract still bites, because `PAUSED_CLOSE_ALLOWANCE` is far below
+/// [`PAUSED_RETRY_DELAY`]: a `thread::sleep` that never saw the shutdown would
+/// hold the close for a full minute.
 #[rstest]
 #[serial_test::serial]
 fn a_close_during_a_retry_delay_is_answered_from_it(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let (addr, answered) = spawn_perpetual_server(tcp_listener, 503).expect("spawn server");
     crate::handlers::file::test_support::install_test_logger();
-    let mut handler = build_retrying_handler(addr, 16, Duration::from_secs(5));
+    let mut handler =
+        build_retrying_handler_with_budget(addr, 16, PAUSED_RETRY_DELAY, PAUSED_CLOSE_BUDGET);
     let (delays, resume_delay) = handler.pause_next_wait();
     send_info_record(&handler, "retrying").expect("record should be queued");
     answered
@@ -209,15 +259,15 @@ fn a_close_during_a_retry_delay_is_answered_from_it(tcp_listener: io::Result<Tcp
         .expect("resume the worker after shutdown is visible");
 
     let elapsed = close_done_rx
-        .recv_timeout(CLOSE_ALLOWANCE)
+        .recv_timeout(PAUSED_CLOSE_ALLOWANCE)
         .expect("close should finish within its deadline and scheduling margin");
     close_thread
         .join()
         .expect("the close thread should not panic");
     assert!(
-        elapsed < CLOSE_ALLOWANCE,
+        elapsed < PAUSED_CLOSE_ALLOWANCE,
         "close must not wait out a retry delay: took {elapsed:?}, allowed \
-         {CLOSE_ALLOWANCE:?}"
+         {PAUSED_CLOSE_ALLOWANCE:?}"
     );
     assert!(
         matches!(answered.try_recv(), Err(mpsc::TryRecvError::Empty)),

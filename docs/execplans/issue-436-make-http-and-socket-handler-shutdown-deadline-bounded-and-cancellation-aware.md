@@ -130,7 +130,7 @@ with the drop/discard helpers, and the response classifier.
 
 The tests are
 `rust_extension/src/http_handler/{close_tests,drain_tests,retry_tests}.rs`,
-`rust_extension/src/socket_handler/{close_tests,drain_tests}.rs`,
+`rust_extension/src/socket_handler/{close_tests,drain_tests,slow_collector_tests}.rs`,
 `rust_extension/src/shutdown_signal_tests.rs`, and the Python-level
 `tests/test_http_handler.py` and `tests/test_socket_handler_close.py`.
 
@@ -414,6 +414,47 @@ Trace links, from issue #436 to milestone:
   the socket does its final silent flush first. Focused tests queue a shutdown
   before a record held in HTTP I/O or a TLS handshake and assert that no
   acknowledgement is available until the record completes.
+- (2026-11-02) A blocking socket write is bounded *per call*, not per write
+  operation, and `write_all` is the operation. Measured on this host with
+  `SO_SNDTIMEO` at 200 ms and a collector reading 4 KiB every 20 ms, one
+  `write()` of 4 MiB returned `Ok(2613675)` after 202.5 ms: the call made all
+  the progress the buffer allowed and then reported a partial count, rather
+  than failing. The unbounded behaviour in the finding was therefore
+  `write_all`'s loop - each partial write spending another full timeout without
+  re-reading the shutdown state - and the fix has to own that loop. Loopback
+  accepted about 2.59 MB (peer receive buffer 131,072) before blocking, which
+  is what the 4 MiB test frame is sized against.
+- (2026-11-02) The std library has neither a timed nor a non-blocking Unix
+  connect: `UnixStream::connect` and `connect_addr` both block and neither
+  takes a timeout. `socket2` is absent from `Cargo.lock` and the Constraints
+  forbid adding a dependency, so a bounded Unix connect cannot be implemented
+  here. `UnixListener::bind` also calls `listen(fd, -1)`, which Linux caps to
+  `somaxconn`, so a std listener cannot present the saturated backlog the
+  suggested regression test needs. The narrowest honest contract - check the
+  deadline before starting, never start after it - is implemented and the
+  residual is documented, which is the exception the finding authorised.
+- (2026-11-02) Both paused-wait tests park the worker inside the wait hook
+  while the product deadline runs, so the acknowledgement needs two thread
+  hand-offs after the resume; at the product's 200 ms budget that can lose on a
+  loaded host. Each now separates its *fallback clock* from its
+  *discriminator*: the close budget and allowance are generous (5 s and 7 s)
+  while the retry delay the worker would otherwise sleep out is 60 s, so host
+  load cannot make the test measure itself and an uninterruptible sleep still
+  fails it.
+- (2026-11-02) `a_close_whose_worker_answers_does_not_report_abandoning_it`
+  was not a fixture problem, and it took a thread dump to see that. A
+  `eu-stack` capture 4 s into a hang showed three tasks - main, the test thread
+  in `recv_deadline`, and the test's listener in `accept4` - and no worker at
+  all. The handler published the shutdown signal before queueing the shutdown
+  command, so a worker that woke on the signal could leave the loop without
+  ever reading that command; because the handler still held the sender, the
+  queued command stayed alive and kept the acknowledgement channel open, and
+  `close` sat out its entire budget before abandoning a worker that had already
+  finished. The fix is to drop the handler's sender once the command is queued:
+  a live worker still reads what was queued, and one that left drops the queue,
+  which drops the command and disconnects the acknowledgement - the case
+  `request_shutdown` already treated as "the worker has left". Two channel
+  property tests in `unit_tests.rs` pin the behaviour.
 
 ## Decision log
 
@@ -461,6 +502,23 @@ Trace links, from issue #436 to milestone:
     worker to be in a delay, which measures the host rather than the handler.
     The hook is absent from every shipped build.
   - Date: 2026-10-16.
+- Decision: `FemtoSocketHandler::request_shutdown` drops its command sender
+  before awaiting the acknowledgement, and `FrameWriter` owns the write loop.
+  - Rationale: the signal is published before the command is queued, so a
+    worker may leave on the signal without reading the command. While the
+    handler kept a sender alive, that unread command kept the acknowledgement
+    channel open and `close` waited out its whole budget. Dropping the sender
+    makes "the worker left" a disconnect, which the wait already handled. The
+    write loop moved out of `write_all` for the same reason at the other end: a
+    socket timeout bounds one call, so only a loop that re-clamps between calls
+    can respect the deadline.
+  - Date: 2026-11-02.
+- Decision: split the socket's in-flight write contracts into
+  `slow_collector_tests.rs`.
+  - Rationale: `drain_tests.rs` is about the shutdown *signal* reaching a worker
+    that is not reading commands; a frame already in flight is a different
+    concern, so the split is feature-coherent rather than only a size fix.
+  - Date: 2026-11-02.
 
 ## Progress
 
@@ -795,6 +853,17 @@ Trace links, from issue #436 to milestone:
   comments now reflect their implementations, the example uses `Arc::clone` and
   states that shutdown stops retries, and the Loom wrapper constructs its inner
   lock. Rerun all deterministic gates before the next review.
+- 2026-11-02: The review's two remaining findings are addressed in the socket
+  transport and worker. `ActiveConnection::write_some` reports one call's
+  progress, and a new `FrameWriter` loop recomputes the clamp before every
+  call, so a frame write stops at the deadline instead of running for one
+  socket timeout per bufferful.
+  `a_slow_collector_does_not_outlast_the_shutdown_budget` checks the worker's
+  exit rather than only `close()`'s duration, which is what the finding asked
+  for: `close` detaches and returns inside its budget either way. The Unix
+  connect is now given the shared connection deadline, though `std` offers no
+  timed Unix connect, so the residual is documented in the users' guide beside
+  the resolver exception rather than claimed fixed.
 
 ## Outcomes & retrospective
 

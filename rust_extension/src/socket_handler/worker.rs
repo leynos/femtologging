@@ -26,7 +26,7 @@ use super::{
     backoff::BackoffState,
     config::SocketHandlerConfig,
     serialize::{frame_payload, serialize_record},
-    transport::{ActiveConnection, connect_transport},
+    transport::{ActiveConnection, FrameWriter, connect_transport},
 };
 
 /// Commands processed by the worker thread.
@@ -179,17 +179,24 @@ impl Worker {
         }
         // Re-clamped here because opening the connection may itself have spent
         // the budget: a write started after a slow connect must not be handed
-        // the configuration's full write timeout.
-        let Some(timeout) = self.signal.clamp(self.config.write_timeout) else {
+        // the configuration's full write timeout on the shutdown deadline.
+        if self.signal.clamp(self.config.write_timeout).is_none() {
             self.warn_shutdown_drops();
             return;
-        };
+        }
         if let Some(conn) = self.connection.as_mut() {
-            let write_result = conn
-                .set_write_timeout(timeout)
-                .and_then(|_| conn.write_all(frame))
-                .and_then(|_| conn.flush());
-            match write_result {
+            // `FrameWriter` re-clamps between calls; see its own docs for why a
+            // `write_all` here could outlast the deadline. The frame's clock
+            // starts now rather than at `now`, because a connect that took time
+            // was already bounded by the connect timeout, and charging one
+            // against the other would fail writes that never blocked at all.
+            let mut writer = FrameWriter {
+                connection: conn,
+                write_timeout: self.config.write_timeout,
+                signal: &self.signal,
+                started: Instant::now(),
+            };
+            match writer.write_frame(frame) {
                 Ok(()) => {
                     self.backoff.record_success(now);
                     self.backoff.reset_after_idle(now);

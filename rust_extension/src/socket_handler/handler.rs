@@ -44,6 +44,15 @@ pub struct FemtoSocketHandler {
     signal: Option<Arc<ShutdownSignal>>,
     /// Budget shared by flush and shutdown waits.
     flush_timeout: Duration,
+    /// Handle of a worker this handler gave up waiting for.
+    ///
+    /// `abandon_worker` normally drops the handle, which detaches the thread
+    /// so nothing can join it later. A test that asserts the detached worker
+    /// actually left needs to observe the thread itself, so under `cfg(test)`
+    /// the handle is kept here instead. Nothing joins it: the proof is its
+    /// completion, and joining would put the unbounded wait back.
+    #[cfg(test)]
+    abandoned: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl FemtoSocketHandler {
@@ -64,6 +73,8 @@ impl FemtoSocketHandler {
             warner,
             signal: Some(signal),
             flush_timeout,
+            #[cfg(test)]
+            abandoned: Mutex::new(None),
         }
     }
 
@@ -140,6 +151,21 @@ impl FemtoSocketHandler {
                 return ShutdownOutcome::TimedOut;
             }
         }
+        // Give up the last sender now the command is queued. The worker also
+        // stops on the signal alone, so it can leave the loop between the
+        // signal above and the command below - and it would then never read
+        // this command, which owns the only real acknowledgement sender. While
+        // this sender lived, the queue stayed allocated and that unread command
+        // kept the acknowledgement channel open, so the wait below had nothing
+        // to read and nothing to disconnect it: `close` sat out its entire
+        // budget, and abandoned a worker that had already finished.
+        //
+        // Dropping it cannot lose a live acknowledgement. A worker still in its
+        // loop reads queued commands after every sender is gone; one that has
+        // already left drops the queue, which drops the unread command and so
+        // disconnects the acknowledgement channel, and that is what the wait
+        // below already reads as "the worker has left".
+        drop(tx);
         match ack_rx.recv_deadline(deadline) {
             Ok(()) => ShutdownOutcome::Finished,
             // The worker dropped the acknowledgement channel without using it,
@@ -147,61 +173,6 @@ impl FemtoSocketHandler {
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
         }
-    }
-
-    /// Ask to be told when the worker next begins a backoff delay.
-    ///
-    /// Exposed for tests, and only compiled for them. A test that asserts a
-    /// close is observed *during* a retry delay has to know the worker reached
-    /// that delay first; the alternative is a sleep long enough to guess it,
-    /// which measures the host rather than the handler.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let backoffs = handler.wait_notification();
-    /// handler.handle(record).expect("queue the record");
-    /// backoffs.recv_timeout(one_second).expect("the worker should be backing off");
-    /// ```
-    #[cfg(test)]
-    pub(crate) fn wait_notification(&self) -> std::sync::mpsc::Receiver<()> {
-        self.signal
-            .as_ref()
-            .expect("an open handler has a signal")
-            .notify_on_wait()
-    }
-
-    /// Pause the worker at its next backoff wait until the test resumes it.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let (started, resume) = handler.pause_next_wait();
-    /// started.recv().expect("the worker reached backoff");
-    /// resume.send(()).expect("resume the worker");
-    /// ```
-    #[cfg(test)]
-    pub(crate) fn pause_next_wait(
-        &self,
-    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
-        self.signal
-            .as_ref()
-            .expect("an open handler has a signal")
-            .pause_next_wait()
-    }
-
-    /// Clone the worker signal so a test can observe shutdown before releasing
-    /// a worker paused at the backoff boundary.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let signal = handler.signal_for_test();
-    /// assert!(!signal.is_shutting_down());
-    /// ```
-    #[cfg(test)]
-    pub(crate) fn signal_for_test(&self) -> Arc<ShutdownSignal> {
-        Arc::clone(self.signal.as_ref().expect("an open handler has a signal"))
     }
 
     /// Join the worker after its acknowledgement or channel disconnection.
@@ -237,6 +208,11 @@ impl FemtoSocketHandler {
              abandoning it rather than blocking the caller",
             self.flush_timeout
         );
+        #[cfg(test)]
+        {
+            *self.abandoned.lock() = self.handle.lock().take();
+        }
+        #[cfg(not(test))]
         self.handle.lock().take();
     }
 }
@@ -370,3 +346,7 @@ impl std::fmt::Debug for FemtoSocketHandler {
             .finish()
     }
 }
+
+#[cfg(test)]
+#[path = "handler_test_accessors.rs"]
+mod test_accessors;
