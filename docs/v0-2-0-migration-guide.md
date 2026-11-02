@@ -379,11 +379,11 @@ The behaviour that stays the same is the one that makes this safe to adopt:
   waits, so calls made during the wait reach a handler that is already closed:
   `handle()` raises `RuntimeError`, `flush()` returns `False`, and a second
   `close()` shares the same completion wait. The timed-rotating binding reports
-  that closed handler from `handle()` as `ValueError`. A `handle()` or `flush()`
-  call that is still waiting holds its shared borrow for the whole wait, but a
-  concurrent `close()` needs only a shared borrow too, so it does not raise; it
-  takes the shutdown state and waits on the same completion signal, bounded by
-  its one-second deadline.
+  that closed handler from `handle()` as `ValueError`. A `handle()` or
+  `flush()` call that is still waiting holds its shared borrow for the whole
+  wait, but a concurrent `close()` needs only a shared borrow too, so it does
+  not raise; it takes the shutdown state and waits on the same completion
+  signal, bounded by its one-second deadline.
 - The handler destructor still performs shutdown with the interpreter lock
   held. Call `close()` explicitly during shutdown to get the detached wait.
 
@@ -527,7 +527,6 @@ ______________________________________________________________________
 | Error                                                                     | Fix                                                                                                   |
 | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `AttributeError: 'BasicConfig' object has no attribute 'filename_backup'` | Use one of the five declared fields, or keep the value in the caller's own structure.                 |
-| `RuntimeError: Cannot close the handler while another call is using it`   | Stop in-flight `handle()` and `flush()` calls before calling `close()`.                               |
 | `RuntimeError: Python-backed handlers must provide contextual dispatch`   | Give the handler contextual-dispatch support, or register it through `ConfigBuilder` or `dictConfig`. |
 
 _Table 2: Diagnostics introduced in v0.2.0 and their remedies._

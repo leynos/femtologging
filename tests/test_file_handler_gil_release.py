@@ -92,10 +92,10 @@ def test_close_while_handle_is_blocked_returns_without_raising(
 
 @pytest.mark.concurrency
 @pytest.mark.parametrize("builder_name", BUILDER_NAMES)
-def test_close_while_flush_is_in_flight_raises_runtime_error(
+def test_close_while_flush_is_in_flight_returns_without_raising(
     tmp_path: Path, builder_name: str
 ) -> None:
-    """A concurrent ``close()`` must not take a handler a flush is using."""
+    """A concurrent ``close()`` must wait on the shared completion signal."""
     path = tmp_path / f"{builder_name}-concurrent-close-flush.log"
     run_scenario(builder_name, "concurrent-close-flush", path)
 
