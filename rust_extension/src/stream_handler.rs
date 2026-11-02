@@ -8,18 +8,9 @@
 mod shutdown;
 
 use std::{
-    io::{self, Write},
-    time::{Duration, Instant},
 };
-use crate::handler::{FemtoHandlerTrait, capped_deadline, deadline_after, remaining};
-use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
 use crate::{
-    formatter::{DefaultFormatter, FemtoFormatter},
-    log_record::FemtoLogRecord,
-    rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
 };
-use log::warn;
-use pyo3::prelude::*;
 mod trait_impl;
 
 use std::{
@@ -31,7 +22,7 @@ use std::{
 use log::warn;
 use pyo3::prelude::*;
 
-use crate::handler::{FemtoHandlerTrait, capped_deadline, remaining};
+use crate::handler::{FemtoHandlerTrait, capped_deadline, deadline_after, remaining};
 use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
 use crate::{
@@ -181,6 +172,7 @@ pub struct FemtoStreamHandler {
 }
 
 
+
 #[pymethods]
 impl FemtoStreamHandler {
     /// Constructs the Python-facing default handler, which writes to stderr.
@@ -256,6 +248,7 @@ impl FemtoStreamHandler {
         py.detach(move || shutdown.wait());
     }
 }
+
 
 
 
