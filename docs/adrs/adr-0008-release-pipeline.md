@@ -134,6 +134,14 @@ downloaded from the release that an earlier run attached. A carried-over
 artefact with no matching attestation fails verification and leaves the release
 as a draft rather than attaching a bundle for other bytes.
 
+The `verify` check is structural, not cryptographic. It reads each bundle's
+in-toto subjects and compares their digests with the published bytes; it does
+not validate the bundle's signature or signing certificate, and it does not run
+`gh attestation verify`. An actor able to write release assets already controls
+the bytes this check covers, so structural coverage is the intended guarantee.
+Cryptographic provenance verification would be a change to the release contract
+rather than a fix to this check.
+
 ### Production and test feature sets
 
 The Cargo defaults remain unchanged:

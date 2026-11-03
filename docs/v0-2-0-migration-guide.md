@@ -283,6 +283,28 @@ For the complete parameter and error contract, see
 
 ______________________________________________________________________
 
+## Production wheels omit the timed-rotation test hooks
+
+The persistent `[tool.maturin]` feature set is now `["python"]` rather than
+`["test-util"]`. Wheels and the source distribution therefore no longer export
+`set_timed_rotation_test_times_for_test` or
+`clear_timed_rotation_test_times_for_test`, and `femtologging._has_test_util` is
+`False`. Their underscore-prefixed Python wrappers,
+`_set_timed_rotation_test_times_for_test` and
+`_clear_timed_rotation_test_times_for_test`, are retained as compatibility
+shims: the setter raises `RuntimeError` because the feature is absent, and the
+clearer does nothing.
+
+These helpers were never supported runtime API. Code that relied on them must
+build the extension with the `test-util` feature, either by setting
+`UV_CONFIG_FILE=.github/uv-test-util.toml` for a source install or by passing
+`--features python,test-util` to a development build. The rotating
+fresh-failure helpers `_force_rotating_fresh_failure_for_test` and
+`_clear_rotating_fresh_failure_for_test` remain exposed in every build, but
+they are test-only as well and carry no support guarantee.
+
+______________________________________________________________________
+
 ## Unchanged APIs
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,

@@ -415,6 +415,45 @@ attached to the release, either by this run or by an earlier one. A
 carried-over file with no matching attestation fails verification and leaves
 the release as a draft.
 
+The check is structural rather than cryptographic: it compares in-toto subject
+digests with the published bytes and does not validate the Sigstore signature
+or certificate, nor does it run `gh attestation verify`. An actor able to write
+release assets already controls those bytes, so structural coverage is the
+intended guarantee; cryptographic provenance verification would be a change to
+the release contract.
+
+### Reconciling release assets locally
+
+`scripts.release_assets_cli` is the entry point the `release.yml` jobs use after
+`build` and `attest`. It has no network access: workflow steps fetch the PyPI
+Simple index and the GitHub Release asset list with `gh` or `curl`, then pass
+the saved files to the CLI. Run a command from the repository root as
+`python3 -m scripts.release_assets_cli <command>`.
+
+Every command reads the build directory through `--publish`. `--index` is
+required by every command except `carryover`, and `--assets` is always
+required; both name snapshots that the caller has already downloaded.
+
+| Command         | Required paths                                                                 | Optional paths       | Effect                                                                                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carryover`     | `--publish`, `--assets`                                                        | –                    | Prints names held by both the build and the release, one per line, for a caller that downloads them.                                                                                                                              |
+| `stage-pypi`    | `--publish`, `--index`, `--assets`, `--github-files`, `--github-output`        | –                    | Copies upload candidates into `--github-files` and writes `remaining=true` or `remaining=false` to `--github-output`.                                                                                                             |
+| `stage-github`  | `--publish`, `--index`, `--assets`, `--bundles`, `--output`, `--github-output` | `--github-files`     | Stages missing release assets into `--output` and copies bundles whose subjects match them. Prints `name<TAB>url` for files whose canonical bytes are on PyPI, and writes `pending=true` or `pending=false` to `--github-output`. |
+| `check-fetched` | `--publish`, `--index`, `--assets`, `--output`                                 | –                    | Compares each file in `--output` downloaded from PyPI with its index digest and fails on a mismatch.                                                                                                                              |
+| `verify`        | `--publish`, `--index`, `--assets`, `--bundles`                                | `--existing-bundles` | Fails unless both destinations hold the same SHA-256 digest for every distribution file and every one is attested. Prints a success line when they are.                                                                           |
+
+Commands return `0` on success and `1` on a reconciliation error, which is
+printed to standard error as `::error title=release-assets::<reason>`.
+`--existing-bundles` names the bundles an earlier run attached to the release;
+without it, `verify` can only account for the bundles staged in the current run.
+
+The commands implement the precedence described above rather than re-deriving
+it. `stage-pypi` omits names PyPI already holds, `stage-github` prefers PyPI
+bytes and prints the URLs its caller must fetch, `check-fetched` confirms those
+downloads match the index, and `verify` compares both destinations. See
+[Publishing a release](#publishing-a-release) for the release contract these
+checks enforce.
+
 ### Required publishing settings
 
 Configure these settings manually before the first tag:
