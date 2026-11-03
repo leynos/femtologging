@@ -320,16 +320,19 @@ fields with safe defaults does not require a version bump.
 - Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
   Always close the handler when the application shuts down. `close()` is
   idempotent and safe to call multiple times; only the first call performs
-  shutdown work, and every call waits for the worker to stop. Prefer calling
-  `close()` explicitly: the destructor performs the same shutdown, but it runs
-  with the interpreter lock held, so it cannot offer the GIL release described
-  below.
+  shutdown work, and every call waits on the same completion signal. That wait
+  is bounded to one second: if the worker does not signal completion within
+  that second, `close()` logs a warning and returns while the worker may still
+  be running, so a timed-out close is not confirmation that queued records have
+  been written. Prefer calling `close()` explicitly: the destructor performs
+  the same shutdown, but it runs with the interpreter lock held, so it cannot
+  offer the GIL release described below.
 - In Rust, `close()` takes `&self` and may be called concurrently on a shared
   handler, including while another thread flushes it. Every closer observes the
-  same completion signal, so none returns while the worker is still writing
-  queued records, and a closer that arrives after the worker has stopped
-  returns immediately. The wait remains bounded by the handler's timeout: a
-  worker that never signals completion is reported and skipped.
+  same completion signal, and a closer that arrives after the worker has
+  stopped returns immediately. Each wait is bounded to one second: a worker
+  that does not signal completion in that window is reported, and the call
+  returns without joining it.
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Pass a callable, a `FormatterBuilder`, or a named
