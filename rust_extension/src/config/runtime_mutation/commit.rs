@@ -14,10 +14,11 @@ use crate::{
         types::HandlerBuilder,
     },
     filters::{FemtoFilter, FilterBuilder},
-    logger::{FemtoLogger, HandlerAttachment},
+    logger::{DetachedOwners, FemtoLogger, HandlerAttachment},
     manager::{self, LoggerAttachmentState, RuntimeStateSnapshot},
 };
 
+use super::super::DeferredDrop;
 use super::{KnownIds, LoggerScalarMutation, RuntimeConfigBuilder, SharedFilters, SharedHandlers};
 
 /// Built handler and filter registries ready to merge into the runtime snapshot.
@@ -204,7 +205,16 @@ fn build_registry<Builder, Value, BuildError>(
 }
 
 /// Publishes live logger attachments and the registry snapshot after validation succeeds.
-pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(), ConfigError> {
+///
+/// Owners that this commit displaces are pushed onto `deferred_drop` instead of
+/// being released here. The caller releases that bundle only after the runtime
+/// transaction guard is gone, so a Python finalizer cannot re-enter a held
+/// transaction.
+pub(crate) fn apply_commit(
+    py: Python<'_>,
+    commit: &RuntimeCommit,
+    deferred_drop: &mut DeferredDrop,
+) -> Result<(), ConfigError> {
     let logger_updates = commit
         .impacted_loggers
         .iter()
@@ -222,7 +232,14 @@ pub(crate) fn apply_commit(py: Python<'_>, commit: &RuntimeCommit) -> Result<(),
         commit.filter_registry.clone(),
         commit.logger_states.clone(),
     ));
-    displaced.drop_without_gil(py);
+    // Hand the displaced owners to the caller's bundle rather than dropping
+    // them here: the transaction guard is still held, and this path never prunes
+    // definitions, so the bootstrapping-only fields stay empty.
+    deferred_drop.detached.push(DetachedOwners {
+        attachments: displaced.handlers,
+        filters: displaced.filters,
+    });
+    deferred_drop.snapshots.extend(displaced.runtime_state);
     Ok(())
 }
 

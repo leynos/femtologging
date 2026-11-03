@@ -13,8 +13,11 @@ use std::{
 
 use pyo3::prelude::*;
 
+#[cfg(feature = "python")]
+use crate::config::{lock_runtime_transaction, reachability::ReachableIds};
 use crate::{
     filters::FemtoFilter,
+    handler::FemtoHandlerTrait,
     level::FemtoLevel,
     logger::{FemtoLogger, HandlerAttachment},
 };
@@ -75,6 +78,10 @@ pub(crate) struct DisplacedAttachments {
     /// Staged logger handles not inserted because their names were registered
     /// by another caller before commit.
     pub(crate) unused_loggers: Vec<Py<FemtoLogger>>,
+    /// Handler definitions dropped from the published registry as unreachable.
+    pub(crate) unreachable_handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    /// Filter definitions dropped from the published registry as unreachable.
+    pub(crate) unreachable_filters: Vec<Arc<dyn FemtoFilter>>,
     /// The previous runtime registry snapshot, retained until after unlock.
     pub(crate) runtime_state: Option<RuntimeStateSnapshot>,
 }
@@ -109,10 +116,11 @@ struct LoggerStateUpdate {
 /// Apply a fully prepared configuration as one atomic transition.
 ///
 /// Preparation has validated every logger name, resource reference and scalar
-/// setting. This function takes the manager write lock once. Its only fallible
-/// work is the registry capacity check and the creation of missing ancestor
-/// loggers, and both happen before any live logger is changed, so a refusal
-/// leaves every logger exactly as it was.
+/// setting. This function takes the runtime transaction guard, then the manager
+/// write lock, so a concurrent runtime mutation cannot plan from a snapshot this
+/// commit replaces. Its only fallible work is the registry capacity check and
+/// the creation of missing ancestor loggers, and both happen before any live
+/// logger is changed, so a refusal leaves every logger exactly as it was.
 ///
 /// The write lock makes the capacity check authoritative: room consumed by
 /// another caller after staging cannot slip in between. The planned set covers
@@ -134,14 +142,19 @@ pub(crate) fn commit_configuration(
     prepared: PreparedConfiguration,
 ) -> PyResult<DisplacedAttachments> {
     let mut displaced = DisplacedAttachments::default();
+    // Serialize with runtime mutations, which plan from a snapshot and would
+    // otherwise overwrite this configuration with state that never contained
+    // it. The transaction is taken before the manager lock so every
+    // configuration path acquires the two in the same order.
+    let transaction = lock_runtime_transaction(py);
     let mut manager = MANAGER.write();
     let PreparedConfiguration {
         loggers,
         disable_existing,
         keep_names,
-        handler_registry,
-        handler_filter_ids,
-        filter_registry,
+        mut handler_registry,
+        mut handler_filter_ids,
+        mut filter_registry,
     } = prepared;
 
     let planned: HashSet<&str> = loggers.iter().map(|plan| plan.name.as_str()).collect();
@@ -156,6 +169,7 @@ pub(crate) fn commit_configuration(
         // those resources are torn down; dropping them under either would
         // deadlock a worker that needs the lock or the interpreter.
         drop(manager);
+        drop(transaction);
         py.detach(move || drop((loggers, handler_registry, filter_registry)));
         return Err(error);
     }
@@ -169,6 +183,18 @@ pub(crate) fn commit_configuration(
     if disable_existing {
         disable_omitted_loggers(py, &manager.loggers, &keep_names, &mut displaced);
     }
+
+    // Publish only definitions a committed logger can still reach: an orphaned
+    // handler would keep its worker thread, queue and file descriptor alive for
+    // the manager's lifetime. Reachability considers every committed state, so a
+    // definition shared with an untouched logger stays published.
+    prune_unreachable_definitions(
+        &mut handler_registry,
+        &mut handler_filter_ids,
+        &mut filter_registry,
+        &logger_states,
+        &mut displaced,
+    );
 
     displaced.runtime_state = Some(std::mem::replace(
         &mut manager.runtime,
@@ -188,7 +214,49 @@ pub(crate) fn commit_configuration(
     #[cfg(feature = "log-compat")]
     crate::log_compat::refresh_global_max_level();
     drop(manager);
+    // Release the transaction before the caller tears displaced resources down:
+    // a Python finalizer they trigger must find the guard free.
+    drop(transaction);
     Ok(displaced)
+}
+
+/// Drop handler and filter definitions that no committed logger can reach.
+///
+/// A handler retains its worker thread, queue and file descriptor, and a filter
+/// may hold the last reference to a Python callable, so an unreachable
+/// definition is a leak for the manager's lifetime. The handler filter chain map
+/// is pruned with the registries so a later runtime mutation cannot resolve a
+/// filter chain for a handler that is no longer published.
+fn prune_unreachable_definitions(
+    handler_registry: &mut SharedHandlers,
+    handler_filter_ids: &mut BTreeMap<String, Vec<String>>,
+    filter_registry: &mut SharedFilters,
+    logger_states: &BTreeMap<String, LoggerAttachmentState>,
+    displaced: &mut DisplacedAttachments,
+) {
+    let reachable = ReachableIds::from_logger_states_and_handler_filters(
+        logger_states.values(),
+        handler_filter_ids,
+    );
+    // Removing a definition here would be its last reference, and dropping a
+    // handler joins its worker while a filter may run a Python finalizer.
+    // Retain a clone in `displaced` so teardown happens after the manager lock
+    // and the GIL are released.
+    handler_registry.retain(|handler_id, handler| {
+        let is_reachable = reachable.handlers.contains(handler_id);
+        if !is_reachable {
+            displaced.unreachable_handlers.push(handler.clone());
+        }
+        is_reachable
+    });
+    filter_registry.retain(|filter_id, filter| {
+        let is_reachable = reachable.filters.contains(filter_id);
+        if !is_reachable {
+            displaced.unreachable_filters.push(filter.clone());
+        }
+        is_reachable
+    });
+    handler_filter_ids.retain(|handler_id, _| reachable.handlers.contains(handler_id));
 }
 
 /// Apply one resolved plan to its adopted or newly registered logger.

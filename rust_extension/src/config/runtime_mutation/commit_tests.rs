@@ -6,7 +6,7 @@ use pyo3::Python;
 use serial_test::serial;
 
 use super::*;
-use crate::{FemtoLevel, manager};
+use crate::{FemtoLevel, config::DeferredDrop, manager};
 
 #[test]
 #[serial]
@@ -51,7 +51,8 @@ fn later_logger_resolution_failure_keeps_earlier_logger_unchanged() {
             )]),
         };
 
-        let error = apply_commit(py, &commit).expect_err("missing attachment should be rejected");
+        let error = apply_commit(py, &commit, &mut DeferredDrop::default())
+            .expect_err("missing attachment should be rejected");
         assert!(matches!(
             error,
             ConfigError::InvalidMutation(message)
