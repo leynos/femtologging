@@ -78,8 +78,11 @@ finding `3e0c8fe12a0081918a117d28e165c10e` define the implementation scope:
 Python-exposed file-handler waits must release the GIL, and the block and
 timeout policies must be covered by observable concurrency tests. The issue's
 acceptance items map to Tasks 1–4 below and the verification obligations in
-this plan. There is no separate Terms of Reference, technical design, or ADR
-for this issue; no new public signature or dependency is introduced.
+this plan. The design contract for the detached waits is recorded in the
+"Python-facing lifecycle waits" section of
+[the design document](../rust-multithreaded-logging-framework-for-python-design.md);
+no new public signature or dependency is introduced, so no separate Terms of
+Reference or ADR is required.
 
 ## Verification plan
 
@@ -118,8 +121,10 @@ for this issue; no new public signature or dependency is introduced.
   changes are introduced; Loom continues to cover the Rust channel lifecycle,
   while the Python subprocess tests cover the GIL boundary.
 - **Documentation invariant:** the user and developer contract stays aligned
-  with the implementation and builder outputs. `make markdownlint` checks
-  prose, spelling, and links; `make nixie` checks diagrams.
+  with the implementation and builder outputs, and the design document's
+  "Python-facing lifecycle waits" section states the boundary the bindings
+  implement. `make markdownlint` checks prose, spelling, and links;
+  `make nixie` checks diagrams.
 
 ## Progress
 
@@ -280,6 +285,30 @@ for this issue; no new public signature or dependency is introduced.
       `test_close_while_flush_is_in_flight_returns_without_raising`. The
       `FemtoLogRecord` import moved from `file/mod.rs` to `file/tests.rs`,
       which is its only non-binding user, clearing an unused-import warning.
+
+- [x] Rebased `6602359` onto `origin/main` at `3e1c9ef3` (#548). All 29
+      branch-owned commits replayed with no conflicts; `git range-diff`
+      reported `=` for every entry, so each patch was preserved exactly. The
+      Weave driver was bypassed because only global attributes selected it,
+      and the branch touched none of main's files, so no lockfile needed
+      rebuilding. The rebased head is `c70a125d`.
+- [x] Addressed the two remaining review findings in `c70a125d`.
+      `concurrent-close-flush` no longer parks the worker for
+      `CLOSE_HOLD_SECONDS`: it settles, checks that the flush is still active,
+      starts the close on its own thread, checks that the closer is still
+      active, and then releases the worker. The ExecPlan no longer describes
+      the follow-up gate run as pending.
+- [x] Completed the documentation pass for the review's Developer Documentation
+      and Observability warnings. The design document's "Python-facing
+      lifecycle waits" section now covers the direct `handle()` wait, the
+      `py.detach` boundary, parsing and exception construction on the
+      interpreter side, the three file-handler wrappers, and the shared
+      close-borrow contract. The developer guide's scope sentence now names
+      the bindings that detach `flush()` from those that remain follow-up
+      work. Issue
+      [#551](https://github.com/leynos/femtologging/issues/551) was extended
+      to cover the `handle()` enqueue wait, which is this plan's disposition
+      for the handler-wait telemetry warning.
 
 ## Negative control (evidence that the tests detect the defect)
 

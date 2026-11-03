@@ -653,7 +653,9 @@ block, and the rotating and timed-rotating wrappers that delegate to it, take a
 `handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
 (`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
 (`send_timeout`). Other Python-exposed handler families also have operations
-that may block; the HTTP, socket, and stream bindings remain follow-up work.
+that may block. The stream and HTTP bindings detach their `flush()` waits, but
+the socket bindings' `flush()` and `close()`, and the HTTP `close()`, remain
+follow-up work.
 
 `py.detach` requires its closure and return type to implement `Ungil`. On
 stable Rust, PyO3 approximates that requirement through `Send`, so the bound
