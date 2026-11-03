@@ -780,8 +780,9 @@ interruptions without attributing host contention to the implementation.
 
 `rust_extension/src/handlers/file/` holds the shared file handler:
 
-- `mod.rs` — the `#[pyclass]` `FemtoFileHandler` and its `#[pymethods]` block
-  (`py_new`, `py_handle`, `py_flush`, `py_close`);
+- `mod.rs` — the `#[pyclass]` `FemtoFileHandler`;
+- `python.rs` — its `#[pymethods]` block (`py_new`, `py_handle`, `py_flush`,
+  `py_close`);
 - `handler_impl.rs` — `FemtoHandlerTrait::handle`, which sends through a
   `crossbeam_channel::Sender` whose behaviour depends on `OverflowPolicy`;
 - `worker.rs` — the file worker thread, `FileCommand`, and the flush
@@ -799,7 +800,7 @@ accepts `py: Python<'_>` and returns `py.detach(|| self.flush())`.
 
 ### Task 1 — shared `FemtoFileHandler` bindings
 
-In `rust_extension/src/handlers/file/mod.rs`:
+In `rust_extension/src/handlers/file/python.rs`:
 
 - `py_handle`: add `py: Python<'_>`; parse the level and build the record
   before the detached section; wrap only the core `handle` call in

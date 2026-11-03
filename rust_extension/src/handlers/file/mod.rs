@@ -205,15 +205,17 @@ impl FemtoFileHandler {
     /// Close the handler and wait for the worker to stop.
     ///
     /// This method is idempotent. Calling it multiple times is safe; only the
-    /// first call starts shutdown work, and every call waits for the worker to
-    /// finish before returning so a caller never leaves records unwritten.
+    /// first call starts shutdown work, and every call waits on the same
+    /// bounded completion signal. A wait that reaches its one-second limit
+    /// logs a warning and returns without joining the worker, so a timed-out
+    /// call does not confirm that queued records have been written.
     ///
     /// Threading
     /// ---------
     /// The method takes `&self` and may be called concurrently. The first call
     /// takes the worker state; every call waits for the same completion
-    /// broadcast, so a caller never returns while the worker is still writing
-    /// queued records.
+    /// broadcast, so concurrent closers share one shutdown rather than
+    /// competing for the join handle.
     pub fn close(&self) {
         self.take_shutdown().wait();
     }

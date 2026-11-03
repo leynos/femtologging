@@ -224,9 +224,8 @@ release that borrow, and then release the GIL while they wait for the worker.
 Concurrent `close()` calls, or a `close()` beside a detached `flush()`, do not
 contend for the handler. Every caller waits on the same completion broadcast,
 so one closer does not return early merely because another has already taken
-the shutdown state; the wait stays bounded by the handler's timeout. Preserve
-the handlers' existing timeouts and idempotent-close behaviour when changing
-this boundary.
+the shutdown state; each wait is bounded to one second. Preserve the handlers'
+existing timeouts and idempotent-close behaviour when changing this boundary.
 
 ### Handler shutdown signal, clock and condition-variable seams
 
@@ -900,15 +899,15 @@ borrow, several threads may close the same handler, and a close may start while
 a detached flush is still running. Each closer waits on one completion
 broadcast: every caller observes the worker's exit, and a closer that arrives
 after the worker has already stopped returns without waiting out its timeout. A
-repeated `close()` is therefore safe and still returns only once the worker has
-stopped.
+repeated `close()` is therefore safe and observes the same bounded wait.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush
 timeout and `False` otherwise, and `close()` still returns `None`. The wait in
-`close()` remains bounded by the handler's timeout: a worker that does not
-signal completion in time is reported and skipped rather than waited on
-indefinitely.
+`close()` is bounded to one second, not by the overflow policy's timeout: a
+worker that does not signal completion within that second is reported and
+skipped rather than waited on indefinitely, and the call returns while the
+worker may still be running.
 
 ## Configuration transaction
 
