@@ -64,36 +64,41 @@ guard(body)
 #: shutdown state and waits on the shared completion signal without raising;
 #: the in-flight flush still completes once the worker is released. A capacity
 #: of 2 leaves a command slot free for the flush itself, so the wait under test
-#: is the acknowledgement rather than the one-second enqueue timeout.
+#: is the acknowledgement rather than the one-second enqueue timeout. This body
+#: probes the borrow and leaves progress-duration validation to the ``flush-ack``
+#: scenario: a fixed hold here would race the flush's one-second deadline on a
+#: loaded host without adding evidence about the GIL.
 CONCURRENT_CLOSE_FLUSH_BODY = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block(), capacity=2)
     results = []
     saturate(handler)
     blocked = start_blocked(lambda: results.append(handler.flush()))
-    watchdog = start_watchdog_when_blocked(blocked)
+    # The worker is parked and the queue has a free slot, so ``flush`` is
+    # waiting on the worker's acknowledgement; its shared borrow is active.
+    time.sleep({settle})
+    assert blocked.is_alive(), "flush returned before the worker was released"
+    close_entered = threading.Event()
     close_failures = []
 
     def close_handler():
+        close_entered.set()
         try:
             handler.close()
         except Exception as err:
             close_failures.append(err)
 
-    # ``flush`` is still waiting for the worker's acknowledgement, so its
-    # shared borrow is active when ``close`` starts. ``close`` must wait for
-    # the worker rather than rejecting the handler.
+    # ``close`` must take the shutdown state and wait for the worker rather
+    # than rejecting the handler or returning while the worker is parked.
     closer = start_blocked(close_handler)
-    try:
-        time.sleep({close_hold})
-        assert closer.is_alive(), "close returned before the worker was released"
-    finally:
-        RELEASE_WORKER.set()
+    assert close_entered.wait(CHILD_WAIT), "the close call never started"
+    time.sleep({settle})
+    assert closer.is_alive(), "close returned before the worker was released"
+    RELEASE_WORKER.set()
 
     join_blocked(blocked)
     join_blocked(closer)
     assert not close_failures, f"close() failed unexpectedly: {{close_failures!r}}"
-    assert_progress_during("flush", watchdog)
     assert results == [True], f"the flush unexpectedly reported {{results!r}}"
     handler.close()
 

@@ -681,9 +681,6 @@ valid against the source and are applied in the follow-up commit.
   `pytest --doctest-modules` still executes it without leaving `timeout.log`
   behind.
 
-The follow-up head's gate and hosted-CI results are recorded in `Progress` once
-that run completes.
-
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core

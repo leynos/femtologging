@@ -318,6 +318,7 @@ def render_scenario(builder_name: str, body_name: str, path: Path) -> str:
             timeout_ms=TIMEOUT_MS,
             hold=BLOCK_HOLD_SECONDS,
             close_hold=CLOSE_HOLD_SECONDS,
+            settle=SETTLE_SECONDS,
             error_type=_ERROR_TYPES[builder_name],
         )
     )
