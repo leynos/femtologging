@@ -878,6 +878,15 @@ Trace links, from issue #436 to milestone:
   rewritten stdlib-adapter and file-handler prose and this branch's socket and
   HTTP close contracts. `git range-diff` reports every replayed commit as `=`,
   and `git diff --check` is clean.
+- 2026-11-03: Rebased again onto `origin/main` at `077bc0e`, from the boundary
+  `9e6640d`, replaying thirteen commits. It was a fast-forward-only rebase: the
+  two commits that landed in between touched only `uv.lock` and
+  `.github/workflows/ci.yml`, and this branch touches no packaging file at all,
+  so `uv.lock` is taken from `main` unchanged and needed no regeneration. Every
+  replayed commit is again reported as `=` by `git range-diff`, and
+  `git diff --check` is clean. No conflict resolution was required, which is
+  evidence rather than luck: the paths the branch and the target share are all
+  from the earlier replay.
 
 ## Outcomes & retrospective
 
