@@ -887,6 +887,28 @@ Trace links, from issue #436 to milestone:
   `git diff --check` is clean. No conflict resolution was required, which is
   evidence rather than luck: the paths the branch and the target share are all
   from the earlier replay.
+- 2026-11-04: The full `make test` run failed
+  `http_handler::tests::drain::a_close_during_a_retry_delay_is_answered_from_it`
+  with the abandonment warning, while the same test passed 12/12 alone and the
+  whole drain module passed 40/40 alone. The host was at load 56 on 24 cores
+  with a deep compiler-admission queue, but that was a symptom rather than the
+  cause. The test's pause hook made the worker block in an unbounded
+  `mpsc::recv` *before* it had read the shutdown phase, and the test released
+  that block only after close had started. Both thread hand-offs therefore ran
+  inside close's budget, so a correct close could spend the whole budget and be
+  abandoned, which flips the assertion from "not abandoned" to abandoned with
+  no product defect involved. The hook is now notification-only: the worker is
+  told when it reaches the wait and then goes on to observe the phase itself.
+  The delay is sixty seconds against a two-second budget, so the worker is
+  still in the delay when the close lands, and nothing but the signal can end
+  it. The budget is a real product-sized value instead of the five-second
+  accommodation the hook forced, with the allowance above it for host load. The
+  socket drain test needed the same change, and both tests now hold an
+  `Arc<ShutdownSignal>` clone for their duration: the worker dropping the last
+  reference closes the notification channel, which `try_recv` reports as
+  `Disconnected` rather than `Empty`, and the retry assertion reads that as a
+  retry. Both drain modules together now run in 0.44 s, against the five
+  seconds the pause hook spent parked.
 
 ## Outcomes & retrospective
 

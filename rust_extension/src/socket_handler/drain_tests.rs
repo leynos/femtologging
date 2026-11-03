@@ -36,30 +36,28 @@ pub(super) const BUSY_WINDOW: Duration = Duration::from_secs(10);
 pub(super) const CLOSE_BUDGET: Duration = Duration::from_millis(200);
 /// The shutdown budget plus 500ms for scheduling.
 pub(super) const CLOSE_ALLOWANCE: Duration = Duration::from_millis(700);
-/// The close budget for a test that parks the worker at a wait boundary.
+/// The close budget for a test whose worker is known to be in a retry delay.
 ///
-/// The pause hook holds the worker inside its retry delay while the product
-/// deadline runs, so waking it and receiving its acknowledgement afterwards
-/// costs two thread hand-offs. On a loaded host that is scheduling latency,
-/// not handler behaviour; a budget sized for the product would make this test
-/// measure the host.
-const PAUSED_CLOSE_BUDGET: Duration = Duration::from_secs(5);
-/// What a close against a parked worker may take.
+/// The notification fires when the worker enters the delay, and the delay is
+/// [`PAUSED_RETRY_DELAY`], so the worker is still waiting when the close is
+/// issued. It is not held there: the shutdown has the whole budget to wake it
+/// and receive its acknowledgement, which is the behaviour under test. An
+/// earlier version parked the worker until the test released it, which put the
+/// test's own hand-off inside this budget; on a loaded host that made a correct
+/// close miss its deadline and be abandoned.
+const SLEEPING_CLOSE_BUDGET: Duration = Duration::from_secs(2);
+/// What a close against a sleeping worker may take.
 ///
 /// Above its budget so a loaded host cannot fail a correct close at the
-/// deadline, and still below the retry delay an unbounded close would wait
-/// out. That delay is [`PAUSED_RETRY_DELAY`], deliberately not a product
-/// value and not tied to this allowance: on a loaded host a correct close's
-/// hand-offs can take seconds, so the margin between a correct close and an
-/// unbounded one has to be wide enough to survive that without widening the
-/// allowance until it stops discriminating.
-const PAUSED_CLOSE_ALLOWANCE: Duration = Duration::from_secs(7);
+/// deadline, and far below the retry delay an uninterruptible close would wait
+/// out. That delay is [`PAUSED_RETRY_DELAY`], deliberately not a product value
+/// and not tied to this allowance: the gap between them is what keeps the test
+/// meaningful while the allowance absorbs host load.
+const SLEEPING_CLOSE_ALLOWANCE: Duration = Duration::from_secs(4);
 /// How long the worker retries before trying again.
 ///
-/// The discriminator for the paused test: a close that did not interrupt the
-/// backoff would wait this out. It is much longer than any scheduling delay a
-/// correct close can suffer, which is what keeps the test meaningful while its
-/// allowance is generous.
+/// The discriminator for the sleeping test: a close that did not interrupt the
+/// backoff would wait this out.
 const PAUSED_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 /// The message `abandon_worker` logs, and the marker a close that gave up on
@@ -144,11 +142,10 @@ fn build_stalled_handler(addr: SocketAddr, capacity: usize) -> FemtoSocketHandle
 /// entirely, and the close would take the abandonment path - which is the other
 /// thing asserted, because a worker that wakes should be joined.
 ///
-/// The close budget is larger than the product one because the pause hook
-/// holds the worker there while the deadline runs, leaving two thread
-/// hand-offs between the resume and the acknowledgement. `PAUSED_CLOSE_ALLOWANCE`
-/// stays far below [`PAUSED_RETRY_DELAY`], so an uninterruptible sleep still
-/// fails it however generous the allowance has to be for host load.
+/// The worker is left to sleep: the delay is minutes away from elapsing, so
+/// nothing but the signal can end it sooner. `SLEEPING_CLOSE_ALLOWANCE` stays
+/// far below [`PAUSED_RETRY_DELAY`], so an uninterruptible sleep still fails it
+/// however generous the allowance has to be for host load.
 ///
 /// `#[serial]` because the tests here read one process-wide log capture: the
 /// stuck closes assert the abandonment and discard messages are present, and
@@ -161,14 +158,17 @@ fn build_stalled_handler(addr: SocketAddr, capacity: usize) -> FemtoSocketHandle
 fn close_during_a_connect_backoff_is_answered_from_it() {
     let addr = closed_port().expect("reserve an unlistened address");
     crate::handlers::file::test_support::install_test_logger();
-    let mut handler = build_unconnectable_handler(addr, PAUSED_CLOSE_BUDGET, PAUSED_RETRY_DELAY);
-    let (backoffs, resume_backoff) = handler.pause_next_wait();
+    let mut handler = build_unconnectable_handler(addr, SLEEPING_CLOSE_BUDGET, PAUSED_RETRY_DELAY);
+    // Held for the rest of the test so the notification channel stays open:
+    // the worker dropping its own reference is how the signal is freed, and a
+    // closed channel would be indistinguishable from one that never fired.
+    let signal = handler.signal_for_test();
+    let backoffs = signal.notify_on_wait();
     send_info_record(&mut handler, "unreachable").expect("record should be queued");
     backoffs
         .recv_timeout(CONNECT_ALLOWANCE)
         .expect("the worker should enter a connect backoff");
-    let next_backoff = handler.wait_notification();
-    let signal = handler.signal_for_test();
+    let next_backoff = signal.notify_on_wait();
     let (close_done_tx, close_done_rx) = mpsc::channel();
     let close_thread = thread::spawn(move || {
         let started = Instant::now();
@@ -178,29 +178,17 @@ fn close_during_a_connect_backoff_is_answered_from_it() {
             .expect("the test should still be waiting for close");
     });
 
-    let shutdown_wait_started = Instant::now();
-    while !signal.is_shutting_down() {
-        assert!(
-            shutdown_wait_started.elapsed() < CONNECT_ALLOWANCE,
-            "close should publish shutdown before the paused wait resumes"
-        );
-        thread::yield_now();
-    }
-    resume_backoff
-        .send(())
-        .expect("resume the worker after shutdown is visible");
-
     let elapsed = close_done_rx
-        .recv_timeout(PAUSED_CLOSE_ALLOWANCE)
+        .recv_timeout(SLEEPING_CLOSE_ALLOWANCE)
         .expect("close should finish within its deadline and scheduling margin");
     close_thread
         .join()
         .expect("the close thread should not panic");
 
     assert!(
-        elapsed < PAUSED_CLOSE_ALLOWANCE,
+        elapsed < SLEEPING_CLOSE_ALLOWANCE,
         "close must not wait out a connect backoff: took {elapsed:?}, allowed \
-         {PAUSED_CLOSE_ALLOWANCE:?}"
+         {SLEEPING_CLOSE_ALLOWANCE:?}"
     );
     assert!(
         matches!(

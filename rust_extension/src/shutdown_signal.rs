@@ -89,17 +89,13 @@ pub struct ShutdownSignal {
     /// backoff has to know the worker reached the backoff first, and a sleep
     /// long enough to guess that on a loaded host is a test that measures the
     /// host. This channel is that knowledge.
+    ///
+    /// Notification only: the worker is never held here. An earlier version
+    /// also parked the worker until the test released it, which put that
+    /// hand-off inside the handler's shutdown budget and made a correct close
+    /// look like one that had missed its deadline.
     #[cfg(test)]
-    waiting: Mutex<Option<WaitHook>>,
-}
-
-/// Test coordination for observing and pausing a worker's next timed wait.
-#[cfg(test)]
-struct WaitHook {
-    /// Notifies the test when the worker reaches the wait.
-    started: mpsc::Sender<()>,
-    /// Releases the worker when the test has observed shutdown.
-    resume: Option<mpsc::Receiver<()>>,
+    waiting: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 impl ShutdownSignal {
@@ -251,6 +247,13 @@ impl ShutdownSignal {
     /// when it fires, so a test that observes one wait is told about one wait
     /// and cannot be satisfied by a later retry's sleep.
     ///
+    /// The worker is not held at the wait: it goes on to observe the phase as
+    /// usual. A test that wants the close to land *while* the worker is in the
+    /// delay uses a delay far longer than the shutdown budget, so the worker is
+    /// still waiting when the shutdown arrives however quickly the test thread
+    /// runs. Holding it instead would fold the test's own hand-off into the
+    /// budget under test.
+    ///
     /// This exists only for tests, and is compiled only for them.
     ///
     /// # Examples
@@ -264,36 +267,8 @@ impl ShutdownSignal {
     #[cfg(test)]
     pub fn notify_on_wait(&self) -> mpsc::Receiver<()> {
         let (tx, rx) = mpsc::channel();
-        *self.waiting.lock() = Some(WaitHook {
-            started: tx,
-            resume: None,
-        });
+        *self.waiting.lock() = Some(tx);
         rx
-    }
-
-    /// Pause the next wait until the test releases it.
-    ///
-    /// This lets a test place a shutdown between a worker reaching backoff and
-    /// the worker entering its timed wait, without relying on the backoff's
-    /// random jitter to leave enough time for the test thread to run.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let (started, resume) = signal.pause_next_wait();
-    /// // Wait until the worker reports that it reached backoff.
-    /// started.recv().expect("worker reached the wait");
-    /// resume.send(()).expect("resume the worker");
-    /// ```
-    #[cfg(test)]
-    pub fn pause_next_wait(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
-        let (started_tx, started_rx) = mpsc::channel();
-        let (resume_tx, resume_rx) = mpsc::channel();
-        *self.waiting.lock() = Some(WaitHook {
-            started: started_tx,
-            resume: Some(resume_rx),
-        });
-        (started_rx, resume_tx)
     }
 
     /// Tell the test that registered with [`notify_on_wait`] that a wait has
@@ -302,12 +277,8 @@ impl ShutdownSignal {
     /// [`notify_on_wait`]: ShutdownSignal::notify_on_wait
     #[cfg(test)]
     fn announce_wait(&self) {
-        let hook = self.waiting.lock().take();
-        if let Some(hook) = hook {
-            let _ = hook.started.send(());
-            if let Some(resume) = hook.resume {
-                let _ = resume.recv();
-            }
+        if let Some(started) = self.waiting.lock().take() {
+            let _ = started.send(());
         }
     }
 

@@ -38,24 +38,6 @@ impl FemtoSocketHandler {
             .notify_on_wait()
     }
 
-    /// Pause the worker at its next backoff wait until the test resumes it.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let (started, resume) = handler.pause_next_wait();
-    /// started.recv().expect("the worker reached backoff");
-    /// resume.send(()).expect("resume the worker");
-    /// ```
-    pub(crate) fn pause_next_wait(
-        &self,
-    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
-        self.signal
-            .as_ref()
-            .expect("an open handler has a signal")
-            .pause_next_wait()
-    }
-
     /// Report when the worker this handler gave up on finally exits.
     ///
     /// Only a handler that took the abandonment path has a worker to report on.

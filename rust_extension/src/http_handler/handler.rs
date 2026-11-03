@@ -163,31 +163,8 @@ impl FemtoHTTPHandler {
         }
     }
 
-    /// Pause the worker at its next backoff wait until the test resumes it.
-    ///
-    /// This keeps the worker inside the wait until the test has requested
-    /// shutdown, making the interruption check independent of scheduling.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let (backoffs, resume) = handler.pause_next_wait();
-    /// handler.handle(record).expect("queue the record");
-    /// backoffs.recv_timeout(one_second).expect("the worker reached the wait");
-    /// resume.send(()).expect("resume the worker");
-    /// ```
-    #[cfg(test)]
-    pub(crate) fn pause_next_wait(
-        &self,
-    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
-        self.signal
-            .as_ref()
-            .expect("an open handler has a signal")
-            .pause_next_wait()
-    }
-
-    /// Clone the worker signal so tests can observe shutdown before resuming
-    /// a worker paused at the backoff boundary.
+    /// Clone the worker signal so tests can observe that shutdown was
+    /// published before the worker's wait is interrupted.
     ///
     /// # Examples
     ///
