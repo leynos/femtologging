@@ -9,6 +9,7 @@ from femtologging import (
     ConfigBuilder,
     FileHandlerBuilder,
     LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
     StreamHandlerBuilder,
     get_logger,
 )
@@ -123,6 +124,58 @@ def test_explicitly_named_logger_is_reenabled(
     core = get_logger("core")
     assert not core.disabled, "naming the logger again should re-enable it"
     assert core.isEnabledFor("DEBUG"), "the re-enabled logger should honour its level"
+
+
+def test_disabled_logger_skips_ancestor_filter_and_formatter(
+    new_info_stderr_builder: BuilderFactory, tmp_path: pathlib.Path
+) -> None:
+    """A disabled logger's record never reaches ancestor filters or formatters."""
+    builder = new_info_stderr_builder().with_logger(
+        "omitted", LoggerConfigBuilder().with_level("INFO")
+    )
+    builder.build_and_init()
+    omitted = get_logger("omitted")
+
+    filter_calls: list[str] = []
+    formatter_calls: list[str] = []
+
+    def counting_filter(record: object) -> bool:
+        filter_calls.append("filter")
+        return True
+
+    def counting_formatter(record: cabc.Mapping[str, object]) -> str:
+        formatter_calls.append("formatter")
+        return str(record["message"])
+
+    log_path = tmp_path / "root.log"
+    rebuild = (
+        ConfigBuilder()
+        .with_filter("count", PythonCallbackFilterBuilder(counting_filter))
+        .with_handler(
+            "root_file",
+            FileHandlerBuilder(str(log_path))
+            .with_filters(["count"])
+            .with_formatter(counting_formatter),
+        )
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["root_file"])
+        )
+        .with_disable_existing_loggers(DISABLE_EXISTING_LOGGERS)
+    )
+    rebuild.build_and_init()
+
+    assert omitted.disabled, "the omitted logger should be disabled"
+    assert omitted.log("ERROR", "must not escape") is None, (
+        "a disabled logger must reject the record instead of dispatching it"
+    )
+    assert omitted.flush_handlers(), "the omitted logger should flush its (empty) queue"
+    assert get_logger("root").flush_handlers(), "the root handler should flush"
+    assert not filter_calls, (
+        f"a disabled logger's record must not reach ancestor filters: {filter_calls!r}"
+    )
+    assert not formatter_calls, (
+        f"a disabled logger's record must not be formatted: {formatter_calls!r}"
+    )
 
 
 @pytest.mark.parametrize(
