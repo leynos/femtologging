@@ -363,6 +363,20 @@ jobs:
             exit 1
           fi
           gh release upload "${TAG_NAME}" "${assets[@]}"
+      - name: Download existing attestation bundles
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          EXISTING_BUNDLES: existing-bundles
+        run: |
+          set -euo pipefail
+          mkdir -p "${EXISTING_BUNDLES}"
+          while IFS= read -r name; do
+            [ -n "${name}" ] || continue
+            gh release download "${TAG_NAME}" --pattern "${name}" \
+              --dir "${EXISTING_BUNDLES}"
+          done < <(gh release view "${TAG_NAME}" --json assets \
+            --jq '.assets[].name | select(endswith(".sigstore.json"))')
       - name: Verify PyPI and GitHub Release digests
         shell: bash
         env:
@@ -371,12 +385,14 @@ jobs:
           PYPI_INDEX_PATH: pypi-index.json
           GITHUB_ASSETS_PATH: release-assets.json
           ATTESTATION_DIRECTORY: dist/attestations
+          EXISTING_BUNDLES: existing-bundles
         run: |
           set -euo pipefail
           gh release view "${TAG_NAME}" --json assets > "${GITHUB_ASSETS_PATH}"
           python3 -m scripts.release_assets_cli verify \
             --publish "${PUBLISH_DIRECTORY}" --index "${PYPI_INDEX_PATH}" \
-            --assets "${GITHUB_ASSETS_PATH}" --bundles "${ATTESTATION_DIRECTORY}"
+            --assets "${GITHUB_ASSETS_PATH}" --bundles "${ATTESTATION_DIRECTORY}" \
+            --existing-bundles "${EXISTING_BUNDLES}"
       - name: Publish the GitHub Release
         shell: bash
         env:

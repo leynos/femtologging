@@ -55,6 +55,14 @@ class DestinationDigestMismatchError(ReleaseAssetError):
         super().__init__(f"{name} differs between PyPI and the GitHub Release")
 
 
+class MalformedAttestationError(ReleaseAssetError):
+    """A provenance bundle does not contain readable in-toto subjects."""
+
+    def __init__(self, name: str) -> None:
+        """Name the bundle whose subjects could not be read."""
+        super().__init__(f"{name} has no readable in-toto subject digests")
+
+
 class MissingWorkflowOptionError(ReleaseAssetError):
     """A reconciliation command is missing an option it requires."""
 

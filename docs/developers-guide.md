@@ -393,9 +393,11 @@ The workflow then proceeds through these jobs:
 - `publish-pypi` runs in the `pypi` environment with Trusted Publishing. It
   checks the PyPI Simple index, stages names PyPI does not already hold, and
   uploads only those files with `skip-existing` enabled.
-- `publish-release` reconciles the GitHub Release with PyPI, checks that both
-  destinations have the same SHA-256 digest for every distribution file, then
-  publishes the draft. Pre-release status follows the checked Python version.
+- `publish-release` reconciles the GitHub Release with PyPI, attaches only
+  provenance bundles whose subjects match the published bytes, checks that both
+  destinations have the same SHA-256 digest for every distribution file and
+  that every file is attested, then publishes the draft. Pre-release status
+  follows the checked Python version.
 
 Re-running the same tag is safe. Runs for one tag queue rather than cancel each
 other, and the workflow never overwrites an existing filename. For each name,
@@ -405,6 +407,13 @@ rerun has nothing new to upload. If the destinations already hold different
 bytes for the same name, digest verification fails and the release remains a
 draft. PyPI files cannot be deleted; resolve the conflict by removing the
 inconsistent asset from the GitHub Release, then rerun the tag.
+
+Attestations follow the published bytes rather than the current build. A bundle
+that attests a rebuilt file whose canonical bytes came from PyPI is skipped,
+and verification requires every published file to be covered by a bundle
+attached to the release, either by this run or by an earlier one. A
+carried-over file with no matching attestation fails verification and leaves
+the release as a draft.
 
 ### Required publishing settings
 

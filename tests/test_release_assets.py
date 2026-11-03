@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import typing as typ
@@ -54,6 +55,20 @@ def _write(path: Path, contents: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(contents)
     return _digest(contents)
+
+
+def _write_bundle(path: Path, subjects: dict[str, str]) -> None:
+    """Write a minimal Sigstore bundle attesting the given subject digests."""
+    statement = {
+        "subject": [
+            {"name": name, "digest": {"sha256": digest}}
+            for name, digest in subjects.items()
+        ]
+    }
+    payload = base64.b64encode(json.dumps(statement).encode()).decode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {"dsseEnvelope": {"payload": payload}}
+    path.write_text(json.dumps(document), encoding="utf-8")
 
 
 def test_plan_prefers_pypi_then_github_then_this_build() -> None:
@@ -147,9 +162,15 @@ def test_stage_github_uses_pypi_bytes_and_stages_only_absent_bundles(
     old_bundle = "femtologging-old.sigstore.json"
     _write_assets(assets, {old_bundle: _digest(b"old")})
     bundles = tmp_path / "bundles"
-    _write(bundles / old_bundle, b"rebuilt old bundle")
+    _write_bundle(bundles / old_bundle, {local_wheel: _digest(b"old")})
     new_bundle = "femtologging-run-12.sigstore.json"
-    _write(bundles / new_bundle, b"new bundle")
+    _write_bundle(
+        bundles / new_bundle,
+        {
+            local_wheel: _digest(b"new local wheel"),
+            pypi_sdist: _digest(b"published canonical sdist"),
+        },
+    )
     output = tmp_path / "github-upload"
 
     fetch = stage_github(State.load(publish, index, assets), bundles, output)
@@ -161,8 +182,31 @@ def test_stage_github_uses_pypi_bytes_and_stages_only_absent_bundles(
         "GitHub gets canonical PyPI bytes and only new provenance bundles."
     )
     assert not (output / old_bundle).exists(), "existing bundle names are left alone"
-    assert (output / new_bundle).read_bytes() == b"new bundle", (
+    assert (output / new_bundle).exists(), (
         "GitHub gets canonical PyPI bytes and only new provenance bundles."
+    )
+
+
+def test_stage_github_rejects_bundles_attesting_unpublished_bytes(
+    tmp_path: Path,
+) -> None:
+    """A bundle for a rebuilt file is not attached when PyPI holds other bytes."""
+    publish = tmp_path / "publish"
+    name = "femtologging.whl"
+    _write(publish / name, b"fresh local rebuild")
+    index = tmp_path / "index.json"
+    _write_index(index, {name: (b"canonical PyPI bytes", "https://files.test/wheel")})
+    assets = tmp_path / "assets.json"
+    _write_assets(assets, {})
+    bundles = tmp_path / "bundles"
+    bundle = "femtologging-run-12.sigstore.json"
+    _write_bundle(bundles / bundle, {name: _digest(b"fresh local rebuild")})
+    output = tmp_path / "github-upload"
+
+    stage_github(State.load(publish, index, assets), bundles, output)
+
+    assert not (output / bundle).exists(), (
+        "A bundle attesting bytes the release does not publish is never attached."
     )
 
 
@@ -270,8 +314,37 @@ def test_check_fetched_and_verify_detect_digest_mismatches(tmp_path: Path) -> No
     assert any("differs" in issue and name in issue for issue in problems), (
         "Fetched files and both published destinations must have matching hashes."
     )
+    assert any("no attestation" in issue and name in issue for issue in problems), (
+        "An artefact no attached bundle attests is reported."
+    )
     assert digest == _digest(b"same package bytes"), (
         "Fetched files and both published destinations must have matching hashes."
+    )
+
+
+def test_verify_accepts_an_existing_bundle_covering_carried_over_bytes(
+    tmp_path: Path,
+) -> None:
+    """A bundle from an earlier run attests the bytes carried over from PyPI."""
+    publish = tmp_path / "publish"
+    name = "femtologging.whl"
+    _write(publish / name, b"fresh local rebuild")
+    index = tmp_path / "index.json"
+    _write_index(index, {name: (b"canonical PyPI bytes", "https://files.test/wheel")})
+    assets = tmp_path / "assets.json"
+    _write_assets(assets, {name: _digest(b"canonical PyPI bytes")})
+    bundles = tmp_path / "bundles"
+    bundles.mkdir()
+    existing = tmp_path / "existing-bundles"
+    _write_bundle(
+        existing / "femtologging-run-11.sigstore.json",
+        {name: _digest(b"canonical PyPI bytes")},
+    )
+
+    problems = verify(State.load(publish, index, assets), bundles, existing)
+
+    assert problems == [], (
+        "An existing attestation covers the artefact carried over from PyPI."
     )
 
 

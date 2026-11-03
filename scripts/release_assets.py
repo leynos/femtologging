@@ -29,6 +29,10 @@ from scripts.release_asset_io import (
     write_output,
 )
 from scripts.release_asset_plan import Plan, Source, mismatches, plan
+from scripts.release_attestations import (
+    select_bundles,
+    uncovered_artefacts,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -48,6 +52,7 @@ __all__ = [
     "plan",
     "read_github_assets",
     "read_pypi_index",
+    "release_digests",
     "sha256_of",
     "stage_github",
     "stage_pypi",
@@ -202,13 +207,53 @@ def _copy_pypi_gap(
             shutil.copyfile(publish / name, output / name)
 
 
+def release_digests(state: State) -> dict[str, str]:
+    """Return the canonical SHA-256 digest for every artefact name.
+
+    Parameters
+    ----------
+    state
+        Current local file list and destination snapshots.
+
+    Returns
+    -------
+    dict[str, str]
+        Artefact names mapped to the digest of the bytes the release publishes.
+
+    Examples
+    --------
+    A name already on PyPI takes PyPI's digest, not the local rebuild's.
+    """
+    digests: dict[str, str] = {}
+    for name in local_names(state.publish):
+        pypi_file = state.pypi.get(name)
+        github_digest = state.github.get(name)
+        if pypi_file is not None:
+            digests[name] = pypi_file.sha256
+        elif github_digest is not None:
+            digests[name] = github_digest
+        else:
+            digests[name] = sha256_of(state.publish / name)
+    return digests
+
+
 def _copy_unattached_bundles(
-    bundles: Path, github: cabc.Mapping[str, str | None], output: Path
+    bundles: Path,
+    github: cabc.Mapping[str, str | None],
+    output: Path,
+    release: cabc.Mapping[str, str],
 ) -> None:
-    """Copy only provenance bundles the GitHub Release lacks."""
-    for bundle in sorted(bundles.iterdir()):
-        if bundle.is_file() and bundle.name not in github:
-            shutil.copyfile(bundle, output / bundle.name)
+    """Copy only bundles that attest the bytes the release publishes."""
+    candidates = [
+        bundle
+        for bundle in sorted(bundles.iterdir())
+        if bundle.is_file() and bundle.name not in github
+    ]
+    attachable, rejected = select_bundles(candidates, release)
+    for name in rejected:
+        print(f"::notice::Skipping {name}: it does not attest the release bytes")
+    for bundle in attachable:
+        shutil.copyfile(bundle, output / bundle.name)
 
 
 def stage_github(
@@ -261,7 +306,7 @@ def stage_github(
     fetch = _pypi_fetch_list(lacking, state.pypi)
     output.mkdir(parents=True, exist_ok=True)
     _copy_pypi_gap(lacking, state.pypi, state.publish, output)
-    _copy_unattached_bundles(bundles, state.github, output)
+    _copy_unattached_bundles(bundles, state.github, output, release_digests(state))
     return fetch
 
 
@@ -283,8 +328,41 @@ def check_fetched(state: State, output: Path) -> None:
         _check_digest(output / name, state.pypi[name].sha256)
 
 
-def verify(state: State, bundles: Path) -> list[str]:
-    """List artefacts or bundles missing from the reconciled destinations.
+def _attached_bundles(
+    bundles: Path,
+    existing_bundles: Path | None,
+    github: cabc.Mapping[str, str | None],
+) -> list[Path]:
+    """Return the bundles the release carries after this run's upload.
+
+    A bundle from this run counts only when the refreshed GitHub snapshot
+    lists it, because a rejected bundle is never uploaded. Bundles attached by
+    an earlier run are supplied separately, since their subjects are needed to
+    cover artefacts carried over from PyPI.
+
+    Returns
+    -------
+    list[Path]
+        Bundle files whose subjects may cover the published artefacts.
+    """
+    attached = [
+        bundle
+        for bundle in sorted(bundles.iterdir())
+        if bundle.is_file() and bundle.name in github
+    ]
+    if existing_bundles is not None:
+        attached.extend(
+            bundle for bundle in sorted(existing_bundles.iterdir()) if bundle.is_file()
+        )
+    return attached
+
+
+def verify(
+    state: State,
+    bundles: Path,
+    existing_bundles: Path | None = None,
+) -> list[str]:
+    """List artefacts or attestations missing from the reconciled release.
 
     Parameters
     ----------
@@ -292,25 +370,29 @@ def verify(state: State, bundles: Path) -> list[str]:
         Current local files and the latest PyPI and GitHub snapshots.
     bundles
         Directory containing this run's provenance bundles.
+    existing_bundles
+        Optional directory holding bundles already attached to the release.
 
     Returns
     -------
     list[str]
-        Human-readable missing-name and digest-mismatch descriptions. An empty
-        list means every release artefact is present with matching digests.
+        Human-readable missing-name, digest-mismatch, and unattested-artefact
+        descriptions. An empty list means every release artefact is present
+        with matching digests and covered by an attached attestation.
 
     Examples
     --------
     A fully reconciled release returns an empty list of problems.
     """
     pypi = {name: item.sha256 for name, item in state.pypi.items()}
+    release = release_digests(state)
     problems = mismatches(local_names(state.publish), pypi, state.github)
-    missing = sorted(
-        bundle.name
-        for bundle in bundles.iterdir()
-        if bundle.is_file() and bundle.name not in state.github
-    )
+    attached = _attached_bundles(bundles, existing_bundles, state.github)
+    uncovered = uncovered_artefacts(attached, release)
     return [
         *problems,
-        *(f"{name} is missing from the GitHub Release" for name in missing),
+        *(
+            f"{name} has no attestation matching its published bytes"
+            for name in uncovered
+        ),
     ]

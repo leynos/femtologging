@@ -37,6 +37,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--index", type=Path)
     parser.add_argument("--github-files", type=Path)
     parser.add_argument("--bundles", type=Path)
+    parser.add_argument(
+        "--existing-bundles",
+        type=Path,
+        help="Bundles already attached to the release by an earlier run.",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--github-output",
@@ -92,11 +97,11 @@ def _check_fetched(state: State, args: argparse.Namespace) -> None:
 
 
 def _verify(state: State, args: argparse.Namespace) -> None:
-    """Fail unless PyPI and GitHub agree on every artefact digest."""
-    problems = verify(state, _path(args, "bundles"))
+    """Fail unless both destinations agree and every artefact is attested."""
+    problems = verify(state, _path(args, "bundles"), args.existing_bundles)
     if problems:
         raise ReleaseAssetError("; ".join(problems))
-    print("PyPI and the GitHub Release hold matching artefact bytes.")
+    print("PyPI and the GitHub Release hold matching, attested artefact bytes.")
 
 
 _COMMANDS: dict[str, cabc.Callable[[State, argparse.Namespace], None]] = {

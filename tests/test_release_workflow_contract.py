@@ -316,6 +316,7 @@ def test_release_asset_reconciliation_precedes_publication() -> None:
         "Fetch canonical PyPI bytes and refresh its index",
         "Check all fetched PyPI bytes",
         "Upload missing assets to the GitHub Release",
+        "Download existing attestation bundles",
         "Verify PyPI and GitHub Release digests",
         "Publish the GitHub Release",
     ]
