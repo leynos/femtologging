@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.machinery
 import io
 import sys
 import tarfile
 import typing as typ
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,9 +17,6 @@ from scripts import release_wheel_probe
 from tests import conftest
 from tests.make_contract_helpers import sole_workflow_step
 from tests.release_workflow_helpers import run_bash
-
-if typ.TYPE_CHECKING:
-    from pathlib import Path
 
 _REQUIRED = {
     "README.md",
@@ -94,6 +93,27 @@ def test_release_probe_rejects_invalid_installations(
     assert any(
         expected in error for error in release_wheel_probe.release_wheel_errors()
     ), "Report the specific invalid installation."
+
+
+def test_release_probe_accepts_a_production_wheel(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A native extension inside the environment with no hooks passes the probe."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
+    native = SimpleNamespace(__file__=str(origin))
+    monkeypatch.setattr(
+        release_wheel_probe.importlib, "import_module", lambda _: native
+    )
+    monkeypatch.setattr(femtologging, "_has_test_util", False)
+
+    assert not release_wheel_probe.release_wheel_errors(), (
+        "A production native extension reports no violations."
+    )
+    assert release_wheel_probe.main() == 0, "The probe exits successfully."
+    assert capsys.readouterr().out == "release wheel probe passed\n", (
+        "The probe reports its success on standard output."
+    )
 
 
 def test_promised_test_hooks_missing_exits_with_usage_error(
