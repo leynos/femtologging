@@ -691,15 +691,20 @@ valid against the source and are applied in the follow-up commit.
 - **Stale plan text.** Task 1 and Task 3 now describe the shipped `py_close`
   flow and the four test modules, rather than the superseded
   `self.close()`-inside-`detach` design and a single test module.
-- **`close()` contradiction.** The users' guide no longer claims that a
-  `close()` concurrent with a blocked `handle()` performs its one-second
-  shutdown wait. It now says the borrow refusal raises `RuntimeError` and the
-  wait never starts.
-- **`flush()` and the borrow.** An in-flight `flush()` holds the same shared
-  borrow as a blocked `handle()`, so a concurrent `close()` is refused for
-  both. The users' guide and the migration guide now say so and tell callers to
-  serialize `close()` against both calls. A new `concurrent-close-flush`
-  scenario pins it for the file, rotating, and timed-rotating builders.
+- **`close()` contradiction.** The follow-up corrected the users' guide to say
+  that a `close()` concurrent with a blocked `handle()` was refused by the
+  borrow rules: it raised `RuntimeError` and the wait never started.
+  (Superseded by the rebase onto `9e6640de`: `close()` takes only a shared
+  borrow, so it takes the shutdown state, releases the borrow, and waits on
+  the shared completion signal instead of raising. See "Rebase onto
+  `origin/main` at `9e6640de` and reconciliation with #545".)
+- **`flush()` and the borrow.** The follow-up also named `flush()` in the
+  borrow rules: an in-flight `flush()` held the same shared borrow as a
+  blocked `handle()`, so `close()` was refused for both, and callers were told
+  to serialize `close()` against both calls. (Superseded by the rebase onto
+  `9e6640de`: `close()` now starts for both and waits on the shared completion
+  signal. The `concurrent-close-flush` scenario covers the file, rotating, and
+  timed-rotating builders.)
 - **Migration-guide structure.** `docs/v0-2-0-migration-guide.md` now has the
   sections the documentation style guide requires: "Who should read this",
   "Impact at a glance", numbered task sections, "What does not need to change",
@@ -753,7 +758,8 @@ theoretical:
   `close()` there can hold the interpreter lock for half a minute.
 - `rust_extension/src/socket_handler/handler.rs` — `handle`, `flush` and
   `close` all still run with the lock held.
-- `rust_extension/src/stream_handler.rs` — same, all three.
+- `rust_extension/src/stream_handler.rs` — `handle` still runs with the lock
+  held; `flush()` and the blocking part of `close()` detach.
 
 They were left unchanged because the issue's acceptance criteria name the file
 handlers and the builder audit confirmed no builder work is needed; widening
