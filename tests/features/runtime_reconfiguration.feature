@@ -11,6 +11,11 @@ Feature: Runtime handler and filter reconfiguration
     Then logger "core" has 2 handlers
     And logger "core" runtime state matches snapshot
 
+  Scenario: A mutation declaring an unattached handler is rejected
+    When I try to define unattached runtime handler "orphan" targeting "stdout"
+    Then the runtime mutation fails with value error containing "unreferenced definitions"
+    And logger "core" has 1 handlers
+
   Scenario: Replacing filters at runtime
     When I replace logger "core" filters with name filter "name" using prefix "core"
     Then logger "core" emits "ERROR"

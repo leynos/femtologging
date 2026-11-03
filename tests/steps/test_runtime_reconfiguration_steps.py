@@ -30,6 +30,21 @@ FEATURES = Path(__file__).resolve().parents[1] / "features"
 
 scenarios(str(FEATURES / "runtime_reconfiguration.feature"))
 
+_STREAM_HANDLER_FACTORIES = {
+    "stderr": StreamHandlerBuilder.stderr,
+    "stdout": StreamHandlerBuilder.stdout,
+}
+
+
+def _stream_handler_builder(target: str) -> StreamHandlerBuilder:
+    """Build the configured stream handler, preserving the useful error."""
+    normalized_target = target.lower()
+    factory = _STREAM_HANDLER_FACTORIES.get(normalized_target)
+    if factory is None:
+        msg = f"unsupported stream target: {normalized_target}"
+        raise ValueError(msg)
+    return factory()
+
 
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> cabc.Iterator[None]:
@@ -66,14 +81,7 @@ def runtime_configured_logger(name: str) -> str:
 )
 def append_runtime_handler(hid: str, target: str, name: str) -> None:
     """Append a new stream handler to the named logger."""
-    match target.lower():
-        case "stderr":
-            builder = StreamHandlerBuilder.stderr()
-        case "stdout":
-            builder = StreamHandlerBuilder.stdout()
-        case unsupported:
-            msg = f"unsupported stream target: {unsupported}"
-            raise ValueError(msg)
+    builder = _stream_handler_builder(target)
     (
         RuntimeConfigBuilder()
         .with_handler(hid, builder)
@@ -113,6 +121,20 @@ def replace_runtime_filters_with_missing(name: str, fid: str) -> BaseException:
     return excinfo.value
 
 
+@when(
+    parsers.parse(
+        'I try to define unattached runtime handler "{hid}" targeting "{target}"'
+    ),
+    target_fixture="runtime_mutation_error",
+)
+def define_unattached_runtime_handler(hid: str, target: str) -> BaseException:
+    """Capture the rejection of a handler definition no logger attaches."""
+    builder = _stream_handler_builder(target)
+    with pytest.raises(ValueError, match="unreferenced definitions") as excinfo:
+        RuntimeConfigBuilder().with_handler(hid, builder).apply()
+    return excinfo.value
+
+
 @when(parsers.parse('I set root logger level to "{level}" via runtime mutation'))
 def set_root_level(level: str) -> None:
     """Update the root logger level through the runtime control plane."""
@@ -144,17 +166,30 @@ def logger_suppresses(name: str, level: str) -> None:
     assert actual is None, f"expected logger {name} to suppress level {level}"
 
 
+def _assert_mutation_failed_with(
+    error: BaseException, expected_type: type[BaseException], msg: str
+) -> None:
+    """Assert a captured mutation failure has the expected type and message."""
+    assert isinstance(error, expected_type), (
+        f"expected {expected_type.__name__} but got {error!r}"
+    )
+    assert msg in str(error), f"expected {msg!r} in {error!r}"
+
+
 @then(parsers.parse('the runtime mutation fails with key error containing "{msg}"'))
 def mutation_fails_with_key_error(
     runtime_mutation_error: BaseException, msg: str
 ) -> None:
     """Assert that the captured runtime mutation failure mentions the ID."""
-    assert isinstance(runtime_mutation_error, KeyError), (
-        f"expected KeyError but got {runtime_mutation_error!r}"
-    )
-    assert msg in str(runtime_mutation_error), (
-        f"expected {msg!r} in {runtime_mutation_error!r}"
-    )
+    _assert_mutation_failed_with(runtime_mutation_error, KeyError, msg)
+
+
+@then(parsers.parse('the runtime mutation fails with value error containing "{msg}"'))
+def mutation_fails_with_value_error(
+    runtime_mutation_error: BaseException, msg: str
+) -> None:
+    """Assert that the captured runtime mutation failure mentions the reason."""
+    _assert_mutation_failed_with(runtime_mutation_error, ValueError, msg)
 
 
 @then(parsers.parse('logger "{name}" runtime state matches snapshot'))

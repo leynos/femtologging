@@ -7,7 +7,10 @@ use std::{
 
 use pyo3::prelude::*;
 
-use crate::config::ConfigError;
+use crate::config::{
+    ConfigError,
+    reachability::{ReachableIds, prune_filters, prune_handlers},
+};
 use crate::{
     filters::FemtoFilter,
     handler::FemtoHandlerTrait,
@@ -50,62 +53,151 @@ struct BuiltConfigComponents {
     /// Resolved filter chains keyed by handler identifier, in configured order.
     resolved_handler_filters: BTreeMap<String, Vec<Arc<dyn FemtoFilter>>>,
 }
+
+impl ConfiguredLoggerPlan {
+    /// Attach this plan's handlers, filters, and logger settings in place.
+    ///
+    /// Displaced owners go to `deferred_drop`: shutting down a handler worker
+    /// or running a Python finalizer must not happen under the transaction.
+    fn apply(
+        &self,
+        py: Python<'_>,
+        logger: &Py<FemtoLogger>,
+        deferred_drop: &mut super::DeferredDrop,
+    ) -> Result<(), ConfigError> {
+        let logger_ref = logger.borrow(py);
+        deferred_drop.detached.push(logger_ref.detach_owners());
+        for handler in &self.handlers {
+            logger_ref
+                .add_handler_with_filters(handler.handler.clone(), handler.filters.clone())
+                .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
+        }
+        for filter in &self.filters {
+            logger_ref.add_filter(filter.clone());
+        }
+        if let Some(level) = self.level {
+            logger_ref.set_level(level);
+        }
+        if let Some(propagate) = self.propagate {
+            logger_ref.set_propagate(propagate);
+        }
+        Ok(())
+    }
+}
+
 impl ConfigBuilder {
     /// Finalize the configuration and initialize loggers.
     pub fn build_and_init(&self) -> Result<(), ConfigError> {
+        self.validate_bootstrap()?;
+        let components = self.build_runtime_components()?;
+        Python::attach(|py| self.commit_components(py, &components))
+    }
+
+    /// Reject a configuration that cannot produce a usable logger tree.
+    fn validate_bootstrap(&self) -> Result<(), ConfigError> {
         if self.version() != 1 {
             return Err(ConfigError::UnsupportedVersion(self.version()));
         }
         if self.root_logger().is_none() {
             return Err(ConfigError::MissingRootLogger);
         }
-        let components = self.build_runtime_components()?;
-
-        Python::attach(|py| -> Result<_, ConfigError> {
-            let BuiltConfigComponents {
-                built_handlers,
-                handler_filter_ids,
-                built_filters,
-                resolved_handler_filters: _,
-            } = &components;
-            let targets = self
-                .root_logger()
-                .map(|c| ("root", c))
-                .into_iter()
-                .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
-            let plans = targets
-                .map(|(name, cfg)| self.prepare_logger_plan(name, cfg, &components))
-                .collect::<Result<Vec<_>, _>>()?;
-            let staged_loggers =
-                manager::stage_loggers(py, plans.iter().map(|plan| plan.name.as_str()))
-                    .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
-            let keep_names = self.disable_existing_loggers().then(|| {
-                let mut names: HashSet<String> = self
-                    .logger_builders()
-                    .keys()
-                    .cloned()
-                    .chain(std::iter::once("root".to_string()))
-                    .collect();
-                self.extend_keep_names_with_ancestors(&mut names);
-                names
-            });
-            let committed_loggers = manager::commit_staged_loggers(py, staged_loggers)
-                .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
-
-            if let Some(keep_names) = &keep_names {
-                manager::disable_existing_loggers(py, keep_names);
-            }
-            let runtime_loggers =
-                self.apply_committed_logger_plans(py, &plans, &committed_loggers)?;
-            manager::replace_runtime_state(
-                (*built_handlers).clone(),
-                (*handler_filter_ids).clone(),
-                (*built_filters).clone(),
-                runtime_loggers,
-            );
-            Ok(())
-        })?;
         Ok(())
+    }
+
+    /// Commit prepared components inside a single runtime transaction.
+    ///
+    /// The bundle is declared before the guard so it drops after the guard on
+    /// every exit path, including early `?` returns: locals drop in reverse.
+    fn commit_components(
+        &self,
+        py: Python<'_>,
+        components: &BuiltConfigComponents,
+    ) -> Result<(), ConfigError> {
+        let mut deferred_drop = super::DeferredDrop::default();
+        let transaction = super::lock_runtime_transaction(py);
+        let runtime_loggers = self.stage_commit_and_attach(py, components, &mut deferred_drop)?;
+        let replaced = Self::publish_reachable_registries(components, runtime_loggers);
+        deferred_drop.snapshots.push(replaced);
+        drop(transaction);
+        deferred_drop.release(py);
+        Ok(())
+    }
+
+    /// Stage every configured logger, commit it, then attach its plan.
+    fn stage_commit_and_attach(
+        &self,
+        py: Python<'_>,
+        components: &BuiltConfigComponents,
+        deferred_drop: &mut super::DeferredDrop,
+    ) -> Result<BTreeMap<String, manager::LoggerAttachmentState>, ConfigError> {
+        let plans = self.plan_loggers(components)?;
+        let staged_loggers =
+            manager::stage_loggers(py, plans.iter().map(|plan| plan.name.as_str()))
+                .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
+        let committed_loggers = manager::commit_staged_loggers(py, staged_loggers)
+            .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
+
+        if let Some(keep_names) = self.keep_names_for_disabling() {
+            deferred_drop
+                .detached
+                .extend(manager::disable_existing_loggers(py, &keep_names));
+        }
+        Self::apply_committed_logger_plans(py, &plans, &committed_loggers, deferred_drop)
+    }
+
+    /// Resolve every configured logger against the prepared components.
+    fn plan_loggers(
+        &self,
+        components: &BuiltConfigComponents,
+    ) -> Result<Vec<ConfiguredLoggerPlan>, ConfigError> {
+        let targets = self
+            .root_logger()
+            .map(|c| ("root", c))
+            .into_iter()
+            .chain(self.logger_builders().iter().map(|(n, c)| (n.as_str(), c)));
+        targets
+            .map(|(name, cfg)| self.prepare_logger_plan(name, cfg, components))
+            .collect()
+    }
+
+    /// Names that must survive `disable_existing_loggers`, when it is enabled.
+    fn keep_names_for_disabling(&self) -> Option<HashSet<String>> {
+        self.disable_existing_loggers().then(|| {
+            let mut names: HashSet<String> = self
+                .logger_builders()
+                .keys()
+                .cloned()
+                .chain(std::iter::once("root".to_string()))
+                .collect();
+            self.extend_keep_names_with_ancestors(&mut names);
+            names
+        })
+    }
+
+    /// Prune the prepared registries to what the committed loggers reach.
+    ///
+    /// Publication and pruning happen together so the manager never observes a
+    /// registry entry that no logger in the same snapshot can reference.
+    fn publish_reachable_registries(
+        components: &BuiltConfigComponents,
+        runtime_loggers: BTreeMap<String, manager::LoggerAttachmentState>,
+    ) -> manager::RuntimeStateSnapshot {
+        let mut handler_registry = components.built_handlers.clone();
+        let mut retained_handler_filter_ids = components.handler_filter_ids.clone();
+        let mut filter_registry = components.built_filters.clone();
+        let reachable = ReachableIds::from_logger_states_and_handler_filters(
+            runtime_loggers.values(),
+            &retained_handler_filter_ids,
+        );
+        prune_handlers(&mut handler_registry, &reachable);
+        prune_filters(&mut filter_registry, &reachable);
+        retained_handler_filter_ids.retain(|handler_id, _| reachable.handlers.contains(handler_id));
+        manager::replace_runtime_state(
+            handler_registry,
+            retained_handler_filter_ids,
+            filter_registry,
+            runtime_loggers,
+        )
     }
 
     /// Attach validated plans only after every logger has been committed.
@@ -113,10 +205,10 @@ impl ConfigBuilder {
     /// This preserves configuration atomicity: a failed plan cannot leave a
     /// newly created logger in the manager with partially attached resources.
     fn apply_committed_logger_plans(
-        &self,
         py: Python<'_>,
         plans: &[ConfiguredLoggerPlan],
         committed_loggers: &BTreeMap<String, Py<FemtoLogger>>,
+        deferred_drop: &mut super::DeferredDrop,
     ) -> Result<BTreeMap<String, manager::LoggerAttachmentState>, ConfigError> {
         let mut runtime_loggers = BTreeMap::new();
         for plan in plans {
@@ -126,7 +218,7 @@ impl ConfigBuilder {
                     plan.name
                 ))
             })?;
-            self.apply_logger_plan(py, logger, plan)?;
+            plan.apply(py, logger, deferred_drop)?;
             runtime_loggers.insert(
                 plan.name.clone(),
                 manager::LoggerAttachmentState::new(
@@ -204,16 +296,6 @@ impl ConfigBuilder {
         Ok(items)
     }
 
-    /// Convert repeated handler references into the configuration error type.
-    fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
-        ConfigError::DuplicateHandlerIds(ids)
-    }
-
-    /// Convert repeated filter references into the configuration error type.
-    fn duplicate_filter_ids(ids: Vec<String>) -> ConfigError {
-        ConfigError::DuplicateFilterIds(ids)
-    }
-
     /// Validate a logger's resource references without changing live state.
     fn prepare_logger_plan(
         &self,
@@ -224,7 +306,7 @@ impl ConfigBuilder {
         let resolved_handlers = Self::collect_items(
             cfg.handler_ids(),
             &components.built_handlers,
-            Self::duplicate_handler_ids,
+            ConfigError::DuplicateHandlerIds,
         )?;
         #[cfg(feature = "python")]
         if resolved_handlers
@@ -250,7 +332,7 @@ impl ConfigBuilder {
         let planned_filters = Self::collect_items(
             cfg.filter_ids(),
             &components.built_filters,
-            Self::duplicate_filter_ids,
+            ConfigError::DuplicateFilterIds,
         )?;
         Ok(ConfiguredLoggerPlan {
             name: name.to_string(),
@@ -261,36 +343,6 @@ impl ConfigBuilder {
             level: cfg.level_opt().or(self.default_level()),
             propagate: cfg.propagate_opt(),
         })
-    }
-
-    /// Replace a committed logger's attachments while the Python GIL is held.
-    ///
-    /// Handler and filter objects are shared by `Arc`; borrowing the PyO3
-    /// logger here confines Python object access to the attached interpreter.
-    fn apply_logger_plan(
-        &self,
-        py: Python<'_>,
-        logger: &Py<FemtoLogger>,
-        plan: &ConfiguredLoggerPlan,
-    ) -> Result<(), ConfigError> {
-        let logger_ref = logger.borrow(py);
-        logger_ref.clear_handlers();
-        for handler in &plan.handlers {
-            logger_ref
-                .add_handler_with_filters(handler.handler.clone(), handler.filters.clone())
-                .map_err(|error| ConfigError::LoggerInit(error.to_string()))?;
-        }
-        logger_ref.clear_filters();
-        for filter in &plan.filters {
-            logger_ref.add_filter(filter.clone());
-        }
-        if let Some(level) = plan.level {
-            logger_ref.set_level(level);
-        }
-        if let Some(propagate) = plan.propagate {
-            logger_ref.set_propagate(propagate);
-        }
-        Ok(())
     }
 
     /// Build formatter, filter, and handler registries before touching live loggers.
@@ -313,7 +365,7 @@ impl ConfigBuilder {
                 Self::collect_items(
                     builder.filter_ids(),
                     &built_filters,
-                    Self::duplicate_filter_ids,
+                    ConfigError::DuplicateFilterIds,
                 )
                 .map(|filters| (id.clone(), filters))
             })

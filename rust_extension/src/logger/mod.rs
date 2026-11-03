@@ -59,6 +59,8 @@ pub use py_handler::{PyHandler, validate_handler};
 pub(crate) use python_helpers::should_capture_exc_info;
 pub use queue::QueuedRecord;
 pub(crate) use queue::{HandlerAttachment, HandlerRecordSnapshot};
+#[cfg(feature = "python")]
+pub(crate) use runtime_mutation::DetachedOwners;
 
 /// Threshold applied to loggers when the manager creates them.
 pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
