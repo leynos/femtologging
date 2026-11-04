@@ -913,16 +913,16 @@ Trace links, from issue #436 to milestone:
   `9e6640d` as the exclusive boundary and was rejected by its own audit rather
   than by a conflict: `git diff --stat 326fb5ad HEAD -- uv.lock` reported 144
   changed lines. The previous rebase had landed the branch on `077bc0e1`, so
-  `9e6640d..OLD_HEAD` still contained two inherited `main` commits
-  (`c23b0c9c`, `077bc0e1`) and replaying them walked main's `hypothesis`
-  lockfile entry backwards from `6.170.12` to `6.170.11`. A boundary only has
-  to be an ancestor of the target; it also has to be the *last* inherited
-  commit. `077bc0e1` is both, and it yields exactly the fifteen commits this
-  branch owns. The second replay was clean, `range-diff` reports all fifteen
-  commits as `=`, and `uv.lock` and `.github/workflows/ci.yml` are now
-  byte-identical to `main`. The lesson is that a clean rebase exit proves
-  nothing about the boundary: the lockfile diffstat is the check that catches
-  an inherited commit being replayed.
+  `9e6640d..OLD_HEAD` still contained two inherited `main` commits (`c23b0c9c`,
+  `077bc0e1`) and replaying them walked main's `hypothesis` lockfile entry
+  backwards from `6.170.12` to `6.170.11`. A boundary only has to be an
+  ancestor of the target; it also has to be the *last* inherited commit.
+  `077bc0e1` is both, and it yields exactly the fifteen commits this branch
+  owns. The second replay was clean, `range-diff` reports all fifteen commits as
+  `=`, and `uv.lock` and `.github/workflows/ci.yml` are now byte-identical to
+  `main`. The lesson is that a clean rebase exit proves nothing about the
+  boundary: the lockfile diffstat is the check that catches an inherited commit
+  being replayed.
 
 ## Outcomes & retrospective
 
