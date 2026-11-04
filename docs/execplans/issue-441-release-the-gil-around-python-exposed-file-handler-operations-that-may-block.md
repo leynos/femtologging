@@ -753,12 +753,45 @@ shows only the two intended conflict resolutions and one hunk-context shift;
 the final tree differs from the pre-rebase tree only by the removed duplicate
 block.
 
-The rebased candidate is `0135d05c`. Its gate results are recorded in "Rebased
-candidate `0135d05c`: commit gates".
+The rebased series ended at `0135d05c`, before the two follow-up commits that
+record it (`ad500222`) and fix the close scenario (`c5338464`). Gate results
+are recorded in "Commit gates after the rebase".
 
-## Rebased candidate `0135d05c`: commit gates
+## Commit gates after the rebase
 
-The full gate chain has not yet run on this candidate.
+The chain ran once, sequentially, on `ad500222` (the rebased series plus the
+ExecPlan record). `make check-fmt`, `make markdownlint`, `make nixie`,
+`make lint` (848 seconds) and `make typecheck` (93 seconds) passed. `make test`
+returned 2 with `1 failed, 1067 passed, 6 skipped`:
+`test_operations_during_close_observe_a_closed_handler[close-file]` aborted its
+child with
+`Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` /
+`Python runtime state: finalizing`.
+
+**Diagnosis.** The abort is in test scaffolding, not in the product. The
+close-during-close body parks the worker, starts a closer, then runs a second
+`close()` from the probing thread. That second close waits out the closer's
+one-second completion deadline. Only after both have returned does the epilogue
+release the worker, so the child reaches interpreter finalization with a
+detached worker that may still attach to call the Python formatter. CPython
+does not guard that window. The comment already in
+`tests/file_handler_gil_wait_scenarios.py` records the same hazard for its own
+close body.
+
+**Fix (`c5338464`).** `_CLOSE_EPILOGUE` now calls `handler.close()` after
+releasing the worker and joining the closer. The trailing close shares the same
+`Arc<ShutdownCompletion>` signal, so it returns as soon as the released worker
+stops and the child cannot finalize around a live detached worker.
+
+**Evidence.** A negative control replaced the epilogue with the pre-fix text in
+a scratch harness and ran the rendered `file`/`close-close` scenario 60 times:
+3 abnormal exits (two fatal finalization aborts and one SIGSEGV). A further 80
+runs of the old epilogue produced one more SIGSEGV. The fixed scenario ran 60 +
+60 times clean in the same harness, and 5 full 30-scenario runs plus 40 targeted
+`close-close` runs were clean before the commit.
+
+The full chain was then re-run on `c5338464`; its results are recorded below
+once complete.
 
 ## Decision log
 
