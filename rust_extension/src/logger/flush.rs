@@ -14,11 +14,18 @@ impl FemtoLogger {
     /// Python access must detach before calling this method. Otherwise the
     /// worker cannot acquire the GIL to run a Python handler.
     ///
+    /// # Returns
+    ///
+    /// `true` if the worker acknowledges the flush marker within the shared
+    /// timeout and every attached handler flush succeeds. `false` if the
+    /// marker cannot be enqueued or acknowledged in time, or a handler flush
+    /// fails.
+    ///
     /// # Examples
     ///
     /// A Rust caller holding Python access detaches during the blocking flush:
     ///
-    /// ```no_run
+    /// ```
     /// use _femtologging_rs::FemtoLogger;
     /// use pyo3::Python;
     ///
