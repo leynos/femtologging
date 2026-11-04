@@ -715,6 +715,51 @@ valid against the source and are applied in the follow-up commit.
   `pytest --doctest-modules` still executes it without leaving `timeout.log`
   behind.
 
+## Rebase onto `origin/main` at `0dccd48d`
+
+`origin/main` advanced from `3e1c9ef` to `0dccd48d` while the review follow-ups
+were in progress. The two new commits are #585 (a `hypothesis` bump in
+`uv.lock`) and #552, the release-process work, which moved the PR's
+`mergeStateStatus` from `CLEAN` to `DIRTY`. The branch was replayed from
+`OLD_BASE` `3e1c9ef` onto `TARGET` `0dccd48d` with `zdiff3` and the built-in
+merge backend. Weave was bypassed with `-c core.attributesFile=/dev/null`
+because the only `merge=weave` rule comes from this host's global attributes
+file, not from the repository. All 34 commits replayed; `OLD_HEAD` `e26d8c8b`
+became `0135d05c` after the drop described below.
+
+Three conflicts appeared:
+
+- **`tests/test_private_docs_lint_contract.py` and
+  `tests/test_env_access_policy_contract.py`.** Both sides raised the gate
+  timeouts after the shared compile queue stalled the lanes. #552 raised them
+  to 3600 seconds and kept the original `2 * timeout + 20` test budget; this
+  branch had split the budget into `..._CALLS_PER_TEST` and
+  `..._TEST_TIMEOUT_SECONDS` at 1800 seconds. The resolution keeps the split
+  constants and #552's larger 3600-second lane budget, so the test budget
+  becomes `2 * 3600 + 60` seconds. The duplicated explanatory comment in
+  `run_policy_lane` was reduced to #552's single line.
+- **`docs/v0-2-0-migration-guide.md`.** Both branches appended a new section at
+  the same point. Both are kept: "10. File-handler calls release the
+  interpreter lock" first, then #552's "Production wheels omit the
+  timed-rotation test hooks".
+
+The replay also silently merged `tests/test_build_standard_contract.py`, where
+this branch's `CARGO_HOME` isolation and #552's independently written isolation
+landed as two copies of the same block and two overlapping docstring
+paragraphs. #552's version carries the same intent and is complete, so the
+branch's "Isolate the build-standard fixture's Cargo home" commit was dropped
+from the series and the file now matches `0dccd48d` byte for byte. `range-diff`
+shows only the two intended conflict resolutions and one hunk-context shift;
+the final tree differs from the pre-rebase tree only by the removed duplicate
+block.
+
+The rebased candidate is `0135d05c`. Its gate results are recorded in "Rebased
+candidate `0135d05c`: commit gates".
+
+## Rebased candidate `0135d05c`: commit gates
+
+The full gate chain has not yet run on this candidate.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
