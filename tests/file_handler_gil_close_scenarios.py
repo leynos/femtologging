@@ -132,13 +132,21 @@ def body():
 """
 
 #: Shared epilogue for the same bodies: release the worker, wait for the
-#: in-progress close to finish, and report a close that failed on its own.
+#: in-progress close to finish, report a close that failed on its own, and wait
+#: once more for the worker itself to stop. That last wait is deliberate. The
+#: probing call can outlast the closer's one-second deadline -- ``close-close``
+#: calls a second ``close()``, which waits out that deadline while the worker is
+#: still parked -- so releasing the worker afterwards leaves a detached worker
+#: that may attach to the interpreter while the child finalizes. CPython does
+#: not guard that window. The trailing close shares the same completion signal
+#: and returns as soon as the released worker stops.
 _CLOSE_EPILOGUE = """
     finally:
         RELEASE_WORKER.set()
 
     join_blocked(blocked)
     assert not close_failures, f"close() failed unexpectedly: {{close_failures!r}}"
+    handler.close()
 
 
 guard(body)
