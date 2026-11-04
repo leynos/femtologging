@@ -109,7 +109,7 @@ def test_file_handler_concurrent_usage(
 ) -> None:
     """Concurrent writes should not lose messages."""
     path = tmp_path / "concurrent.log"
-    with file_handler_factory(path, 8, 1) as handler:
+    with file_handler_factory(path, 10, 1) as handler:
 
         def send(h: FemtoFileHandler, i: int) -> None:
             """Handle one message from the calling thread."""

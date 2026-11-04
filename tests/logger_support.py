@@ -20,13 +20,20 @@ cancel_flush_wait_for_test = getattr(
     "cancel_flush_wait_for_test",
     None,
 )
+drain_flush_signals_for_test = getattr(
+    _femtologging_rs,
+    "drain_flush_signals_for_test",
+    None,
+)
 wait_for_flush_entry_for_test = getattr(
     _femtologging_rs,
     "wait_for_flush_entry_for_test",
     None,
 )
-FLUSH_TEST_HOOKS_AVAILABLE = callable(cancel_flush_wait_for_test) and callable(
-    wait_for_flush_entry_for_test
+FLUSH_TEST_HOOKS_AVAILABLE = (
+    callable(cancel_flush_wait_for_test)
+    and callable(drain_flush_signals_for_test)
+    and callable(wait_for_flush_entry_for_test)
 )
 
 if typ.TYPE_CHECKING:
@@ -174,12 +181,22 @@ class HandlerFlushGate:
         TypeError
             If the Rust extension does not expose its test-util hooks.
         """
+        drain_flush_signals = drain_flush_signals_for_test
         wait_for_flush_entry = wait_for_flush_entry_for_test
         cancel_flush_wait = cancel_flush_wait_for_test
-        if not callable(wait_for_flush_entry) or not callable(cancel_flush_wait):
+        if not callable(drain_flush_signals):
+            message = "HandlerFlushGate requires the Rust test-util feature"
+            raise TypeError(message)
+        if not callable(wait_for_flush_entry):
+            message = "HandlerFlushGate requires the Rust test-util feature"
+            raise TypeError(message)
+        if not callable(cancel_flush_wait):
             message = "HandlerFlushGate requires the Rust test-util feature"
             raise TypeError(message)
 
+        # Clear old signals before starting the waiter so it cannot consume
+        # the signal from the flush this gate is meant to observe.
+        drain_flush_signals(logger)
         self._handler = handler
         self._wait_for_flush_entry = partial(
             wait_for_flush_entry,
