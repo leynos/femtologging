@@ -29,15 +29,34 @@ use crate::socket_handler::{
 
 /// How long the worker has to leave its write loop after `close` returns.
 ///
-/// Whatever it is blocked on at that point - one socket timeout of at most
-/// `CLOSE_BUDGET`, plus the last chunk it had already queued - is far shorter.
-const SLOW_COLLECTOR_ALLOWANCE: Duration = Duration::from_secs(5);
+/// The shutdown budget plus the same 500ms margin [`CLOSE_ALLOWANCE`] carries
+/// for scheduling. It has to be tied to the budget rather than set generously:
+/// an allowance of seconds would pass a worker that ignored the deadline and
+/// simply finished the frame, which is the defect this test exists to catch.
+///
+/// A collector that reads slowly enough for the frame to outlast this is what
+/// makes that discrimination possible, so [`SLOW_READ_CHUNK`] and
+/// [`SLOW_READ_PAUSE`] are chosen against this figure rather than in isolation.
+const SLOW_COLLECTOR_ALLOWANCE: Duration = Duration::from_millis(700);
 /// The bytes one read from the slow collector takes at a time.
-const SLOW_READ_CHUNK: usize = 4 * 1024;
+///
+/// One kilobyte makes the 3.9 MB message about 3,800 reads, so the pause below
+/// dominates the transfer: the collector drains roughly a megabyte a second,
+/// and finishing the frame takes about four seconds. That is far longer than
+/// [`SLOW_COLLECTOR_ALLOWANCE`], so a worker that ignores the deadline cannot
+/// reach the end of the frame inside it however fast the host schedules.
+const SLOW_READ_CHUNK: usize = 1024;
 /// How long the slow collector pauses between reads.
 const SLOW_READ_PAUSE: Duration = Duration::from_millis(20);
 /// The largest frame the slow-collector handler will accept.
 const SLOW_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+/// The message the write loop logs when it stops on the shutdown budget.
+///
+/// Taken from `frame_write`'s own error text, and deliberately the part that
+/// names the cause rather than the progress figures: the value of the message
+/// is that no socket timeout produces it, so a test that matches on it is
+/// asserting the deadline was consulted and not merely that the frame ended.
+const BUDGET_SPENT_MARKER: &str = "shutdown budget spent after writing";
 /// A message far larger than the socket send buffer, so the write is partial.
 ///
 /// Loopback accepted about 2.5 MiB before blocking when this was measured, and
@@ -105,16 +124,21 @@ fn build_slow_collector_handler(addr: SocketAddr) -> FemtoSocketHandler {
 /// Invariant: the worker stops inside the shutdown budget and exits, rather
 /// than writing as many socket-timeout-sized chunks as the frame needs. The
 /// write used to be a single `write_all`, and a socket timeout bounds each
-/// call, not the frame: one 4 MiB frame against a 4 KiB/20 ms reader took
+/// call, not the frame: one 3.9 MB frame against a 1 KiB/20 ms reader takes
 /// several seconds of successive timeouts, none of which re-read the shutdown
 /// state or the remaining budget.
 ///
 /// The assertion is the worker's exit, not the `close()` duration, because
 /// `close` detaches a worker that misses its acknowledgement and returns
 /// inside its budget either way. Only a worker that actually stopped proves
-/// the write path consulted the deadline between calls. The abandonment
-/// warning is asserted too: a worker that exited because the connection broke
-/// would also pass a bare exit check.
+/// the write path consulted the deadline between calls.
+///
+/// Either close path is accepted, because both are correct and which one
+/// happens is a race: the write ends at the same deadline the handler stops
+/// waiting at, so an acknowledgement landing microseconds before it is joined
+/// rather than abandoned. What the warning is held to is the path taken - a
+/// close that gave up says so, and one that joined its worker does not - and
+/// only the abandoned path is required to have stopped on the budget.
 #[rstest]
 #[serial_test::serial]
 fn a_slow_collector_does_not_outlast_the_shutdown_budget(
@@ -132,8 +156,10 @@ fn a_slow_collector_does_not_outlast_the_shutdown_budget(
     let started = Instant::now();
     handler.close();
     let elapsed = started.elapsed();
-    // Asked for after the close: only the abandonment path keeps the handle,
-    // so before this point there is no worker to report on.
+    // Asked for after the close, because it reports on a worker `close` gave
+    // up on and there is no such worker before that. A `close` that joined its
+    // worker instead leaves nothing here, and the empty receiver below is read
+    // as that outcome rather than as a worker that outlived the allowance.
     let worker = handler.worker_for_test();
     assert!(
         elapsed < CLOSE_ALLOWANCE,
@@ -141,20 +167,57 @@ fn a_slow_collector_does_not_outlast_the_shutdown_budget(
          {elapsed:?}, allowed {CLOSE_ALLOWANCE:?}"
     );
 
-    let joined = worker.recv_timeout(SLOW_COLLECTOR_ALLOWANCE);
+    // `close` returns at the same deadline the write stops at, so the
+    // acknowledgement that decides which path it took arrives within
+    // microseconds of the decision. A `close` that detached its worker proves
+    // the exit through this receiver; one that joined it has already proved it
+    // by the join returning, and hands back a disconnected receiver because
+    // there is no handle left to report on.
+    let outcome = worker.recv_timeout(SLOW_COLLECTOR_ALLOWANCE);
+    let was_abandoned = matches!(outcome, Ok(()));
     assert!(
-        joined.is_ok(),
+        !matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)),
         "the worker must leave its write loop at the shutdown deadline rather \
          than finish the frame; it was still running {SLOW_COLLECTOR_ALLOWANCE:?} \
          after close returned in {elapsed:?}"
     );
     let logged = crate::handlers::file::test_support::take_logged_messages();
-    assert!(
-        logged
-            .iter()
-            .any(|entry| entry.message.contains(ABANDON_MARKER)),
-        "a worker that missed its acknowledgement must say so; the exit above is \
-         only evidence the write stopped, and a broken connection would explain \
-         it too; close logged {logged:?}"
+    let said_abandoned = logged
+        .iter()
+        .any(|entry| entry.message.contains(ABANDON_MARKER));
+    assert_eq!(
+        said_abandoned,
+        was_abandoned,
+        "close must report abandoning a worker only when it did; it {} its \
+         worker, and {} that warning; it returned in {elapsed:?}, and close \
+         logged {logged:?}",
+        if was_abandoned { "abandoned" } else { "joined" },
+        if said_abandoned {
+            "emitted"
+        } else {
+            "did not emit"
+        },
     );
+    // What stopped the write is asserted only when `close` gave up on it. A
+    // joined worker may have reached the end of the frame legitimately, and
+    // demanding the budget message there would fail correct behaviour - that
+    // is the mistaken assumption this test was originally written with.
+    //
+    // On the abandonment path the exit above is not enough on its own: a
+    // `write` call that times out on its own per-call budget also ends the
+    // frame, so a connection that broke and a deadline that was honoured would
+    // both pass it. Only the write loop produces this message, and it produces
+    // it by comparing the frame's remaining budget before starting another
+    // call - which is exactly the consultation this test exists to require.
+    if was_abandoned {
+        assert!(
+            logged
+                .iter()
+                .any(|entry| entry.message.contains(BUDGET_SPENT_MARKER)),
+            "a worker left running at the deadline must stop because it re-read \
+             the shutdown budget between write calls, not because one socket \
+             timeout expired; a worker that kept writing until the frame \
+             finished would also have exited; close logged {logged:?}"
+        );
+    }
 }

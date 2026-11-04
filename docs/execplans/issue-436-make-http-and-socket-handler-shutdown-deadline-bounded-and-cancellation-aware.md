@@ -1087,6 +1087,47 @@ Trace links, from issue #436 to milestone:
     which leaves `transport.rs` at 323 lines. A gate run was stopped rather
     than let a knowingly invalid candidate finish.
 
+### The slow-collector oracle modelled only one of two correct outcomes
+
+The hosted `build-test (3.14)` job failed
+`a_slow_collector_does_not_outlast_the_shutdown_budget` on run 41827678110 with
+"it was still running 5s after close returned in 199.913409ms". That message
+cannot be literally true: `recv_timeout(5s)` cannot return in the 16ms the
+whole test took, and `close` returned *under* its own 200ms deadline.
+
+The real cause is a race the test did not model. The worker's last legal action
+lands on the same instant the handler stops waiting, so which close path wins
+is decided by microseconds:
+
+- the acknowledgement arrives first, `close` joins the worker, and
+  `worker_for_test` has no abandoned handle to report on, so it returns an
+  already-disconnected receiver;
+- the acknowledgement misses, `close` abandons the worker and retains the
+  handle.
+
+The test read a disconnected receiver as "still running", so it failed on the
+first path - which is correct product behaviour. Debug builds had always lost
+that race locally; the hosted runner won it.
+
+Two further weaknesses were found while proving the repair:
+
+- The allowance was 5s against a 200ms budget, so a worker that ignored its
+  deadline and simply finished a frame draining in under 4s still passed. The
+  mutation that made `remaining_budget` ignore shutdown *survived*. The
+  allowance is now the budget plus the same 500ms scheduling margin
+  `CLOSE_ALLOWANCE` uses, and the collector reads 1 KiB per 20ms so a 3.9 MB
+  frame cannot finish inside it.
+- Even with the tighter bound the mutation survived again, because a socket
+  timeout that expires ends the frame and the process just as well as an
+  honoured deadline does. On the abandoned path the test now also requires the
+  write loop's own "shutdown budget spent" message, which no socket timeout
+  produces.
+
+Both properties are pinned by mutation: making `remaining_budget` ignore
+shutdown fails the test, and the join path a fast collector reaches passes it.
+The lesson generalizes: a test whose two outcomes race must assert the *path
+taken*, not merely that the process ended.
+
 ## Outcomes & retrospective
 
 The first corrected candidate passed every deterministic gate, including the
