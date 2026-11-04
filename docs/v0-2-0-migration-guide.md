@@ -372,8 +372,9 @@ noisy.error("dropped")
 
 ### How to migrate omitted loggers
 
-- Name every logger that must keep emitting in the new configuration; an
-  explicit entry re-enables it and keeps its ancestors enabled.
+- Name every logger that must keep emitting in the new configuration. An
+  explicit entry re-enables that logger. Its kept ancestors retain their
+  existing enabled or disabled state and their attachments.
 - Set `disable_existing_loggers=False` when existing loggers should keep their
   handlers, filters, and enabled state.
 - Move diagnostic calls to a configured logger, or add the emitting logger to
