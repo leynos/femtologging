@@ -695,13 +695,13 @@ valid against the source and are applied in the follow-up commit.
   that a `close()` concurrent with a blocked `handle()` was refused by the
   borrow rules: it raised `RuntimeError` and the wait never started.
   (Superseded by the rebase onto `9e6640de`: `close()` takes only a shared
-  borrow, so it takes the shutdown state, releases the borrow, and waits on
-  the shared completion signal instead of raising. See "Rebase onto
-  `origin/main` at `9e6640de` and reconciliation with #545".)
+  borrow, so it takes the shutdown state, releases the borrow, and waits on the
+  shared completion signal instead of raising. See "Rebase onto `origin/main` at
+  `9e6640de` and reconciliation with #545".)
 - **`flush()` and the borrow.** The follow-up also named `flush()` in the
-  borrow rules: an in-flight `flush()` held the same shared borrow as a
-  blocked `handle()`, so `close()` was refused for both, and callers were told
-  to serialize `close()` against both calls. (Superseded by the rebase onto
+  borrow rules: an in-flight `flush()` held the same shared borrow as a blocked
+  `handle()`, so `close()` was refused for both, and callers were told to
+  serialize `close()` against both calls. (Superseded by the rebase onto
   `9e6640de`: `close()` now starts for both and waits on the shared completion
   signal. The `concurrent-close-flush` scenario covers the file, rotating, and
   timed-rotating builders.)
