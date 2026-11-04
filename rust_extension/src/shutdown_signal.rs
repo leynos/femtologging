@@ -38,6 +38,7 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 use std::sync::mpsc;
 
+use crate::monotonic_clock::{SharedClock, system_clock};
 use crate::sync::{Condvar, Mutex};
 
 /// What the handler has asked its worker to do.
@@ -80,6 +81,21 @@ pub struct ShutdownSignal {
     /// leaves no window in which a waiter has released the lock but has not yet
     /// parked, and so cannot miss the change it is waiting to observe.
     changed: Condvar,
+    /// Where the deadline queries read "now" from.
+    ///
+    /// Sampled once per query rather than captured at construction: the phase
+    /// changes while the signal lives, and each query's answer has to be
+    /// against the moment it was asked. Tests supply a clock that only moves
+    /// when told to, so a deadline boundary is a value they choose rather than
+    /// a race against the host's scheduler.
+    ///
+    /// One instant per query, and never two: a query that sampled the clock,
+    /// decided, and sampled again could return a value belonging to neither
+    /// moment. That is why the deadline predicates here read the clock exactly
+    /// once, and why a test asserts against
+    /// [`phase_and_now`](ShutdownSignal::phase_and_now) rather than calling
+    /// the queries piecemeal.
+    clock: SharedClock,
     /// Fires once per [`wait`](ShutdownSignal::wait), at the moment the wait
     /// begins.
     ///
@@ -104,6 +120,33 @@ impl ShutdownSignal {
         Self {
             phase: Mutex::new(Phase::Running),
             changed: Condvar::new(),
+            clock: system_clock(),
+            #[cfg(test)]
+            waiting: Mutex::new(None),
+        }
+    }
+
+    /// Create a signal whose deadlines are read from `clock`.
+    ///
+    /// The production constructor already uses the real clock; this one exists
+    /// so a test can make a deadline boundary depend on the instant it chose
+    /// rather than on how quickly the test thread got scheduled. A deadline
+    /// built from the clock's own base is the natural pairing, and
+    /// [`ManualClock::base`](crate::monotonic_clock::ManualClock::base) is
+    /// there to express it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let clock = Arc::new(ManualClock::new());
+    /// let signal = ShutdownSignal::with_clock(Arc::clone(&clock));
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn with_clock(clock: SharedClock) -> Self {
+        Self {
+            phase: Mutex::new(Phase::Running),
+            changed: Condvar::new(),
+            clock,
             #[cfg(test)]
             waiting: Mutex::new(None),
         }
@@ -153,7 +196,7 @@ impl ShutdownSignal {
     pub fn is_aborted(&self) -> bool {
         match self.current() {
             Phase::Running => false,
-            Phase::Draining { deadline } => deadline <= Instant::now(),
+            Phase::Draining { deadline } => deadline <= self.clock.now(),
             Phase::Aborted => true,
         }
     }
@@ -166,11 +209,22 @@ impl ShutdownSignal {
     /// only want to know how long an operation may take want
     /// [`clamp`](ShutdownSignal::clamp), which already knows the difference.
     ///
-    /// [`is_shutting_down`]: ShutdownSignal::is_shutting_down
+    /// A remainder of exactly zero is reported as `None`, not as `Some(0)`.
+    /// The instant the deadline arrives is the boundary this query exists to
+    /// police, and `checked_duration_since` answers `Some(0)` there rather than
+    /// `None`: the deadline is not in the past, it has just been reached. Those
+    /// two must not disagree with [`is_aborted`](ShutdownSignal::is_aborted),
+    /// which treats the arriving instant as aborted, and a caller handed a zero
+    /// budget must not start: `std` and `ureq` both read a zero timeout as "no
+    /// timeout", the unbounded wait a spent budget forbids.
+    ///
+    /// [`is_aborted`]: ShutdownSignal::is_aborted
     pub fn remaining(&self) -> Option<Duration> {
         match self.current() {
             Phase::Running | Phase::Aborted => None,
-            Phase::Draining { deadline } => deadline.checked_duration_since(Instant::now()),
+            Phase::Draining { deadline } => deadline
+                .checked_duration_since(self.clock.now())
+                .filter(|left| !left.is_zero()),
         }
     }
 
@@ -211,13 +265,19 @@ impl ShutdownSignal {
     pub fn wait(&self, delay: Duration) -> WaitOutcome {
         #[cfg(test)]
         self.announce_wait();
+        // Two clocks on purpose. Whether the drain deadline has passed is the
+        // same question `is_aborted` answers, so it reads the signal's clock
+        // and the two can never disagree. The sleep bound is a real duration
+        // handed to `wait_timeout`, which has no seam: a manual clock that
+        // never advances would leave `left` constant and this loop unable to
+        // finish.
         let ends_at = Instant::now() + delay;
         let mut phase = self.phase.lock();
         loop {
             match *phase {
                 Phase::Running => {}
                 Phase::Draining { deadline } => {
-                    return if Instant::now() >= deadline {
+                    return if self.clock.now() >= deadline {
                         WaitOutcome::Aborted
                     } else {
                         WaitOutcome::ShutdownRequested
@@ -288,6 +348,18 @@ impl ShutdownSignal {
     fn current(&self) -> Phase {
         *self.phase.lock()
     }
+
+    /// The phase and the instant the signal's clock reads now, read together.
+    ///
+    /// Test-only. The deadline queries each sample the clock, so a test that
+    /// called them separately and compared the answers would be comparing two
+    /// different instants - which is exactly the race the manual clock exists
+    /// to remove. This returns the phase with the instant it should be judged
+    /// against, so an invariant can be stated once and checked exactly.
+    #[cfg(test)]
+    pub(crate) fn phase_and_now(&self) -> (Phase, Instant) {
+        (self.current(), self.clock.now())
+    }
 }
 
 impl Default for ShutdownSignal {
@@ -307,3 +379,7 @@ impl std::fmt::Debug for ShutdownSignal {
 #[cfg(test)]
 #[path = "shutdown_signal_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shutdown_signal_property_tests.rs"]
+mod property_tests;

@@ -163,6 +163,43 @@ logger creation.
 
 ______________________________________________________________________
 
+## Handler `close()` is bounded end to end
+
+`FemtoSocketHandler.close()` and `FemtoHTTPHandler.close()` now run on one
+deadline, taken from the handler's write timeout, that covers the whole
+shutdown: signalling the worker, queueing the acknowledgement request, waiting
+for the acknowledgement, and joining the worker. Previously the acknowledgement
+wait and the join each had their own or no bound, so a worker stuck in a
+blocking network call could hold `close()` for far longer than the timeout
+suggested. `Drop` calls `close()`, so the same bound applies to a handler that
+is simply dropped.
+
+A worker that does not acknowledge within the budget is abandoned rather than
+joined. It finishes the network call it was in, sends what is still queued up
+to the deadline, discards the rest, and exits on its own with nothing left to
+join it. This changes three observable behaviours:
+
+- **`close()` returns on time.** Code that relied on `close()` blocking until
+  every queued record had been sent must call `flush()` first, and must accept
+  that a flush is best-effort under the same timeout.
+- **Records can be dropped at the deadline.** Whatever is still queued when the
+  drain deadline passes is discarded rather than sent, and one rate-limited
+  warning reports how many records went that way. A collector that cannot keep
+  up with the shutdown budget now loses records instead of extending shutdown.
+- **A partially written frame stays partially written.** A frame that runs out
+  of budget mid-write reports how many of its bytes were sent. The connection
+  is closed rather than retried, so the collector may observe a truncated frame.
+
+The bound is on what the worker *starts*: no standard-library API cancels a
+blocking `connect`, `write`, or TLS handshake, so a close can take up to the
+budget plus one network call already in flight when the deadline fell. Nothing
+new starts after the deadline.
+
+No API changed. The contract is unchanged for callers that already treat
+`close()` as best-effort, and `flush()` keeps its existing boolean return.
+
+______________________________________________________________________
+
 ## `StdlibHandlerAdapter` honours the wrapped handler level
 
 `StdlibHandlerAdapter` now checks two thresholds in order. `FemtoLogger` first

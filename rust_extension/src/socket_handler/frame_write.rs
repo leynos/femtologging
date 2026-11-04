@@ -136,16 +136,42 @@ impl<S: FrameSink> FrameWriter<'_, S> {
     /// exists to stop one frame outlasting the shutdown deadline; charging it
     /// against ordinary operation instead would turn `write_timeout` into a
     /// whole-frame budget and drop frames that were still making progress.
+    ///
+    /// "Now" is sampled here and handed to [`spent_within_frame`], which is a
+    /// pure function of the frame's start, its budget and that instant. The
+    /// clock read stays at the edge of the decision rather than inside it.
     fn remaining_budget(&self) -> Option<Duration> {
         if !self.signal.is_shutting_down() {
             return Some(self.write_timeout);
         }
-        let within_frame = self
-            .write_timeout
-            .checked_sub(self.started.elapsed())
-            .filter(|left| !left.is_zero())?;
+        let within_frame = spent_within_frame(self.write_timeout, self.started, Instant::now())?;
         self.signal.clamp(within_frame)
     }
+}
+
+/// What is left of a frame's own budget as of `now`, or `None` once spent.
+///
+/// The frame's clock is the shutdown clamp only: it stops one frame outlasting
+/// the handler's deadline. Kept as a function of its arguments so the boundary
+/// cases - exactly at the deadline, one nanosecond before it - can be tested
+/// without racing a real clock.
+///
+/// # Examples
+///
+/// ```ignore
+/// let budget = Duration::from_millis(50);
+/// let started = Instant::now();
+/// assert_eq!(spent_within_frame(budget, started, started), Some(budget));
+/// assert_eq!(spent_within_frame(budget, started, started + budget), None);
+/// ```
+pub(super) fn spent_within_frame(
+    budget: Duration,
+    started: Instant,
+    now: Instant,
+) -> Option<Duration> {
+    budget
+        .checked_sub(now.saturating_duration_since(started))
+        .filter(|left| !left.is_zero())
 }
 
 /// The error produced when a frame write runs out of budget part-way through.

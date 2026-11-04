@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use rstest::rstest;
 
 use super::{Phase, ShutdownSignal, WaitOutcome};
+use crate::monotonic_clock::{ManualClock, SharedClock};
 
 /// A delay long enough that only an early wakeup can beat it, and short enough
 /// that a signal which fails to interrupt costs the suite a moment rather than
@@ -208,6 +209,44 @@ fn clamp_keeps_a_timeout_shorter_than_the_budget() {
     let configured = Duration::from_millis(1);
 
     assert_eq!(signal.clamp(configured), Some(configured));
+}
+
+/// Scenario: the clock reads exactly the drain deadline.
+///
+/// Invariant: that instant counts as spent, and the budget is `None` rather
+/// than `Some(0)`. `checked_duration_since` answers `Some(0)` exactly at the
+/// deadline, which made `remaining` disagree with `is_aborted` and let `clamp`
+/// hand a zero to its caller. A property test found this on a generated
+/// sequence; the manual clock pins it here so the regression does not depend on
+/// sampling a real clock at a boundary.
+#[rstest]
+fn the_deadline_instant_itself_is_spent() {
+    let clock = Arc::new(ManualClock::new());
+    let signal = ShutdownSignal::with_clock(Arc::clone(&clock) as SharedClock);
+    let deadline = clock.base() + BUDGET;
+    signal.begin_shutdown(deadline);
+
+    // Not yet. The instant before the boundary still has a budget, so the
+    // assertions below are about the boundary and not about drain in general.
+    clock.advance(BUDGET - Duration::from_nanos(1));
+    assert_eq!(
+        signal.remaining(),
+        Some(Duration::from_nanos(1)),
+        "a nanosecond before the deadline is still live"
+    );
+
+    clock.advance(Duration::from_nanos(1));
+    assert!(signal.is_aborted(), "the deadline instant is aborted");
+    assert_eq!(
+        signal.remaining(),
+        None,
+        "the deadline instant leaves no budget, not a zero"
+    );
+    assert_eq!(
+        signal.clamp(BUDGET),
+        None,
+        "a zero budget must not reach a caller as a zero timeout"
+    );
 }
 
 /// Scenario: a spent budget, and an aborted signal.

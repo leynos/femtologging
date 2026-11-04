@@ -8,31 +8,39 @@ proceeds.
 
 Status: IN PROGRESS
 
-All four milestones are implemented. The current candidate is rebased onto
-`origin/main` at `d234990f7f4c3a7c000215cf9b90ad87d5d43c25`; the five feature
-commits replay unchanged. Retry 19 passed all deterministic gates, including
-formatting, lint, typecheck, Rust and Python tests, Markdown lint and Mermaid
-validation. Pytest reported 791 passed, 5 skipped and 1 warning, with 66
-snapshots passed. CodeRabbit found two paths that silently dropped the
-in-flight record when its shutdown budget expired. Both are fixed and covered
-by worker tests. The follow-up ExecPlan update also passed its documentation
-gates. Two later CodeRabbit requests were rate-limited and returned no review
-findings; their cooldowns and retry history are recorded below. CodeRabbit then
-completed a review on `cb8a81e` and identified five findings. The current
-follow-up serializes two log-capture tests, flushes shutdown drops immediately,
-and uses `Python::try_attach` in both destructors. The full formatting, lint,
-typecheck and test gates have since passed; pytest reported 791 passed, 5
-skipped and 1 warning, with 66 snapshots passed. A Markdown spelling error was
-fixed, and the final formatting, Markdown lint and Mermaid gates passed. The
-hosted CodeScene check on `b790035` then identified duplicated warning tests.
-Those cases have been consolidated while retaining the rate-limit and
-immediate-flush assertions; rerun all deterministic gates before the next
-CodeRabbit review. A subsequent test run exposed the stream handler's GIL wait
-while invoking Python formatters; its Python `flush`, `close` and drop paths
-now detach while waiting, and the guide documents that behaviour. CodeRabbit
-then identified inaccurate HTTP and shutdown-signal docs plus a missing Loom
-lock constructor. Those findings are fixed; the full gate sequence must pass
-before requesting another review.
+All four milestones are implemented. An earlier candidate was rebased onto the
+`origin/main` of `d234990f7f4c3a7c000215cf9b90ad87d5d43c25`, replaying five
+feature commits unchanged; the branch has since been rebased and reviewed
+further. Retry 19 passed all deterministic gates, including formatting, lint,
+typecheck, Rust and Python tests, Markdown lint and Mermaid validation. Pytest
+reported 791 passed, 5 skipped and 1 warning, with 66 snapshots passed.
+CodeRabbit found two paths that silently dropped the in-flight record when its
+shutdown budget expired. Both are fixed and covered by worker tests. The
+follow-up ExecPlan update also passed its documentation gates. Two later
+CodeRabbit requests were rate-limited and returned no review findings; their
+cooldowns and retry history are recorded below. CodeRabbit then completed a
+review on `cb8a81e` and identified five findings. The current follow-up
+serializes two log-capture tests, flushes shutdown drops immediately, and uses
+`Python::try_attach` in both destructors. The full formatting, lint, typecheck
+and test gates have since passed; pytest reported 791 passed, 5 skipped and 1
+warning, with 66 snapshots passed. A Markdown spelling error was fixed, and the
+final formatting, Markdown lint and Mermaid gates passed. The hosted CodeScene
+check on `b790035` then identified duplicated warning tests. Those cases have
+been consolidated while retaining the rate-limit and immediate-flush
+assertions; rerun all deterministic gates before the next CodeRabbit review. A
+subsequent test run exposed the stream handler's GIL wait while invoking Python
+formatters; its Python `flush`, `close` and drop paths now detach while
+waiting, and the guide documents that behaviour. CodeRabbit then identified
+inaccurate HTTP and shutdown-signal docs plus a missing Loom lock constructor.
+Those findings are fixed. CodeRabbit never reviewed the ensuing head
+`fe58f995`: it auto-paused there after the preceding commit series, and its only
+`CHANGES_REQUESTED` review remains anchored at `7f12c636`. The pre-merge
+assessment table from that older review had never been reconciled, so it was
+re-checked row by row against `fe58f995`. Four of its five rows were still
+genuine and are fixed in the reconciliation commit: the `MonotonicClock` seam,
+the `ShutdownSignal` property tests, and both documentation rows. The fifth,
+Observability, is declined with evidence and tracked in issue #551. The full
+gate sequence must pass before requesting another review.
 
 Related: [Issue #436](https://github.com/leynos/femtologging/issues/436).
 
@@ -995,6 +1003,89 @@ Trace links, from issue #436 to milestone:
   `7f12c636`. Recorded rather than retried until green: the gate's verdict for
   the candidate is the rerun, and the flake belongs to the polling helper, not
   to this change.
+
+- 2026-11-04: Reconciled CodeRabbit's pre-merge table, which had never been
+  dispositioned. It was anchored at `7f12c636` and reported one error and four
+  warnings. Every row was re-checked against `fe58f995` rather than accepted or
+  dismissed on its anchor:
+
+  - *Unit Architecture* (error): real. `ShutdownSignal::is_aborted`,
+    `remaining`, `clamp` and the transport deadline helpers read `Instant::now`
+    directly, so a query that looks pure is untestable without real time.
+    Fixed by adding a `MonotonicClock` seam: `ShutdownSignal` samples it once
+    per query, production uses `Instant::now`, and tests inject a scripted
+    clock. The existing `Clock` in `rate_limited_warner.rs` reports
+    milliseconds-since-construction and cannot express a deadline, so this is a
+    second, narrower seam rather than a reuse of that one.
+  - *Testing (Property / Proof)* (warning): real. `ShutdownSignal` is a
+    concurrent state machine tested only with fixed scenarios. Fixed with a
+    `proptest` model over operation sequences asserting monotonic phase
+    transitions, first-deadline retention, and that every query agrees with the
+    phase.
+  - *Developer Documentation* (warning): real and partly stale. The developers
+    guide and `docs/rust-extension.md` describe the file/stream handlers only,
+    and the latter claims a detached worker drains its queue when the changed
+    workers abort and discard. Fixed in `docs/developers-guide.md` and
+    `docs/rust-extension.md`.
+  - *User-Facing Documentation* (warning): real. A behaviour change with no
+    migration-guide entry. Fixed by adding the bounded-shutdown contract to
+    `docs/v0-2-0-migration-guide.md` and the contents file.
+  - *Observability* (warning): declined, with evidence.
+    `docs/adrs/adr-0002-journald-and-otel-support.md`
+    states as a non-goal that "setting up tracing spans or metrics in an
+    application is outside the logging framework's scope", and the repository
+    has no metrics exporter for this path. The bounded telemetry this row asks
+    for is scoped and tracked in issue
+    [#551](https://github.com/leynos/femtologging/issues/551), which the reply
+    cites.
+
+  The implementation of the first two rows touched these Rust files:
+  `rust_extension/src/monotonic_clock.rs` (new), `shutdown_signal.rs` (the
+  clock field, `with_clock`, `phase_and_now`), `lib.rs` (module registration),
+  `shutdown_signal_property_tests.rs` (new), `socket_handler/transport.rs` and
+  `socket_handler/frame_write.rs` (sampled `now` parameters on the budget
+  helpers), and the corresponding test files.
+
+  The property test then earned its place immediately by finding a real defect.
+  On its first full `make test` run it failed the generated sequence
+  `[Advance(164), Advance(355), Advance(101), BeginShutdown(620)]` with
+  "remaining must be empty exactly when the deadline has passed". The cause:
+  `checked_duration_since` returns `Some(0)` when the clock reads *exactly* the
+  deadline, not `None`. So at that instant `is_aborted()` said aborted while
+  `remaining()` said a zero budget remained, and `clamp()` handed that zero to
+  its caller. Since `std` and `ureq` read a zero timeout as "no timeout", a
+  spent budget at the boundary asked for an unbounded wait, which is precisely
+  the behaviour this change exists to eliminate. `remaining()` now filters a
+  zero remainder to `None`. A named regression,
+  `the_deadline_instant_itself_is_spent`, pins the boundary on the manual
+  clock; removing the filter makes it fail with `left: Some(0ns)`.
+
+  That fix then exposed a second, independent mistake, this time in the test
+  rather than the code. `the_first_deadline_survives_later_ones` generated
+  `first_millis = 0`, which puts the first deadline at the clock's own base,
+  and asserted `remaining()` was `Some(..)`. Under the corrected contract that
+  instant is spent, so the oracle was wrong, not the signal. It now expresses
+  the budget as `checked_duration_since(now).filter(|left| !left.is_zero())`,
+  the same rule the production query applies. The general lesson: when a
+  boundary rule changes, every test that restates it has to change with it, or
+  the suite reports the fix as a regression.
+
+  Two further corrections came out of writing that code, both worth keeping:
+
+  - `Arc<ManualClock>` does not coerce to `Arc<dyn MonotonicClock>` at a
+    function argument merely because the trait is implemented. The coercion
+    has to happen where the value is bound, so the property tests build the
+    pair through one `signal_on_manual_clock()` helper that returns the
+    concrete handle for `advance` and `base` alongside the signal. Doing it
+    per test site also keeps a single place to explain why two handles to one
+    clock are the point.
+  - Appending the transport budget tests inline pushed
+    `socket_handler/transport.rs` to 408 lines, past the repository's
+    400-line ceiling in `pyproject.toml`. They were moved to
+    `socket_handler/transport_tests.rs` behind the same
+    `#[cfg(test)] #[path = ...] mod tests;` form `frame_write` already uses,
+    which leaves `transport.rs` at 323 lines. A gate run was stopped rather
+    than let a knowingly invalid candidate finish.
 
 ## Outcomes & retrospective
 

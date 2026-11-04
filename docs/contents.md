@@ -11,8 +11,9 @@ libraries. Use the links below to explore each topic.
   - Records developer toolchain ownership and validation boundaries.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Describes structured logging additions, the bounded logger and shared
-    dispatch changes, and the production-wheel packaging change that omits the
-    timed-rotation test hooks in v0.2.0.
+    dispatch changes, the bounded handler `close()` contract, and the
+    production-wheel packaging change that omits the timed-rotation test
+    hooks in v0.2.0.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)
@@ -27,8 +28,9 @@ libraries. Use the links below to explore each topic.
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Describes the `BasicConfig` slots, bounded logger names and registry,
-    shared dispatch changes, and the move to production wheels that omit the
-    timed-rotation test hooks, with migration guidance for v0.2.0.
+    shared dispatch, bounded handler `close()`, and the move to production
+    wheels that omit the timed-rotation test hooks, with migration guidance for
+    v0.2.0.
 
 ## Architecture decision records
 

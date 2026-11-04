@@ -145,13 +145,18 @@ impl ActiveConnection {
     }
 }
 
-/// What one step of a connection attempt may spend.
+/// What one step of a connection attempt may spend, as of `now`.
 ///
 /// `None` once the attempt's own deadline has passed, or the handler's
 /// shutdown budget is spent - whichever comes first. Both are ceilings on the
 /// same call, so neither can outlast the other.
-fn step_budget(signal: &ShutdownSignal, deadline: Instant) -> Option<Duration> {
-    let left = deadline.checked_duration_since(Instant::now())?;
+///
+/// `now` is sampled by the caller rather than read here. One attempt asks this
+/// once per address, and a helper that read the clock itself would make the
+/// sequence of budgets depend on how long each call took; passing the instant
+/// keeps the decision a function of its arguments.
+fn step_budget(signal: &ShutdownSignal, deadline: Instant, now: Instant) -> Option<Duration> {
+    let left = deadline.checked_duration_since(now)?;
     signal.clamp(left).filter(|budget| !budget.is_zero())
 }
 
@@ -169,7 +174,7 @@ fn connect_tcp(
     let addrs = config.socket_addrs()?;
     let mut last_error = None;
     for addr in addrs {
-        let Some(left) = step_budget(signal, deadline) else {
+        let Some(left) = step_budget(signal, deadline, Instant::now()) else {
             break;
         };
         match TcpStream::connect_timeout(&addr, left) {
@@ -203,7 +208,12 @@ pub fn connect_transport(
     connect_timeout: Duration,
     signal: &ShutdownSignal,
 ) -> io::Result<ActiveConnection> {
-    let deadline = Instant::now() + connect_timeout;
+    // The clock read stays here, at the edge of the operation, so every helper
+    // below receives its deadline as a value. `start` is sampled once for the
+    // same reason: a deadline computed from two different reads would be off
+    // by however long the sampling took.
+    let start = Instant::now();
+    let deadline = start + connect_timeout;
     match transport {
         SocketTransport::Tcp(config) => connect_tcp_transport(config, deadline, signal),
         // The deadline is passed on even though the Windows arm cannot use it:
@@ -246,7 +256,7 @@ fn connect_unix_transport(
     deadline: Instant,
     signal: &ShutdownSignal,
 ) -> io::Result<ActiveConnection> {
-    if step_budget(signal, deadline).is_none() {
+    if step_budget(signal, deadline, Instant::now()).is_none() {
         return Err(budget_spent());
     }
     UnixStream::connect(&config.path).map(ActiveConnection::Unix)
@@ -281,7 +291,7 @@ fn connect_tls(
     signal: &ShutdownSignal,
 ) -> io::Result<ActiveConnection> {
     let stream = connect_tcp(config, deadline, signal)?;
-    let Some(left) = step_budget(signal, deadline) else {
+    let Some(left) = step_budget(signal, deadline, Instant::now()) else {
         return Err(budget_spent());
     };
     let connector = tls.connector()?;
@@ -307,3 +317,7 @@ fn budget_spent() -> io::Error {
         "shutdown budget spent before the connection was established",
     )
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod tests;

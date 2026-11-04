@@ -228,6 +228,88 @@ the shutdown state; the wait stays bounded by the handler's timeout. Preserve
 the handlers' existing timeouts and idempotent-close behaviour when changing
 this boundary.
 
+### Handler shutdown signal, clock and condition-variable seams
+
+`ShutdownSignal` (`rust_extension/src/shutdown_signal.rs`) is the second
+channel a handler's worker can hear. A close sent through the command channel
+queues behind the backlog it is meant to cancel, so it could not bound a
+worker's retries or its blocking network calls. The signal carries no work,
+only a [`Phase`], and the worker consults it between attempts and inside every
+timeout.
+
+The phases are `Running`, `Draining { deadline }` and `Aborted`. A drain's
+first deadline is the binding one: `begin_shutdown` after it, or after an
+abort, does nothing. `abort` is permanent. `remaining()` reports the budget
+left in `Draining` and `None` while running (no budget applies) and after an
+abort (none is left); callers that need to tell those apart ask
+`is_shutting_down()` first. `clamp(configured)` is the query most call sites
+want, because it already distinguishes them, and it returns `None` rather than
+a zero duration: `std` and `ureq` both read a zero timeout as "no timeout",
+which is the opposite of a spent budget.
+
+Three seams exist so that behaviour can be tested at a chosen instant rather
+than at whatever instant the host's scheduler supplies.
+
+`monotonic_clock::MonotonicClock` (`rust_extension/src/monotonic_clock.rs`)
+supplies "now" to the deadline queries. Production uses `SystemClock`, which is
+`Instant::now`; tests construct a `ShutdownSignal::with_clock` around a
+`ManualClock`, which moves only when told to. This is deliberately not
+`rate_limited_warner::Clock`: that trait reports milliseconds since its own
+construction and so cannot express an absolute `Instant` deadline. Each query
+samples the clock once, so the answer belongs to one instant; a test that
+compared two separately-read queries would be comparing two moments, which is
+the race the manual clock exists to remove. `wait` reads both clocks on
+purpose: the deadline comparison uses the signal's clock so it can never
+disagree with `is_aborted`, while the sleep bound is a real duration handed to
+`Condvar::wait_timeout`, which has no seam. A manual clock that never advanced
+would leave that bound constant and the loop unable to finish.
+
+`sync::Condvar` is the platform seam behind the notification the workers park
+on. The phase is mutated under its guard and `notify_all` runs while the guard
+is still held, so no waiter can have released the lock without having parked.
+`wait` re-reads the phase after each wakeup rather than assuming the wakeup was
+a phase change, and it terminates on the real clock as described above.
+
+The deadline is a bound on what a worker *starts*, not on what it has already
+started: no `std` API cancels a blocking `connect`, a `write`, or a TLS
+handshake. Nothing new begins once the deadline has passed or the phase is
+aborted, and nothing started after a drain began outlasts the budget's
+remainder. Actual exit is therefore bounded by the budget plus one call already
+in flight when the deadline fell.
+
+`discard_rest` in each worker's module is the record of what that bound costs.
+Records still queued at the deadline are dropped and counted rather than sent,
+and `warn_discarded` emits one rate-limited warning naming the count. The same
+accounting covers the write path, where a frame that runs out of budget
+mid-write reports how many of its bytes were sent, so a collector that is slow
+can be told apart from one that has stopped reading.
+
+Detaching is not draining to completion. `abandon_worker`
+(`rust_extension/src/http_handler/handler.rs`, and the socket handler's
+equivalent) must `abort` the signal and take the join handle, because the
+detached thread is the only other holder of the signal: one left in `Draining`
+would keep telling it that budget remained past the deadline it had already
+reached. The worker then finishes its in-flight call, discards whatever is
+still queued, and exits, with nothing left to join it, including the `Drop`
+that may follow.
+
+Tests covering these seams:
+
+- `shutdown_signal_tests.rs` pins each transition and each query.
+- `shutdown_signal_property_tests.rs` generates operation sequences over a
+  `ManualClock` and asserts, after every operation, that `is_shutting_down`,
+  `is_aborted`, `remaining` and `clamp` agree with the phase and the instant.
+  It complements the Loom models under `tests/heavy/`, which explore thread
+  interleavings rather than operation orders.
+- `socket_handler/transport.rs` and `socket_handler/frame_write.rs` each carry
+  boundary tables over the pure budget helpers, covering a deadline exactly
+  reached, one nanosecond short, one long past, and a zero remainder.
+
+Keep the helper functions taking the sampled instant as a parameter. A helper
+that read the clock itself would make the sequence of budgets depend on how
+long the previous call took, which is untestable and is the defect the seam
+exists to prevent.
+
 ### Dependabot grouping for the extension build
 
 The project is uv-managed (`uv.lock`, no requirements files), so the Python
