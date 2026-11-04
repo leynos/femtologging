@@ -196,7 +196,7 @@ def capture_records(logger: FlushableLogger) -> cabc.Iterator[RecordCollector]:
 
     Examples
     --------
-    >>> from femtologging import get_logger
+    >>> from femtologging import get_logger, info
     >>> logger = get_logger("doctest.capture_records")
     >>> with capture_records(logger) as collector:
     ...     _ = info("hello", name="doctest.capture_records")

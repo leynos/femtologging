@@ -545,6 +545,10 @@ def wait_for_flush_entry_for_test(logger: FemtoLogger, timeout_ms: int) -> bool:
     """Wait for the test-only flush-entry signal within ``timeout_ms``."""
     ...
 
+def drain_flush_signals_for_test(logger: FemtoLogger) -> None:
+    """Clear stale test-only flush signals before arming a handler gate."""
+    ...
+
 def cancel_flush_wait_for_test(logger: FemtoLogger) -> None:
     """Wake a pending test-only flush-entry wait during cleanup."""
     ...

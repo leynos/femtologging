@@ -604,11 +604,30 @@ shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
 `flush_handlers()` queues a barrier only when that logger has work in flight.
-The barrier drains records ahead of it on the same shard and has a two-second
-timeout; an idle logger does not consume a queue slot or wait for unrelated
-work. Dropping a logger follows the same per-logger in-flight check. The pool
-itself lives for the process lifetime. If the operating system refuses to start
-a worker, construction returns `DispatcherError` in Rust or `RuntimeError`
+The barrier drains records ahead of it on the same shard; an idle logger does
+not consume a queue slot or wait for unrelated work. The Python wrapper
+releases the GIL while the worker acknowledges the barrier and attached
+handlers flush, so Python handlers can run. Enqueueing the flush marker and
+waiting for its acknowledgement share a two-second timeout. Flushing attached
+handlers can take additional time. The method returns `True` only when the
+worker acknowledges the marker in time and every handler flush succeeds; it
+returns `False` if the marker cannot be enqueued or acknowledged in time, or a
+handler flush fails.
+
+The Rust `log::Log::flush` bridge snapshots logger references under the
+`MANAGER` read guard, releases the guard, then detaches each logger's blocking
+flush. This avoids a lock cycle: a Python manager writer can hold the GIL while
+waiting for the write lock, while the detached flush waits for a Python
+callback to acquire the GIL. The bridge ignores each logger's boolean result
+because `log::Log::flush` returns `()`.
+
+Builds with `python,test-util` also expose `wait_for_flush_entry_for_test()`,
+`drain_flush_signals_for_test()`, and `cancel_flush_wait_for_test()` for
+bounded regression-test coordination. Normal `python` builds omit these hooks.
+
+Dropping a logger follows the same per-logger in-flight check. The pool itself
+lives for the process lifetime. If the operating system refuses to start a
+worker, construction returns `DispatcherError` in Rust or `RuntimeError`
 through Python. The pool is not marked failed, so a later construction retries.
 
 The production pool is outside the Loom model. Each Loom run owns and stops its

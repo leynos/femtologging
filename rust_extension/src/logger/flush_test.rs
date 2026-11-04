@@ -39,6 +39,11 @@ impl FlushTestHooks {
         let _ = self.signal_tx.try_send(FlushTestSignal::Entered);
     }
 
+    /// Discard signals from earlier flushes before a test arms its gate.
+    pub(crate) fn drain_pending_signals(&self) {
+        while self.signal_rx.try_recv().is_ok() {}
+    }
+
     /// Wait for flush entry or cancellation for at most *timeout_ms*.
     pub(crate) fn wait_for_entry(&self, timeout_ms: u64) -> bool {
         matches!(
@@ -65,8 +70,30 @@ pub(crate) fn wait_for_flush_entry_for_test(
     py.detach(|| logger_ref.flush_test_hooks.wait_for_entry(timeout_ms))
 }
 
+/// Clear prior flush signals before a test arms a new handler gate.
+#[pyfunction]
+pub(crate) fn drain_flush_signals_for_test(logger: PyRef<'_, FemtoLogger>) {
+    logger.flush_test_hooks.drain_pending_signals();
+}
+
 /// Cancel a logger's pending flush-entry test wait during cleanup.
 #[pyfunction]
 pub(crate) fn cancel_flush_wait_for_test(logger: PyRef<'_, FemtoLogger>) {
     logger.flush_test_hooks.cancel_wait();
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression checks for stale test-only flush-entry signals.
+
+    use super::FlushTestHooks;
+
+    #[test]
+    fn draining_pending_signals_discards_a_stale_signal() {
+        let hooks = FlushTestHooks::new();
+        hooks.signal_entered();
+        hooks.drain_pending_signals();
+
+        assert!(!hooks.wait_for_entry(1));
+    }
 }

@@ -171,6 +171,34 @@ it.
 - There is no lazy formatting. Build the final message string before calling
   `log()`.
 
+### Flushing records
+
+`logger.flush_handlers()` waits for records already queued by that logger to
+reach its handlers, then flushes each attached handler. The Python wrapper
+releases the GIL while it waits, so Python handlers can run. Enqueueing the
+flush marker and waiting for its acknowledgement share a two-second timeout.
+Flushing attached handlers can take additional time. The method returns `True`
+when the worker acknowledges the marker in time and every handler flush
+succeeds; it returns `False` if the marker cannot be enqueued or acknowledged
+in time, or any handler flush fails.
+
+<!-- tested-example: flush-handlers-usage -->
+```python
+import femtologging
+
+logger = femtologging.get_logger("service")
+handler = femtologging.FemtoFileHandler("service.log")
+logger.add_handler(handler)
+
+try:
+    logger.info("shutting down")
+    if not logger.flush_handlers():
+        raise RuntimeError("logger handlers did not flush")
+finally:
+    logger.remove_handler(handler)
+    handler.close()
+```
+
 ### Exception schema versioning
 
 Structured `exc_info` and `stack_info` payloads carry a `schema_version` field.
@@ -953,8 +981,9 @@ is reported.
 
 ## Operational tips and caveats
 
-- Always flush or close handlers before shutting down the process; otherwise
-  buffered records may be lost.
+- Call `logger.flush_handlers()` before shutting down to drain that logger's
+  queued records and flush its attached handlers. Close handlers that support
+  `close()` as part of shutdown; otherwise buffered records may be lost.
 - Monitor `logger.get_dropped()`, `logger.get_context_dropped()`,
   `logger.get_disabled_drops()`, and the warnings emitted by each handler to
   detect back pressure, Rust context validation failures, or traffic aimed at a
