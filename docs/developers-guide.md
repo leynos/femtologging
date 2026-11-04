@@ -754,14 +754,17 @@ When `disable_existing_loggers` is on, the commit then disables every
 registered logger outside `root` and the keep set, clearing each disabled
 logger's handler attachments and filters. The keep set is the explicitly
 configured logger names, plus `root`, plus every dotted ancestor of a
-configured name; kept ancestors stay enabled with their attachments so a
-configured descendant can still propagate to them. The commit finishes by
-publishing one `RuntimeStateSnapshot` holding the handler registry, handler
-filter IDs, filter registry, and per-logger attachment metadata. Handlers,
-filters, unused staged loggers, and the displaced previous snapshot are
-retained in `DisplacedAttachments`; after the manager lock is dropped,
-`build_and_init` calls `displaced.drop_without_gil(py)`, so handler teardown
-that flushes or joins a worker runs without the GIL.
+configured name. Kept ancestors retain their existing enabled or disabled state
+and their attachments, so a configured descendant can still propagate to them,
+but keep-set membership does not re-enable an ancestor that was already
+disabled. Only a logger named explicitly in the configuration is re-enabled.
+The commit finishes by publishing one `RuntimeStateSnapshot` holding the
+handler registry, handler filter IDs, filter registry, and per-logger
+attachment metadata. Handlers, filters, unused staged loggers, and the
+displaced previous snapshot are retained in `DisplacedAttachments`; after the
+manager lock is dropped, `build_and_init` calls
+`displaced.drop_without_gil(py)`, so handler teardown that flushes or joins a
+worker runs without the GIL.
 
 `dictConfig` and `fileConfig` use this same builder path, so their validation
 and transaction boundary match direct builder use.

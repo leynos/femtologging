@@ -125,9 +125,9 @@ it.
 - `logger.log(level, message)` accepts the case-insensitive names `"TRACE"`,
   `"DEBUG"`, `"INFO"`, `"WARN"`, `"WARNING"`, `"ERROR"`, and `"CRITICAL"`.
 - The method returns the formatted string when the record passes level checks
-  (default format is `"{logger} [LEVEL] message"`), or `None` when the record
-  is filtered out. This differs from `logging.Logger.log()`, which always
-  returns `None`.
+  (default format is `"{logger} [LEVEL] message"`), or `None` when the logger
+  is disabled or the record is filtered out. This differs from
+  `logging.Logger.log()`, which always returns `None`.
 - Convenience methods `logger.debug(message)`, `logger.info(message)`,
   `logger.warning(message)`, `logger.error(message)`,
   `logger.critical(message)`, and `logger.exception(message)` are available.
@@ -163,8 +163,9 @@ it.
   ```
 
 - `logger.isEnabledFor(level)` returns `True` when the logger would process a
-  record at the given level. Use it for expensive message construction that
-  should be skipped when the level is filtered out.
+  record at the given level. A disabled logger returns `False` for every level.
+  Use it for expensive message construction that should be skipped when the
+  level is filtered out.
 - `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
   compatibility with code written against `logging.getLogger`.
 - There is no lazy formatting. Build the final message string before calling
@@ -270,6 +271,12 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
+- `logger.disabled` is a read-only property reporting whether a configuration
+  with `disable_existing_loggers=True` disabled the logger. A disabled logger
+  rejects its own records before the level check, filters, formatter, dispatch,
+  or propagation, so `log()` returns `None` and `isEnabledFor()` returns
+  `False` for every level. A later configuration that names the logger
+  re-enables it.
 - Use `logger.get_disabled_drops()` to inspect records refused because a
   configuration with `disable_existing_loggers=True` disabled the logger. The
   record never reaches the level check, filters, formatter, or dispatch, so

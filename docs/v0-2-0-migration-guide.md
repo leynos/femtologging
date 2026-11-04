@@ -319,8 +319,11 @@ configuration-disabled traffic is visible separately from queue-pressure drops.
 
 Naming a disabled logger in a later configuration re-enables it, and a
 configuration with `disable_existing_loggers=False` leaves the existing
-disabled flag untouched. Ancestors of configured loggers stay enabled with
-their attachments, so a configured descendant can still propagate to them.
+disabled flag untouched. Ancestors of configured loggers are kept with their
+attachments, so a configured descendant can still propagate to them, but
+keep-set membership does not change their disabled state: an ancestor that was
+already disabled stays disabled. Only a logger the configuration names
+explicitly is re-enabled.
 
 The configuration itself is now all-or-nothing for live state: a rejected
 configuration leaves every pre-existing logger as it was. Two side effects sit
@@ -340,19 +343,23 @@ configured level, now sees no output.
 ### Before: an omitted logger still reached root
 
 ```python
+# Create the logger before configuration, or the configuration never sees it.
+noisy = femtologging.get_logger("noisy")
 femtologging.dictConfig({
     "version": 1,
     "disable_existing_loggers": True,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": "ERROR"},
 })
-# The omitted logger lost its handlers but still propagated to `root`.
-femtologging.get_logger("noisy").error("still seen")  # reached root
+# The omitted logger was not disabled, so it still propagated to `root`.
+noisy.error("still seen")  # reached root
 ```
 
 ### After: an omitted logger is disabled
 
 ```python
+# Create the logger before configuration so the configuration disables it.
+noisy = femtologging.get_logger("noisy")
 femtologging.dictConfig({
     "version": 1,
     "disable_existing_loggers": True,
@@ -360,7 +367,7 @@ femtologging.dictConfig({
     "root": {"handlers": ["console"], "level": "ERROR"},
 })
 # The omitted logger is now disabled: this returns None and reaches nothing.
-femtologging.get_logger("noisy").error("dropped")
+noisy.error("dropped")
 ```
 
 ### How to migrate omitted loggers
