@@ -125,9 +125,9 @@ it.
 - `logger.log(level, message)` accepts the case-insensitive names `"TRACE"`,
   `"DEBUG"`, `"INFO"`, `"WARN"`, `"WARNING"`, `"ERROR"`, and `"CRITICAL"`.
 - The method returns the formatted string when the record passes level checks
-  (default format is `"{logger} [LEVEL] message"`), or `None` when the record
-  is filtered out. This differs from `logging.Logger.log()`, which always
-  returns `None`.
+  (default format is `"{logger} [LEVEL] message"`), or `None` when the logger
+  is disabled or the record is filtered out. This differs from
+  `logging.Logger.log()`, which always returns `None`.
 - Convenience methods `logger.debug(message)`, `logger.info(message)`,
   `logger.warning(message)`, `logger.error(message)`,
   `logger.critical(message)`, and `logger.exception(message)` are available.
@@ -163,8 +163,9 @@ it.
   ```
 
 - `logger.isEnabledFor(level)` returns `True` when the logger would process a
-  record at the given level. Use it for expensive message construction that
-  should be skipped when the level is filtered out.
+  record at the given level. A disabled logger returns `False` for every level.
+  Use it for expensive message construction that should be skipped when the
+  level is filtered out.
 - `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
   compatibility with code written against `logging.getLogger`.
 - There is no lazy formatting. Build the final message string before calling
@@ -270,6 +271,17 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
+- `logger.disabled` is a read-only property reporting whether a configuration
+  with `disable_existing_loggers=True` disabled the logger. A disabled logger
+  rejects its own records before the level check, filters, formatter, dispatch,
+  or propagation, so `log()` returns `None` and `isEnabledFor()` returns
+  `False` for every level. A later configuration that names the logger
+  re-enables it.
+- Use `logger.get_disabled_drops()` to inspect records refused because a
+  configuration with `disable_existing_loggers=True` disabled the logger. The
+  record never reaches the level check, filters, formatter, or dispatch, so
+  this counter is separate from `get_dropped()`. A later configuration that
+  names the logger re-enables it and stops the counter rising.
 
 ## Built-in handlers
 
@@ -701,13 +713,20 @@ builder = (
 builder.build_and_init()
 ```
 
-- `build_and_init()` validates handler and filter references and prepares the
-  complete configuration before changing live logger state. If configuration
-  fails, the current logger configuration remains intact.
+- `build_and_init()` validates every logger name, handler and filter reference,
+  and scalar setting, and prepares the complete configuration before changing
+  live logger state. The resulting transition is atomic from the caller's
+  perspective: if configuration fails, every pre-existing logger keeps its
+  handlers, filters, level, propagation flag, disabled flag, and runtime
+  attachment metadata exactly as they were.
 - `with_default_level(level)` sets a fallback for loggers that omit explicit
-  levels. `with_disable_existing_loggers(True)` clears handlers and filters on
-  previously created loggers that are not part of the new configuration (their
-  ancestors are preserved automatically).
+  levels. `with_disable_existing_loggers(True)` disables previously created
+  loggers that are not part of the new configuration: they reject records
+  outright, so nothing reaches ancestor or root handlers through propagation,
+  and they lose their handlers and filters. Ancestors of configured loggers are
+  preserved automatically. Naming a logger in a later configuration enables it
+  again; loggers that were never disabled keep their state through a
+  configuration that leaves `disable_existing_loggers` off.
 - Available filter builders are `LevelFilterBuilder`,
   `NameFilterBuilder`, and `PythonCallbackFilterBuilder`. Callback filters run
   on the producer thread and may either return a truthy/falsy value directly or
@@ -918,17 +937,33 @@ For upgrade steps covering handler filters and formatter builders, see the
   string, or supply a callable formatter per handler.
 - The logging manager is separate from `logging`’s global state. Mixing both
   systems in the same process is unsupported.
+- `disable_existing_loggers=True` rejects records at each omitted logger,
+  including descendants of configured loggers, and clears their handlers and
+  filters. Ancestors of configured loggers remain available for propagation.
+  This differs from stdlib `dictConfig`, which exempts descendants of
+  configured loggers and leaves handlers and filters attached to other disabled
+  loggers. A later configuration that explicitly names a disabled logger
+  enables it again.
+
+Configuration preparation validates logger names and resource references before
+changing live logger state. If validation fails, every existing logger keeps
+its state. Records already queued before a successful change are not retracted,
+and handler construction can open destinations before a later preparation error
+is reported.
 
 ## Operational tips and caveats
 
 - Always flush or close handlers before shutting down the process; otherwise
   buffered records may be lost.
-- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`, and the
-  warnings emitted by each handler to detect back pressure or Rust context
-  validation failures. When `get_context_dropped()` increases, correct or
-  reduce Rust context fields and explicit metadata that contributes to
-  validation. For queue-full/back-pressure drops, increase handler capacities
-  or switch to blocking/timeout policies when drops are unacceptable.
+- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`,
+  `logger.get_disabled_drops()`, and the warnings emitted by each handler to
+  detect back pressure, Rust context validation failures, or traffic aimed at a
+  logger the current configuration disabled. When `get_context_dropped()`
+  increases, correct or reduce Rust context fields and explicit metadata that
+  contributes to validation. For queue-full/back-pressure drops, increase
+  handler capacities or switch to blocking/timeout policies when drops are
+  unacceptable. When `get_disabled_drops()` increases, either stop logging
+  through that logger or name it in the configuration to re-enable it.
 - File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies affect the thread that calls `logger.log()`. Use

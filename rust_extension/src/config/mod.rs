@@ -19,8 +19,10 @@ mod formatter_builder;
 mod handler_builder;
 #[cfg(feature = "python")]
 mod py;
+// Shared with the manager's configuration commit, which publishes the
+// bootstrap registries through the same reachability rule as runtime mutation.
 #[cfg(feature = "python")]
-mod reachability;
+pub(crate) mod reachability;
 #[cfg(feature = "python")]
 mod runtime_mutation;
 mod types;

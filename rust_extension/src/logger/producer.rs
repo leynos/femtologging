@@ -5,8 +5,6 @@
 //! counted as dropped, so a slow handler slows the loggers sharing its shard
 //! rather than the code doing the logging.
 
-#[cfg(feature = "python")]
-use log::warn;
 use std::sync::Arc;
 
 use crate::handler::FemtoHandlerTrait;
@@ -16,6 +14,10 @@ use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
 mod admission;
+
+#[cfg(feature = "python")]
+mod context_capture;
+
 mod handler_filters;
 
 #[cfg(all(test, not(loom)))]
@@ -27,8 +29,14 @@ impl FemtoLogger {
     ///
     /// Checks level threshold and filters, formats the record, and dispatches
     /// to handlers. Returns `Some(formatted_message)` if the record was logged,
-    /// or `None` if it was filtered out.
+    /// or `None` if it was filtered out or the logger is disabled.
+    ///
+    /// The disabled check lives here as well as in the public entry points
+    /// because this is the funnel every producer path reaches.
     pub(super) fn log_record(&self, mut record: FemtoLogRecord) -> Option<String> {
+        if self.refuse_if_disabled() {
+            return None;
+        }
         let threshold = self.level.load(std::sync::atomic::Ordering::Relaxed);
         if u8::from(record.level()) < threshold {
             return None;
@@ -47,6 +55,9 @@ impl FemtoLogger {
     /// This method is a simplified version of the PyO3-exposed `log` method
     /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
     pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
+        if self.refuse_if_disabled() {
+            return None;
+        }
         let record = FemtoLogRecord::new(&self.name, level, message);
         self.log_record(record)
     }
@@ -78,7 +89,7 @@ impl FemtoLogger {
         message: &str,
         mut metadata: RecordMetadata,
     ) -> Option<String> {
-        if !self.is_enabled_for(level) {
+        if self.refuse_if_disabled() || !self.is_enabled_for(level) {
             return None;
         }
         match log_context::merge_context_values(&metadata.key_values) {
@@ -105,16 +116,36 @@ impl FemtoLogger {
         message: &str,
         metadata: RecordMetadata,
     ) -> Option<String> {
-        if !self.is_enabled_for(level) {
+        if self.refuse_if_disabled() || !self.is_enabled_for(level) {
             return None;
         }
         let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
         self.log_record(record)
     }
 
+    /// Refuse and count a record because configuration disabled this logger.
+    ///
+    /// Returns `true` when the logger is disabled, after incrementing
+    /// [`Self::disabled_dropped_records`]. Every producer entry point consults
+    /// this before its level check, so a disabled logger's records never reach
+    /// filters, formatting or dispatch, and the counter records exactly the
+    /// records that rejection discarded.
+    pub(crate) fn refuse_if_disabled(&self) -> bool {
+        let is_disabled = self.is_disabled();
+        if is_disabled {
+            self.disabled_dropped_records
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        is_disabled
+    }
+
     /// Return whether `level` is enabled for this logger.
+    ///
+    /// A disabled logger reports every level as disabled, so callers that
+    /// guard work with this check skip it entirely.
     pub(crate) fn is_enabled_for(&self, level: FemtoLevel) -> bool {
-        u8::from(level) >= self.level.load(std::sync::atomic::Ordering::Relaxed)
+        !self.is_disabled()
+            && u8::from(level) >= self.level.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Clone the level handle so the manager can index it without Python.
@@ -239,58 +270,6 @@ impl FemtoLogger {
             return None;
         }
         Some((record, handlers))
-    }
-
-    /// Capture Python context for the exact handler snapshot being queued.
-    #[cfg(feature = "python")]
-    fn capture_context_for_dispatch(
-        &self,
-        handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
-        #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
-    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-        #[cfg(feature = "tracing-compat")]
-        let capture_started = std::time::Instant::now();
-        let context = self.capture_python_context(handlers);
-        #[cfg(feature = "tracing-compat")]
-        {
-            let capture_outcome = match &context {
-                Ok(Some(_)) => "captured",
-                Ok(None) => "not_required",
-                Err(_) => "failed",
-            };
-            tracing::trace!(
-                target: "femtologging::internal",
-                operation = "producer_context_capture",
-                handler_kind,
-                capture_outcome,
-                elapsed_us = capture_started.elapsed().as_micros(),
-            );
-        }
-        context
-    }
-
-    /// Count a failed context snapshot separately from queue-capacity drops.
-    #[cfg(feature = "python")]
-    fn record_context_capture_failure(&self, error: pyo3::PyErr) {
-        self.context_capture_failures
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.context_capture_warner.record_drop();
-        self.context_capture_warner.warn_if_due(|count| {
-            warn!("FemtoLogger: dropped {count} records after context capture failed");
-            pyo3::Python::attach(|py| error.print(py));
-        });
-    }
-
-    /// Capture the current Python context only when a queued handler needs it.
-    #[cfg(feature = "python")]
-    pub(super) fn capture_python_context(
-        &self,
-        handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
-    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-        if !handlers.iter().any(|handler| handler.is_python_backed()) {
-            return Ok(None);
-        }
-        self.context_snapshot_provider.capture().map(Some)
     }
 
     /// Drain this logger's queued records, then flush its configured handlers.

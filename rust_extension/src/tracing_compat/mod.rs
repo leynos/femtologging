@@ -250,8 +250,11 @@ where
                 return;
             };
 
-            if !logger.borrow(py).is_enabled_for(level) {
-                return;
+            {
+                let guarded = logger.borrow(py);
+                if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
+                    return;
+                }
             }
 
             let metadata = Self::build_record_metadata(event, ctx, captured.key_values);

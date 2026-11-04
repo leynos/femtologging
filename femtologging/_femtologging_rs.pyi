@@ -42,6 +42,16 @@ class FemtoLogger:
     def level(self) -> str: ...
     @property
     def propagate(self) -> bool: ...
+    @property
+    def disabled(self) -> bool:
+        """Whether configuration has disabled this logger.
+
+        A disabled logger rejects its own records and reports every level as
+        disabled. A later full configuration that names the logger enables it
+        again.
+
+        """
+        ...
     def log(
         self,
         level: LevelArg,
@@ -74,8 +84,9 @@ class FemtoLogger:
         Returns
         -------
         str | None
-            The formatted log message if the record passes level and filter
-            checks, otherwise ``None``.
+            The formatted log message if the logger is enabled and the record
+            passes level and filter checks, otherwise ``None``. A disabled
+            logger returns ``None`` without processing or propagating the record.
 
         """
         ...
@@ -99,6 +110,15 @@ class FemtoLogger:
     def get_context_dropped(self) -> int:
         """Return records dropped because Rust context validation failed."""
         ...
+    def get_disabled_drops(self) -> int:
+        """Return records refused because configuration disabled the logger.
+
+        The counter rises only for records aimed at a logger that
+        ``disable_existing_loggers`` has disabled. A later configuration that
+        names the logger re-enables it and stops the rise.
+
+        """
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
@@ -109,7 +129,10 @@ class FemtoLogger:
         """
         ...
     def isEnabledFor(self, level: LevelArg) -> bool:  # ruff: ignore[invalid-function-name]  # TODO(#343): camelCase for stdlib compat
-        """Return ``True`` if *level* would pass the effective level filter."""
+        """Return ``True`` if *level* passes and the logger is not disabled.
+
+        A disabled logger returns ``False`` for every level.
+        """
         ...
     def debug(
         self,

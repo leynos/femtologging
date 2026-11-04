@@ -31,18 +31,6 @@ impl DetachedOwners {
 }
 
 impl FemtoLogger {
-    /// Detach every handler and filter, returning the displaced owners.
-    ///
-    /// Companion to [`Self::replace_handlers`] and [`Self::replace_filters`]
-    /// for callers that clear rather than replace, so a transaction can defer
-    /// the same releases past its guard.
-    pub(crate) fn detach_owners(&self) -> DetachedOwners {
-        DetachedOwners {
-            attachments: std::mem::take(&mut *self.handlers.write()),
-            filters: std::mem::take(&mut *self.filters.write()),
-        }
-    }
-
     /// Replace handler attachments while retaining each configured filter chain.
     ///
     /// Returns the displaced attachments rather than dropping them, so a caller
