@@ -790,8 +790,21 @@ runs of the old epilogue produced one more SIGSEGV. The fixed scenario ran 60 +
 60 times clean in the same harness, and 5 full 30-scenario runs plus 40 targeted
 `close-close` runs were clean before the commit.
 
-The full chain was then re-run on `c5338464`; its results are recorded below
-once complete.
+The full chain was then re-run once, sequentially, on `4ba0cde3` and passed:
+
+| Gate                | Result                        | Duration |
+| ------------------- | ----------------------------- | -------- |
+| `make check-fmt`    | pass                          | 2 s      |
+| `make markdownlint` | pass                          | 8 s      |
+| `make nixie`        | pass                          | 1 s      |
+| `make lint`         | pass                          | 717 s    |
+| `make typecheck`    | pass                          | 72 s     |
+| `make test`         | pass, 1068 passed / 6 skipped | 4983 s   |
+
+Most of the wall clock is the host's shared compile-admission queue: the test
+lane waited behind hundreds of queued crates and ran one stretch uncached while
+the managed sccache server was restarting. Admission reported healthy
+throughout.
 
 ## Decision log
 
