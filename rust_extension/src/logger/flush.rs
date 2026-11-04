@@ -6,9 +6,9 @@ impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
     /// This call blocks until the worker acknowledges a flush marker and each
-    /// attached handler has flushed. The 2-second timeout bounds only the
-    /// acknowledgement wait; enqueueing the marker and flushing handlers can
-    /// take additional time.
+    /// attached handler has flushed. Enqueueing the flush marker and waiting
+    /// for its acknowledgement share a two-second timeout. Flushing attached
+    /// handlers can take additional time.
     ///
     /// When Python handlers can be attached, callers that currently hold
     /// Python access must detach before calling this method. Otherwise the

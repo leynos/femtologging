@@ -123,10 +123,11 @@ class FemtoLogger:
         """Flush all handlers, returning ``True`` on success.
 
         Releases the GIL while waiting for the worker acknowledgement and
-        flushing attached handlers, so Python handlers can run. Waits up to
-        2 s for the acknowledgement; enqueueing the marker and flushing the
-        handlers can take additional time. Returns ``False`` when the worker
-        does not acknowledge the marker or any handler flush fails.
+        flushing attached handlers, so Python handlers can run. Enqueueing
+        the flush marker and waiting for its acknowledgement share a two-second
+        timeout. Flushing attached handlers can take additional time. Returns
+        ``False`` when the worker does not acknowledge the marker or any
+        handler flush fails.
 
         """
         ...
