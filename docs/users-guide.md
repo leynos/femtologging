@@ -317,16 +317,18 @@ fields with safe defaults does not require a version bump.
   - `"drop"` (default) discards records and raises `RuntimeError`.
   - `"block"` blocks the caller until the worker makes room.
   - `"timeout:N"` blocks for `N` milliseconds before giving up.
-- Use `handler.flush()` and `handler.close()` to ensure on-disk consistency.
-  Always close the handler when the application shuts down. `close()` is
-  idempotent and safe to call multiple times; only the first call performs
-  shutdown work, and every call waits on the same completion signal. That wait
-  is bounded to one second: if the worker does not signal completion within
-  that second, `close()` logs a warning and returns while the worker may still
-  be running, so a timed-out close is not confirmation that queued records have
-  been written. Prefer calling `close()` explicitly: the destructor performs
-  the same shutdown, but it runs with the interpreter lock held, so it cannot
-  offer the GIL release described below.
+- Use `handler.flush()` and `handler.close()` to move queued records to disk,
+  and check what they report. `flush()` returns `True` only when the worker
+  acknowledged the flush within its one-second timeout; a `False` result means
+  the records were not confirmed written. Always close the handler when the
+  application shuts down. `close()` is idempotent and safe to call multiple
+  times; only the first call performs shutdown work, and every call waits on
+  the same completion signal. That wait is bounded to one second: if the worker
+  does not signal completion within that second, `close()` logs a warning and
+  returns while the worker may still be running, so a timed-out close is not
+  confirmation that queued records have been written. Prefer calling `close()`
+  explicitly: the destructor performs the same shutdown, but it runs with the
+  interpreter lock held, so it cannot offer the GIL release described below.
 - In Rust, `close()` takes `&self` and may be called concurrently on a shared
   handler, including while another thread flushes it. Every closer observes the
   same completion signal, and a closer that arrives after the worker has

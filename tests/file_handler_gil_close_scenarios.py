@@ -32,7 +32,15 @@ CONCURRENT_CLOSE_BODY = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block())
     saturate(handler)
-    blocked = start_blocked(lambda: handler.handle("core", "INFO", "third"))
+    handle_failures = []
+
+    def blocked_handle():
+        try:
+            handler.handle("core", "INFO", "third")
+        except Exception as err:
+            handle_failures.append(err)
+
+    blocked = start_blocked(blocked_handle)
     watchdog = start_watchdog_when_blocked(blocked)
     try:
         # ``handle`` is stuck on queue capacity, so the worker cannot complete.
@@ -51,6 +59,9 @@ def body():
         RELEASE_WORKER.set()
 
     join_blocked(blocked)
+    assert not handle_failures, (
+        f"the blocked handle() failed unexpectedly: {{handle_failures!r}}"
+    )
     assert_progress_during("handle", watchdog)
     handler.close()
 
