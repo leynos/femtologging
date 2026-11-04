@@ -833,6 +833,73 @@ against `852bfec6` is `git diff --check` clean. A `git merge-tree` of the old
 head and `852bfec6` had reported exactly those two conflicted files and no
 others.
 
+## Review follow-ups on the rebased candidate
+
+CodeRabbit reviewed the rebased head (`4eddf2b3`) and raised two findings. Both
+were valid, and both were fixed in `b7ccde8d`.
+
+**The users guide claimed `flush()` proves durability.** The durability bullet
+said `flush()` and `close()` "ensure on-disk consistency". They do not:
+`perform_flush` in `rust_extension/src/handlers/file/mod.rs` returns `false`
+when the channel send times out or the channel is closed, and the `close()`
+wait is bounded to one second. The bullet now says to move queued records to
+disk and to check what `flush()` reports — `True` only on worker
+acknowledgement within that timeout, `False` meaning the records were not
+confirmed written — and keeps the existing sentences on close idempotence and
+the bounded close wait.
+
+The rebase in `0079527f` tightened the same bullet again. The first fix said to
+"check what they report", which implied `close()` returns something a caller
+can test. It returns `None`, so the sentence now names `flush()` alone as the
+call whose result is a boolean.
+
+**The `concurrent-close` scenario could not observe a failing `handle()`.**
+`CONCURRENT_CLOSE_BODY` ran its in-flight call through `start_blocked`, which
+keeps an exception on the child's stderr but never fails the scenario, so a
+call that raised instead of blocking could still satisfy the progress check.
+The body now wraps the call, appends any exception, joins, and asserts the list
+is empty before the progress check.
+
+The new assertion was proved load-bearing rather than assumed. A negative
+control inserted `raise RuntimeError("negative control: handle() failed")`
+immediately after `handler.handle("core", "INFO", "third")` inside the wrapper.
+The child then failed at exactly that assertion:
+
+```text
+AssertionError: the blocked handle() failed unexpectedly: [RuntimeError('negative control: handle() failed')]
+```
+
+The unmutated scenario still passes. An earlier, cruder mutant that raised
+before the block failed at `start_watchdog_when_blocked` instead, which would
+have proved only that the scenario failed, not that the assertion fired.
+
+## Commit gates on `0079527f`
+
+The chain ran once, sequentially, on `0079527f` (the rebased series plus the
+two review fixes):
+
+| Gate                | Result                        | Duration |
+| ------------------- | ----------------------------- | -------- |
+| `make check-fmt`    | pass                          | 2 s      |
+| `make markdownlint` | pass                          | 6 s      |
+| `make nixie`        | pass                          | 0 s      |
+| `make lint`         | pass                          | 1184 s   |
+| `make typecheck`    | pass                          | 102 s    |
+| `make test`         | pass, 1073 passed / 6 skipped | 8938 s   |
+
+The test lane logged 21604 compile-slot waits; pytest itself ran in 471 s, so
+almost all of that gate's wall clock was compile admission. Admission stayed
+healthy throughout, with a `drain fault kind: live_work` and a resting
+automatic-recovery trigger while the queue drained; no gate failed on admission.
+
+The jump from 1068 to 1073 passing tests is #547's five new tests arriving with
+the rebase.
+
+Hosted CI on the same head went green except for one infrastructure failure:
+`build-wheels / verify-wheel-install` failed with a check-run annotation
+reading "The self-hosted runner lost communication with the server", and the
+job log was unavailable. One bounded rerun of the failed job passed.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
