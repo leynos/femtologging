@@ -318,10 +318,10 @@ fields with safe defaults does not require a version bump.
   - `"block"` blocks the caller until the worker makes room.
   - `"timeout:N"` blocks for `N` milliseconds before giving up.
 - Use `handler.flush()` and `handler.close()` to move queued records to disk,
-  and check what they report. `flush()` returns `True` only when the worker
-  acknowledged the flush within its one-second timeout; a `False` result means
-  the records were not confirmed written. Always close the handler when the
-  application shuts down. `close()` is idempotent and safe to call multiple
+  and check what `flush()` reports. `flush()` returns `True` only when the
+  worker acknowledged the flush within its one-second timeout; a `False` result
+  means the records were not confirmed written. Always close the handler when
+  the application shuts down. `close()` is idempotent and safe to call multiple
   times; only the first call performs shutdown work, and every call waits on
   the same completion signal. That wait is bounded to one second: if the worker
   does not signal completion within that second, `close()` logs a warning and

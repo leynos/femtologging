@@ -806,6 +806,33 @@ lane waited behind hundreds of queued crates and ran one stretch uncached while
 the managed sccache server was restarting. Admission reported healthy
 throughout.
 
+## Rebase onto `origin/main` at `852bfec6`
+
+`origin/main` gained #547 (`disable_existing_loggers` becomes atomic and
+propagation is suppressed) after `0dccd48d`, so the published branch no longer
+merged cleanly. The series was replayed with the exclusive boundary
+`0dccd48d..4eddf2b3` onto `852bfec6` using
+`git -c merge.conflictStyle=zdiff3 rebase --merge --no-fork-point
+--no-update-refs --no-autostash --reapply-cherry-picks --keep-empty
+--empty=stop`.
+
+Two of the 38 replayed commits conflicted, both in prose that both sides had
+edited:
+
+- `9d7b0a38` (users guide) — #547 added `logger.get_disabled_drops()` to the
+  operational-tips bullet. The resolution keeps #547's monitoring sentence and
+  this branch's clarification that a file-handler overflow policy does not
+  change the logger queue's own overflow policy.
+- `abf5021a` (v0.2.0 migration guide) — #547 inserted a whole
+  `disable_existing_loggers` section before the heading this branch renames.
+  The resolution keeps #547's section and applies this branch's heading, "What
+  does not need to change".
+
+`git range-diff` shows every other replay as identical (`=`); the final diff
+against `852bfec6` is `git diff --check` clean. A `git merge-tree` of the old
+head and `852bfec6` had reported exactly those two conflicted files and no
+others.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
