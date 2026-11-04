@@ -11,8 +11,10 @@ import pytest
 from scripts.release_asset_errors import MalformedAttestationError
 from scripts.release_attestations import (
     bundle_subjects,
+    partition_bundles,
     select_bundles,
     uncovered_artefacts,
+    uncovered_names,
 )
 
 if typ.TYPE_CHECKING:
@@ -116,3 +118,45 @@ def test_uncovered_artefacts_compares_digests_not_names(tmp_path: Path) -> None:
     assert uncovered_artefacts(bundles, {"a.whl": "published"}) == ["a.whl"], (
         "A subject with the right name but other bytes leaves the artefact bare."
     )
+
+
+def test_partition_bundles_orders_decisions_without_filesystem_access() -> None:
+    """Decoded subjects alone decide attachment, in sorted name order."""
+    subjects = {
+        "z.sigstore.json": {"a.whl": "aa"},
+        "a.sigstore.json": {"sdist.tar.gz": "dd"},
+        "m.sigstore.json": {"a.whl": "aa", "sdist.tar.gz": "stale"},
+    }
+
+    attachable, rejected = partition_bundles(
+        subjects, {"a.whl": "aa", "sdist.tar.gz": "dd"}
+    )
+
+    assert attachable == ["a.sigstore.json", "z.sigstore.json"], (
+        "Every bundle whose subjects match published digests is attachable."
+    )
+    assert rejected == ["m.sigstore.json"], (
+        "One unpublished subject rejects the whole bundle."
+    )
+
+
+def test_uncovered_names_compares_digests_only() -> None:
+    """Coverage follows the published digest, not the artefact name."""
+    subjects = {
+        "run-1.sigstore.json": {"a.whl": "aa"},
+        "run-2.sigstore.json": {"renamed.whl": "cc"},
+    }
+
+    assert uncovered_names(
+        subjects, {"a.whl": "aa", "renamed.whl": "published", "d.tar.gz": "dd"}
+    ) == ["d.tar.gz", "renamed.whl"], (
+        "Only artefacts whose published digest appears in no bundle are bare."
+    )
+
+
+def test_uncovered_names_reports_every_artefact_when_no_bundle_is_attached() -> None:
+    """An empty attachment set leaves every published artefact uncovered."""
+    assert uncovered_names({}, {"b.whl": "bb", "a.whl": "aa"}) == [
+        "a.whl",
+        "b.whl",
+    ], "Coverage is reported in sorted artefact order."

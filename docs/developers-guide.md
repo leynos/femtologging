@@ -397,7 +397,9 @@ The workflow then proceeds through these jobs:
   provenance bundles whose subjects match the published bytes, checks that both
   destinations have the same SHA-256 digest for every distribution file and
   that every file is attested, then publishes the draft. Pre-release status
-  follows the checked Python version.
+  follows the checked Python version. See
+  [Reconciling release assets locally](#reconciling-release-assets-locally) to
+  run the same reconciliation by hand.
 
 Re-running the same tag is safe. Runs for one tag queue rather than cancel each
 other, and the workflow never overwrites an existing filename. For each name,
@@ -434,13 +436,13 @@ Every command reads the build directory through `--publish`. `--index` is
 required by every command except `carryover`, and `--assets` is always
 required; both name snapshots that the caller has already downloaded.
 
-| Command         | Required paths                                                                 | Optional paths       | Effect                                                                                                                                                                                                                            |
-| --------------- | ------------------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `carryover`     | `--publish`, `--assets`                                                        | –                    | Prints names held by both the build and the release, one per line, for a caller that downloads them.                                                                                                                              |
-| `stage-pypi`    | `--publish`, `--index`, `--assets`, `--github-files`, `--github-output`        | –                    | Copies upload candidates into `--github-files` and writes `remaining=true` or `remaining=false` to `--github-output`.                                                                                                             |
-| `stage-github`  | `--publish`, `--index`, `--assets`, `--bundles`, `--output`, `--github-output` | `--github-files`     | Stages missing release assets into `--output` and copies bundles whose subjects match them. Prints `name<TAB>url` for files whose canonical bytes are on PyPI, and writes `pending=true` or `pending=false` to `--github-output`. |
-| `check-fetched` | `--publish`, `--index`, `--assets`, `--output`                                 | –                    | Compares each file in `--output` downloaded from PyPI with its index digest and fails on a mismatch.                                                                                                                              |
-| `verify`        | `--publish`, `--index`, `--assets`, `--bundles`                                | `--existing-bundles` | Fails unless both destinations hold the same SHA-256 digest for every distribution file and every one is attested. Prints a success line when they are.                                                                           |
+| Command         | Required paths                                                                 | Optional paths       | Effect                                                                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carryover`     | `--publish`, `--assets`                                                        | –                    | Prints names held by both the build and the release, one per line, for a caller that downloads them.                                                                                                                                                  |
+| `stage-pypi`    | `--publish`, `--index`, `--assets`, `--github-files`, `--github-output`        | –                    | Removes names already on PyPI from `--publish` and replaces a rebuilt name whose canonical bytes are an existing release asset with the digest-checked file from `--github-files`. Writes `remaining=true` or `remaining=false` to `--github-output`. |
+| `stage-github`  | `--publish`, `--index`, `--assets`, `--bundles`, `--output`, `--github-output` | `--github-files`     | Stages missing release assets into `--output` and copies bundles whose subjects match them. Prints `name<TAB>url` for files whose canonical bytes are on PyPI, and writes `pending=true` or `pending=false` to `--github-output`.                     |
+| `check-fetched` | `--publish`, `--index`, `--assets`, `--output`                                 | –                    | Compares each file in `--output` downloaded from PyPI with its index digest and fails on a mismatch.                                                                                                                                                  |
+| `verify`        | `--publish`, `--index`, `--assets`, `--bundles`                                | `--existing-bundles` | Fails unless both destinations hold the same SHA-256 digest for every distribution file and every one is attested. Prints a success line when they are.                                                                                               |
 
 Commands return `0` on success and `1` on a reconciliation error, which is
 printed to standard error as `::error title=release-assets::<reason>`.

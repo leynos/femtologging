@@ -224,13 +224,13 @@ def release_digests(state: State) -> dict[str, str]:
     --------
     A name already on PyPI takes PyPI's digest, not the local rebuild's.
     """
+    decided = state.plan()
     digests: dict[str, str] = {}
-    for name in local_names(state.publish):
-        pypi_file = state.pypi.get(name)
+    for name, source in sorted(decided.canonical.items()):
         github_digest = state.github.get(name)
-        if pypi_file is not None:
-            digests[name] = pypi_file.sha256
-        elif github_digest is not None:
+        if source is Source.PYPI:
+            digests[name] = state.pypi[name].sha256
+        elif source is Source.GITHUB and github_digest is not None:
             digests[name] = github_digest
         else:
             digests[name] = sha256_of(state.publish / name)

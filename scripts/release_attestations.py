@@ -20,7 +20,13 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
 
-__all__ = ["bundle_subjects", "select_bundles", "uncovered_artefacts"]
+__all__ = [
+    "bundle_subjects",
+    "partition_bundles",
+    "select_bundles",
+    "uncovered_artefacts",
+    "uncovered_names",
+]
 
 
 def bundle_subjects(bundle: Path) -> dict[str, str]:
@@ -67,6 +73,90 @@ def bundle_subjects(bundle: Path) -> dict[str, str]:
     return subjects
 
 
+def partition_bundles(
+    subjects_by_bundle: cabc.Mapping[str, cabc.Mapping[str, str]],
+    release_digests: cabc.Mapping[str, str],
+) -> tuple[list[str], list[str]]:
+    """Split decoded bundle subjects into attachable and rejected names.
+
+    This is the network- and filesystem-free decision behind
+    :func:`select_bundles`. A bundle is attachable only when every subject
+    digest it attests is the digest of an artefact the release publishes.
+
+    Parameters
+    ----------
+    subjects_by_bundle
+        Bundle filenames mapped to the in-toto subjects they attest.
+    release_digests
+        Published artefact names mapped to their canonical SHA-256 digests.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        Attachable bundle names and rejected bundle names, both sorted.
+
+    Examples
+    --------
+    >>> partition_bundles(
+    ...     {"a.json": {"a.whl": "aa"}, "b.json": {"b.whl": "bb"}},
+    ...     {"a.whl": "aa"},
+    ... )
+    (['a.json'], ['b.json'])
+    """
+    published = set(release_digests.values())
+    attachable: list[str] = []
+    rejected: list[str] = []
+    for name in sorted(subjects_by_bundle):
+        if set(subjects_by_bundle[name].values()) <= published:
+            attachable.append(name)
+        else:
+            rejected.append(name)
+    return attachable, rejected
+
+
+def uncovered_names(
+    subjects_by_bundle: cabc.Mapping[str, cabc.Mapping[str, str]],
+    release_digests: cabc.Mapping[str, str],
+) -> list[str]:
+    """List published artefacts no decoded bundle attests with their digest.
+
+    This is the network- and filesystem-free decision behind
+    :func:`uncovered_artefacts`.
+
+    Parameters
+    ----------
+    subjects_by_bundle
+        Attached bundle filenames mapped to the in-toto subjects they attest.
+    release_digests
+        Published artefact names mapped to their canonical SHA-256 digests.
+
+    Returns
+    -------
+    list[str]
+        Sorted artefact names whose digest appears in no bundle.
+
+    Examples
+    --------
+    >>> uncovered_names({"a.json": {"a.whl": "aa"}}, {"a.whl": "aa", "b": "bb"})
+    ['b']
+    """
+    covered = {
+        digest
+        for subjects in subjects_by_bundle.values()
+        for digest in subjects.values()
+    }
+    return [
+        name
+        for name, digest in sorted(release_digests.items())
+        if digest not in covered
+    ]
+
+
+def _decode_bundles(bundles: cabc.Iterable[Path]) -> dict[str, dict[str, str]]:
+    """Read every bundle's in-toto subjects, keyed by bundle filename."""
+    return {bundle.name: bundle_subjects(bundle) for bundle in sorted(bundles)}
+
+
 def select_bundles(
     bundles: cabc.Iterable[Path],
     release_digests: cabc.Mapping[str, str],
@@ -105,15 +195,11 @@ def select_bundles(
     >>> [path.name for path in attachable], rejected
     (['a.whl.sigstore.json'], ['b.whl.sigstore.json'])
     """
-    published = set(release_digests.values())
-    attachable: list[Path] = []
-    rejected: list[str] = []
-    for bundle in sorted(bundles):
-        if set(bundle_subjects(bundle).values()) <= published:
-            attachable.append(bundle)
-        else:
-            rejected.append(bundle.name)
-    return attachable, rejected
+    paths = {bundle.name: bundle for bundle in bundles}
+    attachable, rejected = partition_bundles(
+        _decode_bundles(paths.values()), release_digests
+    )
+    return [paths[name] for name in attachable], rejected
 
 
 def uncovered_artefacts(
@@ -145,11 +231,4 @@ def uncovered_artefacts(
     >>> uncovered_artefacts([bundle], {"a.whl": "aa", "b.whl": "bb"})
     ['b.whl']
     """
-    covered: set[str] = set()
-    for bundle in bundles:
-        covered.update(bundle_subjects(bundle).values())
-    return [
-        name
-        for name, digest in sorted(release_digests.items())
-        if digest not in covered
-    ]
+    return uncovered_names(_decode_bundles(bundles), release_digests)
