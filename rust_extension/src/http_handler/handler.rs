@@ -154,6 +154,18 @@ impl FemtoHTTPHandler {
                 return ShutdownOutcome::TimedOut;
             }
         }
+        // Give up the last sender now the command is queued. The signal was
+        // raised first, so the worker can leave between that and this send and
+        // never read the command - and the queued command owns the only real
+        // acknowledgement sender, so while this one lived the wait below could
+        // neither receive nor see a disconnect. It then ran out the whole
+        // budget and reported a worker that had already finished as abandoned.
+        //
+        // Dropping it cannot lose a live acknowledgement: a worker still in
+        // its loop reads queued commands after every sender is gone, and one
+        // that has left drops the queue, which drops the unread command and
+        // disconnects the channel the wait below already treats as "left".
+        drop(tx);
         match ack_rx.recv_deadline(deadline) {
             Ok(()) => ShutdownOutcome::Finished,
             // The worker dropped the acknowledgement channel without using it,

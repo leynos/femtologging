@@ -25,8 +25,9 @@ use crate::{
 use super::{
     backoff::BackoffState,
     config::SocketHandlerConfig,
+    frame_write::FrameWriter,
     serialize::{frame_payload, serialize_record},
-    transport::{ActiveConnection, FrameWriter, connect_transport},
+    transport::{ActiveConnection, connect_transport},
 };
 
 /// Commands processed by the worker thread.

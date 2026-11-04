@@ -924,6 +924,78 @@ Trace links, from issue #436 to milestone:
   boundary: the lockfile diffstat is the check that catches an inherited commit
   being replayed.
 
+- 2026-11-04: Two reviewers found three defects in the candidate
+  `7f12c636`, all in code this branch added, and all confirmed against the
+  source before any edit.
+
+  1. **HTTP never disconnects an unread shutdown acknowledgement.** The HTTP
+     `request_shutdown` keeps its local `tx` alive through
+     `ack_rx.recv_deadline`. When the worker leaves on the signal before it
+     reads the queued shutdown command, that command owns the only
+     acknowledgement sender; while `tx` lives the queue and that sender stay
+     allocated, so the wait neither receives nor observes a disconnect and
+     runs to the full budget. `close` then reports abandonment for a worker
+     that had already finished. The socket handler had already been fixed for
+     exactly this race (2026-11-02 above) and the HTTP one was missed. The fix
+     is the socket's, verbatim: `drop(tx)` once the command is queued, which
+     works because a live worker reads what was queued after the last sender
+     goes, and a dead one drops the queue, disconnecting the acknowledgement.
+     Regression coverage mirrors the socket's two channel property tests.
+
+  2. **An interrupted socket write is no longer retried.** `write_some`
+     propagates `ErrorKind::Interrupted`, and `handle_write_error` treats it
+     as a failed frame: it discards the record and closes the connection. The
+     `write_all` calls it replaced retried internally, so this is a
+     behavioural regression, not merely a missing nuance. The loop now treats
+     `Interrupted` as "no progress, reconsider the budget", which is also what
+     lets the next iteration re-check the deadline.
+
+  3. **`write_timeout` became a whole-frame budget while running.**
+     `remaining_budget` subtracted the frame's elapsed time from
+     `write_timeout` unconditionally, so during `Phase::Running` a slow but
+     progressing collector could have a frame fail after one total
+     `write_timeout` rather than the documented per-call ceiling. The
+     whole-frame figure was only ever meant to be the shutdown clamp: before
+     this branch an unbounded `write_all` loop was the defect, and the frame
+     clock exists to stop *that* outlasting the deadline. `remaining_budget`
+     now returns the configured timeout unchanged while no shutdown is in
+     progress, and applies the frame clock only once the signal has left
+     `Running`. This also keeps `frame_budget_spent`, whose message names the
+     shutdown budget, off the ordinary-operation path.
+
+  All three are fixed with regression coverage in the same commit. The HTTP fix
+  carries the socket's two channel properties, restated against `HTTPCommand` in
+  `http_handler/channel_property_tests.rs`: an unread command disconnects with
+  its last sender, and a queued command is still read after that sender drops.
+  The socket loop's two rules cannot be provoked on loopback - an `EINTR` needs
+  a signal to land inside one specific `write` call - so `FrameWriter` is now
+  generic over a `FrameSink` trait that `ActiveConnection` is the only
+  production implementor of, and a scripted sink drives five cases in
+  `frame_write_tests.rs`: an interrupted call is retried without losing bytes,
+  a broken pipe is not retried, a running handler gives every call the full
+  configured timeout even when the frame clock is already a second old, a drain
+  with an exhausted frame clock starts no call and reports its progress, and a
+  drain clamps each call to what the deadline leaves.
+
+- 2026-11-04: The first `make test` on the three fixes failed one pytest case,
+  `tests/test_handler_filter_formatting.py::test_handler_filter_enriches_records_from_propagated_loggers`,
+  while every Cargo lane, doctest, Loom test, clippy lane and the build
+  prerequisite passed. The failing assertion was the second of the two: the
+  filter did observe both propagated loggers, but the log file held one line
+  rather than two, and the same test's teardown logged
+  `FemtoFileHandler: worker thread did not shut down within 1s`. The host was
+  at load 12-20 during the 32-minute gate and closer to 56 when the run began.
+  `poll_file_for_text` returns as soon as the *first* occurrence of its
+  substring appears, so under that load the assertion can read the file between
+  the two records reaching disk. Nothing here is a regression: the test,
+  `tests/helpers.py` and the file-handler shutdown path are untouched by this
+  branch, the test passes 5/5 alone, the three runtime-definition modules pass
+  24/24 together, and a standalone `uv run pytest --doctest-modules` passes 910
+  with 5 skipped and 66 snapshots - the same counts as the green run on
+  `7f12c636`. Recorded rather than retried until green: the gate's verdict for
+  the candidate is the rerun, and the flake belongs to the polling helper, not
+  to this change.
+
 ## Outcomes & retrospective
 
 The first corrected candidate passed every deterministic gate, including the

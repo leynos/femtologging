@@ -9,6 +9,7 @@
 
 pub(crate) mod backoff;
 mod config;
+mod frame_write;
 mod handler;
 mod serialize;
 mod transport;
