@@ -5,8 +5,6 @@
 //! counted as dropped, so a slow handler slows the loggers sharing its shard
 //! rather than the code doing the logging.
 
-#[cfg(feature = "python")]
-use log::warn;
 use std::sync::Arc;
 
 use crate::handler::FemtoHandlerTrait;
@@ -16,6 +14,9 @@ use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
 mod admission;
+
+#[cfg(feature = "python")]
+mod context_capture;
 
 mod handler_filters;
 
@@ -269,58 +270,6 @@ impl FemtoLogger {
             return None;
         }
         Some((record, handlers))
-    }
-
-    /// Capture Python context for the exact handler snapshot being queued.
-    #[cfg(feature = "python")]
-    fn capture_context_for_dispatch(
-        &self,
-        handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
-        #[cfg(feature = "tracing-compat")] handler_kind: &'static str,
-    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-        #[cfg(feature = "tracing-compat")]
-        let capture_started = std::time::Instant::now();
-        let context = self.capture_python_context(handlers);
-        #[cfg(feature = "tracing-compat")]
-        {
-            let capture_outcome = match &context {
-                Ok(Some(_)) => "captured",
-                Ok(None) => "not_required",
-                Err(_) => "failed",
-            };
-            tracing::trace!(
-                target: "femtologging::internal",
-                operation = "producer_context_capture",
-                handler_kind,
-                capture_outcome,
-                elapsed_us = capture_started.elapsed().as_micros(),
-            );
-        }
-        context
-    }
-
-    /// Count a failed context snapshot separately from queue-capacity drops.
-    #[cfg(feature = "python")]
-    fn record_context_capture_failure(&self, error: pyo3::PyErr) {
-        self.context_capture_failures
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.context_capture_warner.record_drop();
-        self.context_capture_warner.warn_if_due(|count| {
-            warn!("FemtoLogger: dropped {count} records after context capture failed");
-            pyo3::Python::attach(|py| error.print(py));
-        });
-    }
-
-    /// Capture the current Python context only when a queued handler needs it.
-    #[cfg(feature = "python")]
-    pub(super) fn capture_python_context(
-        &self,
-        handlers: &[std::sync::Arc<dyn crate::handler::FemtoHandlerTrait>],
-    ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
-        if !handlers.iter().any(|handler| handler.is_python_backed()) {
-            return Ok(None);
-        }
-        self.context_snapshot_provider.capture().map(Some)
     }
 
     /// Drain this logger's queued records, then flush its configured handlers.

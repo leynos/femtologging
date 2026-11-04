@@ -94,6 +94,8 @@ pub(crate) use validation::is_valid_logger_name;
 mod manager_tests;
 
 #[cfg(all(test, feature = "python"))]
+mod configuration_tests;
+#[cfg(all(test, feature = "python"))]
 #[path = "manager/manager_tests_capacity.rs"]
 mod manager_tests_capacity;
 #[cfg(feature = "python")]
