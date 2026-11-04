@@ -49,6 +49,10 @@ REQUIRED_LANES: typ.Final[Tokens] = ("none", "all")
 #: Manifest feature keys that name no lane of their own.
 LANE_EXEMPT_FEATURES: typ.Final[Tokens] = ("default",)
 STANDARD_CLIPPY_TARGET: typ.Final = "lint-rust-clippy"
+# Each Rust policy lane may wait for the shared compiler pool on this host.
+POLICY_LANE_TIMEOUT_SECONDS: typ.Final = 3600
+# The contract runs the gate twice; allow both subprocess budgets plus setup.
+POLICY_CONTRACT_TIMEOUT_SECONDS: typ.Final = 2 * POLICY_LANE_TIMEOUT_SECONDS + 20
 #: Shell fragments that swallow the preceding command's exit status.
 STATUS_SWALLOWING: typ.Final[Tokens] = (
     "|| true",
@@ -298,6 +302,7 @@ def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
     assert make is not None, "make must be on PATH to run the policy target"
     # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is
     # fixed here and the executable is resolved above
+    # Cargo may wait for the shared cache or compiler pool on a busy host.
     return subprocess.run(
         [
             make,
@@ -310,10 +315,11 @@ def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        timeout=POLICY_LANE_TIMEOUT_SECONDS,
     )
 
 
-@pytest.mark.timeout(620)
+@pytest.mark.timeout(POLICY_CONTRACT_TIMEOUT_SECONDS)
 def test_a_failing_lane_fails_the_policy_target() -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 

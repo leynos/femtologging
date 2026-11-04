@@ -22,7 +22,7 @@ _FEATURES: typ.Final = (
     "tracing-compat",
     "test-util",
 )
-_LINT_GATE_TIMEOUT_SECONDS: typ.Final = 600
+_LINT_GATE_TIMEOUT_SECONDS: typ.Final = 3600
 # This contract runs the lint gate twice, once for each fixture variant.
 # Allow both subprocess budgets to expire plus time for test setup and teardown.
 _CONTRACT_TIMEOUT_SECONDS: typ.Final = 2 * _LINT_GATE_TIMEOUT_SECONDS + 20

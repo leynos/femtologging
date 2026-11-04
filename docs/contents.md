@@ -10,8 +10,9 @@ libraries. Use the links below to explore each topic.
 - [developers-guide.md](./developers-guide.md)
   - Records developer toolchain ownership and validation boundaries.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes structured logging additions and the bounded logger and shared
-    dispatch changes in v0.2.0.
+  - Describes structured logging additions, the bounded logger and shared
+    dispatch changes, and the production-wheel packaging change that omits the
+    timed-rotation test hooks in v0.2.0.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)
@@ -25,8 +26,9 @@ libraries. Use the links below to explore each topic.
   - Records the v0.1.0 renames from British to Oxford spelling across the
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes the `BasicConfig` slots, bounded logger names and registry, and
-    shared dispatch changes in v0.2.0 with migration guidance.
+  - Describes the `BasicConfig` slots, bounded logger names and registry,
+    shared dispatch changes, and the move to production wheels that omit the
+    timed-rotation test hooks, with migration guidance for v0.2.0.
 
 ## Architecture decision records
 
@@ -50,6 +52,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md](./adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md)
   - Records the bounds on logger names and registry size, and the shared
     dispatch pool that replaced one worker thread per logger.
+- [adrs/adr-0008-release-pipeline.md](./adrs/adr-0008-release-pipeline.md)
+  - Records the attested release pipeline, production feature set and
+    idempotent PyPI/GitHub Release reconciliation.
 
 ## Logging Architecture
 

@@ -199,12 +199,16 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     ``[profile.dev]`` table, and builds under the repository's pinned channel
     with every wrapper and profile override removed from the environment and
     from any host-level Cargo configuration, so only the repository's own
-    settings and the override under test apply.
+    settings and the override under test apply. The build also gets a private
+    ``CARGO_HOME``: with no host configuration to read, Cargo has no wrapper
+    to re-apply after the variable was removed and none that could reject the
+    incremental override under test.
 
     Parameters
     ----------
     tmp_path
-        Scratch directory for the fixture crate and its target directory.
+        Scratch directory for the fixture crate, the private ``CARGO_HOME``
+        and the target directory.
     extra_env
         Environment variables to add, such as a documented override.
 
@@ -229,9 +233,14 @@ def _compile_fixture(tmp_path: Path, extra_env: dict[str, str] | None = None) ->
     # environment variables above are removed. An empty value overrides that
     # config key, so the fixture observes the repository's own settings; a host
     # wrapper can otherwise hold this build in a shared admission queue or
-    # reject the `CARGO_INCREMENTAL` override under test.
+    # reject the `CARGO_INCREMENTAL` override under test. The private
+    # `CARGO_HOME` removes that host config as a source altogether, so Cargo
+    # has no wrapper to re-apply after the variables were removed.
     env["CARGO_BUILD_RUSTC_WRAPPER"] = ""
     env["CARGO_BUILD_RUSTDOC"] = ""
+    cargo_home = tmp_path / "cargo-home"
+    cargo_home.mkdir()
+    env["CARGO_HOME"] = str(cargo_home)
     env["CARGO_TARGET_DIR"] = str(tmp_path / "target")
     env.update(extra_env or {})
     cargo = shutil.which("cargo")
@@ -305,3 +314,32 @@ def test_the_ci_build_installs_mold_for_the_nested_trybuild_crates() -> None:
     assert str(setup.get("with", {}).get("install-mold")) == "true", (
         "ci.yml must install mold: trybuild's nested crate finds .cargo/config.toml"
     )
+
+
+def test_the_release_wheel_builds_displace_the_linux_linker_flag() -> None:
+    """Each Linux wheel step assigns an empty ``RUSTFLAGS`` for its container.
+
+    A manylinux image carries no ``mold``, and its GCC driver rejects
+    ``-fuse-ld=mold``. An assigned ``RUSTFLAGS`` replaces every ``rustflags``
+    source, and maturin-action forwards ``RUST*`` variables into the container,
+    so the release wheels link with the container's own toolchain instead.
+    """
+    document = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "build-wheels.yml").read_text("utf-8")
+    )
+    steps = document["jobs"]["build-linux"]["steps"]
+    builds = [
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("messense/maturin-action@")
+    ]
+    assert len(builds) == 2, f"expected two Linux wheel builds, found {len(builds)}"
+    for step in builds:
+        environment = step.get("env") or {}
+        assert "RUSTFLAGS" in environment, (
+            f"{step.get('name')}: the Linux wheel build must assign RUSTFLAGS"
+        )
+        assert not environment["RUSTFLAGS"], (
+            f"{step.get('name')}: an empty RUSTFLAGS must displace the repository's "
+            "Linux mold table, because the manylinux container has no mold"
+        )

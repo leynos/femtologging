@@ -16,6 +16,7 @@ if typ.TYPE_CHECKING:
 _DEV_MATURIN_PIN_RE = re.compile(r"maturin\[patchelf\]==(\d+\.\d+\.\d+)")
 _BUILD_MATURIN_RE = re.compile(r"maturin>=(\d+\.\d+\.\d+),<2\.0\.0")
 _HEAVY_WORKFLOW_PIN_RE = re.compile(r'"maturin==(\d+\.\d+\.\d+)"')
+_BUILD_WORKFLOW_PIN_RE = re.compile(r'MATURIN_VERSION:\s*"(\d+\.\d+\.\d+)"')
 _GENERATOR_RE = re.compile(r"^Generator:\s*maturin\s*\(([^)]+)\)\s*$", re.MULTILINE)
 _EXTENSION_MODULE_RE = re.compile(
     r"^femtologging/_femtologging_rs\.cpython-[^/]+\.so$",
@@ -113,11 +114,14 @@ def read_maturin_pins(root: Path) -> dict[str, str]:
 
     >>> pins = read_maturin_pins(root)  # doctest: +SKIP
     >>> sorted(pins)  # doctest: +SKIP
-    ['build-system', 'dev-dependency', 'heavy-tests']
+    ['build-system', 'build-wheels', 'dev-dependency', 'heavy-tests']
 
     """
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     heavy_tests = (root / ".github/workflows/heavy-tests.yml").read_text(
+        encoding="utf-8"
+    )
+    build_wheels = (root / ".github/workflows/build-wheels.yml").read_text(
         encoding="utf-8"
     )
     return {
@@ -132,6 +136,10 @@ def read_maturin_pins(root: Path) -> dict[str, str]:
         "heavy-tests": _require_pin_match(
             _HEAVY_WORKFLOW_PIN_RE.search(heavy_tests),
             ".github/workflows/heavy-tests.yml",
+        ),
+        "build-wheels": _require_pin_match(
+            _BUILD_WORKFLOW_PIN_RE.search(build_wheels),
+            ".github/workflows/build-wheels.yml",
         ),
     }
 
@@ -204,8 +212,6 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
         str(out_dir),
         "--manifest-path",
         str(root / "rust_extension/Cargo.toml"),
-        "--features",
-        "python,test-util",
     ]
     # ruff: ignore[subprocess-without-shell-equals-true] the command vector is
     # built from repository-local paths and the pinned maturin module only.
@@ -213,6 +219,7 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
         command,
         check=True,
         cwd=root,
+        timeout=3600,
     )
     wheels = sorted(out_dir.glob("*.whl"))
     if len(wheels) != 1:
