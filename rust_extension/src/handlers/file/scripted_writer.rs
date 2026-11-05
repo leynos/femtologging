@@ -92,10 +92,26 @@ impl Gate {
     }
 }
 
+/// The scenario a scripted writer should play out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Scenario {
+    /// Block in `write` and `flush` until released.
+    Blocking,
+    /// Block in `write`; fail `flush` immediately.
+    FailingFlush,
+    /// Block in `write`; panic in `flush` immediately.
+    PanickingFlush,
+    /// Pass `write`; block in `flush` and panic once released.
+    BlockingThenPanickingFlush,
+    /// Pass `write` and panic inside it.
+    PanickingWrites,
+}
+
 /// The gates and behaviours that make up one scripted run.
 ///
-/// Grouping them keeps the writer's constructor to two arguments and lets each
-/// named constructor read as a table of the two stages it scripts.
+/// Grouping them keeps the writer's constructor to two arguments, and the one
+/// `for_scenario` table keeps the five scenarios from repeating the same
+/// literal shape.
 struct Script {
     /// Gate the worker waits on inside `write`.
     write_gate: Arc<Gate>,
@@ -105,6 +121,50 @@ struct Script {
     flush_behaviour: FlushBehaviour,
     /// What `write` does once its gate opens.
     write_behaviour: WriteBehaviour,
+}
+
+impl Script {
+    /// The gates and behaviours `scenario` calls for.
+    fn for_scenario(scenario: Scenario) -> Self {
+        let (write_gate, flush_gate, flush_behaviour, write_behaviour) = match scenario {
+            Scenario::Blocking => (
+                Gate::closed(),
+                Gate::closed(),
+                FlushBehaviour::Succeed,
+                WriteBehaviour::Succeed,
+            ),
+            Scenario::FailingFlush => (
+                Gate::closed(),
+                Gate::opened(),
+                FlushBehaviour::Fail,
+                WriteBehaviour::Succeed,
+            ),
+            Scenario::PanickingFlush => (
+                Gate::closed(),
+                Gate::opened(),
+                FlushBehaviour::Panic,
+                WriteBehaviour::Succeed,
+            ),
+            Scenario::BlockingThenPanickingFlush => (
+                Gate::opened(),
+                Gate::closed(),
+                FlushBehaviour::Panic,
+                WriteBehaviour::Succeed,
+            ),
+            Scenario::PanickingWrites => (
+                Gate::opened(),
+                Gate::opened(),
+                FlushBehaviour::Succeed,
+                WriteBehaviour::Panic,
+            ),
+        };
+        Self {
+            write_gate: Arc::new(write_gate),
+            flush_gate: Arc::new(flush_gate),
+            flush_behaviour,
+            write_behaviour,
+        }
+    }
 }
 
 /// Writer that reports each stage to the test and can block or fail there.
@@ -117,77 +177,37 @@ pub(super) struct ScriptedWriter {
 }
 
 impl ScriptedWriter {
-    /// Build a writer that follows `script`.
-    fn new(script: Script, entered: mpsc::Sender<Stage>) -> Self {
+    /// Build a writer that plays out `scenario`.
+    fn new(scenario: Scenario, entered: mpsc::Sender<Stage>) -> Self {
         Self {
-            script: Arc::new(script),
+            script: Arc::new(Script::for_scenario(scenario)),
             entered,
         }
     }
 
     /// Build a writer that blocks in `write` and `flush` until released.
     pub(super) fn blocking(entered: mpsc::Sender<Stage>) -> Self {
-        Self::new(
-            Script {
-                write_gate: Arc::new(Gate::closed()),
-                flush_gate: Arc::new(Gate::closed()),
-                flush_behaviour: FlushBehaviour::Succeed,
-                write_behaviour: WriteBehaviour::Succeed,
-            },
-            entered,
-        )
+        Self::new(Scenario::Blocking, entered)
     }
 
     /// Build a writer whose `flush` fails immediately.
     pub(super) fn failing_flush(entered: mpsc::Sender<Stage>) -> Self {
-        Self::new(
-            Script {
-                write_gate: Arc::new(Gate::closed()),
-                flush_gate: Arc::new(Gate::opened()),
-                flush_behaviour: FlushBehaviour::Fail,
-                write_behaviour: WriteBehaviour::Succeed,
-            },
-            entered,
-        )
+        Self::new(Scenario::FailingFlush, entered)
     }
 
     /// Build a writer whose `flush` panics immediately.
     pub(super) fn panicking_flush(entered: mpsc::Sender<Stage>) -> Self {
-        Self::new(
-            Script {
-                write_gate: Arc::new(Gate::closed()),
-                flush_gate: Arc::new(Gate::opened()),
-                flush_behaviour: FlushBehaviour::Panic,
-                write_behaviour: WriteBehaviour::Succeed,
-            },
-            entered,
-        )
+        Self::new(Scenario::PanickingFlush, entered)
     }
 
     /// Build a writer that blocks in `flush` and panics once released.
     pub(super) fn blocking_then_panicking_flush(entered: mpsc::Sender<Stage>) -> Self {
-        Self::new(
-            Script {
-                write_gate: Arc::new(Gate::opened()),
-                flush_gate: Arc::new(Gate::closed()),
-                flush_behaviour: FlushBehaviour::Panic,
-                write_behaviour: WriteBehaviour::Succeed,
-            },
-            entered,
-        )
+        Self::new(Scenario::BlockingThenPanickingFlush, entered)
     }
 
     /// Build a writer that panics inside `write`.
     pub(super) fn panicking_writes(entered: mpsc::Sender<Stage>) -> Self {
-        Self::new(
-            Script {
-                write_gate: Arc::new(Gate::opened()),
-                flush_gate: Arc::new(Gate::opened()),
-                flush_behaviour: FlushBehaviour::Succeed,
-                write_behaviour: WriteBehaviour::Panic,
-            },
-            entered,
-        )
+        Self::new(Scenario::PanickingWrites, entered)
     }
 
     /// Release both gates so the worker can finish.
