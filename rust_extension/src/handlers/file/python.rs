@@ -10,11 +10,11 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 
 use super::{
-    DEFAULT_CHANNEL_CAPACITY, FemtoFileHandler, HandlerConfig, classify_handle,
+    DEFAULT_CHANNEL_CAPACITY, FemtoFileHandler, HandlerConfig, classify_enqueue,
     io_utils::open_log_file, policy, validate_params,
 };
 use crate::handlers::telemetry::{WaitContext, WaitSite, WaitTimer};
-use crate::{formatter::DefaultFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord};
+use crate::{formatter::DefaultFormatter, log_record::FemtoLogRecord};
 
 #[pymethods]
 impl FemtoFileHandler {
@@ -74,13 +74,15 @@ impl FemtoFileHandler {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
         let record = FemtoLogRecord::new(logger, parsed_level, message);
         let timer = WaitTimer::start();
-        let result = py.detach(|| <Self as FemtoHandlerTrait>::handle(self, record));
+        let result = py.detach(|| self.enqueue(record));
         self.record_wait(
             timer,
             WaitSite::new("handler_handle", "file"),
-            classify_handle(&result),
+            classify_enqueue(&result),
         );
-        result.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        result
+            .map_err(super::EnqueueFailure::into_handler_error)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to the underlying file without closing the

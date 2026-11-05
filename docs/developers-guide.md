@@ -838,9 +838,10 @@ Each Python-facing wait on a worker-backed file handler records one bounded
 counter when it returns. `FemtoFileHandler`, `FemtoRotatingFileHandler`, and
 `FemtoTimedRotatingFileHandler` expose `wait_diagnostics()`, which returns a
 dictionary with a fixed key set: one counter per outcome (`handle_accepted`,
-`handle_queue_full`, `handle_timed_out`, `handle_closed`, `handle_failed`,
-`flush_acknowledged`, `flush_timed_out`, `flush_closed`, `flush_failed`,
-`close_completed`, `close_timed_out`, `close_panicked`) plus
+`handle_queue_full`, `handle_timed_out`, `handle_closed`, `handle_disconnected`,
+`handle_failed`, `flush_acknowledged`, `flush_enqueue_timed_out`,
+`flush_ack_timed_out`, `flush_closed`, `flush_disconnected`, `flush_failed`,
+`close_completed`, `close_timed_out`, `close_panicked`, `close_unknown`) plus
 `total_wait_micros` and `max_wait_micros`. Counters use relaxed atomics: the
 handler path must not pay for cross-thread ordering, and a slightly stale
 snapshot is acceptable for periodic reporting.
@@ -861,21 +862,35 @@ Activation is per accessor and per build. `wait_diagnostics()` always works and
 needs no configuration; the trace events exist only when the crate is built with
 `tracing-compat`, where each event costs one `tracing` call on the interpreter
 thread. In a build without that feature `emit_event` is a compiled no-op, so
-the only per-wait cost is the counter update: two relaxed atomic adds, with no
-allocation, formatting, or lock. Readings are cumulative for the life of the
-handler, so an operator reports a delta between two snapshots rather than
-reinterpreting a total.
+the only per-wait cost is the counter update: two relaxed `fetch_add` calls and
+one relaxed `fetch_max`, with no allocation, formatting, or lock. The timer
+also reads the clock twice, once before the detached section and once after it,
+so `elapsed_us` includes the time taken to reattach to the interpreter as well
+as the wait itself. No benchmark has measured this overhead; treat the cost
+description as a design statement rather than a measured figure. Readings are
+cumulative for the life of the handler, so an operator reports a delta between
+two snapshots rather than reinterpreting a total.
 
 The counters are diagnostic signals, not error rates:
 
 - `handle_queue_full` and `handle_timed_out` rising against
   `handle_accepted` mean producers outrun the worker under a `drop` or
   `timeout` policy, and records are being lost.
-- `flush_failed` points at the file or filesystem; `flush_timed_out` and
-  `flush_closed` mean the acknowledgement never arrived, not that the records
-  were lost.
-- `close_timed_out` and `close_panicked` mean shutdown did not complete
-  within its one-second bound, so queued records may still be unwritten.
+- `handle_closed` is an expected post-shutdown call. `handle_disconnected`
+  means the worker's channel disappeared while the handler still looked open,
+  which points at a worker that died rather than at a deliberate close.
+- `flush_failed` points at the file or filesystem. `flush_enqueue_timed_out`
+  means the request never reached the worker because the queue was saturated;
+  `flush_ack_timed_out` means the worker accepted the request but did not
+  answer in time. Neither implies the records were lost.
+- `flush_closed` is an expected post-shutdown call; `flush_disconnected` again
+  points at a worker that died.
+- `close_timed_out` means the worker did not signal completion within the
+  one-second bound, so queued records may still be unwritten. `close_panicked`
+  means the worker signalled completion but its thread had panicked, so the
+  final flush may not have run. `close_unknown` means completion was observed
+  but no verdict was recorded, which happens when the worker left without
+  running its exit guard, for example under `panic = "abort"`.
 - A `max_wait_micros` close to `total_wait_micros` with few operations
   suggests one slow wait rather than sustained pressure; the reverse suggests
   steady queueing.

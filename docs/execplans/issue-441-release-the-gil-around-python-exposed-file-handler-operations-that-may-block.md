@@ -309,8 +309,21 @@ Reference or ADR is required.
       [#551](https://github.com/leynos/femtologging/issues/551) was extended
       to cover the `handle()` enqueue wait when the warning was first
       dispositioned. That disposition was later superseded: the telemetry is
-      instrumented in this PR, and #551 retains only the exporter scope. See
-      "Handler-wait telemetry".
+      instrumented in this PR. #551 still owns the exporter, the bridge
+      decision and maximum-level counters, the facade-prefilter note, the
+      overhead benchmark, and the operational alerting documentation; the
+      completed and remaining criteria are listed under "Handler-wait
+      telemetry".
+- [x] Answered the second review round's Observability finding with
+      behavioural coverage rather than enum-conversion tests alone. The
+      scripted writer holds the worker at a chosen stage, so the new tests
+      drive a timed-out enqueue, a saturated queue, a dead worker, an
+      unanswered acknowledgement, an I/O flush failure, a blocked shutdown, a
+      panicking shutdown, and a later closer reading a panic recorded after an
+      earlier closer timed out. A separate `tracing-compat`-only module pins
+      the event target, the five bounded fields, and that counters still
+      record with no subscriber. The writer and its helpers live in their own
+      module so no test file exceeds 400 lines.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -643,12 +656,12 @@ The review of `9655df1` accepted Tasks 1–4 and found no production defect,
 while the pre-merge table still reported one error and three warnings. Each was
 dispositioned against the current tree.
 
-| Row                         | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Module-Level Documentation  | Fixed. `tests/file_handler_gil_close_scenarios.py` now states that it provides reusable child-interpreter scenario bodies, which module renders them, which module runs them, and which test module parametrizes them.                                                                                                                                                                                                                     |
-| User-Facing Documentation   | Fixed. `docs/v0-2-0-migration-guide.md` gained a "File-handler calls release the interpreter lock" section covering direct calls, unbounded `"block"`, the per-binding timeout exception, the two borrow states, `Drop`, and explicit `close()`.                                                                                                                                                                                           |
-| Testing (Compile-Time / Ui) | Partly fixed, partly adjudicated. `tests/ui/pass/pyo3_detach_ungil.rs` pins the accepted `Python<'_>` plus `py.detach` shape. A compile-fail fixture for capturing a `Bound<'_, PyString>` is not expressible on stable Rust: PyO3 has no stable negative impls, so `Ungil` is blanket-implemented for every `Send` type, and the capture compiles.                                                                                        |
-| Observability               | Fixed in the follow-up commit. An earlier disposition claimed the crate had no metrics or tracing subsystem; that claim was false, because `tracing-compat` already carries internal producer tracing and worker-dispatch events. This PR now instruments every wait it creates, see "Handler-wait telemetry". The remaining #551 scope is the exporter or bridge from these counters to an operator-facing sink, not the counting itself. |
+| Row                         | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module-Level Documentation  | Fixed. `tests/file_handler_gil_close_scenarios.py` now states that it provides reusable child-interpreter scenario bodies, which module renders them, which module runs them, and which test module parametrizes them.                                                                                                                                                                                                                                                                                                                             |
+| User-Facing Documentation   | Fixed. `docs/v0-2-0-migration-guide.md` gained a "File-handler calls release the interpreter lock" section covering direct calls, unbounded `"block"`, the per-binding timeout exception, the two borrow states, `Drop`, and explicit `close()`.                                                                                                                                                                                                                                                                                                   |
+| Testing (Compile-Time / Ui) | Partly fixed, partly adjudicated. `tests/ui/pass/pyo3_detach_ungil.rs` pins the accepted `Python<'_>` plus `py.detach` shape. A compile-fail fixture for capturing a `Bound<'_, PyString>` is not expressible on stable Rust: PyO3 has no stable negative impls, so `Ungil` is blanket-implemented for every `Send` type, and the capture compiles.                                                                                                                                                                                                |
+| Observability               | Fixed in the follow-up commit. An earlier disposition claimed the crate had no metrics or tracing subsystem; that claim was false, because `tracing-compat` already carries internal producer tracing and worker-dispatch events. This PR now instruments every wait it creates, see "Handler-wait telemetry". #551 still owns the exporter, the bridge decision and maximum-level counters, the facade-prefilter note, the overhead benchmark, and the operational alerting documentation; the completed and remaining criteria are listed there. |
 
 The inline findings were also applied:
 
@@ -984,7 +997,7 @@ the subprocess evidence.
 
 **Observability.** Addressed by the handler-wait telemetry commit. The
 reconciliation comment posted to the PR records the counters, the tracing
-target, and the remaining #551 scope.
+target, and the #551 criteria this PR completes and those it leaves open.
 
 ## Commit gates on the review candidate
 
@@ -1054,22 +1067,59 @@ commit implements that rather than deferring it.
   concrete rotating handler classes, so the structural `Handler` protocol in
   the new test file type-checks. `FemtoFileHandler` is already typed as `_Any`
   in the stub, so it needs no change there.
-- `rust_extension/src/handlers/file/telemetry_tests.rs` pins the three
-  result-to-outcome mappings and the fixed `policy_bucket` vocabulary.
-  `tests/test_wait_diagnostics.py` pins the exposed key set, the zeroed initial
-  state, successful outcomes, post-close outcomes, and a queue-full drop.
+- `rust_extension/src/handlers/file/telemetry_tests.rs` pins the
+  result-to-outcome mappings for the enqueue, flush, and shutdown results and
+  the fixed `policy_bucket` vocabulary.
+- `rust_extension/src/handlers/file/outcome_paths_tests.rs` (new) drives the
+  real enqueue and flush paths with a scripted writer: a timed-out enqueue, a
+  saturated queue, a worker that died, an unanswered acknowledgement, and an
+  I/O flush failure. `rust_extension/src/handlers/file/shutdown_paths_tests.rs`
+  (new) covers a blocked shutdown, a panicking shutdown, and a later closer
+  reading a panic recorded after an earlier closer timed out.
+  `rust_extension/src/handlers/file/scripted_writer.rs` (new) holds the
+  gate-based writer and the shared helpers, so neither test module exceeds the
+  400-line limit.
+- `rust_extension/src/handlers/file/telemetry_event_tests.rs` (new), compiled
+  only with `tracing-compat`, pins the event contract: one event per wait on the
+  `femtologging::internal` target, exactly the five bounded fields, and
+  counters that still record when no subscriber is installed.
+- `tests/test_wait_diagnostics.py` pins the exposed key set, the zeroed initial
+  state, successful outcomes, post-close outcomes, and a queue-full drop for
+  all three handler kinds.
 
 Evidence on the candidate:
 `cargo check --no-default-features --features python`,
-`cargo test --lib telemetry` (22 passed), and
-`uv run pytest tests/test_wait_diagnostics.py` (10 passed) all succeed. The
-full sequential gate chain is recorded in "Commit gates on the telemetry
-candidate".
+`cargo test --no-default-features --lib handlers::file::` (77 passed; this
+covers the baseline lane) and
+`cargo test --no-default-features --features tracing-compat --lib
+handlers::file::telemetry`
+(25 passed) succeed. The Python contract test is covered by the full
+`make test` chain recorded in "Commit gates on the telemetry candidate".
 
-Issue [#551](https://github.com/leynos/femtologging/issues/551) keeps the part
-this PR deliberately does not build: a bridge or exporter from these counters
-to an operator-facing sink. Counting, key-set stability, and the trace event
-contract belong here because they are introduced by these waits.
+Issue [#551](https://github.com/leynos/femtologging/issues/551) asks for more
+than this PR builds. This PR completes the acceptance criteria that the waits
+it introduces make possible:
+
+- record flush, close, and handle wait durations with their success, timeout,
+  disconnected, and panic outcomes;
+- keep dimensions bounded, excluding raw targets, paths, messages, and
+  payloads;
+- keep the counting path free of Python access and of recursive logging, so
+  the `femtologging::internal` event cannot re-enter user handlers;
+- test the outcome semantics and the label bounds.
+
+Still outstanding in #551, and deliberately not built here:
+
+- a supported telemetry interface with documented export;
+- counting bridge decisions that reach the adapter and maximum-level updates;
+- documenting that facade-prefiltered calls never reach the adapter;
+- a benchmark of disabled and enabled telemetry overhead;
+- documentation of metric names, operational interpretation, and actionable
+  alerts for those bridge metrics.
+
+Counting, key-set stability, and the trace event contract belong here because
+these waits introduce them; the exporter and the bridge metrics are separate
+work with their own interfaces.
 
 ## Decision log
 
