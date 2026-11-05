@@ -691,7 +691,7 @@ The review of `ddf9984` requested five documentation corrections. All five were
 valid against the source and are applied in the follow-up commit.
 
 - **Stale plan text.** Task 1 and Task 3 now describe the shipped `py_close`
-  flow and the four test modules, rather than the superseded
+  flow and the five test modules, rather than the superseded
   `self.close()`-inside-`detach` design and a single test module.
 - **`close()` contradiction.** The follow-up corrected the users' guide to say
   that a `close()` concurrent with a blocked `handle()` was refused by the
@@ -940,6 +940,76 @@ Admission stayed healthy throughout, but the queue was deep: the test lane
 logged thousands of `[build-limits] CRATE: waiting for a compile slot` lines
 and pytest itself accounted for only a small part of its 62 minutes. A queued
 build is not a hung one, so neither gate was killed or retried.
+
+## Review follow-ups on `6e2c1e2a`
+
+CodeRabbit reviewed `3c8ed48d` and raised five inline findings and three failed
+pre-merge rows. Each was checked against the current tree before any edit.
+
+| Finding                                                      | Disposition                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ExecPlan still said "the four test modules"                  | Fixed. Task 3 lists five modules, and the follow-up bullet now says five.                                                                                                                                                                                         |
+| ExecPlan Observability row claimed no metrics or tracing     | Already fixed before this review. The row records that `tracing-compat` already carried internal producer tracing and that this PR instruments every wait it creates.                                                                                             |
+| Users guide policy advice did not name `"block"`             | Fixed. The operational-tips bullet now recommends `policy="block"` when drops are unacceptable and says `"timeout:N"` bounds the wait but still drops on expiry, so it is not a no-drop choice.                                                                   |
+| Close probe did not prove the shutdown hand-off              | Declined, with the reasoning recorded in the PR body. The raised switch interval keeps the closing thread on the interpreter lock from its entry event through `close()` until the binding detaches, and the binding takes the shutdown state before it detaches. |
+| Close probes could pass vacuously after the deadline expired | Fixed. `CLOSE_FLUSH_PROBE` and `CLOSE_CLOSE_PROBE` now assert the closer is still alive before probing, matching the handle probe.                                                                                                                                |
+
+The three pre-merge rows were dispositioned as follows.
+
+**Developer Documentation.** The Python-facing section of
+`docs/rust-multithreaded-logging-framework-for-python-design.md` said "existing
+handler-specific timeouts remain authoritative" and that "the handler's own
+timeout still bounds each wait". Both were wrong for the file handler family:
+`perform_flush` gives the enqueue and the acknowledgement one second in total,
+and `WorkerShutdown::wait` gives the close completion one second, neither of
+which reads the overflow policy or the write timeout. The section now states
+both fixed deadlines and records that a timed-out `close()` returns while the
+worker may still be running.
+
+**Testing (Property / Proof).** Implemented rather than argued.
+`tests/test_file_handler_lifecycle_state_machine.py` adds a Hypothesis
+`RuleBasedStateMachine` that generates bounded sequences of `handle()`,
+`flush()`, and repeated `close()` for all three builders across capacities 1–4
+and the `drop`, `block`, and `timeout` policies. It asserts that `close()`
+never raises, that `handle()` names the closure after a close, that `flush()`
+reports `False` after a close, and that a pre-close call either completes or
+raises the documented overflow error. The machine runs in-process and does not
+control scheduling, so the subprocess scenarios remain the interleaving
+evidence; the module docstring says so. A negative control that flipped the
+closed-flush assertion failed all three parametrizations, and a temporary
+counter confirmed the rules execute (64 handler constructions and 174 closes in
+one run). The "Testing the boundary" section of `docs/developers-guide.md` now
+points at the state machine and says why it complements, rather than replaces,
+the subprocess evidence.
+
+**Observability.** Addressed by the handler-wait telemetry commit. The
+reconciliation comment posted to the PR records the counters, the tracing
+target, and the remaining #551 scope.
+
+## Commit gates on the review candidate
+
+The chain ran once, sequentially, over the tree that carries the telemetry, the
+design-document deadline correction, the developers-guide pointer, and the
+lifecycle state machine:
+
+| Gate                | Result                        | Duration |
+| ------------------- | ----------------------------- | -------- |
+| `make fmt`          | pass                          | 3 s      |
+| `make check-fmt`    | pass                          | 1 s      |
+| `make markdownlint` | pass                          | 3 s      |
+| `make nixie`        | pass                          | 0 s      |
+| `make lint`         | pass                          | 167 s    |
+| `make typecheck`    | pass                          | 20 s     |
+| `make test`         | pass, 1086 passed / 6 skipped | 1339 s   |
+
+Logs are `/tmp/fmt-femtologging-issue-441.out` and the matching `check-fmt`,
+`markdownlint`, `nixie`, `lint`, `typecheck`, and `test` files; each ends with a
+`GATE=<name> EXIT=0` marker. The `make fmt`, `check-fmt`, `markdownlint`, and
+`nixie` gates were rerun after the final ExecPlan edit and passed again.
+Admission reported a `live_work` drain fault with a
+`required recovery action: Run build-limits-recover ...` line, which is the
+host operator's business; the supervisor stayed healthy, the femtologging crate
+was admitted, and no gate was killed or retried.
 
 ## Handler-wait telemetry
 

@@ -118,10 +118,14 @@ guard(body)
 """
 
 
-#: Shared prologue for the three "operation during close" bodies. The closing
-#: thread takes the shutdown state and then detaches; with a long switch
-#: interval the probing thread can only resume after that, so the operation it
-#: performs is genuinely concurrent with an in-progress close.
+#: Shared prologue for the three "operation during close" bodies. The hand-off
+#: needs no extra signal: with a one-second switch interval, the closing thread
+#: keeps the interpreter lock from ``close_entered.set()`` through
+#: ``handler.close()`` until the binding detaches, and the binding takes the
+#: shutdown state before it detaches. The probing thread therefore cannot
+#: resume before the shutdown state is gone. Each probe then asserts the closer
+#: is still alive, which rules out the other vacuous case: the closer's
+#: one-second deadline expiring while the probing thread was not scheduled.
 _CLOSE_PROLOGUE = """
 def body():
     handler = build_handler({path!r}, OverflowPolicy.block())
@@ -179,8 +183,12 @@ CLOSE_HANDLE_PROBE = """
         assert blocked.is_alive(), "close returned before the worker was released"
 """
 
-#: ``flush()`` reports the closed handler by returning ``False``.
+#: ``flush()`` reports the closed handler by returning ``False``. The
+#: liveness check comes first: a ``False`` after the closer's one-second
+#: deadline expired would prove nothing, because a flush that timed out while
+#: the shutdown state was still in place also reports ``False``.
 CLOSE_FLUSH_PROBE = """
+        assert blocked.is_alive(), "close returned before flush() was probed"
         results = [handler.flush()]
         assert results == [False], (
             f"flush() during close must report False, got {{results!r}}"
@@ -189,8 +197,10 @@ CLOSE_FLUSH_PROBE = """
 
 #: A second ``close()`` shares the first one's completion wait. It must return
 #: without raising once the worker stops or its own deadline expires; it does
-#: not start new shutdown work.
+#: not start new shutdown work. As with the flush probe, the liveness check
+#: keeps a first close that already returned from passing vacuously.
 CLOSE_CLOSE_PROBE = """
+        assert blocked.is_alive(), "close returned before the second close()"
         handler.close()
 """
 

@@ -99,6 +99,29 @@ impl WaitOutcome {
     }
 }
 
+/// Names the Python entry point and handler class a wait belongs to.
+///
+/// The overflow-policy bucket is deliberately absent: only the handler knows
+/// it, so the recording method fills it in. Keeping the two apart stops a
+/// caller from labelling a wait with a policy the handler is not using.
+#[derive(Clone, Copy)]
+pub(crate) struct WaitSite {
+    /// Operation name such as `handler_flush`.
+    pub(crate) operation: &'static str,
+    /// Handler category such as `file` or `timed_rotating`.
+    pub(crate) handler_kind: &'static str,
+}
+
+impl WaitSite {
+    /// Name one Python entry point on one handler class.
+    pub(crate) const fn new(operation: &'static str, handler_kind: &'static str) -> Self {
+        Self {
+            operation,
+            handler_kind,
+        }
+    }
+}
+
 /// Bounded context attached to one recorded wait.
 #[derive(Clone, Copy)]
 pub(crate) struct WaitContext {

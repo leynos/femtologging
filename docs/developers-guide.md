@@ -807,6 +807,15 @@ The window check matters for the bounded cases. A `"timeout:N"` or `close()`
 wait ends on its own deadline, so a call that returned early would otherwise
 collect records trivially, and a bare ordering check would pass for the defect.
 
+The subprocess scenarios pin one interleaving each, so they cannot enumerate
+the order of `handle()`, `flush()`, and `close()` calls.
+`tests/test_file_handler_lifecycle_state_machine.py` covers that gap with a
+Hypothesis `RuleBasedStateMachine` that generates bounded call sequences for
+all three builders across queue capacities and overflow policies, and asserts
+the shutdown invariants after each step. It runs in-process and does not
+control scheduling, so it complements the subprocess evidence rather than
+replacing it: the GIL verdict still comes from the child interpreters.
+
 ## Producer/worker context propagation
 
 The logger's producer path snapshots the configured handler list while holding

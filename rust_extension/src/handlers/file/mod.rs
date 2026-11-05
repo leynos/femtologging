@@ -48,7 +48,7 @@ use crate::sync::{
 use io_utils::open_log_file;
 use worker::{FileCommand, WorkerConfig, spawn_worker};
 
-use super::telemetry::{WaitContext, WaitDiagnostics, WaitOutcome, WaitTimer};
+use super::telemetry::{WaitContext, WaitDiagnostics, WaitOutcome, WaitSite, WaitTimer};
 
 pub(crate) use builder_options::BuilderOptions;
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
@@ -214,21 +214,16 @@ impl FemtoFileHandler {
 
     /// Time one Python-facing wait and record its outcome.
     ///
-    /// `handler_kind` names the Python class the caller reached, because the
+    /// The site names the Python class the caller reached, because the
     /// rotating wrappers delegate to this core handler and the operator needs
-    /// to tell them apart.
-    pub(crate) fn record_wait(
-        &self,
-        timer: WaitTimer,
-        operation: &'static str,
-        handler_kind: &'static str,
-        outcome: WaitOutcome,
-    ) {
+    /// to tell them apart. The policy bucket comes from this handler, not the
+    /// caller, so the label always matches the queue behaviour in force.
+    pub(crate) fn record_wait(&self, timer: WaitTimer, site: WaitSite, outcome: WaitOutcome) {
         timer.finish(
             self.diagnostics(),
             WaitContext {
-                operation,
-                handler_kind,
+                operation: site.operation,
+                handler_kind: site.handler_kind,
                 policy_bucket: self.policy_bucket(),
             },
             outcome,

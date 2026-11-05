@@ -13,7 +13,7 @@ use super::{
     DEFAULT_CHANNEL_CAPACITY, FemtoFileHandler, HandlerConfig, classify_handle,
     io_utils::open_log_file, policy, validate_params,
 };
-use crate::handlers::telemetry::{WaitContext, WaitTimer};
+use crate::handlers::telemetry::{WaitContext, WaitSite, WaitTimer};
 use crate::{formatter::DefaultFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord};
 
 #[pymethods]
@@ -75,7 +75,11 @@ impl FemtoFileHandler {
         let record = FemtoLogRecord::new(logger, parsed_level, message);
         let timer = WaitTimer::start();
         let result = py.detach(|| <Self as FemtoHandlerTrait>::handle(self, record));
-        self.record_wait(timer, "handler_handle", "file", classify_handle(&result));
+        self.record_wait(
+            timer,
+            WaitSite::new("handler_handle", "file"),
+            classify_handle(&result),
+        );
         result.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
@@ -108,7 +112,11 @@ impl FemtoFileHandler {
     fn py_flush(&self, py: Python<'_>) -> bool {
         let timer = WaitTimer::start();
         let outcome = py.detach(|| self.flush_outcome());
-        self.record_wait(timer, "handler_flush", "file", outcome.into());
+        self.record_wait(
+            timer,
+            WaitSite::new("handler_flush", "file"),
+            outcome.into(),
+        );
         matches!(outcome, super::FlushOutcome::Acknowledged)
     }
 

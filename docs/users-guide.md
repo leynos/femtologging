@@ -1090,11 +1090,13 @@ is reported.
   logger the current configuration disabled. When `get_context_dropped()`
   increases, correct or reduce Rust context fields and explicit metadata that
   contributes to validation. For queue-full/back-pressure drops, increase
-  handler capacity, or use a blocking or timeout policy for a file handler when
-  those drops are unacceptable; a handler policy does not change the logger
-  queue's own overflow policy. When `get_disabled_drops()` increases, either
-  stop logging through that logger or name it in the configuration to re-enable
-  it.
+  handler capacity, or use `policy="block"` on a file handler when those drops
+  are unacceptable; a handler policy does not change the logger queue's own
+  overflow policy. Only `"block"` guarantees delivery: it waits until the queue
+  makes room. `"timeout:N"` bounds that wait but still drops the record when
+  the deadline expires, so it is not a no-drop choice. When
+  `get_disabled_drops()` increases, either stop logging through that logger or
+  name it in the configuration to re-enable it.
 - File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies slow whichever thread ends up waiting, and which
