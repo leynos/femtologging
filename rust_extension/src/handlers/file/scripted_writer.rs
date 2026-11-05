@@ -92,9 +92,11 @@ impl Gate {
     }
 }
 
-/// Writer that reports each stage to the test and can block or fail there.
-#[derive(Clone)]
-pub(super) struct ScriptedWriter {
+/// The gates and behaviours that make up one scripted run.
+///
+/// Grouping them keeps the writer's constructor to two arguments and lets each
+/// named constructor read as a table of the two stages it scripts.
+struct Script {
     /// Gate the worker waits on inside `write`.
     write_gate: Arc<Gate>,
     /// Gate the worker waits on inside `flush`.
@@ -103,24 +105,22 @@ pub(super) struct ScriptedWriter {
     flush_behaviour: FlushBehaviour,
     /// What `write` does once its gate opens.
     write_behaviour: WriteBehaviour,
+}
+
+/// Writer that reports each stage to the test and can block or fail there.
+#[derive(Clone)]
+pub(super) struct ScriptedWriter {
+    /// The gates and behaviours this writer follows.
+    script: Arc<Script>,
     /// Reports the stage the worker has reached.
     entered: mpsc::Sender<Stage>,
 }
 
 impl ScriptedWriter {
-    /// Build a writer whose gates start in the requested state.
-    fn new(
-        write_gate: Arc<Gate>,
-        flush_gate: Arc<Gate>,
-        flush_behaviour: FlushBehaviour,
-        write_behaviour: WriteBehaviour,
-        entered: mpsc::Sender<Stage>,
-    ) -> Self {
+    /// Build a writer that follows `script`.
+    fn new(script: Script, entered: mpsc::Sender<Stage>) -> Self {
         Self {
-            write_gate,
-            flush_gate,
-            flush_behaviour,
-            write_behaviour,
+            script: Arc::new(script),
             entered,
         }
     }
@@ -128,10 +128,12 @@ impl ScriptedWriter {
     /// Build a writer that blocks in `write` and `flush` until released.
     pub(super) fn blocking(entered: mpsc::Sender<Stage>) -> Self {
         Self::new(
-            Arc::new(Gate::closed()),
-            Arc::new(Gate::closed()),
-            FlushBehaviour::Succeed,
-            WriteBehaviour::Succeed,
+            Script {
+                write_gate: Arc::new(Gate::closed()),
+                flush_gate: Arc::new(Gate::closed()),
+                flush_behaviour: FlushBehaviour::Succeed,
+                write_behaviour: WriteBehaviour::Succeed,
+            },
             entered,
         )
     }
@@ -139,10 +141,12 @@ impl ScriptedWriter {
     /// Build a writer whose `flush` fails immediately.
     pub(super) fn failing_flush(entered: mpsc::Sender<Stage>) -> Self {
         Self::new(
-            Arc::new(Gate::closed()),
-            Arc::new(Gate::opened()),
-            FlushBehaviour::Fail,
-            WriteBehaviour::Succeed,
+            Script {
+                write_gate: Arc::new(Gate::closed()),
+                flush_gate: Arc::new(Gate::opened()),
+                flush_behaviour: FlushBehaviour::Fail,
+                write_behaviour: WriteBehaviour::Succeed,
+            },
             entered,
         )
     }
@@ -150,10 +154,12 @@ impl ScriptedWriter {
     /// Build a writer whose `flush` panics immediately.
     pub(super) fn panicking_flush(entered: mpsc::Sender<Stage>) -> Self {
         Self::new(
-            Arc::new(Gate::closed()),
-            Arc::new(Gate::opened()),
-            FlushBehaviour::Panic,
-            WriteBehaviour::Succeed,
+            Script {
+                write_gate: Arc::new(Gate::closed()),
+                flush_gate: Arc::new(Gate::opened()),
+                flush_behaviour: FlushBehaviour::Panic,
+                write_behaviour: WriteBehaviour::Succeed,
+            },
             entered,
         )
     }
@@ -161,10 +167,12 @@ impl ScriptedWriter {
     /// Build a writer that blocks in `flush` and panics once released.
     pub(super) fn blocking_then_panicking_flush(entered: mpsc::Sender<Stage>) -> Self {
         Self::new(
-            Arc::new(Gate::opened()),
-            Arc::new(Gate::closed()),
-            FlushBehaviour::Panic,
-            WriteBehaviour::Succeed,
+            Script {
+                write_gate: Arc::new(Gate::opened()),
+                flush_gate: Arc::new(Gate::closed()),
+                flush_behaviour: FlushBehaviour::Panic,
+                write_behaviour: WriteBehaviour::Succeed,
+            },
             entered,
         )
     }
@@ -172,18 +180,20 @@ impl ScriptedWriter {
     /// Build a writer that panics inside `write`.
     pub(super) fn panicking_writes(entered: mpsc::Sender<Stage>) -> Self {
         Self::new(
-            Arc::new(Gate::opened()),
-            Arc::new(Gate::opened()),
-            FlushBehaviour::Succeed,
-            WriteBehaviour::Panic,
+            Script {
+                write_gate: Arc::new(Gate::opened()),
+                flush_gate: Arc::new(Gate::opened()),
+                flush_behaviour: FlushBehaviour::Succeed,
+                write_behaviour: WriteBehaviour::Panic,
+            },
             entered,
         )
     }
 
     /// Release both gates so the worker can finish.
     pub(super) fn release(&self) {
-        self.write_gate.open();
-        self.flush_gate.open();
+        self.script.write_gate.open();
+        self.script.flush_gate.open();
     }
 }
 
@@ -191,8 +201,8 @@ impl Write for ScriptedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         // A disconnected receiver only means the test stopped listening.
         let _ = self.entered.send(Stage::Write);
-        self.write_gate.wait();
-        match self.write_behaviour {
+        self.script.write_gate.wait();
+        match self.script.write_behaviour {
             WriteBehaviour::Succeed => Ok(buf.len()),
             WriteBehaviour::Panic => panic!("simulated worker write panic"),
         }
@@ -200,8 +210,8 @@ impl Write for ScriptedWriter {
 
     fn flush(&mut self) -> io::Result<()> {
         let _ = self.entered.send(Stage::Flush);
-        self.flush_gate.wait();
-        match self.flush_behaviour {
+        self.script.flush_gate.wait();
+        match self.script.flush_behaviour {
             FlushBehaviour::Succeed => Ok(()),
             FlushBehaviour::Fail => Err(io::Error::other("simulated flush failure")),
             FlushBehaviour::Panic => panic!("simulated worker flush panic"),
