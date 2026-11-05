@@ -16,7 +16,7 @@ use crate::{
         self, DEFAULT_CHANNEL_CAPACITY, FlushOutcome, HandlerConfig, WorkerShutdown,
         classify_handle,
     },
-    handlers::telemetry::{WaitContext, WaitTimer},
+    handlers::telemetry::{WaitContext, WaitSite, WaitTimer},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -253,8 +253,7 @@ impl PyRotatingFileHandler {
         let result = py.detach(|| self.inner.handle(record));
         self.inner.inner.record_wait(
             timer,
-            "handler_handle",
-            "rotating",
+            WaitSite::new("handler_handle", "rotating"),
             classify_handle(&result),
         );
         result.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
@@ -289,9 +288,11 @@ impl PyRotatingFileHandler {
     fn py_flush(&self, py: Python<'_>) -> bool {
         let timer = WaitTimer::start();
         let outcome = py.detach(|| self.inner.inner.flush_outcome());
-        self.inner
-            .inner
-            .record_wait(timer, "handler_flush", "rotating", outcome.into());
+        self.inner.inner.record_wait(
+            timer,
+            WaitSite::new("handler_flush", "rotating"),
+            outcome.into(),
+        );
         matches!(outcome, FlushOutcome::Acknowledged)
     }
 

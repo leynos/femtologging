@@ -1242,9 +1242,13 @@ another Python thread can use the handler while the worker exits. Because the
 shutdown state is shared, concurrent `close()` calls and a `close()` running
 beside a detached `flush()` both wait on the same completion broadcast; a
 closer that arrives after the worker has stopped returns at once, and a
-repeated close stays safe. Existing handler-specific timeouts remain
-authoritative, so a worker that never signals completion is reported and
-skipped rather than waited on indefinitely.
+repeated close stays safe. The two Python-facing waits carry their own fixed
+deadlines rather than reusing the handler's write or overflow timeout.
+`flush()` gives the enqueue and the acknowledgement one second in total, and
+`close()` waits at most one second for the shared completion signal. Neither
+deadline depends on the overflow policy. A `close()` whose one-second deadline
+expires logs a warning and returns while the worker may still be running, so a
+returned `close()` is not proof that the worker stopped.
 
 These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
 uses no Python access and has no Python exception path. The expected failure
@@ -1286,8 +1290,9 @@ callable formatter and a callback that re-enters the handler in its closed
 state make progress. Because the shutdown state is shared rather than taken
 exclusively, a close can start while another thread is blocked inside
 `handle()` or `flush()`; concurrent closes and a close beside a detached flush
-all observe the same completion, while the handler's own timeout still bounds
-each wait.
+all observe the same completion, while each wait keeps its own fixed bound: one
+second for the flush acknowledgement and one second for the close completion,
+whatever the configured overflow policy.
 
 **flush() Behaviour:**
 

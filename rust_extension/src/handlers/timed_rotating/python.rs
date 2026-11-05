@@ -28,7 +28,7 @@ use crate::{
         self, DEFAULT_CHANNEL_CAPACITY, FlushOutcome, HandlerConfig, WorkerShutdown,
         classify_handle,
     },
-    handlers::telemetry::{WaitContext, WaitTimer},
+    handlers::telemetry::{WaitContext, WaitSite, WaitTimer},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -282,8 +282,7 @@ impl PyTimedRotatingFileHandler {
         let result = py.detach(|| self.inner.handle(record));
         self.inner.inner.record_wait(
             timer,
-            "handler_handle",
-            "timed_rotating",
+            WaitSite::new("handler_handle", "timed_rotating"),
             classify_handle(&result),
         );
         result.map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
@@ -297,9 +296,11 @@ impl PyTimedRotatingFileHandler {
     fn py_flush(&self, py: Python<'_>) -> bool {
         let timer = WaitTimer::start();
         let outcome = py.detach(|| self.inner.inner.flush_outcome());
-        self.inner
-            .inner
-            .record_wait(timer, "handler_flush", "timed_rotating", outcome.into());
+        self.inner.inner.record_wait(
+            timer,
+            WaitSite::new("handler_flush", "timed_rotating"),
+            outcome.into(),
+        );
         matches!(outcome, FlushOutcome::Acknowledged)
     }
 
