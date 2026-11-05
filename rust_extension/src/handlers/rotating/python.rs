@@ -4,6 +4,7 @@
 //! configurable capacity, flush interval, overflow policy, and rotation thresholds.
 
 use std::any::Any;
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 
@@ -11,7 +12,11 @@ use super::{FemtoRotatingFileHandler as CoreRotatingFileHandler, RotationConfig,
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
+    handlers::file::{
+        self, DEFAULT_CHANNEL_CAPACITY, FlushOutcome, HandlerConfig, WorkerShutdown,
+        classify_handle,
+    },
+    handlers::telemetry::{WaitContext, WaitTimer},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -244,8 +249,15 @@ impl PyRotatingFileHandler {
         let record = FemtoLogRecord::new(logger, parsed_level, message);
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
-        py.detach(|| self.inner.handle(record))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        let timer = WaitTimer::start();
+        let result = py.detach(|| self.inner.handle(record));
+        self.inner.inner.record_wait(
+            timer,
+            "handler_handle",
+            "rotating",
+            classify_handle(&result),
+        );
+        result.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to disk without closing the handler or
@@ -275,7 +287,28 @@ impl PyRotatingFileHandler {
     /// run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.inner.flush())
+        let timer = WaitTimer::start();
+        let outcome = py.detach(|| self.inner.inner.flush_outcome());
+        self.inner
+            .inner
+            .record_wait(timer, "handler_flush", "rotating", outcome.into());
+        matches!(outcome, FlushOutcome::Acknowledged)
+    }
+
+    /// Return bounded counters for the Python-facing `handle()`, `flush()`,
+    /// and `close()` waits.
+    ///
+    /// The key set is fixed and never includes logger names, paths, messages,
+    /// or raw timeout values.
+    ///
+    /// Examples
+    /// --------
+    /// >>> diagnostics = handler.wait_diagnostics()
+    /// >>> diagnostics["close_completed"] >= 0
+    /// True
+    #[pyo3(name = "wait_diagnostics")]
+    fn py_wait_diagnostics(&self) -> std::collections::BTreeMap<&'static str, u64> {
+        self.inner.inner.diagnostics().snapshot().to_map()
     }
 
     /// Close the handler and stop its file worker.
@@ -294,11 +327,26 @@ impl PyRotatingFileHandler {
     /// ```
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let shutdown = {
+        let timer = WaitTimer::start();
+        let (shutdown, diagnostics, policy_bucket) = {
             let handler = slf.borrow(py);
-            handler.take_shutdown()
+            let file_handler = &handler.inner.inner;
+            (
+                handler.take_shutdown(),
+                Arc::clone(file_handler.diagnostics()),
+                file_handler.policy_bucket(),
+            )
         };
-        py.detach(move || shutdown.wait());
+        let outcome = py.detach(move || shutdown.wait());
+        timer.finish(
+            &diagnostics,
+            WaitContext {
+                operation: "handler_close",
+                handler_kind: "rotating",
+                policy_bucket,
+            },
+            outcome.into(),
+        );
     }
 }
 

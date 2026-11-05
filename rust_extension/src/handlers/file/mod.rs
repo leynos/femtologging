@@ -21,6 +21,7 @@ mod python;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod validations;
+mod wait_outcomes;
 mod worker;
 
 use std::{
@@ -41,9 +42,13 @@ use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
 use crate::shutdown::ShutdownCompletion;
-use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded};
+use crate::sync::{
+    JoinHandle, Mutex, Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded,
+};
 use io_utils::open_log_file;
 use worker::{FileCommand, WorkerConfig, spawn_worker};
+
+use super::telemetry::{WaitContext, WaitDiagnostics, WaitOutcome, WaitTimer};
 
 pub(crate) use builder_options::BuilderOptions;
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
@@ -52,34 +57,11 @@ pub(crate) use validations::{
 };
 pub(crate) use worker::{NoRotation, RotationStrategy};
 
-/// Owns the worker state needed to finish a handler shutdown after its Python
-/// object borrow has been released.
-pub(super) struct WorkerShutdown {
-    /// Worker thread handle retained for joining after completion.
-    handle: Option<JoinHandle<()>>,
-    /// Broadcast completion every closer waits on, so a closer that does not
-    /// own the join handle still observes worker shutdown.
-    completion: Arc<ShutdownCompletion>,
-}
-
-impl WorkerShutdown {
-    /// Wait for worker completion and join it when it reports a clean exit.
-    ///
-    /// Every caller waits on the shared completion, including one that finds
-    /// no join handle left: another closer may still be joining a worker that
-    /// has not finished writing its queued records.
-    pub(super) fn wait(self) {
-        if !self.completion.wait(Duration::from_secs(1)) {
-            log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-            return;
-        }
-        if let Some(handle) = self.handle
-            && handle.join().is_err()
-        {
-            log::warn!("FemtoFileHandler: worker thread panicked");
-        }
-    }
-}
+pub(crate) use wait_outcomes::{FlushOutcome, WorkerShutdown, classify_handle};
+// Only the telemetry tables inspect a shutdown outcome directly; production
+// code converts one straight into a [`WaitOutcome`] after waiting.
+#[cfg(test)]
+pub(crate) use wait_outcomes::ShutdownOutcome;
 
 /// File-based logging handler exposed to Python.
 ///
@@ -101,6 +83,8 @@ pub struct FemtoFileHandler {
     completion: Arc<ShutdownCompletion>,
     /// Selects the producer-side queue behaviour when delivery cannot proceed.
     overflow_policy: OverflowPolicy,
+    /// Bounded counters and duration totals for the Python-facing waits.
+    diagnostics: Arc<WaitDiagnostics>,
 }
 
 impl FemtoFileHandler {
@@ -168,38 +152,87 @@ impl FemtoFileHandler {
     /// Flush the worker's buffer, waiting up to one second. Returns `true` only when the flush
     /// is confirmed in time; `false` if the handler is closed, unreachable or the flush fails.
     pub fn flush(&self) -> bool {
+        matches!(self.flush_outcome(), FlushOutcome::Acknowledged)
+    }
+
+    /// Flush and report why the attempt finished.
+    ///
+    /// The Python binding records this outcome so an operator can tell a
+    /// timed-out flush from a flush of an already-closed handler, which the
+    /// public `bool` cannot express.
+    pub(crate) fn flush_outcome(&self) -> FlushOutcome {
         // Bind first: a guard in the `match` scrutinee lives through the send.
         let tx = self.tx.lock().clone();
         match tx {
             Some(tx) => self.perform_flush(&tx),
-            None => false,
+            None => FlushOutcome::Closed,
         }
     }
 
     /// Waits for the worker's flush acknowledgement without taking ownership of
     /// the worker thread.
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+    fn perform_flush(&self, tx: &Sender<FileCommand>) -> FlushOutcome {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if tx
-            .send_timeout(FileCommand::Flush(ack_tx), remaining)
-            .is_err()
-        {
-            return false;
+        match tx.send_timeout(FileCommand::Flush(ack_tx), remaining) {
+            Ok(()) => {}
+            Err(SendTimeoutError::Disconnected(_)) => return FlushOutcome::Closed,
+            Err(SendTimeoutError::Timeout(_)) => return FlushOutcome::TimedOut,
         }
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
-    /// Returns true only when the worker acknowledges the flush successfully
-    /// before the caller's deadline.
+    /// Classifies the worker's answer to a flush request.
     fn wait_for_flush_completion(
         &self,
         ack_rx: &Receiver<io::Result<()>>,
         deadline: Instant,
-    ) -> bool {
+    ) -> FlushOutcome {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
+        match ack_rx.recv_timeout(remaining) {
+            Ok(Ok(())) => FlushOutcome::Acknowledged,
+            Ok(Err(_)) => FlushOutcome::Failed,
+            Err(RecvTimeoutError::Timeout) => FlushOutcome::TimedOut,
+            Err(RecvTimeoutError::Disconnected) => FlushOutcome::Closed,
+        }
+    }
+
+    /// Return the bounded overflow-policy bucket for telemetry.
+    pub(crate) fn policy_bucket(&self) -> &'static str {
+        match self.overflow_policy {
+            OverflowPolicy::Drop => "drop",
+            OverflowPolicy::Block => "block",
+            OverflowPolicy::Timeout(_) => "timeout",
+        }
+    }
+
+    /// Return the shared wait diagnostics for this handler.
+    pub(crate) fn diagnostics(&self) -> &Arc<WaitDiagnostics> {
+        &self.diagnostics
+    }
+
+    /// Time one Python-facing wait and record its outcome.
+    ///
+    /// `handler_kind` names the Python class the caller reached, because the
+    /// rotating wrappers delegate to this core handler and the operator needs
+    /// to tell them apart.
+    pub(crate) fn record_wait(
+        &self,
+        timer: WaitTimer,
+        operation: &'static str,
+        handler_kind: &'static str,
+        outcome: WaitOutcome,
+    ) {
+        timer.finish(
+            self.diagnostics(),
+            WaitContext {
+                operation,
+                handler_kind,
+                policy_bucket: self.policy_bucket(),
+            },
+            outcome,
+        );
     }
 
     /// Close the handler and wait for the worker to stop.
@@ -229,10 +262,7 @@ impl FemtoFileHandler {
         let tx = self.tx.lock().take();
         drop(tx);
         let handle = self.handle.lock().take();
-        WorkerShutdown {
-            handle,
-            completion: Arc::clone(&self.completion),
-        }
+        WorkerShutdown::new(handle, Arc::clone(&self.completion))
     }
 
     /// Builds a handler from an existing worker writer and publishes its
@@ -262,6 +292,7 @@ impl FemtoFileHandler {
             handle: Mutex::new(Some(handle)),
             completion,
             overflow_policy,
+            diagnostics: Arc::new(WaitDiagnostics::new()),
         }
     }
 
@@ -294,5 +325,7 @@ impl FemtoFileHandler {
 mod flush_ack_tests;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod telemetry_tests;
 #[cfg(test)]
 mod tests;

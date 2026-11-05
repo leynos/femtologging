@@ -870,15 +870,15 @@ handler-level comparison happens before the handler filter chain. With base
 lock path; a subclass overriding `handle()` owns its internal dispatch path.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
-capture, handler-filter-chain evaluation, queue dispatch, and worker handler
-dispatch. Filter-chain events report `accepted`, `rejected`, or
-`callback_failed`. If all attached handler filters reject a record, the
-producer emits `producer_handler_dispatch` with `handler_kind=none` and
-`dispatch_outcome=no_handlers_accepted`. Events use bounded operation,
-handler-kind, and outcome fields; filter-chain events also include elapsed
-microseconds. Record payloads and context values are never included. They target
-`femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
-from recursively logging its own instrumentation.
+capture, handler-filter-chain evaluation, queue dispatch, worker handler
+dispatch, and the Python-facing handler waits described below. Filter-chain
+events report `accepted`, `rejected`, or `callback_failed`. If all attached
+handler filters reject a record, the producer emits `producer_handler_dispatch`
+with `handler_kind=none` and `dispatch_outcome=no_handlers_accepted`. Events
+use bounded operation, handler-kind, and outcome fields; filter-chain events
+also include elapsed microseconds. Record payloads and context values are never
+included. They target `femtologging::internal`, which `FemtoTracingLayer`
+ignores to prevent tracing from recursively logging its own instrumentation.
 
 ### Python-facing `flush()` and `close()` waits
 
@@ -908,6 +908,58 @@ timeout and `False` otherwise, and `close()` still returns `None`. The wait in
 worker that does not signal completion within that second is reported and
 skipped rather than waited on indefinitely, and the call returns while the
 worker may still be running.
+
+### Handler wait diagnostics
+
+Each Python-facing wait on a worker-backed file handler records one bounded
+counter when it returns. `FemtoFileHandler`, `FemtoRotatingFileHandler`, and
+`FemtoTimedRotatingFileHandler` expose `wait_diagnostics()`, which returns a
+dictionary with a fixed key set: one counter per outcome (`handle_accepted`,
+`handle_queue_full`, `handle_timed_out`, `handle_closed`, `handle_failed`,
+`flush_acknowledged`, `flush_timed_out`, `flush_closed`, `flush_failed`,
+`close_completed`, `close_timed_out`, `close_panicked`) plus
+`total_wait_micros` and `max_wait_micros`. Counters use relaxed atomics: the
+handler path must not pay for cross-thread ordering, and a slightly stale
+snapshot is acceptable for periodic reporting.
+
+With the `tracing-compat` feature enabled, each wait also emits a trace event
+targeting `femtologging::internal` with `operation` (`handler_handle`,
+`handler_flush`, or `handler_close`), `handler_kind` (`file`, `rotating`, or
+`timed_rotating`), `policy_bucket` (`drop`, `block`, or `timeout`),
+`wait_outcome`, and `elapsed_us`. The event is emitted after the detached
+section returns, so it runs on the interpreter-owning thread; a tracing bridge
+never has to attach to Python from a thread that holds no GIL. Neither the
+counters nor the events carry logger names, paths, messages, payloads, or raw
+timeout values, so their cardinality stays bounded however much traffic the
+handler sees. `tests/test_wait_diagnostics.py` pins the key set and the outcome
+semantics for all three handler kinds.
+
+Activation is per accessor and per build. `wait_diagnostics()` always works and
+needs no configuration; the trace events exist only when the crate is built with
+`tracing-compat`, where each event costs one `tracing` call on the interpreter
+thread. In a build without that feature `emit_event` is a compiled no-op, so
+the only per-wait cost is the counter update: two relaxed atomic adds, with no
+allocation, formatting, or lock. Readings are cumulative for the life of the
+handler, so an operator reports a delta between two snapshots rather than
+reinterpreting a total.
+
+The counters are diagnostic signals, not error rates:
+
+- `handle_queue_full` and `handle_timed_out` rising against
+  `handle_accepted` mean producers outrun the worker under a `drop` or
+  `timeout` policy, and records are being lost.
+- `flush_failed` points at the file or filesystem; `flush_timed_out` and
+  `flush_closed` mean the acknowledgement never arrived, not that the records
+  were lost.
+- `close_timed_out` and `close_panicked` mean shutdown did not complete
+  within its one-second bound, so queued records may still be unwritten.
+- A `max_wait_micros` close to `total_wait_micros` with few operations
+  suggests one slow wait rather than sustained pressure; the reverse suggests
+  steady queueing.
+
+`wait_outcomes.rs` owns the classification these counters rely on, so adding a
+new outcome is a single match arm plus one key, and the fixed-key test fails
+until the Python surface and its stub agree.
 
 ## Configuration transaction
 
