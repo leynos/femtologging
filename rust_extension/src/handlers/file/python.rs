@@ -5,12 +5,15 @@
 //! interpreter side, and every wait on the worker runs with the interpreter
 //! lock released.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 
 use super::{
-    DEFAULT_CHANNEL_CAPACITY, FemtoFileHandler, HandlerConfig, io_utils::open_log_file, policy,
-    validate_params,
+    DEFAULT_CHANNEL_CAPACITY, FemtoFileHandler, HandlerConfig, classify_handle,
+    io_utils::open_log_file, policy, validate_params,
 };
+use crate::handlers::telemetry::{WaitContext, WaitTimer};
 use crate::{formatter::DefaultFormatter, handler::FemtoHandlerTrait, log_record::FemtoLogRecord};
 
 #[pymethods]
@@ -70,8 +73,10 @@ impl FemtoFileHandler {
         // still held; only the enqueue below can wait on the worker.
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
         let record = FemtoLogRecord::new(logger, parsed_level, message);
-        py.detach(|| <Self as FemtoHandlerTrait>::handle(self, record))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        let timer = WaitTimer::start();
+        let result = py.detach(|| <Self as FemtoHandlerTrait>::handle(self, record));
+        self.record_wait(timer, "handler_handle", "file", classify_handle(&result));
+        result.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to the underlying file without closing the
@@ -101,7 +106,33 @@ impl FemtoFileHandler {
     /// run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush())
+        let timer = WaitTimer::start();
+        let outcome = py.detach(|| self.flush_outcome());
+        self.record_wait(timer, "handler_flush", "file", outcome.into());
+        matches!(outcome, super::FlushOutcome::Acknowledged)
+    }
+
+    /// Return bounded counters for the Python-facing `handle()`, `flush()`,
+    /// and `close()` waits.
+    ///
+    /// Returns
+    /// -------
+    /// dict
+    ///     A fixed key set: one counter per outcome, plus
+    ///     ``total_wait_micros`` and ``max_wait_micros``. Nothing here
+    ///     carries logger names, paths, messages, or raw timeout values, so
+    ///     the set stays bounded however much traffic the handler sees.
+    ///
+    /// Examples
+    /// --------
+    /// >>> diagnostics = handler.wait_diagnostics()
+    /// >>> diagnostics["handle_accepted"]
+    /// 3
+    /// >>> diagnostics["total_wait_micros"] >= diagnostics["max_wait_micros"]
+    /// True
+    #[pyo3(name = "wait_diagnostics")]
+    fn py_wait_diagnostics(&self) -> std::collections::BTreeMap<&'static str, u64> {
+        self.diagnostics().snapshot().to_map()
     }
 
     /// Closes the handler, signals worker shutdown, and waits briefly for
@@ -117,10 +148,26 @@ impl FemtoFileHandler {
     /// channel closes. See the user guide for the shutdown contract.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let shutdown = {
+        let timer = WaitTimer::start();
+        // Capture the counters and the bounded policy bucket while the borrow
+        // is held; the shutdown wait itself must not touch the object.
+        let (shutdown, diagnostics, policy_bucket) = {
             let handler = slf.borrow(py);
-            handler.take_shutdown()
+            (
+                handler.take_shutdown(),
+                Arc::clone(handler.diagnostics()),
+                handler.policy_bucket(),
+            )
         };
-        py.detach(move || shutdown.wait());
+        let outcome = py.detach(move || shutdown.wait());
+        timer.finish(
+            &diagnostics,
+            WaitContext {
+                operation: "handler_close",
+                handler_kind: "file",
+                policy_bucket,
+            },
+            outcome.into(),
+        );
     }
 }

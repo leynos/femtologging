@@ -335,6 +335,13 @@ fields with safe defaults does not require a version bump.
   stopped returns immediately. Each wait is bounded to one second: a worker
   that does not signal completion in that window is reported, and the call
   returns without joining it.
+- `handler.wait_diagnostics()` returns counters for the Python-facing waits: one
+  entry per outcome across `handle()`, `flush()`, and `close()`, plus
+  `total_wait_micros` and `max_wait_micros`. The key set is fixed and never
+  includes logger names, paths, messages, or raw timeout values. With the
+  `tracing-compat` feature the same outcomes are emitted as
+  `femtologging::internal` trace events; see
+  [Handler wait diagnostics](developers-guide.md#handler-wait-diagnostics).
 - `FileHandlerBuilder` mirrors these options and also exposes
   `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
   `.with_formatter(…)`. Pass a callable, a `FormatterBuilder`, or a named
@@ -411,6 +418,9 @@ accepts the record.
   described in
   [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers),
   including the unbounded `"block"` wait and its shutdown semantics.
+- `wait_diagnostics()` reports the same bounded counters as
+  `FemtoFileHandler`; trace events carry `handler_kind="rotating"` so the two
+  handlers stay distinguishable.
 - `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
   plus `.with_max_bytes()` and `.with_backup_count()`.
 
@@ -429,6 +439,9 @@ accepts the record.
   described in
   [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers),
   including the unbounded `"block"` wait and its shutdown semantics.
+- `wait_diagnostics()` reports the same bounded counters as
+  `FemtoFileHandler`; trace events carry `handler_kind="timed_rotating"` so the
+  three worker-backed handlers stay distinguishable.
 - `TimedRotatingFileHandlerBuilder` mirrors the direct handler surface with
   `.with_when()`, `.with_interval()`, `.with_backup_count()`, `.with_utc()`, and
   `.with_at_time()`.
