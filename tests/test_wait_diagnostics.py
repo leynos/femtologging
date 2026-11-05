@@ -24,7 +24,9 @@ from femtologging import (
     FileHandlerBuilder,
     HandlerOptions,
     OverflowPolicy,
+    RotatingFileHandlerBuilder,
     TimedHandlerOptions,
+    TimedRotatingFileHandlerBuilder,
 )
 
 
@@ -46,6 +48,29 @@ class Handler(typ.Protocol):
 
 type HandlerFactory = cabc.Callable[[Path], Handler]
 
+
+class HandlerBuilder(typ.Protocol):
+    """The builder surface shared by the three worker-backed file handlers."""
+
+    def with_capacity(self, capacity: int) -> HandlerBuilder:
+        """Set the queue capacity."""
+
+    def with_flush_after_records(self, interval: int) -> HandlerBuilder:
+        """Set how many records trigger a periodic flush."""
+
+    def with_overflow_policy(self, policy: OverflowPolicy) -> HandlerBuilder:
+        """Set the queue overflow policy."""
+
+    def with_formatter(
+        self,
+        formatter: cabc.Callable[[cabc.Mapping[str, object]], str],
+    ) -> HandlerBuilder:
+        """Attach a Python callable formatter."""
+
+    def build(self) -> Handler:
+        """Construct the handler."""
+
+
 #: The complete key set ``wait_diagnostics()`` exposes: one counter per
 #: outcome plus the two duration totals. Nothing here carries a logger name,
 #: path, message, or raw timeout value.
@@ -54,14 +79,18 @@ EXPECTED_KEYS = frozenset({
     "handle_queue_full",
     "handle_timed_out",
     "handle_closed",
+    "handle_disconnected",
     "handle_failed",
     "flush_acknowledged",
-    "flush_timed_out",
+    "flush_enqueue_timed_out",
+    "flush_ack_timed_out",
     "flush_closed",
+    "flush_disconnected",
     "flush_failed",
     "close_completed",
     "close_timed_out",
     "close_panicked",
+    "close_unknown",
     "total_wait_micros",
     "max_wait_micros",
 })
@@ -164,7 +193,32 @@ def test_operations_after_close_record_closed_outcomes(
         )
 
 
-def test_queue_full_under_drop_policy_is_counted(tmp_path: Path) -> None:
+def _file_builder(path: Path) -> HandlerBuilder:
+    return FileHandlerBuilder(str(path))
+
+
+def _rotating_builder(path: Path) -> HandlerBuilder:
+    return RotatingFileHandlerBuilder(str(path))
+
+
+def _timed_rotating_builder(path: Path) -> HandlerBuilder:
+    return TimedRotatingFileHandlerBuilder(str(path))
+
+
+@pytest.mark.parametrize(
+    ("builder_factory", "handle_error"),
+    [
+        (_file_builder, RuntimeError),
+        (_rotating_builder, RuntimeError),
+        (_timed_rotating_builder, ValueError),
+    ],
+    ids=["file", "rotating", "timed_rotating"],
+)
+def test_queue_full_under_drop_policy_is_counted(
+    tmp_path: Path,
+    builder_factory: cabc.Callable[[Path], HandlerBuilder],
+    handle_error: type[Exception],
+) -> None:
     """A dropped record is counted separately from an accepted one."""
     worker_started = threading.Event()
     release_worker = threading.Event()
@@ -175,7 +229,7 @@ def test_queue_full_under_drop_policy_is_counted(tmp_path: Path) -> None:
         return f"{record['logger']} [{record['level']}] {record['message']}"
 
     handler = (
-        FileHandlerBuilder(str(tmp_path / "full.log"))
+        builder_factory(tmp_path / "full.log")
         .with_capacity(1)
         .with_flush_after_records(10_000)
         .with_overflow_policy(OverflowPolicy.drop())
@@ -191,7 +245,7 @@ def test_queue_full_under_drop_policy_is_counted(tmp_path: Path) -> None:
         assert worker_started.wait(5), "the worker never reached the formatter"
         handler.handle("core", "INFO", "second")
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(handle_error):
             handler.handle("core", "INFO", "third")
 
         diagnostics = handler.wait_diagnostics()

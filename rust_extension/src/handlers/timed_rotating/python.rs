@@ -25,8 +25,8 @@ use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
     handlers::file::{
-        self, DEFAULT_CHANNEL_CAPACITY, FlushOutcome, HandlerConfig, WorkerShutdown,
-        classify_handle,
+        self, DEFAULT_CHANNEL_CAPACITY, EnqueueFailure, FlushOutcome, HandlerConfig,
+        WorkerShutdown, classify_enqueue,
     },
     handlers::telemetry::{WaitContext, WaitSite, WaitTimer},
     level::FemtoLevel,
@@ -279,13 +279,15 @@ impl PyTimedRotatingFileHandler {
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
         let timer = WaitTimer::start();
-        let result = py.detach(|| self.inner.handle(record));
+        let result = py.detach(|| self.inner.inner.enqueue(record));
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_handle", "timed_rotating"),
-            classify_handle(&result),
+            classify_enqueue(&result),
         );
-        result.map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
+        result
+            .map_err(EnqueueFailure::into_handler_error)
+            .map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
     }
 
     /// Requests a worker flush and returns whether it acknowledged in time.

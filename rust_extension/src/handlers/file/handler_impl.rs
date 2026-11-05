@@ -6,26 +6,26 @@
 
 use std::any::Any;
 
-use super::{FemtoFileHandler, FileCommand, OverflowPolicy};
+use super::{EnqueueFailure, FemtoFileHandler, FileCommand, OverflowPolicy};
 use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
     log_record::FemtoLogRecord,
     sync::{SendTimeoutError, Sender, TrySendError},
 };
 
-/// Log a failed enqueue and surface the corresponding handler error.
-fn queue_failure(policy: &str, reason: &str, err: HandlerError) -> HandlerError {
+/// Log a failed enqueue and surface the corresponding failure.
+fn queue_failure(policy: &str, reason: &str, failure: EnqueueFailure) -> EnqueueFailure {
     log::warn!("FemtoFileHandler ({policy}): {reason}");
-    err
+    failure
 }
 
 /// Enqueue a record, blocking until the worker accepts it.
-fn send_blocking(tx: &Sender<FileCommand>, command: FileCommand) -> Result<(), HandlerError> {
+fn send_blocking(tx: &Sender<FileCommand>, command: FileCommand) -> Result<(), EnqueueFailure> {
     tx.send(command).map_err(|_| {
         queue_failure(
             "Block",
             "channel disconnected or shutting down",
-            HandlerError::Closed,
+            EnqueueFailure::Disconnected,
         )
     })
 }
@@ -38,19 +38,19 @@ fn send_bounded(
     tx: &Sender<FileCommand>,
     command: FileCommand,
     timeout: Option<std::time::Duration>,
-) -> Result<(), HandlerError> {
-    let (policy, saturation_reason, saturation_error, outcome) = match timeout {
+) -> Result<(), EnqueueFailure> {
+    let (policy, saturation_reason, saturation_failure, outcome) = match timeout {
         Some(dur) => (
             "Timeout",
             "timed out waiting for queue, dropping record",
-            HandlerError::Timeout(dur),
+            EnqueueFailure::TimedOut(dur),
             tx.send_timeout(command, dur)
                 .map_err(|err| matches!(err, SendTimeoutError::Disconnected(_))),
         ),
         None => (
             "Drop",
             "queue full, dropping record",
-            HandlerError::QueueFull,
+            EnqueueFailure::QueueFull,
             tx.try_send(command)
                 .map_err(|err| matches!(err, TrySendError::Disconnected(_))),
         ),
@@ -60,21 +60,26 @@ fn send_bounded(
             queue_failure(
                 policy,
                 "queue closed, dropping record",
-                HandlerError::Closed,
+                EnqueueFailure::Disconnected,
             )
         } else {
-            queue_failure(policy, saturation_reason, saturation_error)
+            queue_failure(policy, saturation_reason, saturation_failure)
         }
     })
 }
 
-impl FemtoHandlerTrait for FemtoFileHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+impl FemtoFileHandler {
+    /// Enqueue one record and report why the attempt failed, if it did.
+    ///
+    /// The result is richer than [`HandlerError`] so the Python bindings can
+    /// tell a deliberate close from a worker whose channel disappeared. The
+    /// public trait method maps both onto `HandlerError::Closed`.
+    pub(crate) fn enqueue(&self, record: FemtoLogRecord) -> Result<(), EnqueueFailure> {
         // Clone under the lock and release it before sending: a blocking send
         // must not hold the lock that close needs to take the sender.
         let Some(tx) = self.tx.lock().clone() else {
             log::warn!("FemtoFileHandler: handle called after close");
-            return Err(HandlerError::Closed);
+            return Err(EnqueueFailure::Closed);
         };
         let command = FileCommand::Record(Box::new(record));
         match self.overflow_policy {
@@ -82,6 +87,13 @@ impl FemtoHandlerTrait for FemtoFileHandler {
             OverflowPolicy::Block => send_blocking(&tx, command),
             OverflowPolicy::Timeout(dur) => send_bounded(&tx, command, Some(dur)),
         }
+    }
+}
+
+impl FemtoHandlerTrait for FemtoFileHandler {
+    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
+        self.enqueue(record)
+            .map_err(EnqueueFailure::into_handler_error)
     }
 
     fn flush(&self) -> bool {

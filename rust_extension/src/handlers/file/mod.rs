@@ -41,7 +41,7 @@ use crate::formatter::{DefaultFormatter, FemtoFormatter};
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
-use crate::shutdown::ShutdownCompletion;
+use crate::shutdown::{ShutdownCompletion, TerminalStatus};
 use crate::sync::{
     JoinHandle, Mutex, Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded,
 };
@@ -57,11 +57,7 @@ pub(crate) use validations::{
 };
 pub(crate) use worker::{NoRotation, RotationStrategy};
 
-pub(crate) use wait_outcomes::{FlushOutcome, WorkerShutdown, classify_handle};
-// Only the telemetry tables inspect a shutdown outcome directly; production
-// code converts one straight into a [`WaitOutcome`] after waiting.
-#[cfg(test)]
-pub(crate) use wait_outcomes::ShutdownOutcome;
+pub(crate) use wait_outcomes::{EnqueueFailure, FlushOutcome, WorkerShutdown, classify_enqueue};
 
 /// File-based logging handler exposed to Python.
 ///
@@ -81,6 +77,9 @@ pub struct FemtoFileHandler {
     /// every closer waits for the same shutdown even when another closer has
     /// already taken the join handle.
     completion: Arc<ShutdownCompletion>,
+    /// Verdict the worker records as it leaves, read by closers that no
+    /// longer own the join handle.
+    terminal: Arc<TerminalStatus>,
     /// Selects the producer-side queue behaviour when delivery cannot proceed.
     overflow_policy: OverflowPolicy,
     /// Bounded counters and duration totals for the Python-facing waits.
@@ -171,14 +170,18 @@ impl FemtoFileHandler {
 
     /// Waits for the worker's flush acknowledgement without taking ownership of
     /// the worker thread.
+    ///
+    /// The enqueue and the acknowledgement share one deadline but are reported
+    /// separately: a request that never reached the worker and a request the
+    /// worker never answered point at different faults.
     fn perform_flush(&self, tx: &Sender<FileCommand>) -> FlushOutcome {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
         match tx.send_timeout(FileCommand::Flush(ack_tx), remaining) {
             Ok(()) => {}
-            Err(SendTimeoutError::Disconnected(_)) => return FlushOutcome::Closed,
-            Err(SendTimeoutError::Timeout(_)) => return FlushOutcome::TimedOut,
+            Err(SendTimeoutError::Disconnected(_)) => return FlushOutcome::Disconnected,
+            Err(SendTimeoutError::Timeout(_)) => return FlushOutcome::EnqueueTimedOut,
         }
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
@@ -193,8 +196,10 @@ impl FemtoFileHandler {
         match ack_rx.recv_timeout(remaining) {
             Ok(Ok(())) => FlushOutcome::Acknowledged,
             Ok(Err(_)) => FlushOutcome::Failed,
-            Err(RecvTimeoutError::Timeout) => FlushOutcome::TimedOut,
-            Err(RecvTimeoutError::Disconnected) => FlushOutcome::Closed,
+            Err(RecvTimeoutError::Timeout) => FlushOutcome::AckTimedOut,
+            // The worker dropped the acknowledgement sender without answering,
+            // which means it died between accepting the request and replying.
+            Err(RecvTimeoutError::Disconnected) => FlushOutcome::Disconnected,
         }
     }
 
@@ -257,7 +262,11 @@ impl FemtoFileHandler {
         let tx = self.tx.lock().take();
         drop(tx);
         let handle = self.handle.lock().take();
-        WorkerShutdown::new(handle, Arc::clone(&self.completion))
+        WorkerShutdown::new(
+            handle,
+            Arc::clone(&self.completion),
+            Arc::clone(&self.terminal),
+        )
     }
 
     /// Builds a handler from an existing worker writer and publishes its
@@ -281,11 +290,13 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (tx, completion, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
+        let (tx, completion, terminal, handle) =
+            spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
             tx: Mutex::new(Some(tx)),
             handle: Mutex::new(Some(handle)),
             completion,
+            terminal,
             overflow_policy,
             diagnostics: Arc::new(WaitDiagnostics::new()),
         }
@@ -320,6 +331,14 @@ impl FemtoFileHandler {
 mod flush_ack_tests;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod outcome_paths_tests;
+#[cfg(test)]
+mod scripted_writer;
+#[cfg(test)]
+mod shutdown_paths_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_event_tests;
 #[cfg(test)]
 mod telemetry_tests;
 #[cfg(test)]
