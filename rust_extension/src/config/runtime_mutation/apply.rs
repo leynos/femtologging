@@ -19,10 +19,16 @@ use super::{
 };
 
 impl RuntimeConfigBuilder {
+    /// Start an empty transaction that changes nothing until a `with_*` method is called.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Add a handler definition under `id`, replacing any earlier definition with the same id
+    /// in this transaction.
+    ///
+    /// `apply` constructs the handler after validation and before it publishes the transaction,
+    /// so a later failure can leave construction side effects, such as a created file.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
         B: Into<HandlerBuilder>,
@@ -31,16 +37,28 @@ impl RuntimeConfigBuilder {
         self
     }
 
+    /// Add a filter definition under `id`, replacing any earlier definition with the same id
+    /// in this transaction.
+    ///
+    /// Handlers and loggers refer to the filter by this id. `apply` builds the filter before it
+    /// publishes the transaction, so a later failure can leave construction side effects.
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
     }
 
+    /// Request changes to the logger called `name`, replacing any earlier request for that
+    /// name in this transaction.
+    ///
+    /// Naming `"root"` here is rejected by `apply` when `with_root_logger` is also used. Use
+    /// `with_root_logger` for the root logger.
     pub fn with_logger(mut self, name: impl Into<String>, builder: LoggerMutationBuilder) -> Self {
         self.loggers.insert(name.into(), builder);
         self
     }
 
+    /// Request changes to the root logger, replacing any earlier root request in this
+    /// transaction.
     pub fn with_root_logger(mut self, builder: LoggerMutationBuilder) -> Self {
         self.root_logger = Some(builder);
         self
@@ -57,8 +75,10 @@ impl RuntimeConfigBuilder {
     /// or handler-level filter references an identifier absent from both the
     /// manager and this transaction.
     ///
-    /// Unreachable definitions are rejected before construction, so a rejected
-    /// transaction never opens a file, connects a socket, or spawns a worker.
+    /// Validation failures and unreachable definitions are rejected before any handler or
+    /// filter is built, so those rejections never open a file, connect a socket, or spawn a
+    /// worker. Errors from later steps, such as logger lookup or publication, can occur after
+    /// construction, and the error does not roll back the side effects of that construction.
     pub fn apply(&self) -> Result<(), ConfigError> {
         self.validate()?;
         Python::attach(|py| -> Result<(), ConfigError> {

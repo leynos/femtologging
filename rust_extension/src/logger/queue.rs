@@ -74,8 +74,12 @@ impl FemtoHandlerTrait for HandlerRecordSnapshot {
 
 /// Record queued for dispatch with the handlers captured when it was logged.
 pub struct QueuedRecord {
+    /// The log record to deliver to `handlers`.
     pub record: FemtoLogRecord,
+    /// Handlers that receive `record`, captured when it was enqueued so later attachment
+    /// changes do not affect it.
     pub handlers: Vec<Arc<dyn FemtoHandlerTrait>>,
+    /// Python `contextvars` snapshot taken on the producer thread, for context-aware handlers.
     #[cfg(feature = "python")]
     pub context: Option<Py<PyAny>>,
 }

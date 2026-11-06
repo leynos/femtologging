@@ -33,8 +33,12 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 
 /// Configuration for constructing a [`FemtoStreamHandler`].
 pub struct HandlerConfig {
+    /// Bounded queue size, in commands, between callers and the worker. Records arriving
+    /// while the queue is full are dropped.
     pub capacity: usize,
+    /// How long `flush` waits to enqueue its command and, separately, for the worker's acknowledgement.
     pub flush_timeout: Duration,
+    /// Rate limiter that throttles warnings about dropped records.
     pub warner: RateLimitedWarner,
 }
 
@@ -49,16 +53,19 @@ impl Default for HandlerConfig {
 }
 
 impl HandlerConfig {
+    /// Set the worker queue capacity, in commands.
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
         self
     }
 
+    /// Set how long each of `flush`'s two waits (enqueue, acknowledgement) may take.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.flush_timeout = timeout;
         self
     }
 
+    /// Replace the rate limiter used for drop warnings. Available with the `test-util` feature.
     #[cfg(feature = "test-util")]
     pub fn with_warner(mut self, warner: RateLimitedWarner) -> Self {
         self.warner = warner;
@@ -66,11 +73,7 @@ impl HandlerConfig {
     }
 }
 
-/// Handler that writes formatted log records to an `io::Write` stream.
-///
-/// The writer and formatter are moved into an owned background thread, so the
-/// caller never locks or blocks. Flush operations wait up to `flush_timeout`
-/// for the worker thread to confirm completion.
+/// Commands the worker thread takes from the queue, in order.
 #[expect(
     clippy::large_enum_variant,
     reason = "Record variant is the hot path; wrapping in Box would add indirection for no benefit"
@@ -136,6 +139,8 @@ fn run_stream_worker<W, F>(
     flush_with_warning(&mut writer);
 }
 
+/// Writes formatted log records to a stream (stderr by default) on a background thread, so
+/// the caller never waits for the write. `flush` bounds each of its two waits by `flush_timeout`.
 #[pyclass]
 pub struct FemtoStreamHandler {
     /// Queue sender taken during close; shared so no closer needs an exclusive borrow.
@@ -276,6 +281,8 @@ impl FemtoStreamHandler {
         )
     }
 
+    /// Build a handler from an explicit `HandlerConfig`, for tests that control the queue,
+    /// flush timeout, or rate limiter.
     #[cfg(feature = "test-util")]
     pub fn with_test_config<W, F>(writer: W, formatter: F, config: HandlerConfig) -> Self
     where

@@ -266,6 +266,8 @@ impl FemtoFileHandler {
         )
     }
 
+    /// Flush the worker's buffer, waiting up to one second. Returns `true` only when the flush
+    /// is confirmed in time; `false` if the handler is closed, unreachable or the flush fails.
     pub fn flush(&self) -> bool {
         // Bind first: a guard in the `match` scrutinee lives through the send.
         let tx = self.tx.lock().clone();
@@ -362,6 +364,8 @@ impl FemtoFileHandler {
         }
     }
 
+    /// Build a handler over the writer in `config` instead of opening a file. For tests: the
+    /// settings are used without the validation that file construction applies.
     pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
         W: Write + Seek + Send + 'static,

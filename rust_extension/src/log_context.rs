@@ -53,25 +53,8 @@ struct ContextFrame {
     fields: BTreeMap<String, String>,
 }
 
-/// Errors raised when validating or mutating structured logging context.
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum LogContextError {
-    /// The context stack was popped when no context existed.
-    #[error("log context stack is empty")]
-    EmptyContextStack,
-    /// Too many key-values were supplied for one merged context payload.
-    #[error("context has {count} keys; maximum is {max}")]
-    TooManyKeys { count: usize, max: usize },
-    /// A context key exceeded the byte-length limit.
-    #[error("context key '{key}' is {len} bytes; maximum is {max}")]
-    KeyTooLong { key: String, len: usize, max: usize },
-    /// A context value exceeded the byte-length limit.
-    #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
-    ValueTooLong { key: String, len: usize, max: usize },
-    /// Total serialized context exceeded the aggregate byte limit.
-    #[error("context payload is {total} bytes; maximum is {max}")]
-    TotalBytesExceeded { total: usize, max: usize },
-}
+mod error;
+pub use error::LogContextError;
 
 /// Internal validation failures before the offending key is attached to a public error.
 #[derive(Debug, Error)]

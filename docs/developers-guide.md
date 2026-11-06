@@ -138,7 +138,10 @@ compatibility tests validate the same maturin and PyO3 releases:
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
   the crate declares no minimum supported Rust version.
 
-The Rust extension denies `clippy::missing_docs_in_private_items`, so private
+The Rust extension also sets `missing_docs = "deny"` in
+`rust_extension/Cargo.toml`, so every public item needs a doc comment in every
+build, not just under Clippy; for PyO3 classes and methods that comment is the
+Python docstring. It denies `clippy::missing_docs_in_private_items`, so private
 items and Rust test support must have meaningful documentation alongside the
 public API. This includes integration tests, benchmarks, unit-test modules, and
 feature-gated compatibility code. `make lint` runs Clippy with `-D warnings` and

@@ -69,6 +69,9 @@ impl fmt::Debug for SharedFormatter {
     }
 }
 
+/// Formatter that renders a record as `LOGGER [LEVEL] message`.
+///
+/// A stack trace and an exception traceback, when the record carries them, follow on new lines.
 #[derive(Copy, Clone, Debug)]
 pub struct DefaultFormatter;
 
