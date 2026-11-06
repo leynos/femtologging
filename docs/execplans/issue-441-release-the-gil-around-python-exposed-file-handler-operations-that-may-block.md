@@ -1033,14 +1033,15 @@ review asked for the waits this PR introduces to be observable. The follow-up
 commit implements that rather than deferring it.
 
 - `rust_extension/src/handlers/telemetry.rs` (new) defines `WaitOutcome`, a
-  fixed set of twelve outcomes covering `handle`, `flush`, and `close` for each
-  handler kind, plus `WaitDiagnostics`, twelve relaxed `AtomicU64` counters and
-  two duration totals. `WaitTimer` starts before `py.detach` and finishes after
-  it on the interpreter thread, so the recorded interval is the whole wait, not
-  just the enqueue or the acknowledgement.
+  fixed set of sixteen outcomes: six for `handle`, six for `flush`, and four for
+  `close`. Only the close group has `panicked` and `unknown` outcomes.
+  `WaitDiagnostics` holds sixteen relaxed `AtomicU64` counters and two duration
+  totals. `WaitTimer` starts before `py.detach` and finishes after it on the
+  interpreter thread, so the recorded interval is the whole wait, not just the
+  enqueue or the acknowledgement.
 - `rust_extension/src/handlers/file/wait_outcomes.rs` (new) owns the
   user-visible results the core used to hide behind `bool` and `()`:
-  `FlushOutcome`, `ShutdownOutcome`, and `classify_handle`. `WorkerShutdown`
+  `FlushOutcome`, `ShutdownOutcome`, and `classify_enqueue`. `WorkerShutdown`
   lives there too, so the bindings can take the shutdown state under a short
   borrow and then wait without holding it. Keeping the classification in the
   core lets the rotating wrappers reuse it instead of duplicating a match, and
