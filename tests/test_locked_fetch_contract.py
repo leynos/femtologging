@@ -10,7 +10,10 @@ and its success gating, with mutation cases for each way the fetch could be lost
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs a fixed make
 import typing as typ
 from pathlib import Path
 
@@ -247,3 +250,74 @@ def test_a_job_with_the_fetch_first_is_accepted() -> None:
         {"name": "Test", "run": "cargo test"},
     ]
     assert not _workflow_problems(steps), "the intended shape must be accepted"
+
+
+FAKE_CARGO: typ.Final[str] = """#!/bin/sh
+echo "$@" >> "$CARGO_LOG"
+if [ "$1" = fetch ] && [ -n "$FAIL_FETCH" ]; then
+    exit 1
+fi
+exit 0
+"""
+
+
+def _run_test_recipe(tmp_path: Path, *, fail_fetch: bool) -> tuple[int, list[str]]:
+    """Run the real ``test`` recipe against a fake ``cargo`` and return what it saw.
+
+    Parameters
+    ----------
+    tmp_path
+        A scratch directory for the generated Makefile, the fake ``cargo`` and its log.
+    fail_fetch
+        Whether the fake ``cargo`` fails when asked to ``fetch``.
+
+    Returns
+    -------
+    tuple[int, list[str]]
+        Make's exit status and the argument line of every ``cargo`` call, in order.
+    """
+    recipe = _recipe((ROOT / "Makefile").read_text("utf-8"), "test")
+    body = "\n".join(f"\t{line}" for line in recipe)
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(
+        f"RUST_MANIFEST = rust_extension/Cargo.toml\nTEST_THREADS = 1\ntest:\n{body}\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # `uv` is faked too, so the recipe's final pytest command runs nothing real.
+    for name in ("cargo", "uv"):
+        tool = bin_dir / name
+        tool.write_text(FAKE_CARGO, encoding="utf-8")
+        tool.chmod(0o755)
+    log = tmp_path / "cargo.log"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "CARGO_LOG": str(log),
+        "FAIL_FETCH": "1" if fail_fetch else "",
+    }
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell
+        [shutil.which("make") or "make", "-f", str(makefile), "test"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = log.read_text("utf-8").splitlines() if log.exists() else []
+    return result.returncode, [call for call in calls if not call.startswith("run ")]
+
+
+def test_a_failing_fetch_stops_the_test_recipe(tmp_path: Path) -> None:
+    """A fetch that fails stops the recipe before any later test command runs."""
+    status, calls = _run_test_recipe(tmp_path, fail_fetch=True)
+    assert status != 0, "make must fail when the fetch fails"
+    fetch = MAKE_FETCH.replace("$(RUST_MANIFEST)", "rust_extension/Cargo.toml")
+    assert calls == [fetch.removeprefix("cargo ")], f"only the fetch may run: {calls}"
+
+
+def test_a_passing_fetch_lets_the_test_commands_run(tmp_path: Path) -> None:
+    """With a fetch that succeeds, the commands after it run, so the control is real."""
+    _, calls = _run_test_recipe(tmp_path, fail_fetch=False)
+    assert len(calls) > 1, f"the test commands must follow the fetch: {calls}"
