@@ -121,7 +121,7 @@ jobs:
           enable-cache: true
       - name: Install the pinned Rust toolchain for the sdist
         if: matrix.arch == 'x86_64'
-        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+        uses: leynos/shared-actions/.github/actions/setup-rust@d9c4e1ad5ce37404760ac02b85ba1e8db279b003
       - name: Build the source distribution
         if: matrix.arch == 'x86_64'
         shell: bash
@@ -260,7 +260,7 @@ jobs:
         with:
           version: "0.13.2"
       - name: Install the Rust toolchain
-        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+        uses: leynos/shared-actions/.github/actions/setup-rust@d9c4e1ad5ce37404760ac02b85ba1e8db279b003
       - name: Verify vendored OpenSSL build tools
         shell: bash
         env:
