@@ -1,18 +1,18 @@
-# v0.2.0 migration guide
+# Migration guide: v0.1.0 to v0.2.0
 
-This guide helps an application that already uses femtologging 0.1 move to
-femtologging 0.2.0. Readers who are new to femtologging need none of it: start
+## Who should read this
+
+Read this guide if you have an application using femtologging 0.1 and are
+moving to 0.2.0. If you are new to femtologging, you need none of it: start
 with the [users' guide](users-guide.md) instead.
 
-Most of 0.2.0 is new, opt-in capability. A handful of changes can need an edit
-before an existing application works as before, so this guide puts those first,
-then introduces the new features. An upgrade can stop as soon as the
-application works and come back for the rest later. Every Python example here
-is run by the project's test suite, so it works as printed.
-
-______________________________________________________________________
-
-## Before you upgrade
+Most of 0.2.0 is new, opt-in capability, but some changes can need an edit
+before an existing application behaves as it did. The ones most likely to
+affect you are the limits on logger names, the workers that loggers now share,
+and what `disable_existing_loggers` does to the loggers a configuration omits.
+Table 1 sorts every change by what it asks of you. A row that does not match
+your application can be skipped, and every Python example here is run by the
+project's test suite, so it works as printed.
 
 Femtologging 0.2.0 is currently published as a beta, and installers skip
 pre-releases unless asked. Request it explicitly, and pin the exact beta so
@@ -25,30 +25,74 @@ deliberate choice:
 python -m pip install "femtologging==0.2.0b1"
 ```
 
-Then work through Table 1. Each row names a change and the code it affects; a
-row that does not match your application can be skipped.
+## Impact at a glance
 
-| Change                                                                                              | Affects code that…                                                         |
-| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`BasicConfig` is a slotted dataclass](#basicconfig-is-a-slotted-dataclass)                         | sets attributes on a `BasicConfig` beyond its five fields                  |
-| [Configuration is transactional](#configuration-is-applied-all-or-nothing)                          | relied on a failed configuration call applying part of its changes         |
-| [Python handlers see the caller's context](#python-handlers-run-in-the-callers-contextvars-context) | reads `contextvars` or thread-local state inside a handler                 |
-| [HTTP `close()` is bounded](#http-handler-close-no-longer-waits-for-retries)                        | relied on `FemtoHTTPHandler.close()` waiting for every retry               |
-| [Rust handler trait changes](#rust-handler-and-logger-api-changes)                                  | implements `FemtoHandlerTrait` or calls `FemtoLogger::add_handler` in Rust |
+| Priority           | Area                                                                       | What to do                                                                       |
+| ------------------ | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Required if called | [Logger names](#1-keep-logger-names-stable-and-bounded)                    | Stop deriving logger names from requests, users, or other data                   |
+| Required if called | [`BasicConfig`](#2-use-only-the-fields-of-basicconfig)                     | Keep your own state out of `BasicConfig` instances                               |
+| Required if called | [`RuntimeConfigBuilder`](#3-attach-everything-a-runtime-change-declares)   | Attach every handler and filter a runtime change declares                        |
+| Required if called | [Test hooks](#4-stop-using-the-timed-rotation-test-hooks)                  | Build with `test-util` if you use the timed-rotation test hooks                  |
+| Required if called | [Rust API](#5-handle-the-fallible-rust-apis)                               | Handle the new `Result` values in Rust code                                      |
+| Review if enabled  | [`disable_existing_loggers`](#6-name-the-loggers-that-must-keep-emitting)  | Name every logger that must keep emitting                                        |
+| Review if enabled  | [Thread-local state](#7-move-handler-state-off-threadinglocal)             | Move handler state from `threading.local` to `contextvars`                       |
+| Review if enabled  | [Standard library handler levels](#8-check-wrapped-handler-levels)         | Check the `level` of handlers wrapped in `StdlibHandlerAdapter`                  |
+| Review if enabled  | [Failed configuration](#9-apply-a-corrected-configuration-after-a-failure) | Stop relying on a failed configuration applying part of its changes              |
+| Review if enabled  | [HTTP shutdown](#10-keep-the-process-alive-for-http-delivery)              | Stop relying on `FemtoHTTPHandler.close()` waiting for every retry               |
+| Review if enabled  | [Exception payloads](#11-check-payloads-passed-to-filter_frames)           | Check very large or hand-built payloads passed to `filter_frames()`              |
+| Review if enabled  | [Rust `log` macros](#12-guard-expensive-rust-log-arguments)                | Guard expensive `log` macro arguments                                            |
+| Recommended        | [Handler filters](#13-move-application-wide-enrichment-to-the-handler)     | Attach application-wide enrichment to the shared handler                         |
+| Optional           | [New features](#14-adopt-the-new-features)                                 | Adopt structured fields, formatters, rotation, and runtime changes when you like |
 
-_Table 1: Upgrade checklist for applications using femtologging 0.1._
+*Table 1: Obligations when moving from v0.1.0 to v0.2.0.*
 
 ______________________________________________________________________
 
-## Breaking changes
+## 1. Keep logger names stable and bounded
 
-### `BasicConfig` is a slotted dataclass
+Logger names now have limits. A name is limited to 255 UTF-8 bytes and 32
+dot-separated segments, and may not contain control characters or the Unicode
+line and paragraph separators. The process-wide registry holds at most 10,000
+named loggers and never evicts one, so a pattern that creates one logger per
+request eventually fails. The reasoning is in
+[ADR-0007](adrs/adr-0007-bounded-logger-cardinality-and-shared-dispatch.md).
 
-`BasicConfig` is now declared with `@dataclasses.dataclass(slots=True)`. An
-instance can hold only its five declared fields: `level`, `filename`, `stream`,
-`force`, and `handlers`. A mistyped or invented attribute name now fails at the
-point of assignment, instead of silently creating an attribute that
-`basicConfig()` never reads.
+Use stable component names, and move identifiers to structured fields.
+
+### Before: one logger per request
+
+<!-- tested-example: migration-logger-names-before -->
+
+```python
+from femtologging import get_logger
+
+request_id = 42
+logger = get_logger(f"requests.{request_id}")
+assert logger.info("handled") == "requests.42 [INFO] handled"
+```
+
+### After: a fixed name and a field
+
+<!-- tested-example: migration-logger-names-after -->
+
+```python
+from femtologging import get_logger
+
+request_id = 42
+logger = get_logger("requests")
+assert logger.info("handled", extra={"request_id": request_id}) is not None
+```
+
+Names used by the Rust `log` and `tracing` bridges fall back to the `root`
+logger when they are refused. See
+[Name your loggers](users-guide.md#name-your-loggers).
+
+## 2. Use only the fields of `BasicConfig`
+
+`BasicConfig` is now a slotted dataclass. An instance holds only `level`,
+`filename`, `stream`, `force`, and `handlers`, so a mistyped or invented
+attribute fails where you assign it, instead of silently creating an attribute
+that `basicConfig()` never reads. Keep any other state in your own structure.
 
 <!-- tested-example: migration-basic-config-slots -->
 
@@ -68,17 +112,183 @@ else:
 assert cfg.filename == "app.log"
 ```
 
-To migrate, use one of the declared fields if the value belongs to
-`basicConfig()`. Otherwise keep auxiliary state in your own structure, such as
-a separate variable, dataclass, or dictionary. Constructing `BasicConfig` and
-calling `basicConfig()` are otherwise unchanged.
+## 3. Attach everything a runtime change declares
 
-### Configuration is applied all or nothing
+`RuntimeConfigBuilder.apply()` now rejects a handler or filter that no logger
+will reference once the change is applied, before it builds anything, so a
+stray declaration can no longer hold a file or worker thread open for the life
+of the process. Attach each definition in the same transaction, or leave it out.
 
-`ConfigBuilder.build_and_init()` now builds every handler and filter, checks
-every reference, and prepares every logger before it changes any live logger.
-`dictConfig()` and `fileConfig()` use the same path. A call that raises leaves
-the previous configuration exactly as it was:
+<!-- tested-example: migration-runtime-unreferenced -->
+
+```python
+from femtologging import (
+    LoggerMutationBuilder,
+    RuntimeConfigBuilder,
+    StreamHandlerBuilder,
+)
+
+console = StreamHandlerBuilder.stderr()
+
+try:
+    RuntimeConfigBuilder().with_handler("console", console).apply()
+except ValueError as error:
+    assert "unreferenced definitions" in str(error)
+else:
+    raise AssertionError("an unattached handler should be rejected")
+
+(
+    RuntimeConfigBuilder()
+    .with_handler("console", console)
+    .with_logger("app", LoggerMutationBuilder().replace_handlers(["console"]))
+    .apply()
+)
+```
+
+## 4. Stop using the timed-rotation test hooks
+
+Wheels and the source distribution are now built without the `test-util`
+feature, so they no longer export `set_timed_rotation_test_times_for_test` or
+`clear_timed_rotation_test_times_for_test`, and `femtologging._has_test_util` is
+`False`. The underscore-prefixed Python wrappers remain as shims: the setter
+raises `RuntimeError`, and the clearer does nothing.
+
+These helpers were never supported API. If you rely on them, set
+`UV_CONFIG_FILE=.github/uv-test-util.toml` for a source install, or pass
+`--features python,test-util` to a development build.
+
+## 5. Handle the fallible Rust APIs
+
+This affects only Rust code that uses femtologging directly. Handlers attached
+from Python are unaffected.
+
+- `FemtoLogger::new()` returns `PyResult<Self>` and rejects an invalid name.
+- `FemtoLogger::with_parent()` returns `Result<Self, DispatcherError>` and
+  reports a dispatch pool that could not start. `DispatcherError` is
+  re-exported from the crate root.
+- `FemtoLogger::add_handler()` returns `Result<(), HandlerError>`.
+- A handler whose `is_python_backed()` returns `true` must also return `true`
+  from `provides_context_dispatch()` and override `handle_with_context()` to
+  invoke Python inside the supplied context. Otherwise `add_handler()` fails
+  with `HandlerError::MissingContextDispatch`.
+
+## 6. Name the loggers that must keep emitting
+
+A configuration with `disable_existing_loggers` enabled now disables every
+logger it omits, instead of only clearing its handlers. A disabled logger
+rejects records before the level check, filters, and dispatch, so it no longer
+reaches ancestor handlers through propagation. This setting defaults to on in
+`fileConfig()`, so check any application that uses it.
+
+### Before: an omitted logger still reached `root`
+
+<!-- tested-example: migration-disable-existing-before -->
+
+```python
+from femtologging import dictConfig, get_logger
+
+noisy = get_logger("noisy")
+dictConfig({
+    "version": 1,
+    "disable_existing_loggers": True,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"level": "ERROR", "handlers": ["console"]},
+})
+
+# In 0.1 this still reached the root handler. Now nothing happens.
+assert noisy.error("dropped") is None
+assert noisy.disabled
+assert noisy.get_disabled_drops() == 1
+```
+
+### After: name the logger, or leave existing loggers alone
+
+<!-- tested-example: migration-disable-existing-after -->
+
+```python
+from femtologging import dictConfig, get_logger
+
+noisy = get_logger("noisy")
+dictConfig({
+    "version": 1,
+    "disable_existing_loggers": True,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {"noisy": {"level": "ERROR"}},
+    "root": {"level": "ERROR", "handlers": ["console"]},
+})
+
+assert noisy.error("still seen") is not None
+assert get_logger("root").flush_handlers()
+```
+
+To keep every existing logger, set `disable_existing_loggers` to `False`
+instead. Naming a disabled logger in a later configuration enables it again;
+its kept ancestors keep whatever state they had. See
+[Disable loggers a configuration omits](users-guide.md#disable-loggers-a-configuration-omits).
+
+## 7. Move handler state off `threading.local`
+
+Loggers no longer own worker threads. A process starts a fixed pool of one to
+four dispatch workers, and loggers on the same shard share a worker, though
+each logger's records stay in order. Three things follow:
+
+- A custom handler's `threading.local` state may be seen by handlers serving
+  other loggers. Use `contextvars` for values from the logging caller, or keep
+  the state on the handler.
+- A slow Python handler now delays every logger on its shard.
+- Creating a logger can raise `RuntimeError` if the process has reached its
+  thread limit. The next logger creation tries again.
+
+Python handlers, including `StdlibHandlerAdapter`, now also run inside a copy
+of the `contextvars` context that was active when the record was logged. A
+handler that read worker-thread state through a `ContextVar` now sees the
+caller's value:
+
+<!-- tested-example: migration-handler-contextvars -->
+
+```python
+import contextvars
+
+from femtologging import get_logger
+
+tenant = contextvars.ContextVar("tenant", default="none")
+
+
+class TenantCollector:
+    def __init__(self) -> None:
+        self.tenants: list[str] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        self.tenants.append(tenant.get())
+
+
+logger = get_logger("billing")
+collector = TenantCollector()
+logger.add_handler(collector)
+
+tenant.set("acme")
+logger.info("invoice issued")
+assert logger.flush_handlers()
+assert collector.tenants == ["acme"]
+```
+
+## 8. Check wrapped handler levels
+
+`StdlibHandlerAdapter` now honours the wrapped handler's `level`, as the
+standard library does. In 0.1 a handler with `setLevel(logging.ERROR)` still
+received every record the logger accepted, so it may now receive fewer. Lower
+the level, or leave it at `logging.NOTSET`, if the handler should see
+everything. The adapter reads the level as it processes each record, so
+`setLevel()` needs no rebuild. See
+[Reuse standard library handlers](users-guide.md#reuse-standard-library-handlers).
+
+## 9. Apply a corrected configuration after a failure
+
+`ConfigBuilder.build_and_init()`, `dictConfig()`, and `fileConfig()` now
+prepare everything before changing any live logger. A call that raises leaves
+every logger exactly as it was. If your start-up code caught a configuration
+error and carried on, expecting the valid parts to have applied, apply a
+corrected configuration instead.
 
 <!-- tested-example: migration-config-transaction -->
 
@@ -111,173 +321,222 @@ else:
 assert get_logger("root").level == "ERROR"
 ```
 
-If your start-up code caught a configuration error and carried on, expecting
-the valid parts to have been applied, apply a corrected configuration instead.
+Two side effects sit outside this guarantee: records already queued are not
+retracted, and building a handler can open its file or socket before a later
+error rejects the configuration.
 
-### Python handlers run in the caller's `contextvars` context
-
-Python handlers, including `StdlibHandlerAdapter`, still run on the logger's
-worker thread, but each call now runs inside a copy of the `contextvars`
-context that was active when the record was logged. For the adapter, that
-covers the wrapped handler's whole `handle()` call: its filters, formatter, and
-`emit()`.
-
-<!-- tested-example: migration-handler-contextvars -->
-
-```python
-import contextvars
-
-from femtologging import get_logger
-
-tenant = contextvars.ContextVar("tenant", default="none")
-
-
-class TenantCollector:
-    def __init__(self) -> None:
-        self.tenants: list[str] = []
-
-    def handle(self, logger: str, level: str, message: str) -> None:
-        self.tenants.append(tenant.get())
-
-
-logger = get_logger("billing")
-collector = TenantCollector()
-logger.add_handler(collector)
-
-tenant.set("acme")
-logger.info("invoice issued")
-assert logger.flush_handlers()
-assert collector.tenants == ["acme"]
-```
-
-No code change is needed to benefit. Only `contextvars` travel with the record;
-`threading.local` and other thread-local state still belong to the worker
-thread. A handler that read worker-thread state through a `ContextVar` will now
-see the caller's value instead. Move such state to `contextvars` if it should
-follow the caller, or out of the `ContextVar` if it should not.
-
-### HTTP handler `close()` no longer waits for retries
+## 10. Keep the process alive for HTTP delivery
 
 `FemtoHTTPHandler.close()`, and dropping the handler, now wait for the worker
-for at most the handler's write timeout. A worker that is still retrying
-against an unresponsive endpoint is abandoned with a warning rather than
-joined. It keeps sending the records already queued, and those arrive only if
-the process lives long enough.
+for at most the handler's write timeout. A worker still retrying against an
+unresponsive endpoint is abandoned with a warning rather than joined. It keeps
+sending the records already queued, and those arrive only if the process lives
+long enough. If your shutdown relied on `close()` blocking until every record
+was delivered, keep the process alive until the endpoint has accepted them, or
+call `flush()` first.
 
-If your shutdown relied on `close()` blocking until every record was delivered,
-keep the process alive until the endpoint has accepted them, or call `flush()`
-(which waits for the worker without abandoning it) first.
+## 11. Check payloads passed to `filter_frames()`
 
-### Rust handler and logger API changes
+`filter_frames()` keeps its call pattern and adds keyword-only
+`max_exception_depth` (default 1,000) and `max_exception_nodes` (default
+10,000) limits. Existing calls still work, but a cyclic payload, a malformed
+one, or a graph beyond the limits now raises an exception. If a legitimate
+payload exceeds the defaults, pass larger limits. See
+[Trim frames from exception and stack payloads](users-guide.md#trim-frames-from-exception-and-stack-payloads).
 
-This affects only Rust code that implements `FemtoHandlerTrait` or attaches
-handlers from Rust.
+## 12. Guard expensive Rust `log` arguments
 
-- `FemtoLogger::add_handler()` returns `Result<(), HandlerError>`. Handle or
-  propagate the result.
-- A handler whose `is_python_backed()` returns `true` must also return `true`
-  from `provides_context_dispatch()` and override `handle_with_context()` to
-  invoke Python inside the supplied context. Otherwise `add_handler()` fails
-  with `HandlerError::MissingContextDispatch`, which reaches Python as
-  `RuntimeError("Python-backed handlers must provide contextual dispatch")`.
+The Rust `log` bridge now decides `log::log_enabled!` per target, using that
+target's current femtologging level, so a target at `DEBUG` accepts `DEBUG`
+records even while another is held at `ERROR`. The `log` crate still evaluates
+a macro's arguments for a target held below the process-wide maximum, so add an
+explicit `log::log_enabled!` guard around expensive ones. See
+[Bridge the log and tracing crates](users-guide.md#bridge-the-log-and-tracing-crates).
 
-Handlers attached from Python are unaffected: femtologging wraps them in an
-implementation that already provides contextual dispatch.
+## 13. Move application-wide enrichment to the handler
 
-______________________________________________________________________
+Logger filters do not run for records propagated from child loggers, so a
+filter on `root` misses records logged through `shop.api`. Handler builders now
+accept `with_filters()`, and such filters run for every record routed to the
+handler. The accepted decision is recorded in
+[ADR-0003](adrs/adr-0003-python-stdlib-filter-parity.md#accepted-addendum-2026-10-14-handler-filters).
 
-## New in 0.2.0
+### Before: a filter on each logger
 
-Everything in this part is additive. Existing logging calls keep working
-unchanged.
+<!-- tested-example: migration-handler-filter-before -->
 
-### Structured fields on every log call
+```python
+import logging
 
-`log()`, `debug()`, `info()`, `warning()`, `error()`, and `critical()` accept a
-keyword-only `extra` mapping. Values must be `str`, `int`, `float`, `bool`, or
-`None`, and an invalid mapping raises instead of being silently discarded.
-`exception()` does not accept `extra`.
+from femtologging import (
+    ConfigBuilder,
+    LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
+    get_logger,
+)
+
+
+def enrich(record: logging.LogRecord) -> bool:
+    record.service = "shop"
+    return True
+
+
+(
+    ConfigBuilder()
+    .with_filter("enrich", PythonCallbackFilterBuilder(enrich))
+    .with_logger("shop.api", LoggerConfigBuilder().with_filters(["enrich"]))
+    .with_logger("shop.worker", LoggerConfigBuilder().with_filters(["enrich"]))
+    .with_root_logger(LoggerConfigBuilder())
+    .build_and_init()
+)
+assert get_logger("shop.api").info("accepted") is not None
+```
+
+### After: one filter on the shared handler
+
+<!-- tested-example: migration-handler-filter-after -->
+
+```python
+import logging
+
+from femtologging import (
+    ConfigBuilder,
+    FileHandlerBuilder,
+    FormatterBuilder,
+    LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
+    get_logger,
+)
+
+
+def enrich(record: logging.LogRecord) -> bool:
+    record.service = "shop"
+    return True
+
+
+(
+    ConfigBuilder()
+    .with_filter("enrich", PythonCallbackFilterBuilder(enrich))
+    .with_handler(
+        "file",
+        FileHandlerBuilder("app.log")
+        .with_filters(["enrich"])
+        .with_formatter(FormatterBuilder().with_format("%(service)s %(message)s")),
+    )
+    .with_root_logger(LoggerConfigBuilder().with_handlers(["file"]))
+    .build_and_init()
+)
+
+get_logger("shop.api").info("accepted")
+assert get_logger("root").flush_handlers()
+with open("app.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "shop accepted\n"
+```
+
+## 14. Adopt the new features
+
+Everything in this section is additive, so existing logging calls keep working.
+
+- **Structured fields.** `log()` and the level methods accept a keyword-only
+  `extra` mapping of scalar values. See
+  [Attach fields to one record](users-guide.md#attach-fields-to-one-record).
+- **Scoped context.** `log_context(**fields)` attaches fields to every record
+  logged inside a `with` block, and is safe across `await`. See
+  [Attach fields to a block of code](users-guide.md#attach-fields-to-a-block-of-code).
+  Rust scoped context stays thread-local, and the two never mix; see
+  [Rust and Python context](users-guide.md#rust-and-python-context).
+- **`%`-style formatters.** `FormatterBuilder` now works, directly or by name
+  through `ConfigBuilder` and `dictConfig()`. See
+  [Format output](users-guide.md#format-output).
+- **Callback filters.** `PythonCallbackFilterBuilder` turns a callable, or an
+  object with a `filter(record)` method, into a filter, and `dictConfig()`
+  accepts the `"()"` factory syntax. See
+  [Filter and enrich records](users-guide.md#filter-and-enrich-records).
+- **Time-based rotation.** See
+  [Rotate files on a schedule](users-guide.md#rotate-files-on-a-schedule).
+- **Runtime reconfiguration.** See
+  [Change configuration at runtime](users-guide.md#change-configuration-at-runtime).
+- **Counters.** `get_context_dropped()` counts records discarded because Rust
+  context failed validation, `get_context_capture_failures()` counts failed
+  `contextvars` snapshots, and `get_disabled_drops()` counts records refused by
+  a disabled logger. All are separate from `get_dropped()`.
+- **Reliable flushing.** `flush_handlers()` and each built-in handler's
+  `flush()` and `close()` now release the global interpreter lock while they
+  wait. A call made straight after logging could previously stall until its
+  timeout and report failure, `close()` could lose records still queued, and a
+  slow network shutdown froze every other Python thread.
 
 <!-- tested-example: migration-extra -->
 
 ```python
-from femtologging import get_logger
+from femtologging import get_logger, log_context
 
 logger = get_logger("service")
-assert logger.info("request accepted", extra={"request_id": 42, "user": "alice"})
+with log_context(request_id=42):
+    assert logger.info("accepted", extra={"user": "alice"}) == "service [INFO] accepted"
 ```
 
-See [Attach fields to one record](users-guide.md#attach-fields-to-one-record)
-for the limits that apply.
+## What does not need to change
 
-### Scoped context that follows asyncio tasks
+Valid logger names and the hierarchy, levels, the `basicConfig()` signature,
+the built-in handlers' constructors, and the Python handler protocol
+(`handle()` and `handle_record()`) are unchanged. Configuration that worked in
+0.1 keeps working, apart from the rows in Table 1. Code written before 0.1.0
+should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
 
-`log_context(**fields)` attaches fields to every record logged inside a `with`
-block, including through loggers returned by `get_logger()`. It is built on
-`contextvars`, so it is safe across `await`: concurrent tasks on one event-loop
-thread never see each other's fields, and a child task inherits a snapshot of
-its parent's fields at creation. Fields in `extra` override same-named context
-fields.
+## Migration checklist
 
-<!-- tested-example: migration-log-context -->
+- [ ] Search for logger names built from data, such as f-strings passed to
+  `get_logger()`.
+- [ ] Remove undeclared attributes from `BasicConfig` instances.
+- [ ] Attach every handler and filter declared on a `RuntimeConfigBuilder`.
+- [ ] Remove any reliance on the timed-rotation test hooks in production builds.
+- [ ] Update Rust code for the fallible `FemtoLogger` constructors and
+  `add_handler()`.
+- [ ] Check each use of `disable_existing_loggers`, including the `fileConfig()`
+  default.
+- [ ] Move handler state from `threading.local` to `contextvars`.
+- [ ] Check the `level` of each handler wrapped in `StdlibHandlerAdapter`.
+- [ ] Remove any reliance on partially applied configuration.
+- [ ] Check that shutdown does not rely on `FemtoHTTPHandler.close()` waiting
+      for
+  every retry.
+- [ ] Add `log::log_enabled!` guards around expensive Rust `log` arguments.
+- [ ] Consider moving application-wide enrichment to handler filters.
 
-```python
-import femtologging
+## Common errors and fixes
 
-logger = femtologging.get_logger("service")
-with femtologging.log_context(request_id=42):
-    assert logger.info("request accepted") == "service [INFO] request accepted"
-```
-
-Context is captured when the record is created, so leaving the block later does
-not change records already logged. Rust scoped context (`push_log_context`)
-stays OS-thread-local, and the two never mix; see
-[Rust and Python context](users-guide.md#rust-and-python-context).
-
-### Python callback filters
-
-`PythonCallbackFilterBuilder` turns a callable, or an object with a
-standard-library-style `filter(record)` method, into a filter. It runs on the
-logging thread, and attributes it adds to the record become structured fields.
-`dictConfig()` accepts the standard `"()"` factory syntax for such filters. See
-[Filter and enrich records](users-guide.md#filter-and-enrich-records).
-
-### Time-based file rotation
-
-`FemtoTimedRotatingFileHandler`, `TimedHandlerOptions`, and
-`TimedRotatingFileHandlerBuilder` rotate files on a schedule, and
-`dictConfig()` and `fileConfig()` accept
-`logging.handlers.TimedRotatingFileHandler`. See
-[Rotate files on a schedule](users-guide.md#rotate-files-on-a-schedule).
-
-### Runtime reconfiguration
-
-`RuntimeConfigBuilder` and `LoggerMutationBuilder` replace, append, remove, or
-clear handlers and filters on running loggers, and change their levels and
-propagation, in one step. See
-[Change configuration at runtime](users-guide.md#change-configuration-at-runtime).
-
-### New counters
-
-`FemtoLogger.get_context_dropped()` counts records discarded because Rust
-context failed validation, and `get_context_capture_failures()` counts records
-whose `contextvars` snapshot could not be taken. Both are separate from
-`get_dropped()`, which still counts queue-full drops.
-
-### Reliable flushing
-
-`FemtoLogger.flush_handlers()` and each handler's `flush()` and `close()` now
-release the global interpreter lock while they wait. Previously, a call made
-straight after logging could stall until its timeout, and report failure,
-because the worker needed the lock to deliver the record. `close()` in that
-situation could also lose the records still queued.
-
-______________________________________________________________________
-
-## Unchanged
-
-Logger names and the hierarchy, levels, `basicConfig()`, the built-in handlers'
-constructors, the `dictConfig()` and `fileConfig()` schemas, and the Python
-handler protocol (`handle()` and `handle_record()`) are unchanged. The
-[0.1.0 migration guide](v0-1-0-migration-guide.md) still applies to code
-written before 0.1.0.
+- **Error:** `logger name cannot exceed 255 bytes; got 256 bytes`, or
+  `logger name cannot exceed 32 dot-separated segments; got 33`
+  - **Fix:** Use a stable component name and put identifiers in `extra`. See
+    [task 1](#1-keep-logger-names-stable-and-bounded).
+- **Error:**
+  `logger registry limit reached: at most 10000 distinct loggers …`
+  - **Fix:** Find the code creating loggers from request or user data. See
+    [task 1](#1-keep-logger-names-stable-and-bounded).
+- **Error:** `could not start the log dispatch pool: …` (`RuntimeError`)
+  - **Fix:** The process has reached its thread limit. Reduce its thread use or
+    raise the limit; the next logger creation tries again.
+- **Error:**
+  `'BasicConfig' object has no attribute 'filename_backup' …`
+  - **Fix:** Keep the value in your own structure. See
+    [task 2](#2-use-only-the-fields-of-basicconfig).
+- **Error:**
+  `invalid runtime mutation: unreferenced definitions: handlers ["console"] …`
+  - **Fix:** See [task 3](#3-attach-everything-a-runtime-change-declares).
+- **Error:** `RuntimeError` from `_set_timed_rotation_test_times_for_test`,
+  naming the `'test-util' feature`
+  - **Fix:** See [task 4](#4-stop-using-the-timed-rotation-test-hooks).
+- **Error:** `Python-backed handlers must provide contextual dispatch`
+  - **Fix:** Implement contextual dispatch on your Rust handler. See
+    [task 5](#5-handle-the-fallible-rust-apis).
+- **Error:** `basicConfig() got an unexpected keyword argument 'format'`
+  - **Fix:** Build a handler with a `FormatterBuilder` and pass it through
+    `handlers`. See [Format output](users-guide.md#format-output).
+- **Error:** `… invalid handler configuration: unknown formatter id: plain`
+  - **Fix:** Register the formatter with `ConfigBuilder.with_formatter()` or in
+    `dictConfig()`'s `formatters` section.
+- **Error:** `exception payload graph contains a cycle at $.cause`, or
+  `exception payload graph exceeds max_exception_depth=1000`
+  - **Fix:** Correct the payload, or pass larger limits. See
+    [task 11](#11-check-payloads-passed-to-filter_frames).

@@ -31,6 +31,8 @@ somewhere else.
   work much as they do in the standard library.
 - **Structured context built in**: Attach fields per call with `extra`, or for
   a whole block with `log_context()`, which is safe across `await`.
+- **Bounded by design**: A small, fixed pool of workers serves every logger, so
+  the threads you spend on logging follow the machine, not your logger count.
 - **Bring your own handlers**: Plain Python objects can be handlers, and
   `StdlibHandlerAdapter` reuses standard `logging` handlers as they are.
 - **Honest under pressure**: Full queues drop and count records instead of
@@ -120,11 +122,12 @@ ______________________________________________________________________
   tasks via `contextvars` ([add context to records][guide-context]).
 - **Exception and stack capture** with `exc_info`, `stack_info`, and
   `exception()` ([record exceptions][guide-exceptions]).
-- **Python handlers and filters**, including enrichment filters and reuse of
-  standard `logging` handlers ([write your own handler][guide-python-handler]).
+- **Python handlers and filters**, including enrichment filters on loggers or
+  handlers, and reuse of standard `logging` handlers
+  ([write your own handler][guide-python-handler]).
 - **Configuration your way**: `basicConfig()`, the `ConfigBuilder` API,
-  runtime reconfiguration, and restricted `dictConfig()` and `fileConfig()`
-  ([configure logging][guide-config]).
+  `%`-style formatters, runtime reconfiguration, and restricted `dictConfig()`
+  and `fileConfig()` ([configure logging][guide-config]).
 - **Rust integration**: bridges for the `log` and `tracing` crates, and
   versioned exception payloads ([integrate with Rust][guide-rust]).
 
@@ -135,11 +138,11 @@ ______________________________________________________________________
 Femtologging 0.2.0 is in beta. The logging runtime, handlers, configuration
 APIs, and structured context are in place, and every example in this README and
 the guides is executed by the test suite. Some standard library features, such
-as `%`-style lazy formatting and named formatters, are not implemented yet, and
-the public API may still change before a stable release. Pin the version you
-depend on, and read the [changelog][changelog] and [migration guide][migration]
-when you upgrade. Journald and OpenTelemetry integrations are planned; see the
-[roadmap][roadmap].
+as `%`-style lazy message arguments and `{}`-style formatters, are not
+implemented yet, and the public API may still change before a stable release.
+Pin the version you depend on, and read the [changelog][changelog] and
+[migration guide][migration] when you upgrade. Journald and OpenTelemetry
+integrations are planned; see the [roadmap][roadmap].
 
 ______________________________________________________________________
 
