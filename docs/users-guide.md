@@ -1092,8 +1092,11 @@ is reported.
   contributes to validation. For queue-full/back-pressure drops, increase
   handler capacity, or use `policy="block"` on a file handler when those drops
   are unacceptable; a handler policy does not change the logger queue's own
-  overflow policy. Only `"block"` guarantees delivery: it waits until the queue
-  makes room. `"timeout:N"` bounds that wait but still drops the record when
+  overflow policy. `"block"` prevents queue-full and timeout drops while the
+  worker remains available: it waits until the queue makes room. It does not
+  guarantee delivery or durable writing, because the logger queue can drop a
+  record before it reaches the handler and a disconnected worker still refuses
+  the enqueue. `"timeout:N"` bounds that wait but still drops the record when
   the deadline expires, so it is not a no-drop choice. When
   `get_disabled_drops()` increases, either stop logging through that logger or
   name it in the configuration to re-enable it.
