@@ -7,10 +7,6 @@
 //! records are written.
 mod shutdown;
 
-use std::{
-};
-use crate::{
-};
 mod trait_impl;
 
 use std::{
@@ -171,8 +167,6 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
 }
 
-
-
 #[pymethods]
 impl FemtoStreamHandler {
     /// Constructs the Python-facing default handler, which writes to stderr.
@@ -248,9 +242,6 @@ impl FemtoStreamHandler {
         py.detach(move || shutdown.wait());
     }
 }
-
-
-
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
@@ -397,4 +388,3 @@ impl FemtoStreamHandler {
         StreamShutdown::new(handle, completion, self.flush_timeout)
     }
 }
-

@@ -129,7 +129,6 @@ pub struct FemtoLogger {
     budget: Arc<LoggerBudget>,
 }
 
-
 impl FemtoLogger {
     /// Attach a handler.
     ///
@@ -257,10 +256,7 @@ impl FemtoLogger {
             .map(|filter| Arc::as_ptr(filter) as *const () as usize)
             .collect()
     }
-
 }
-
-
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
