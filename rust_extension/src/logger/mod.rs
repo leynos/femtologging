@@ -192,6 +192,9 @@ impl FemtoLogger {
         self.handlers.write().clear();
     }
 
+    /// Detach a filter previously added to this logger, matching by identity.
+    ///
+    /// Removes the first matching attachment. Returns `true` if one was removed.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
         let mut filters = self.filters.write();
         if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
@@ -202,6 +205,7 @@ impl FemtoLogger {
         }
     }
 
+    /// Remove all filters from this logger, so later records are not filtered by them.
     pub fn clear_filters(&self) {
         self.filters.write().clear();
     }
@@ -225,6 +229,7 @@ impl FemtoLogger {
         self.disabled.store(flag, Ordering::SeqCst);
     }
 
+    /// Snapshot of the attached handlers, for assertions in tests.
     #[cfg(test)]
     pub fn handlers_for_test(&self) -> Vec<Arc<dyn FemtoHandlerTrait>> {
         self.handlers

@@ -93,10 +93,16 @@ pub enum FilterBuildError {
 
 /// Trait implemented by all filter builders.
 pub trait FilterBuilderTrait: Send + Sync {
+    /// The concrete filter type that `build_inner` produces.
     type Filter: FemtoFilter + 'static;
 
+    /// Validate the builder's settings and construct the concrete filter.
+    ///
+    /// Returns [`FilterBuildError::InvalidConfig`] when the settings cannot form a valid filter.
     fn build_inner(&self) -> Result<Self::Filter, FilterBuildError>;
 
+    /// Build the filter and return it as a shared trait object, ready to attach to a logger or
+    /// handler.
     fn build(&self) -> Result<Arc<dyn FemtoFilter>, FilterBuildError> {
         Ok(Arc::new(self.build_inner()?))
     }
@@ -164,7 +170,8 @@ mod py_helpers {
     create_exception!(
         _femtologging_rs,
         FilterBuildErrorPy,
-        pyo3::exceptions::PyException
+        pyo3::exceptions::PyException,
+        "Raised when a filter's configuration is invalid, so no filter can be built."
     );
 
     impl From<FilterBuildError> for PyErr {

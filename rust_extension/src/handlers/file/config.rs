@@ -48,15 +48,23 @@ impl Default for HandlerConfig {
 
 /// Configuration for `with_writer_for_test` when constructing handlers in tests.
 pub struct TestConfig<W, F> {
+    /// Destination for the formatted records, typically an in-memory buffer in tests.
     pub writer: W,
+    /// Formatter that renders each record before it is written.
     pub formatter: F,
+    /// Bounded queue size for records waiting to be written.
     pub capacity: usize,
+    /// Number of writes between automatic flushes; zero disables periodic flushing.
     pub flush_interval: usize,
+    /// Policy applied when the queue is full.
     pub overflow_policy: OverflowPolicy,
+    /// Optional barrier the worker waits on before processing, so tests control startup order.
     pub start_barrier: Option<Arc<Barrier>>,
 }
 
 impl<W, F> TestConfig<W, F> {
+    /// Create a configuration with the default queue capacity, a flush after every write, the
+    /// drop policy and no start barrier.
     pub fn new(writer: W, formatter: F) -> Self {
         Self {
             writer,

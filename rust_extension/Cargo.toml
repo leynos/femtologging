@@ -19,6 +19,7 @@ disallowed_methods = "deny"
 missing_docs_in_private_items = "deny"
 
 [lints.rust]
+missing_docs = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }
 
 [dependencies]

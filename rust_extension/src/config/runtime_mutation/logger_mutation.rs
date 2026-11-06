@@ -12,6 +12,10 @@ use crate::{FemtoLevel, config::ConfigError};
 
 use super::{CollectionMutation, collection_conflict};
 
+/// Requested change to one logger's level, propagation, handlers and filters.
+///
+/// Pass it to a runtime configuration transaction. Conflicting handler or filter edits are
+/// reported when that transaction is applied, against this logger's name.
 #[cfg_attr(feature = "python", pyclass(from_py_object))]
 #[derive(Clone, Debug, Default)]
 pub struct LoggerMutationBuilder {
@@ -28,6 +32,7 @@ pub struct LoggerMutationBuilder {
 }
 
 impl LoggerMutationBuilder {
+    /// Start a mutation that leaves the logger unchanged until a setter is called.
     pub fn new() -> Self {
         Self::default()
     }
@@ -91,16 +96,21 @@ impl LoggerMutationBuilder {
         this
     }
 
+    /// Override the logger's level when the transaction is applied.
     pub fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
     }
 
+    /// Set whether records from this logger also reach handlers on its ancestor loggers.
     pub fn with_propagate(mut self, propagate: bool) -> Self {
         self.propagate = Some(propagate);
         self
     }
 
+    /// Make the logger's handlers exactly `ids`, discarding its current handlers.
+    ///
+    /// Duplicate ids are dropped, keeping the first occurrence.
     pub fn replace_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -109,6 +119,9 @@ impl LoggerMutationBuilder {
         self.do_replace(ids, Self::set_handlers)
     }
 
+    /// Attach the handlers in `ids` after the logger's current handlers.
+    ///
+    /// Ids that are already attached are skipped.
     pub fn append_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -117,6 +130,7 @@ impl LoggerMutationBuilder {
         self.do_append(ids, Self::set_handlers)
     }
 
+    /// Detach the handlers named in `ids` from the logger.
     pub fn remove_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -125,10 +139,14 @@ impl LoggerMutationBuilder {
         self.do_remove(ids, Self::set_handlers)
     }
 
+    /// Detach every handler from the logger.
     pub fn clear_handlers(self) -> Self {
         self.do_clear(Self::set_handlers)
     }
 
+    /// Make the logger's filters exactly `ids`, discarding its current filters.
+    ///
+    /// Duplicate ids are dropped, keeping the first occurrence.
     pub fn replace_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -137,6 +155,9 @@ impl LoggerMutationBuilder {
         self.do_replace(ids, Self::set_filters)
     }
 
+    /// Attach the filters in `ids` after the logger's current filters.
+    ///
+    /// Ids that are already attached are skipped.
     pub fn append_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -145,6 +166,7 @@ impl LoggerMutationBuilder {
         self.do_append(ids, Self::set_filters)
     }
 
+    /// Detach the filters named in `ids` from the logger.
     pub fn remove_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -153,6 +175,7 @@ impl LoggerMutationBuilder {
         self.do_remove(ids, Self::set_filters)
     }
 
+    /// Detach every filter from the logger.
     pub fn clear_filters(self) -> Self {
         self.do_clear(Self::set_filters)
     }

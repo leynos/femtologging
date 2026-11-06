@@ -57,6 +57,9 @@ impl Default for RecordMetadata {
     }
 }
 
+/// A single log event: its logger, level, message, metadata, and any exception or stack payload.
+///
+/// Loggers create records and pass them to handlers and formatters.
 #[derive(Clone, Debug)]
 pub struct FemtoLogRecord {
     /// Name of the logger that created this record.

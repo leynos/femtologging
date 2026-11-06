@@ -43,9 +43,17 @@ pub enum AuthConfig {
     #[default]
     None,
     /// HTTP Basic authentication with username and password.
-    Basic { username: String, password: String },
+    Basic {
+        /// Username sent in the `Authorization: Basic` header.
+        username: String,
+        /// Password sent alongside `username`.
+        password: String,
+    },
     /// Bearer token authentication.
-    Bearer { token: String },
+    Bearer {
+        /// Token sent in the `Authorization: Bearer` header.
+        token: String,
+    },
 }
 
 /// Serialization format for log records.

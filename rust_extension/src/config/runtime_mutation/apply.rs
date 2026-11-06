@@ -19,10 +19,15 @@ use super::{
 };
 
 impl RuntimeConfigBuilder {
+    /// Start an empty transaction that changes nothing until a `with_*` method is called.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Add a handler definition under `id`, replacing any earlier definition with the same id
+    /// in this transaction.
+    ///
+    /// The handler is constructed only when `apply` commits the transaction.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
         B: Into<HandlerBuilder>,
@@ -31,16 +36,28 @@ impl RuntimeConfigBuilder {
         self
     }
 
+    /// Add a filter definition under `id`, replacing any earlier definition with the same id
+    /// in this transaction.
+    ///
+    /// Handlers and loggers refer to the filter by this id. The filter is built only when
+    /// `apply` commits the transaction.
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
     }
 
+    /// Request changes to the logger called `name`, replacing any earlier request for that
+    /// name in this transaction.
+    ///
+    /// Naming `"root"` here is rejected by `apply` when `with_root_logger` is also used. Use
+    /// `with_root_logger` for the root logger.
     pub fn with_logger(mut self, name: impl Into<String>, builder: LoggerMutationBuilder) -> Self {
         self.loggers.insert(name.into(), builder);
         self
     }
 
+    /// Request changes to the root logger, replacing any earlier root request in this
+    /// transaction.
     pub fn with_root_logger(mut self, builder: LoggerMutationBuilder) -> Self {
         self.root_logger = Some(builder);
         self

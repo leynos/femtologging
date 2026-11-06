@@ -69,18 +69,28 @@ pub const TIMED_ROTATION_VALIDATION_MSG: &str =
 #[pyclass(from_py_object, name = "TimedHandlerOptions")]
 #[derive(Clone)]
 pub struct TimedHandlerOptions {
+    /// Bounded queue size for records waiting to be written.
     #[pyo3(get, set)]
     pub capacity: usize,
+    /// Number of writes between flushes, which must be positive. The value `-1` is treated
+    /// as `1`.
     #[pyo3(get, set)]
     pub flush_interval: isize,
+    /// Overflow policy when the queue is full: `'drop'`, `'block'`, or `'timeout:N'`, where
+    /// `N` is the number of milliseconds to wait.
     #[pyo3(get, set)]
     pub policy: String,
+    /// Rollover schedule: `'S'`, `'M'`, `'H'`, `'D'`, `'MIDNIGHT'`, or `'W0'` to `'W6'`
+    /// (`'W0'` is Monday).
     #[pyo3(get, set)]
     pub when: String,
+    /// Number of `when` units between rollovers. Weekday schedules only accept `1`.
     #[pyo3(get, set)]
     pub interval: u32,
+    /// Number of timestamped backups to keep. Zero keeps every backup.
     #[pyo3(get, set)]
     pub backup_count: usize,
+    /// Whether rollover times are computed in UTC rather than local time.
     #[pyo3(get, set)]
     pub utc: bool,
     /// Optional local time at which daily-style schedules roll over.

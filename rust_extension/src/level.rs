@@ -10,15 +10,22 @@ use pyo3::prelude::*;
 use std::fmt;
 use std::str::FromStr;
 
+/// Severity of a log record, ordered from least (`Trace`) to most (`Critical`) severe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
 pub enum FemtoLevel {
+    /// Fine-grained diagnostic detail, usually too noisy for production.
     Trace,
+    /// Diagnostic information for investigating a specific problem.
     Debug,
+    /// Routine events that describe normal operation. This is the default level.
     #[default]
     Info,
+    /// An unexpected condition that the operation survived.
     Warn,
+    /// An operation failed and needs attention.
     Error,
+    /// A severe failure that may leave the program unable to continue.
     Critical,
 }
 

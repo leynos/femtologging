@@ -29,12 +29,19 @@ pub const DEFAULT_BACKOFF_DEADLINE: Duration = Duration::from_secs(120);
 /// Configuration object describing how to construct a [`FemtoSocketHandler`](super::FemtoSocketHandler).
 #[derive(Clone, Debug)]
 pub struct SocketHandlerConfig {
+    /// Bounded queue size for records waiting to be sent.
     pub capacity: usize,
+    /// How long each connection attempt may take before it fails.
     pub connect_timeout: Duration,
+    /// How long a single socket write may block before it fails.
     pub write_timeout: Duration,
+    /// Largest serialized record, in bytes, that will be sent. Larger records are not sent.
     pub max_frame_size: usize,
+    /// Destination for records: a TCP host and port, optionally with TLS, or a Unix socket.
     pub transport: SocketTransport,
+    /// Backoff policy applied between reconnection attempts.
     pub backoff: BackoffPolicy,
+    /// Minimum interval between rate-limited warnings about dropped records and failures.
     pub warn_interval: Duration,
 }
 
@@ -76,9 +83,13 @@ impl SocketHandlerConfig {
 /// Exponential backoff policy for reconnection attempts.
 #[derive(Clone, Debug)]
 pub struct BackoffPolicy {
+    /// Delay before the first retry after a failure. The delay doubles on each further failure.
     pub base: Duration,
+    /// Upper bound on the delay between reconnection attempts.
     pub cap: Duration,
+    /// Period of healthy writes after which the delay returns to `base`.
     pub reset_after: Duration,
+    /// Time after the first failure beyond which reconnection gives up.
     pub deadline: Duration,
 }
 
