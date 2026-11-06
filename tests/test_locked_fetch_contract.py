@@ -291,8 +291,10 @@ def _run_test_recipe(tmp_path: Path, *, fail_fetch: bool) -> tuple[int, list[str
         tool.write_text(FAKE_CARGO, encoding="utf-8")
         tool.chmod(0o755)
     log = tmp_path / "cargo.log"
+    # Flags an outer make passes down (`-i`, `-k`, `-n`) would change how it fails.
+    inherited = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}
     env = {
-        **os.environ,
+        **{key: value for key, value in os.environ.items() if key not in inherited},
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
         "CARGO_LOG": str(log),
         "FAIL_FETCH": "1" if fail_fetch else "",

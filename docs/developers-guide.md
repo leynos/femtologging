@@ -301,7 +301,9 @@ A test that starts its own Cargo build (the trybuild compile-time UI tests, for
 one) must not resolve dependencies while it holds the shared package-cache
 lock, or a cold cache stalls every other Cargo process on the host. Every test
 entry point therefore fetches first, and `cargo fetch --locked` must succeed
-before any test starts: the `test` recipe of the Makefile begins with
+before any `cargo test` starts: the `test` recipe of the Makefile (whose
+prerequisites only build, lint and unit-test the Loom runner script against a
+mocked Cargo) begins with
 `cargo fetch --locked --manifest-path $(RUST_MANIFEST)` on its own line (so a
 failed fetch stops the recipe), and the CI and heavy-test workflows each run an
 unconditional `Fetch locked dependencies` step with
