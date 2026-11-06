@@ -33,8 +33,8 @@ libraries. Use the links below to explore each topic.
   - Records the v0.1.0 renames from British to Oxford spelling across the
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Lists the 0.2.0 breaking changes, each with its fix, then the new
-    features.
+  - Sorts every 0.2.0 change by what it asks of an existing application, with
+    the exact errors and their fixes.
 
 ## Architecture decision records
 
