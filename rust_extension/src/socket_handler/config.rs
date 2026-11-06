@@ -21,9 +21,9 @@ pub const DEFAULT_MAX_FRAME_SIZE: usize = 1 << 20; // 1 MiB
 pub const DEFAULT_BACKOFF_BASE: Duration = Duration::from_millis(100);
 /// Default maximum delay for exponential backoff retries.
 pub const DEFAULT_BACKOFF_CAP: Duration = Duration::from_secs(10);
-/// Default duration of healthy writes that resets backoff state.
+/// Default time since the first failure after which a success resets the backoff state.
 pub const DEFAULT_BACKOFF_RESET: Duration = Duration::from_secs(30);
-/// Default absolute deadline for reconnection attempts.
+/// Default deadline after which backoff sleeps stop; later records still try to connect.
 pub const DEFAULT_BACKOFF_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Configuration object describing how to construct a [`FemtoSocketHandler`](super::FemtoSocketHandler).
@@ -31,7 +31,9 @@ pub const DEFAULT_BACKOFF_DEADLINE: Duration = Duration::from_secs(120);
 pub struct SocketHandlerConfig {
     /// Bounded queue size for records waiting to be sent.
     pub capacity: usize,
-    /// How long each connection attempt may take before it fails.
+    /// Timeout for each TCP connection attempt, applied to each resolved address in turn. It
+    /// also bounds each read and write during the TLS handshake. DNS resolution and Unix-socket
+    /// connections are not bounded by it.
     pub connect_timeout: Duration,
     /// How long a single socket write may block before it fails.
     pub write_timeout: Duration,
@@ -83,13 +85,16 @@ impl SocketHandlerConfig {
 /// Exponential backoff policy for reconnection attempts.
 #[derive(Clone, Debug)]
 pub struct BackoffPolicy {
-    /// Delay before the first retry after a failure. The delay doubles on each further failure.
+    /// Upper bound of the jittered delay before the first retry after a failure. Each later
+    /// failure in the same failure window doubles this bound, up to `cap`.
     pub base: Duration,
     /// Upper bound on the delay between reconnection attempts.
     pub cap: Duration,
-    /// Period of healthy writes after which the delay returns to `base`.
+    /// Time since the first failure of the window after which the next successful connection
+    /// or write resets the delay to `base`.
     pub reset_after: Duration,
-    /// Time after the first failure beyond which reconnection gives up.
+    /// Time since the first failure after which backoff sleeps stop. Later records still
+    /// attempt to connect; the worker does not stop reconnecting.
     pub deadline: Duration,
 }
 

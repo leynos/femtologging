@@ -36,7 +36,7 @@ pub struct HandlerConfig {
     /// Bounded queue size, in commands, between callers and the worker. Records arriving
     /// while the queue is full are dropped.
     pub capacity: usize,
-    /// How long `flush` waits for the worker to acknowledge before reporting failure.
+    /// How long `flush` waits to enqueue its command and, separately, for the worker's acknowledgement.
     pub flush_timeout: Duration,
     /// Rate limiter that throttles warnings about dropped records.
     pub warner: RateLimitedWarner,
@@ -59,7 +59,7 @@ impl HandlerConfig {
         self
     }
 
-    /// Set how long `flush` waits for the worker's acknowledgement.
+    /// Set how long each of `flush`'s two waits (enqueue, acknowledgement) may take.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.flush_timeout = timeout;
         self
@@ -140,7 +140,7 @@ fn run_stream_worker<W, F>(
 }
 
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
-/// the caller never waits for the write. `flush` waits up to `flush_timeout` for the worker.
+/// the caller never waits for the write. `flush` bounds each of its two waits by `flush_timeout`.
 #[pyclass]
 pub struct FemtoStreamHandler {
     /// Queue sender taken during close; shared so no closer needs an exclusive borrow.

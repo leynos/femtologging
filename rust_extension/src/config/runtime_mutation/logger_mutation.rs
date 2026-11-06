@@ -32,7 +32,8 @@ pub struct LoggerMutationBuilder {
 }
 
 impl LoggerMutationBuilder {
-    /// Start a mutation that leaves the logger unchanged until a setter is called.
+    /// Start a mutation with no recorded changes. Setters record changes, and `apply` makes
+    /// them effective.
     pub fn new() -> Self {
         Self::default()
     }
@@ -131,6 +132,10 @@ impl LoggerMutationBuilder {
     }
 
     /// Detach the handlers named in `ids` from the logger.
+    ///
+    /// `apply` rejects the transaction with `ConfigError::UnknownIds` if any listed id is not
+    /// attached to the logger. A logger with no runtime metadata yet is rejected with
+    /// `ConfigError::InvalidMutation` instead.
     pub fn remove_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -167,6 +172,10 @@ impl LoggerMutationBuilder {
     }
 
     /// Detach the filters named in `ids` from the logger.
+    ///
+    /// `apply` rejects the transaction with `ConfigError::UnknownIds` if any listed id is not
+    /// attached to the logger. A logger with no runtime metadata yet is rejected with
+    /// `ConfigError::InvalidMutation` instead.
     pub fn remove_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,

@@ -36,10 +36,11 @@ pub enum LogContextError {
         /// Maximum permitted UTF-8 byte length of a value.
         max: usize,
     },
-    /// Total serialized context exceeded the aggregate byte limit.
+    /// The aggregate key and value byte total exceeded the limit.
     #[error("context payload is {total} bytes; maximum is {max}")]
     TotalBytesExceeded {
-        /// Total serialized size of the context, in bytes.
+        /// Accumulated UTF-8 byte length of the keys and values, up to and including the entry
+        /// that crosses `max`. This is not the serialized size.
         total: usize,
         /// Maximum permitted total serialized size, in bytes.
         max: usize,

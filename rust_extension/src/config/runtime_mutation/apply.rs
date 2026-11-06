@@ -27,7 +27,8 @@ impl RuntimeConfigBuilder {
     /// Add a handler definition under `id`, replacing any earlier definition with the same id
     /// in this transaction.
     ///
-    /// The handler is constructed only when `apply` commits the transaction.
+    /// `apply` constructs the handler after validation and before it publishes the transaction,
+    /// so a later failure can leave construction side effects, such as a created file.
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
         B: Into<HandlerBuilder>,
@@ -39,8 +40,8 @@ impl RuntimeConfigBuilder {
     /// Add a filter definition under `id`, replacing any earlier definition with the same id
     /// in this transaction.
     ///
-    /// Handlers and loggers refer to the filter by this id. The filter is built only when
-    /// `apply` commits the transaction.
+    /// Handlers and loggers refer to the filter by this id. `apply` builds the filter before it
+    /// publishes the transaction, so a later failure can leave construction side effects.
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
@@ -74,8 +75,10 @@ impl RuntimeConfigBuilder {
     /// or handler-level filter references an identifier absent from both the
     /// manager and this transaction.
     ///
-    /// Unreachable definitions are rejected before construction, so a rejected
-    /// transaction never opens a file, connects a socket, or spawns a worker.
+    /// Validation failures and unreachable definitions are rejected before any handler or
+    /// filter is built, so those rejections never open a file, connect a socket, or spawn a
+    /// worker. Errors from later steps, such as logger lookup or publication, can occur after
+    /// construction, and the error does not roll back the side effects of that construction.
     pub fn apply(&self) -> Result<(), ConfigError> {
         self.validate()?;
         Python::attach(|py| -> Result<(), ConfigError> {
