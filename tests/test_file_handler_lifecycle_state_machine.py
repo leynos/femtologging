@@ -156,13 +156,20 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
         # An open handler may refuse the record only in the way its overflow
         # policy documents: ``drop`` reports a full queue, ``timeout`` reports
         # an expired deadline, and ``block`` waits instead of refusing. A
-        # disconnected worker or any other failure must fail the example.
+        # disconnected worker or any other failure must fail the example. The
+        # refusal is captured rather than asserted inside the handler so the
+        # check stays a plain assertion instead of a ``pytest.raises`` call.
         try:
             self._handler.handle("core", "INFO", message)
         except _ENQUEUE_ERRORS as err:
+            refusal = err
+        else:
+            refusal = None
+        if refusal is not None:
             permitted = _OVERFLOW_FAILURES[self._policy]
-            assert any(text in str(err) for text in permitted), (
-                f"the {self._policy!r} policy raised an undocumented failure: {err!r}"
+            assert any(text in str(refusal) for text in permitted), (
+                f"the {self._policy!r} policy raised an undocumented failure: "
+                f"{refusal!r}"
             )
 
     @stateful.rule()
