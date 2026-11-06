@@ -26,7 +26,6 @@ stays with the subprocess scenarios, which is why both suites are kept.
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import typing as typ
 
@@ -65,6 +64,16 @@ _BUILDERS: dict[str, cabc.Callable[[str], typ.Any]] = {
 #: rotating bindings use ``RuntimeError``; the timed-rotating binding maps the
 #: same condition to ``ValueError``.
 _ENQUEUE_ERRORS = (RuntimeError, ValueError)
+
+#: The failure each dropping policy may report for an open handler. ``block``
+#: waits instead of refusing, so it permits no failure at all. A disconnected
+#: worker reports "handler is closed" and must fail the example rather than
+#: being mistaken for the documented overflow outcome.
+_OVERFLOW_FAILURES: dict[str, tuple[str, ...]] = {
+    "drop": ("queue full",),
+    "block": (),
+    "timeout": ("handler send timed out",),
+}
 
 #: The policies the generated sequences may run under. ``block`` cannot be left
 #: out: it is the only policy that changes whether ``handle()`` can wait, and
@@ -114,6 +123,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
         self._log_path = log_path
         self._builder_name = builder_name
         self._handler: typ.Any = None
+        self._policy = ""
         self._closed = False
 
     @stateful.initialize(
@@ -123,6 +133,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
     )
     def init_handler(self, policy: str, capacity: int, timeout_ms: int) -> None:
         """Build one handler with the drawn policy, capacity, and timeout."""
+        self._policy = policy
         builder = _BUILDERS[self._builder_name](self._log_path)
         self._handler = (
             builder
@@ -142,11 +153,17 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
                 f"a closed handler must name the closure, got {excinfo.value!r}"
             )
             return
-        # An open handler may still refuse the record when its queue is full
-        # under a dropping policy. That is the documented outcome, so it is
-        # permitted here; any other exception propagates and fails the example.
-        with contextlib.suppress(*_ENQUEUE_ERRORS):
+        # An open handler may refuse the record only in the way its overflow
+        # policy documents: ``drop`` reports a full queue, ``timeout`` reports
+        # an expired deadline, and ``block`` waits instead of refusing. A
+        # disconnected worker or any other failure must fail the example.
+        try:
             self._handler.handle("core", "INFO", message)
+        except _ENQUEUE_ERRORS as err:
+            permitted = _OVERFLOW_FAILURES[self._policy]
+            assert any(text in str(err) for text in permitted), (
+                f"the {self._policy!r} policy raised an undocumented failure: {err!r}"
+            )
 
     @stateful.rule()
     def flush(self) -> None:
