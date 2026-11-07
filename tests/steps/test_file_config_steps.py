@@ -37,6 +37,5 @@ def then_file_config_raises(config_error: ValueError) -> None:
     # The @when step already asserted the exception type via pytest.raises; this
     # step pins the operator-facing message so the diagnosis stays actionable.
     assert "missing class" in str(config_error), (
-        'fileConfig error text must contain "missing class", '
-        f"got: {config_error!r}"
+        f'fileConfig error text must contain "missing class", got: {config_error!r}'
     )
