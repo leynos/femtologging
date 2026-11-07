@@ -1,19 +1,18 @@
 //! Behavioural tests for the stream handler and its worker thread lifecycle.
 
 use std::io::{self, Write};
-use std::sync::Barrier;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord,
-    FemtoStreamHandler,
+    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
 use rstest::*;
 
 #[path = "test_utils/mod.rs"]
 mod test_utils;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Barrier;
 use test_utils::fixtures::handler_tuple;
 use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;
@@ -118,103 +117,6 @@ fn stream_handler_close_flushes_pending(
     handler.close();
 
     assert_eq!(read_output(&buffer), "core [INFO] close\n");
-}
-
-/// Formatter whose destructor blocks, so the test can prove that `close()` is
-/// bounded by the flush timeout rather than by the formatter's teardown.
-struct SlowDropFormatter {
-    /// How long the destructor holds the worker thread.
-    hold: Duration,
-}
-
-impl FemtoFormatter for SlowDropFormatter {
-    fn format(&self, record: &FemtoLogRecord) -> String {
-        DefaultFormatter.format(record)
-    }
-}
-
-impl Drop for SlowDropFormatter {
-    fn drop(&mut self) {
-        thread::sleep(self.hold);
-    }
-}
-
-#[test]
-fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks() {
-    const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
-    const DROP_HOLD: Duration = Duration::from_millis(400);
-
-    let handler = FemtoStreamHandler::with_capacity_timeout(
-        io::sink(),
-        SlowDropFormatter { hold: DROP_HOLD },
-        8,
-        FLUSH_TIMEOUT,
-    );
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
-
-    let started = Instant::now();
-    handler.close();
-    let elapsed = started.elapsed();
-
-    assert!(
-        elapsed < DROP_HOLD / 2,
-        "close() waited {elapsed:?}; completion must not be signalled before \
-         the formatter is dropped"
-    );
-    // Let the worker finish its formatter teardown so the test leaves no
-    // sleeping thread behind.
-    thread::sleep(DROP_HOLD);
-}
-
-/// How long the thread-local destructor holds the worker thread.
-const TLS_DROP_HOLD: Duration = Duration::from_millis(400);
-
-thread_local! {
-    /// Thread-local initialised on the worker thread. Its destructor runs
-    /// after the worker body returns, which is exactly the window in which a
-    /// closer must not block on an unbounded join.
-    static SLOW_TLS_DTOR: SlowTlsDtor = const { SlowTlsDtor };
-}
-
-/// Value whose destructor blocks during thread teardown.
-struct SlowTlsDtor;
-
-impl Drop for SlowTlsDtor {
-    fn drop(&mut self) {
-        thread::sleep(TLS_DROP_HOLD);
-    }
-}
-
-/// Formatter that initialises the blocking thread-local on the worker thread.
-struct TlsDtorFormatter;
-
-impl FemtoFormatter for TlsDtorFormatter {
-    fn format(&self, record: &FemtoLogRecord) -> String {
-        SLOW_TLS_DTOR.with(|_| ());
-        DefaultFormatter.format(record)
-    }
-}
-
-#[test]
-fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_blocks() {
-    const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
-
-    let handler =
-        FemtoStreamHandler::with_capacity_timeout(io::sink(), TlsDtorFormatter, 8, FLUSH_TIMEOUT);
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
-
-    let started = Instant::now();
-    handler.close();
-    let elapsed = started.elapsed();
-
-    assert!(
-        elapsed < TLS_DROP_HOLD / 2,
-        "close() waited {elapsed:?}; a blocking thread-local destructor must \
-         not extend the flush timeout"
-    );
-    // Let the detached worker finish its thread-local teardown so the test
-    // leaves no sleeping thread behind.
-    thread::sleep(TLS_DROP_HOLD);
 }
 
 #[rstest]

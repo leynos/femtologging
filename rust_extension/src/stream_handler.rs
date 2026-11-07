@@ -10,6 +10,8 @@ mod config;
 
 mod shutdown;
 
+mod waiter;
+
 use std::{
     any::Any,
     io::{self, Write},
@@ -31,6 +33,9 @@ use crate::{
 
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig};
 use shutdown::StreamShutdown;
+use waiter::WaitGuard;
+#[cfg(feature = "test-util")]
+pub(crate) use waiter::waiting_count;
 
 /// Commands the worker thread takes from the queue, in order.
 #[expect(
@@ -117,7 +122,8 @@ fn run_stream_worker<W, F>(
 pub struct FemtoStreamHandler {
     /// Queue sender taken during close; shared so no closer needs an exclusive borrow.
     tx: Mutex<Option<Sender<StreamCommand>>>,
-    /// Worker join handle protected so close and drop cannot join twice.
+    /// Worker handle taken by the closer that detaches the thread; dropping it
+    /// twice is harmless.
     handle: Mutex<Option<JoinHandle<()>>>,
     /// Completion broadcast every closing thread waits on, so a closer that
     /// does not own the join handle still observes worker shutdown.
@@ -193,10 +199,10 @@ impl FemtoStreamHandler {
         py.detach(|| self.flush())
     }
 
-    /// Close the handler and wait for the worker thread to finish.
+    /// Close the handler and wait for the worker to finish its queued work.
     ///
     /// The handler stops accepting records, drains the records already queued,
-    /// and waits for the worker to exit. The GIL is released while waiting, so
+    /// and waits for the worker to write them. The GIL is released while waiting, so
     /// a Python callable formatter can run to completion on the worker thread.
     /// Only a shared PyO3 borrow is needed, so a close can run beside a
     /// detached flush call.
@@ -301,7 +307,7 @@ impl FemtoStreamHandler {
         <Self as FemtoHandlerTrait>::flush(self)
     }
 
-    /// Close the handler and wait for the worker thread to exit.
+    /// Close the handler and wait for the worker to finish its queued work.
     ///
     /// Concurrent callers all wait for the same completion.
     pub fn close(&self) {
@@ -363,6 +369,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                 // further interval, so applying the timeout to each in turn
                 // would let a flush wait nearly twice the configured limit.
                 let deadline = Instant::now() + self.flush_timeout;
+                let _waiting = WaitGuard::enter();
                 if tx
                     .send_timeout(StreamCommand::Flush(ack_tx), self.flush_timeout)
                     .is_err()

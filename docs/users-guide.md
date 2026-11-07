@@ -304,11 +304,13 @@ fields with safe defaults does not require a version bump.
   returns `False` if the underlying I/O flush fails, the handler has already
   been closed, the worker channel has been dropped, or the deadline expires.
 - `handler.close()` stops accepting records, drains the records already queued,
-  waits for the worker thread to exit, and should be called before process
-  exit. Both `flush()` and `close()` release the GIL while they wait, so a
-  Python callable formatter can run to completion on the worker thread during
-  either call.
-- The wait is bounded by the handler's flush timeout, which
+  and waits for the worker to write them; call it before process exit. Both
+  `flush()` and `close()` release the GIL while they wait so a Python callable
+  formatter can run to completion on the worker thread during either call.
+  `close()` returns no status, so a caller cannot tell from the return value
+  whether the worker finished.
+
+  The wait is bounded by the handler's flush timeout, which
   `StreamHandlerBuilder.with_flush_after_ms()` sets. If the timeout expires,
   `close()` returns without the worker having finished; the worker keeps
   processing its queue and can still write to the stream after `close()`

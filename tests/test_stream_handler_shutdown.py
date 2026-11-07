@@ -17,7 +17,7 @@ import typing as typ
 
 import pytest
 
-from femtologging import StreamHandlerBuilder
+from femtologging import StreamHandlerBuilder, rust
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -25,9 +25,22 @@ if typ.TYPE_CHECKING:
 # Long enough to distinguish a correctly released wait (tens of milliseconds)
 # from a GIL-held wait that runs to the handler's configured timeout.
 _GATE_TIMEOUT_SECONDS = 10.0
-_RELEASE_DELAY_SECONDS = 0.05
+_WAITER_TIMEOUT_SECONDS = 5.0
+_WAITER_POLL_SECONDS = 0.005
 _DRAIN_TIMEOUT_MS = 5_000
 _MAX_DRAIN_SECONDS = 3.0
+
+# Reports how many native stream-handler calls are blocked in a wait. It is
+# present only when the extension was built with the Rust `test-util` feature,
+# which `make develop` enables for the test suite.
+_WAITER_COUNT: cabc.Callable[[], int] | None = getattr(
+    rust, "_stream_waiter_count", None
+)
+
+pytestmark = pytest.mark.skipif(
+    _WAITER_COUNT is None,
+    reason="requires Rust extension built with the 'test-util' feature",
+)
 
 type _DrainMethod = typ.Literal["flush", "close"]
 
@@ -38,6 +51,14 @@ class _FormatterNotReleasedError(Exception):
     def __init__(self) -> None:
         """Record that the formatter gate timed out before release."""
         super().__init__("test formatter was not released")
+
+
+class _WaiterNotObservedError(Exception):
+    """No native flush or close call was observed waiting before the deadline."""
+
+    def __init__(self) -> None:
+        """Record that the waiter handshake timed out."""
+        super().__init__("no native stream-handler call was observed waiting")
 
 
 class _StreamHandler(typ.Protocol):
@@ -61,6 +82,8 @@ class _FormatterGate:
         self.entered = threading.Event()
         self.release = threading.Event()
         self.completed = threading.Event()
+        self.waiter_observed = threading.Event()
+        self.waiter_error: Exception | None = None
 
     def format_record(self, record: cabc.Mapping[str, object]) -> str:
         """Block until released, then return a distinctive formatted line."""
@@ -70,13 +93,34 @@ class _FormatterGate:
         self.completed.set()
         return f"gated:{record['message']}"
 
-    def release_after_delay(self) -> threading.Thread:
-        """Start a helper thread that releases the formatter after a short delay."""
+    def release_when_waiting(self) -> threading.Thread:
+        """Start a helper thread that releases the formatter once a drain waits.
+
+        The helper polls the native waiter counter, so the formatter is only
+        released after `flush()` or `close()` has entered its wait. A binding
+        that held the GIL could not let this thread run at all, which is the
+        regression the test exists to catch.
+
+        Returns
+        -------
+        threading.Thread
+            The started helper thread.
+        """
 
         def release_gate() -> None:
-            """Release the formatter after the configured delay."""
-            time.sleep(_RELEASE_DELAY_SECONDS)
-            self.release.set()
+            """Poll for a waiting native call, then release the formatter."""
+            waiter_count = _WAITER_COUNT
+            if waiter_count is None:
+                self.waiter_error = _WaiterNotObservedError()
+                return
+            deadline = time.monotonic() + _WAITER_TIMEOUT_SECONDS
+            while time.monotonic() < deadline:
+                if waiter_count() > 0:
+                    self.waiter_observed.set()
+                    self.release.set()
+                    return
+                time.sleep(_WAITER_POLL_SECONDS)
+            self.waiter_error = _WaiterNotObservedError()
 
         thread = threading.Thread(
             target=release_gate,
@@ -105,6 +149,7 @@ class _DrainOutcome:
 
     acknowledged: bool | None
     formatter_completed: bool
+    waiter_observed: bool
     elapsed_seconds: float
     stderr: str
 
@@ -115,9 +160,10 @@ def _drain_gated_handler(
 ) -> _DrainOutcome:
     """Handle one record, then drain while the formatter is blocked.
 
-    The formatter is released shortly after the drain call starts, so a binding
-    that releases the GIL returns as soon as the worker finishes, while one
-    that holds the GIL blocks until the handler's flush timeout.
+    The formatter is released only once the native call reports that it is
+    waiting, so a binding that releases the GIL returns as soon as the worker
+    finishes, while one that holds the GIL blocks until the handler's flush
+    timeout.
 
     Returns
     -------
@@ -136,7 +182,7 @@ def _drain_gated_handler(
         assert gate.entered.wait(timeout=_GATE_TIMEOUT_SECONDS), (
             "worker never entered the callable formatter"
         )
-        releaser = gate.release_after_delay()
+        releaser = gate.release_when_waiting()
         started = time.monotonic()
         if drain_method == "flush":
             acknowledged = handler.flush()
@@ -150,9 +196,12 @@ def _drain_gated_handler(
         handler.close()
         if releaser is not None:
             releaser.join(timeout=_GATE_TIMEOUT_SECONDS)
+    if gate.waiter_error is not None:
+        raise gate.waiter_error
     return _DrainOutcome(
         acknowledged=acknowledged,
         formatter_completed=completed,
+        waiter_observed=gate.waiter_observed.is_set(),
         elapsed_seconds=elapsed,
         stderr=captured,
     )
@@ -165,6 +214,7 @@ def test_stream_drain_waits_for_callable_formatter(
 ) -> None:
     """Draining releases the GIL and orders the worker's write."""
     outcome = _drain_gated_handler(capfd, drain_method)
+    assert outcome.waiter_observed, f"{drain_method}() never reported a native wait"
     assert outcome.formatter_completed, (
         f"{drain_method}() returned before the formatter completed"
     )

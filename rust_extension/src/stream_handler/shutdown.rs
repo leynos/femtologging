@@ -11,6 +11,7 @@ use log::warn;
 use pyo3::Python;
 
 use super::FemtoStreamHandler;
+use super::waiter::WaitGuard;
 use crate::{shutdown::ShutdownCompletion, sync::JoinHandle};
 
 impl Drop for FemtoStreamHandler {
@@ -33,7 +34,8 @@ impl Drop for FemtoStreamHandler {
 
 /// Waits for a stream worker after the handler has stopped accepting commands.
 pub(super) struct StreamShutdown {
-    /// Worker thread handle retained for joining after completion.
+    /// Worker thread handle, dropped to detach the thread after the wait rather
+    /// than joined.
     handle: Option<JoinHandle<()>>,
     /// Broadcast completion shared by every closer.
     completion: Arc<ShutdownCompletion>,
@@ -58,14 +60,14 @@ impl StreamShutdown {
     /// Waits for completion without joining the worker thread.
     ///
     /// Every caller waits on the shared completion, including one that finds
-    /// no join handle left: another closer may still be joining, so the
+    /// no join handle left: another closer may still be waiting, so the
     /// completion signal—not the join handle—is what orders queued writes
     /// before a closer returns.
     ///
     /// The handle is dropped rather than joined. A successful wait means the
     /// worker finished its body and dropped the writer and formatter, but not
     /// that the thread has exited: thread-local destructors run after the
-    /// body returns, and `join` waits for them. A formatter that initialises a
+    /// body returns, and `join` waits for them. A formatter that initializes a
     /// blocking thread-local destructor would then hold a closer past its
     /// configured timeout, and `JoinHandle::is_finished` cannot distinguish
     /// that window—it reports `true` once the thread function returns, while
@@ -73,6 +75,7 @@ impl StreamShutdown {
     /// which the operating system reclaims when it exits. The worker reports
     /// its own panics, so nothing is lost by abandoning the join result.
     pub(super) fn wait(self) {
+        let _waiting = WaitGuard::enter();
         if !self.completion.wait(self.timeout) {
             warn!(
                 "FemtoStreamHandler: worker thread did not shut down within {:?}",

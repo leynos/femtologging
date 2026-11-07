@@ -525,6 +525,34 @@ noisy.error("dropped")
 
 ______________________________________________________________________
 
+## Stream handler flush deadline and detached close
+
+`FemtoStreamHandler.flush()` now applies its configured timeout once. The
+deadline covers both queueing the flush command and waiting for the worker's
+acknowledgement; previously each wait received the full timeout, so a call
+could take nearly twice the configured limit. `close()` now waits for the
+worker's completion signal and detaches the thread instead of joining it, so a
+blocking thread-local destructor can no longer hold `close()` past its timeout.
+
+### What breaks for stream handler shutdown
+
+- A `flush()` that previously succeeded because the acknowledgement arrived
+  after the first timeout but within a second one now returns `False`.
+- `close()` can return while the worker thread is still running thread-local
+  destructors. Code that assumed the thread had exited when `close()` returned
+  must not rely on that.
+
+### How to migrate stream handler shutdown
+
+- Treat `flush()` returning `False` as "not acknowledged within one timeout".
+  Retry, or raise the timeout with
+  `StreamHandlerBuilder.with_flush_after_ms()`, if the worker needs longer.
+- Do not use `close()` as a barrier for thread-local teardown. If teardown must
+  finish before process exit, perform it in the formatter's own code before the
+  worker body returns, or synchronize on a signal your code owns.
+
+______________________________________________________________________
+
 ## What does not need to change
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,
