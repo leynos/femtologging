@@ -3,23 +3,24 @@
 A stream worker runs Python callable formatters on its own thread. The
 Python-facing ``close()`` and ``flush()`` bindings must release the GIL while
 they wait for that worker, otherwise the formatter cannot run and the binding
-times out. These tests gate the formatter on an event so they observe the
+times out. This test gates the formatter on an event so it observes the
 ordering directly: the native call may not return until the formatter has
 completed and its record has reached the stream.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 import typing as typ
+
+import pytest
 
 from femtologging import StreamHandlerBuilder
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-
-    import pytest
 
 # Long enough to distinguish a correctly released wait (tens of milliseconds)
 # from a GIL-held wait that runs to the handler's configured timeout.
@@ -27,6 +28,8 @@ _GATE_TIMEOUT_SECONDS = 10.0
 _RELEASE_DELAY_SECONDS = 0.05
 _DRAIN_TIMEOUT_MS = 5_000
 _MAX_DRAIN_SECONDS = 3.0
+
+type _DrainMethod = typ.Literal["flush", "close"]
 
 
 class _FormatterNotReleasedError(Exception):
@@ -90,13 +93,35 @@ def _build_gated_handler(gate: _FormatterGate) -> _StreamHandler:
     return typ.cast("_StreamHandler", handler)
 
 
-def test_stream_close_waits_for_callable_formatter(
+@dataclasses.dataclass(slots=True)
+class _DrainOutcome:
+    """Observations captured when the native drain call returned."""
+
+    acknowledged: bool | None
+    formatter_completed: bool
+    elapsed_seconds: float
+    stderr: str
+
+
+def _drain_gated_handler(
     capfd: pytest.CaptureFixture[str],
-) -> None:
-    """close() releases the GIL and orders the worker's write."""
+    drain_method: _DrainMethod,
+) -> _DrainOutcome:
+    """Handle one record, then drain while the formatter is blocked.
+
+    The formatter is released shortly after the drain call starts, so a binding
+    that releases the GIL returns as soon as the worker finishes, while one
+    that holds the GIL blocks until the handler's flush timeout.
+
+    Returns
+    -------
+    _DrainOutcome
+        The observations taken at the moment the drain call returned.
+    """
     gate = _FormatterGate()
     handler = _build_gated_handler(gate)
     releaser: threading.Thread | None = None
+    acknowledged: bool | None = None
     completed = False
     elapsed = 0.0
     captured = ""
@@ -107,7 +132,10 @@ def test_stream_close_waits_for_callable_formatter(
         )
         releaser = gate.release_after_delay()
         started = time.monotonic()
-        handler.close()
+        if drain_method == "flush":
+            acknowledged = handler.flush()
+        else:
+            handler.close()
         elapsed = time.monotonic() - started
         completed = gate.completed.is_set()
         captured = capfd.readouterr().err
@@ -116,49 +144,30 @@ def test_stream_close_waits_for_callable_formatter(
         handler.close()
         if releaser is not None:
             releaser.join(timeout=_GATE_TIMEOUT_SECONDS)
-
-    assert completed, "close() returned before the formatter completed"
-    assert elapsed < _MAX_DRAIN_SECONDS, (
-        f"close() waited {elapsed:.3f}s; the GIL was not released"
-    )
-    assert "gated:hello\n" in captured, (
-        f"close() should order the worker write; stderr={captured!r}"
+    return _DrainOutcome(
+        acknowledged=acknowledged,
+        formatter_completed=completed,
+        elapsed_seconds=elapsed,
+        stderr=captured,
     )
 
 
-def test_stream_flush_waits_for_callable_formatter(
+@pytest.mark.parametrize("drain_method", ["flush", "close"])
+def test_stream_drain_waits_for_callable_formatter(
     capfd: pytest.CaptureFixture[str],
+    drain_method: _DrainMethod,
 ) -> None:
-    """flush() releases the GIL and reports the completed write."""
-    gate = _FormatterGate()
-    handler = _build_gated_handler(gate)
-    releaser: threading.Thread | None = None
-    flushed = False
-    completed = False
-    elapsed = 0.0
-    captured = ""
-    try:
-        handler.handle("logger", "INFO", "hello")
-        assert gate.entered.wait(timeout=_GATE_TIMEOUT_SECONDS), (
-            "worker never entered the callable formatter"
-        )
-        releaser = gate.release_after_delay()
-        started = time.monotonic()
-        flushed = handler.flush()
-        elapsed = time.monotonic() - started
-        completed = gate.completed.is_set()
-        captured = capfd.readouterr().err
-    finally:
-        gate.release.set()
-        handler.close()
-        if releaser is not None:
-            releaser.join(timeout=_GATE_TIMEOUT_SECONDS)
-
-    assert flushed is True, "flush() did not acknowledge the worker"
-    assert completed, "flush() returned before the formatter completed"
+    """Draining releases the GIL and orders the worker's write."""
+    outcome = _drain_gated_handler(capfd, drain_method)
+    assert outcome.formatter_completed, (
+        f"{drain_method}() returned before the formatter completed"
+    )
+    elapsed = outcome.elapsed_seconds
     assert elapsed < _MAX_DRAIN_SECONDS, (
-        f"flush() waited {elapsed:.3f}s; the GIL was not released"
+        f"{drain_method}() waited {elapsed:.3f}s; the GIL was not released"
     )
-    assert "gated:hello\n" in captured, (
-        f"flush() should order the worker write; stderr={captured!r}"
+    assert "gated:hello\n" in outcome.stderr, (
+        f"{drain_method}() should order the worker write; stderr={outcome.stderr!r}"
     )
+    if drain_method == "flush":
+        assert outcome.acknowledged is True, "flush() did not acknowledge the worker"
