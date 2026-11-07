@@ -1279,6 +1279,40 @@ than taken exclusively, concurrent closes and a close beside a detached flush
 all observe the same completion, while the handler's own timeout still bounds
 each wait.
 
+The socket and HTTP handlers reach the same guarantee by a different route,
+because their workers make blocking network calls rather than waiting only on a
+command channel. A close sent through that channel would queue behind the
+backlog it is meant to cancel, and a worker inside a retry backoff or a stalled
+`connect` would not read it until the record in hand had exhausted its budget.
+Each of those handlers therefore shares a `ShutdownSignal` with its worker: a
+phase (`Running`, `Draining { deadline }`, `Aborted`) with a condition variable
+beside it, carrying no work of its own. The worker consults it between attempts
+and uses `clamp` for every timeout it sets, so once a drain begins no new
+attempt starts after the deadline and no started call outlasts what the budget
+leaves.
+
+The bound is on what a worker _starts_, not on what it has already started: no
+`std` API cancels a blocking socket operation, so termination is the budget
+plus one call already in flight when the deadline fell. Only timeout-bounded
+calls started during draining receive that guarantee; an already-started
+Unix-domain connect and TCP hostname resolution have no interruptible timeout
+and can outlast the remaining budget, so an abandoned worker may live on after
+`close()` returns. Everything still queued at the deadline is discarded and
+counted rather than sent, and a frame that runs out of budget mid-write reports
+how many of its bytes went out. Each handler's `close()` still runs on a single
+deadline covering the signal, the command that requests an acknowledgement, the
+acknowledgement itself, and the join. A worker that does not answer within it
+is abandoned instead of joined; abandoning aborts the signal first, so the
+detached worker cannot be told there is budget left past a deadline it has
+already reached.
+
+Both clock and condition variable are seams. Deadline queries read an injected
+monotonic clock that production sets to `Instant::now` and tests replace with a
+manual clock, so a boundary is a value a test chooses rather than a race
+against the host's scheduler. This is separate from the rate-limited warner's
+clock, which reports milliseconds since its own construction and so cannot
+express an absolute deadline.
+
 **flush() Behaviour:**
 
 The `flush()` method iterates over all handlers registered with the Manager and

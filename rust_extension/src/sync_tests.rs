@@ -4,14 +4,60 @@
 //! under `--cfg loom`, where they check the hand-built channel inside a Loom
 //! model; the heavy lane's models then rely on it.
 
+#[cfg(not(loom))]
+mod ordinary {
+    //! The seam's ordinary arm: `crossbeam_channel`, `parking_lot`, and the
+    //! condition variable wrapped behind Loom's calling convention.
+
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::sync::{Condvar, Mutex, spawn};
+
+    /// The condition variable admits a waiter whose lock it re-releases.
+    ///
+    /// A wait that returned without the lock acquired would let the waiter read
+    /// freed state, and one that returned with it held would deadlock the
+    /// waiter that has to re-lock. The timeout is long enough that only a lost
+    /// notification exhausts it.
+    #[test]
+    fn condvar_wakes_a_waiter_and_returns_the_lock() {
+        let state = Arc::new(Mutex::new(false));
+        let changed = Arc::new(Condvar::new());
+        let waiter = {
+            let state = Arc::clone(&state);
+            let changed = Arc::clone(&changed);
+            spawn(move || {
+                let mut guard = state.lock();
+                while !*guard {
+                    changed.wait_timeout(guard, Duration::from_secs(10));
+                    guard = state.lock();
+                }
+                *guard
+            })
+        };
+
+        {
+            let mut guard = state.lock();
+            *guard = true;
+            changed.notify_all();
+        }
+
+        assert!(
+            waiter.join().expect("the waiter should not panic"),
+            "the waiter woke without observing the change it was notified about"
+        );
+    }
+}
+
 #[cfg(loom)]
 mod loom_arm {
     //! The seam's Loom arm: the hand-built bounded channel.
 
     // Named rather than globbed from the seam: this module is the only place
     // that exercises the Loom arm, so its inputs are worth stating. The
-    // ordinary arm has no tests left here, and a file-level glob would
-    // otherwise have to exist for the sake of five names.
+    // ordinary arm names its own imports for the same reason, which also
+    // keeps a file-level glob from existing only for these five names.
     use crate::sync::{TrySendError, bounded, spawn};
 
     /// A full channel refuses `try_send` and hands the message back.

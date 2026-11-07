@@ -2,7 +2,7 @@
 
 use rstest::rstest;
 
-use crate::http_handler::worker::{ResponseClass, classify_status};
+use crate::http_handler::response::{ResponseClass, classify_status};
 
 #[rstest]
 #[case(200, ResponseClass::Success)]

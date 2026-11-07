@@ -294,8 +294,9 @@ fields with safe defaults does not require a version bump.
   buffered writes and returns `True` only when the worker acknowledges
   `Ok(())`. It returns `False` if the underlying I/O flush fails, the handler
   has already been closed, the worker channel has been dropped, or the timeout
-  expires. `handler.close()` shuts down the worker thread and should be called
-  before process exit.
+  expires. Python `flush()` and `close()` release the GIL while waiting, so the
+  worker can run Python formatters before acknowledging. `handler.close()`
+  shuts down the worker thread and should be called before process exit.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
@@ -394,8 +395,32 @@ socket_handler = (
   length prefix.
 - The worker reconnects automatically using exponential backoff. Payloads that
   exceed the configured `max_frame_size` are dropped.
-- `handler.flush()` forces the worker to flush the active socket. Always call
-  `handler.close()` to terminate the worker thread cleanly.
+- `handler.flush()` forces the worker to flush the active socket.
+- `handler.close()` waits for the worker for at most the handler's write
+  timeout. During that window, each pending record gets at most one best-effort
+  attempt, without retries. A worker that acknowledges the shutdown in time is
+  joined. One that does not, typically because it is blocked writing to a
+  collector that has stopped reading, is detached with a warning rather than
+  joined past the deadline. Records still queued when the deadline passes are
+  discarded, and the count is warned about. The same bound applies when the
+  handler is dropped without an explicit `close()`, and the wait runs with the
+  GIL released.
+- One record is written in steps, and the remaining budget is recomputed
+  between them. A frame larger than the socket send buffer therefore stops at
+  the deadline with a warning that reports how many bytes were written, instead
+  of spending one socket timeout per buffer-sized chunk. A partial frame leaves
+  the collector with a truncated record, which is the same outcome as a record
+  that arrived after the deadline: the connection is not reused afterwards.
+- Two operations are outside the cooperative cancellation above, and a `close`
+  against either one is answered by detaching the worker rather than joining
+  it. A Unix domain socket connect that finds a full listener backlog blocks
+  until a slot frees or the listener closes, and the standard library offers no
+  timed or non-blocking constructor for it; the deadline is checked before the
+  attempt, so no connect begins once it has passed, but an attempt already
+  blocked is not interrupted. Hostname resolution for a TCP transport has the
+  same limitation for the same reason. In both cases `close()` still returns
+  inside its budget, and the detached worker leaves as soon as its blocking
+  call returns or fails.
 
 ### FemtoHTTPHandler
 
@@ -412,13 +437,18 @@ socket_handler = (
   `.with_json_format()` mirror the socket/file builder style. Validation
   failures raise `ValueError` before the handler is built.
 - `handler.close()` waits for the worker for at most the handler's write
-  timeout. A worker that acknowledges the shutdown in that time is joined. One
-  that does not, typically because it is still retrying a request against an
-  endpoint that has stopped answering, is abandoned with a warning instead of
-  blocking the caller for the rest of its backoff. The abandoned worker keeps
-  sending the records already queued and then exits, so those records arrive
-  only if the process lives long enough. The same bound applies when the
-  handler is dropped without an explicit `close()`.
+  timeout. During that window, each pending record gets at most one best-effort
+  attempt, without retries. A worker that acknowledges the shutdown in time is
+  joined. One that does not, typically because a request already in flight is
+  waiting on an endpoint that has stopped answering, is detached with a warning
+  rather than joined past the deadline. Records still queued when the deadline
+  passes are discarded, and the count is warned about, so a queue that cannot
+  be delivered inside the timeout costs those records rather than extending the
+  close. The bound is on `close()` itself, not on the detached worker's exit: a
+  request already in flight when the deadline falls may outlive it, and TCP
+  hostname resolution has no interruptible timeout. The same bound applies when
+  the handler is dropped without an explicit `close()`, and the wait runs with
+  the GIL released.
 
 ### Custom Python handlers
 

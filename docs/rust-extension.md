@@ -417,8 +417,13 @@ next reads a command, which a worker stuck mid-request does not do.
   because it is what reports a worker panic.
 - `ShutdownOutcome::TimedOut` covers a send or a receive that ran out of
   budget. `abandon_worker` logs a warning naming the budget and takes the join
-  handle, so neither `close` nor a later `Drop` waits on it. The detached
-  worker drains what was already queued and exits on its own.
+  handle, so neither `close` nor a later `Drop` waits on it. It also aborts the
+  signal first: the detached thread is the only other holder, so a signal left
+  in `Draining` would keep telling it that budget remained past the deadline it
+  had already reached. The detached worker finishes only the request already in
+  flight, and then discards everything still queued instead of sending it: an
+  aborted signal makes `clamp` return `None`, so no further connect or write
+  begins. It exits on its own with nothing left to join it.
 
 This is the contract `FemtoStreamHandler::close` already follows: acknowledge
 or be abandoned, with the timeout warned about rather than swallowed.
