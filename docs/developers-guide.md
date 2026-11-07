@@ -59,10 +59,13 @@ Write an example so it runs on its own. Bind every name it uses, and show a
 value rather than an assertion, so a wrong answer is a failure and not a silent
 pass.
 
-Skip an example only with a written reason beside it. `capture_records` is the
-one skipped here: running it would need a live logger, an emission through the
-process-wide macros, and a bounded wait on the worker that delivers the record,
-and an example that waits on a race is the shape
+Skip an example only with a written reason beside it. `capture_records` used to
+be skipped because its process-wide macro emission needed a bounded wait for a
+Python handler, and `flush_handlers()` held the GIL during that wait
+([issue 451](https://github.com/leynos/femtologging/issues/451)). The flush
+barrier now releases the GIL, so the example exercises enqueue, flush, and
+inspection directly without waiting on a delivery race. An example that waits
+on a race is the shape
 [issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
 skipped example is inert text, never compiled, so it cannot be trusted the way
 an executed one can.
@@ -622,11 +625,30 @@ shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
 `flush_handlers()` queues a barrier only when that logger has work in flight.
-The barrier drains records ahead of it on the same shard and has a two-second
-timeout; an idle logger does not consume a queue slot or wait for unrelated
-work. Dropping a logger follows the same per-logger in-flight check. The pool
-itself lives for the process lifetime. If the operating system refuses to start
-a worker, construction returns `DispatcherError` in Rust or `RuntimeError`
+The barrier drains records ahead of it on the same shard; an idle logger does
+not consume a queue slot or wait for unrelated work. The Python wrapper
+releases the GIL while the worker acknowledges the barrier and attached
+handlers flush, so Python handlers can run. Enqueueing the flush marker and
+waiting for its acknowledgement share a two-second timeout. Flushing attached
+handlers can take additional time. The method returns `True` only when the
+worker acknowledges the marker in time and every handler flush succeeds; it
+returns `False` if the marker cannot be enqueued or acknowledged in time, or a
+handler flush fails.
+
+The Rust `log::Log::flush` bridge snapshots logger references under the
+`MANAGER` read guard, releases the guard, then detaches each logger's blocking
+flush. This avoids a lock cycle: a Python manager writer can hold the GIL while
+waiting for the write lock, while the detached flush waits for a Python
+callback to acquire the GIL. The bridge ignores each logger's boolean result
+because `log::Log::flush` returns `()`.
+
+Builds with `python,test-util` also expose `wait_for_flush_entry_for_test()`,
+`drain_flush_signals_for_test()`, and `cancel_flush_wait_for_test()` for
+bounded regression-test coordination. Normal `python` builds omit these hooks.
+
+Dropping a logger follows the same per-logger in-flight check. The pool itself
+lives for the process lifetime. If the operating system refuses to start a
+worker, construction returns `DispatcherError` in Rust or `RuntimeError`
 through Python. The pool is not marked failed, so a later construction retries.
 
 The production pool is outside the Loom model. Each Loom run owns and stops its
@@ -712,6 +734,26 @@ handler-kind, and outcome fields; filter-chain events also include elapsed
 microseconds. Record payloads and context values are never included. They target
 `femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
 from recursively logging its own instrumentation.
+
+### Flush observability
+
+Every `FemtoLogger::flush_handlers()` call records one bounded outcome and one
+duration in process-wide, cumulative counters. The metric names are:
+
+| Metric                               | Type      | Meaning                                                                                                                                               |
+| ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `femtologging.flush.total{outcome}`  | counter   | Flush attempts by outcome: `success`, `ack_timeout`, `channel_closed`, or `handler_failure`.                                                          |
+| `femtologging.flush.duration_us`     | histogram | Flush duration in microseconds, with cumulative buckets at 100, 500, 1,000, 5,000, 10,000, 50,000, 100,000, and 1,000,000 µs plus an overflow bucket. |
+| `femtologging.flush.bridge_failures` | counter   | Logger flushes that returned `false` while `log::Log::flush` swept the registered loggers.                                                            |
+
+With `tracing-compat` enabled, each flush also emits a `logger_flush` span
+targeting `femtologging::internal`. The span carries
+`operation = "logger_flush"` and records `flush_outcome` and `elapsed_us`; the
+outcome values match the counter labels. Acknowledgement timeouts, handler
+failures, and bridge failures also emit rate-limited warnings (at most one per
+five seconds per boundary) that report only a count. Neither the span nor the
+warnings include record payloads or logger names, because both are unbounded
+user data.
 
 ### Python-facing `flush()` and `close()` waits
 

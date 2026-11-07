@@ -35,6 +35,8 @@ mod handle_expect;
 #[cfg(loom)]
 mod loom_file_flush;
 #[cfg(loom)]
+mod loom_flush;
+#[cfg(loom)]
 mod loom_push;
 #[cfg(loom)]
 mod loom_shutdown_completion;

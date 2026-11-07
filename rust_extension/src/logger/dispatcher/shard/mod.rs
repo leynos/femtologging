@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use crate::logger::QueuedRecord;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
-use crate::sync::{Sender, bounded, recv_timeout};
+use crate::sync::{RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout};
 
 pub(crate) use budget::LoggerBudget;
 use budget::{Permit, Permits};
@@ -70,6 +70,22 @@ enum Job {
     /// has no owner and its worker lives until the process ends.
     #[cfg(loom)]
     Stop,
+}
+
+/// How a barrier wait ended.
+///
+/// A caller reports the distinction rather than a bare failure: a closed
+/// channel means the shard is gone for good, while a timed-out barrier means
+/// the worker is still alive but did not finish the work ahead in time. The two
+/// need different diagnoses, so the flush path records them separately.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DrainOutcome {
+    /// The worker handled every queued job ahead of the barrier.
+    Drained,
+    /// The shard's channel is closed, so no barrier can ever be answered.
+    QueueClosed,
+    /// The worker did not acknowledge the barrier within [`BARRIER_TIMEOUT`].
+    TimedOut,
 }
 
 /// One shard's backlog, and the permits bounding what it holds.
@@ -219,18 +235,47 @@ impl Shard {
     /// barrier and hearing its answer are two halves of one wait, and a
     /// caller that was promised a two-second drain would otherwise block for
     /// four when the queue is full and the worker is slow.
+    ///
+    /// Only the non-Loom shutdown path and its unit tests ask the yes-or-no
+    /// question; the flush path needs the cause, so a Loom build would
+    /// otherwise carry this method unused.
+    #[cfg(not(loom))]
     pub(crate) fn wait_for_drain(&self) -> bool {
+        matches!(self.wait_for_drain_outcome(), DrainOutcome::Drained)
+    }
+
+    /// Wait for the shard to finish the work queued ahead of this call,
+    /// reporting *why* the wait ended.
+    ///
+    /// `wait_for_drain` answers only success or failure, which is all a
+    /// barrier's callers need to decide whether to keep waiting. The flush path
+    /// also counts its failures by cause, so it needs the close-or-timeout
+    /// distinction the channel error variants already carry.
+    ///
+    /// The two waits share one deadline, exactly as `wait_for_drain`
+    /// documents: queueing the barrier and hearing its answer are two halves of
+    /// a single [`BARRIER_TIMEOUT`] budget.
+    pub(crate) fn wait_for_drain_outcome(&self) -> DrainOutcome {
         let deadline = Instant::now() + BARRIER_TIMEOUT;
         let (ack, acked) = bounded::<()>(1);
-        if self
+        match self
             .queue
             .send_timeout(Job::Barrier { ack }, BARRIER_TIMEOUT)
-            .is_err()
         {
-            return false;
+            Ok(()) => {}
+            Err(SendTimeoutError::Disconnected(_)) => return DrainOutcome::QueueClosed,
+            Err(SendTimeoutError::Timeout(_)) => return DrainOutcome::TimedOut,
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
-        recv_timeout(&acked, remaining).is_ok()
+        match recv_timeout(&acked, remaining) {
+            Ok(()) => DrainOutcome::Drained,
+            // The acknowledgement channel can only disconnect when its sender
+            // is dropped without answering, and the worker owns that sender
+            // for as long as it lives. A disconnect therefore means the worker
+            // is gone, not that it was slow.
+            Err(RecvTimeoutError::Disconnected) => DrainOutcome::QueueClosed,
+            Err(RecvTimeoutError::Timeout) => DrainOutcome::TimedOut,
+        }
     }
 
     /// Finish the queued work and join the worker, which only a Loom run has.

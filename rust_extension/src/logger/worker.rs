@@ -15,6 +15,8 @@
 
 #[cfg(feature = "python")]
 use super::context_snapshot::{ContextSnapshotProvider, ContextVarsSnapshotProvider};
+#[cfg(all(feature = "python", feature = "test-util"))]
+use super::flush_test::FlushTestHooks;
 use crate::formatter::{DefaultFormatter, SharedFormatter};
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::RwLock;
@@ -292,6 +294,8 @@ impl FemtoLogger {
         let dispatch = DispatchState::new(shard);
         #[cfg(loom)]
         let budget = shard.budget();
+        #[cfg(all(feature = "python", feature = "test-util"))]
+        let flush_test_hooks = FlushTestHooks::new();
         Self {
             name,
             parent,
@@ -319,6 +323,8 @@ impl FemtoLogger {
             shard,
             #[cfg(loom)]
             budget,
+            #[cfg(all(feature = "python", feature = "test-util"))]
+            flush_test_hooks,
         }
     }
 }

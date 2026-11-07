@@ -1,0 +1,134 @@
+"""Flush behaviour for handlers attached to :class:`FemtoLogger`.
+
+Covers both halves of ``logger.flush_handlers()``: records queued by the logger
+must reach its handlers before the flush is reported, and the flush result must
+follow Python's convention that a handler reports failure by raising rather
+than by returning a value.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from femtologging import FemtoLogger
+from tests.logger_support import (
+    FLUSH_TEST_HOOKS_AVAILABLE,
+    CollectingHandler,
+    HandlerFlushGate,
+    RecordCollectingHandler,
+    handler_payloads,
+)
+
+
+@pytest.mark.parametrize(
+    "handler_type",
+    [RecordCollectingHandler, CollectingHandler],
+    ids=["handle_record", "legacy_handle"],
+)
+def test_flush_handlers_releases_gil_for_python_handlers(
+    handler_type: type[RecordCollectingHandler] | type[CollectingHandler],
+) -> None:
+    """Flush immediately delivers records to either Python handler protocol."""
+    if not FLUSH_TEST_HOOKS_AVAILABLE:
+        pytest.skip("flush synchronization regression requires the test-util feature")
+
+    logger_name = "python.handlers"
+    logger = FemtoLogger(logger_name)
+    handler = handler_type()
+    messages = ["first", "second", "third"]
+    expected_payloads = [(logger_name, "INFO", message) for message in messages]
+
+    try:
+        with HandlerFlushGate(handler, logger):
+            logger.add_handler(handler)
+            for message in messages:
+                logger.info(message)
+
+            # Enqueue, then flush before inspecting; polling first masks the defect.
+            assert logger.flush_handlers(), "logger worker did not flush"
+            payloads = handler_payloads(handler)
+            assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
+    finally:
+        logger.remove_handler(handler)
+
+
+class _RecordingFlushHandler(CollectingHandler):
+    """Base handler that records whether ``flush()`` was called."""
+
+    def __init__(self) -> None:
+        """Initialize the record buffer and the flush counter."""
+        super().__init__()
+        self.flush_calls = 0
+
+
+class _FlushReturningNoneHandler(_RecordingFlushHandler):
+    """Handler whose ``flush()`` returns ``None``, as Python handlers do."""
+
+    def flush(self) -> None:
+        """Succeed silently, matching ``logging.Handler.flush``."""
+        self.flush_calls += 1
+
+
+class _FlushRaisingHandler(_RecordingFlushHandler):
+    """Handler whose ``flush()`` reports failure by raising."""
+
+    def flush(self) -> None:
+        """Fail the way a broken Python handler would."""
+        self.flush_calls += 1
+        message = "flush exploded"
+        raise RuntimeError(message)
+
+
+class _FlushReturningFalseHandler(_RecordingFlushHandler):
+    """Handler that reports failure through a falsy return value."""
+
+    def flush(self) -> bool:
+        """Refuse the flush without raising."""
+        self.flush_calls += 1
+        return False
+
+
+def test_python_handler_flush_returning_none_reports_success() -> None:
+    """A ``None`` return means the handler flushed without complaint.
+
+    ``logging.Handler.flush`` and ``io.IOBase.flush`` both return ``None`` on
+    success, so treating a falsy return as failure would report a broken flush
+    for every well-behaved Python handler.
+    """
+    logger = FemtoLogger("flush.none")
+    handler = _FlushReturningNoneHandler()
+
+    try:
+        logger.add_handler(handler)
+        assert logger.flush_handlers(), "a None-returning flush must succeed"
+    finally:
+        logger.remove_handler(handler)
+
+    assert handler.flush_calls == 1, "the handler's flush was not invoked"
+
+
+@pytest.mark.parametrize(
+    "handler_type",
+    [
+        pytest.param(_FlushRaisingHandler, id="raises"),
+        pytest.param(_FlushReturningFalseHandler, id="returns-false"),
+    ],
+)
+def test_python_handler_flush_failure_reports_failure(
+    handler_type: type[_RecordingFlushHandler],
+) -> None:
+    """Either failure style makes the logger's flush report failure.
+
+    A handler may raise, as Python's flush protocol expects, or return a
+    falsy value of its own accord. Both are failures the logger must report.
+    """
+    logger = FemtoLogger(f"flush.{handler_type.__name__}")
+    handler = handler_type()
+
+    try:
+        logger.add_handler(handler)
+        assert not logger.flush_handlers(), "a failing flush must report failure"
+    finally:
+        logger.remove_handler(handler)
+
+    assert handler.flush_calls == 1, "the handler's flush was not invoked"

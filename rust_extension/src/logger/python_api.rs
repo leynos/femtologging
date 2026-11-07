@@ -155,11 +155,13 @@ impl FemtoLogger {
         self.disabled_dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Flush all handlers attached to this logger, releasing the GIL while waiting.
+    /// Flush all handlers attached to this logger, releasing the GIL while the
+    /// worker and handlers finish.
     ///
-    /// First waits up to 2 seconds for the logger's dispatch shard to drain
-    /// the records already queued for it, then calls ``flush()`` on every
-    /// attached handler (each handler applies its own timeout).
+    /// Enqueueing the flush marker and waiting for its acknowledgement share a
+    /// two-second timeout. Flushing attached handlers can take additional time.
+    /// The GIL is released while waiting for the worker and flushing handlers
+    /// so Python callbacks can run.
     ///
     /// Returns
     /// -------
