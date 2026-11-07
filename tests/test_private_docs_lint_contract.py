@@ -77,6 +77,9 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
     environment["CARGO_TARGET_DIR"] = str(
         _REPO_ROOT / "target" / "private-docs-policy-clippy"
     )
+    # The fixture has no dependencies, so registry access only adds cache
+    # contention with unrelated Cargo work on the shared host.
+    environment["CARGO_NET_OFFLINE"] = "true"
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed Make target and manifest arguments
         [
             make_executable,

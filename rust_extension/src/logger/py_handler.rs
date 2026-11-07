@@ -312,6 +312,10 @@ impl FemtoHandlerTrait for PyHandler {
         true
     }
 
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -380,6 +384,10 @@ impl FemtoHandlerTrait for PyHandler {
                 .map(|_| ())
                 .map_err(|err| map_py_err(py, err, "handle"))
         })
+    }
+
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
     }
 
     fn is_python_backed(&self) -> bool {

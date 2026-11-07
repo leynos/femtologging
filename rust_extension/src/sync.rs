@@ -26,7 +26,9 @@
 
 use std::time::Duration;
 
-pub(crate) use crossbeam_channel::{RecvError, RecvTimeoutError, SendTimeoutError, TrySendError};
+pub(crate) use crossbeam_channel::{
+    RecvError, RecvTimeoutError, SendTimeoutError, TryRecvError, TrySendError,
+};
 
 #[cfg(not(loom))]
 pub(crate) use crossbeam_channel::{Receiver, Sender, bounded};

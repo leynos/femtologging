@@ -1,4 +1,21 @@
-"""BDD steps for scoped context propagated through an ancestor handler."""
+"""BDD steps for scoped context propagated through an ancestor handler.
+
+Examples
+--------
+A root handler captures empty and scoped context from a child logger:
+
+>>> from femtologging import reset_manager
+>>> try:
+...     collector = given_root_record_collector()
+...     payload = emit_get_logger_messages_with_context(
+...         collector, "doctest_context", "correlation_id", "abc123"
+...     )
+...     assert payload["value"] == [{}, {"correlation_id": "abc123"}]
+... finally:
+...     reset_manager()
+>>> payload["value"]
+[{}, {'correlation_id': 'abc123'}]
+"""
 
 from __future__ import annotations
 

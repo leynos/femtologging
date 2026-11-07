@@ -48,6 +48,8 @@ pub struct RateLimitedWarner {
     last_warn: AtomicU64,
     /// Number of dropped records waiting for the next warning emission.
     dropped: AtomicU64,
+    /// Due warning counts whose flush command could not enter a worker queue.
+    retry_drops: AtomicU64,
     /// Minimum interval between warning callbacks, stored in milliseconds.
     interval_ms: u64,
     /// Shared clock seam used by production code and deterministic tests.
@@ -66,6 +68,7 @@ impl RateLimitedWarner {
         Self {
             last_warn: AtomicU64::new(u64::MAX),
             dropped: AtomicU64::new(0),
+            retry_drops: AtomicU64::new(0),
             interval_ms,
             clock,
         }
@@ -86,15 +89,39 @@ impl RateLimitedWarner {
     /// failures would report one per interval however many it lost. The count
     /// includes the record whose call triggers the warning.
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
+        if let Some(count) = self.take_due() {
+            warn(count);
+        }
+    }
+
+    /// Take a due warning count without invoking its callback.
+    ///
+    /// Flush callers move the count onto the existing handler worker so a
+    /// synchronous `log` callback cannot hold the caller beyond its deadline.
+    pub(crate) fn take_due(&self) -> Option<u64> {
+        let retry_count = self.retry_drops.swap(0, Ordering::Relaxed);
+        if retry_count > 0 {
+            self.last_warn
+                .store(self.clock.now_millis(), Ordering::Relaxed);
+            return Some(retry_count);
+        }
+
         let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
         if prev == u64::MAX || now.saturating_sub(prev) >= self.interval_ms {
             let count = self.dropped.swap(0, Ordering::Relaxed);
-            if count > 0 {
-                warn(count);
-            }
             self.last_warn.store(now, Ordering::Relaxed);
+            (count > 0).then_some(count)
+        } else {
+            // Keep suppressed drops pending so the next warning accounts for
+            // the whole interval, including calls that arrived during it.
+            None
         }
+    }
+
+    /// Retry a due warning when a handler could not enqueue its flush.
+    pub(crate) fn restore_drops(&self, count: u64) {
+        self.retry_drops.fetch_add(count, Ordering::Relaxed);
     }
 
     /// Immediately warn about any dropped records.

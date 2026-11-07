@@ -21,7 +21,7 @@ use crate::handlers::{
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 
-use super::core::TimedFileRotationStrategy;
+use super::rotation_strategy::TimedFileRotationStrategy;
 use super::schedule::TimedRotationSchedule;
 use super::test_helpers::utc_datetime;
 
