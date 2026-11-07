@@ -37,6 +37,6 @@ def then_file_config_raises(config_error: ValueError) -> None:
     # The @when step already asserted the exception type via pytest.raises; this
     # step pins the operator-facing message so the diagnosis stays actionable.
     assert "missing class" in str(config_error), (
-        "fileConfig must report which handler entry is missing its `class` key, "
+        "fileConfig must report that a handler entry is missing its `class` key, "
         f"got: {config_error!r}"
     )
