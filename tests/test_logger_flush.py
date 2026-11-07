@@ -107,28 +107,27 @@ def test_python_handler_flush_returning_none_reports_success() -> None:
     assert handler.flush_calls == 1, "the handler's flush was not invoked"
 
 
-def test_python_handler_flush_that_raises_reports_failure() -> None:
-    """A raising ``flush()`` makes the logger's flush report failure."""
-    logger = FemtoLogger("flush.raises")
-    handler = _FlushRaisingHandler()
+@pytest.mark.parametrize(
+    "handler_type",
+    [
+        pytest.param(_FlushRaisingHandler, id="raises"),
+        pytest.param(_FlushReturningFalseHandler, id="returns-false"),
+    ],
+)
+def test_python_handler_flush_failure_reports_failure(
+    handler_type: type[_RecordingFlushHandler],
+) -> None:
+    """Either failure style makes the logger's flush report failure.
+
+    A handler may raise, as Python's flush protocol expects, or return a
+    falsy value of its own accord. Both are failures the logger must report.
+    """
+    logger = FemtoLogger(f"flush.{handler_type.__name__}")
+    handler = handler_type()
 
     try:
         logger.add_handler(handler)
-        assert not logger.flush_handlers(), "a raising flush must report failure"
-    finally:
-        logger.remove_handler(handler)
-
-    assert handler.flush_calls == 1, "the handler's flush was not invoked"
-
-
-def test_python_handler_flush_returning_false_reports_failure() -> None:
-    """A handler can still report failure by returning a falsy value."""
-    logger = FemtoLogger("flush.false")
-    handler = _FlushReturningFalseHandler()
-
-    try:
-        logger.add_handler(handler)
-        assert not logger.flush_handlers(), "a False-returning flush must fail"
+        assert not logger.flush_handlers(), "a failing flush must report failure"
     finally:
         logger.remove_handler(handler)
 
