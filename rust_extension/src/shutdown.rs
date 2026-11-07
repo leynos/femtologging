@@ -10,8 +10,19 @@
 //! [`ShutdownCompletion`] broadcasts the one completion to every registered
 //! waiter, and remembers it, so a closer that arrives after the worker has
 //! stopped returns immediately instead of waiting out its timeout.
+//!
+//! Completion alone says the worker stopped, not that it stopped cleanly. A
+//! closer that no longer owns the join handle cannot call `join`, so
+//! [`TerminalStatus`] records the verdict from inside the worker's own exit
+//! path, where a panic is still observable.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::sync::{Mutex, Receiver, Sender, bounded, recv_timeout};
 
@@ -122,23 +133,116 @@ impl ShutdownCompletion {
     }
 }
 
+/// How a worker thread left its closure.
+///
+/// A closer that still owns the join handle learns this from `join`, but a
+/// closer that does not cannot: once the first closer has taken the handle,
+/// every later one only ever sees the completion signal. Recording the verdict
+/// from inside the worker lets those closers report the same answer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WorkerTerminal {
+    /// No verdict was recorded: the worker has not exited, or it left without
+    /// running the guard at all (for example under `panic = "abort"`).
+    #[default]
+    Unknown,
+    /// The worker's closure returned normally.
+    Clean,
+    /// The worker's closure unwound with a panic.
+    Panicked,
+}
+
+impl WorkerTerminal {
+    /// Encode the verdict for storage in a [`TerminalStatus`].
+    fn code(self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::Clean => 1,
+            Self::Panicked => 2,
+        }
+    }
+
+    /// Decode a stored verdict.
+    fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Clean,
+            2 => Self::Panicked,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// The terminal verdict for one worker, shared by every closer.
+///
+/// Written by the worker as it unwinds or returns, and read by closers that no
+/// longer hold the join handle. `Release`/`Acquire` pairs the verdict with the
+/// completion signal that follows it, so a closer woken by completion never
+/// misses the store.
+pub(crate) struct TerminalStatus(AtomicU8);
+
+impl TerminalStatus {
+    /// Create a status with no verdict recorded yet.
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self(AtomicU8::new(WorkerTerminal::Unknown.code())))
+    }
+
+    /// Record how the worker left; later writes overwrite earlier ones.
+    pub(crate) fn record(&self, terminal: WorkerTerminal) {
+        self.0.store(terminal.code(), Ordering::Release);
+    }
+
+    /// Read the recorded verdict, or [`WorkerTerminal::Unknown`] if none.
+    pub(crate) fn get(&self) -> WorkerTerminal {
+        WorkerTerminal::from_code(self.0.load(Ordering::Acquire))
+    }
+}
+
 /// Signals a [`ShutdownCompletion`] when dropped, including while unwinding.
 ///
 /// A worker that panics never reaches its closing statements. Without a guard,
 /// every closer would wait out its whole timeout and report a worker that "did
 /// not shut down" while the join handle still pointed at a dead thread.
-pub(crate) struct CompleteOnDrop(Arc<ShutdownCompletion>);
+pub(crate) struct CompleteOnDrop {
+    /// Completion broadcast signalled as the worker leaves.
+    completion: Arc<ShutdownCompletion>,
+    /// Optional shared verdict recorded before the completion is signalled.
+    terminal: Option<Arc<TerminalStatus>>,
+}
 
 impl CompleteOnDrop {
     /// Arms a guard that completes `completion` however the worker leaves.
     pub(crate) fn new(completion: Arc<ShutdownCompletion>) -> Self {
-        Self(completion)
+        Self {
+            completion,
+            terminal: None,
+        }
+    }
+
+    /// Arms a guard that also records how the worker left.
+    ///
+    /// The verdict is written before the completion signal, so a closer woken
+    /// by completion always finds a verdict rather than racing the store.
+    pub(crate) fn with_terminal(
+        completion: Arc<ShutdownCompletion>,
+        terminal: Arc<TerminalStatus>,
+    ) -> Self {
+        Self {
+            completion,
+            terminal: Some(terminal),
+        }
     }
 }
 
 impl Drop for CompleteOnDrop {
     fn drop(&mut self) {
-        self.0.complete();
+        if let Some(terminal) = &self.terminal {
+            let verdict = if std::thread::panicking() {
+                WorkerTerminal::Panicked
+            } else {
+                WorkerTerminal::Clean
+            };
+            terminal.record(verdict);
+        }
+        self.completion.complete();
     }
 }
 

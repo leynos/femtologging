@@ -4,6 +4,7 @@
 //! configurable capacity, flush interval, overflow policy, and rotation thresholds.
 
 use std::any::Any;
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 
@@ -11,7 +12,11 @@ use super::{FemtoRotatingFileHandler as CoreRotatingFileHandler, RotationConfig,
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
+    handlers::file::{
+        self, DEFAULT_CHANNEL_CAPACITY, EnqueueFailure, FlushOutcome, HandlerConfig,
+        WorkerShutdown, classify_enqueue,
+    },
+    handlers::telemetry::{WaitContext, WaitSite, WaitTimer},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -226,23 +231,41 @@ impl PyRotatingFileHandler {
 
     /// Send one record to the rotating file handler.
     ///
+    /// The wait for queue capacity runs with the interpreter lock released, so
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
+    /// the "Concurrency" section of the user guide for the full contract.
+    ///
     /// # Examples
     ///
     /// ```ignore
     /// handler.py_handle("service", "INFO", "started")?;
     /// ```
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        // Parsing raises `ValueError`, so it must happen while the lock is
+        // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
-        self.inner
-            .handle(FemtoLogRecord::new(logger, parsed_level, message))
+        let record = FemtoLogRecord::new(logger, parsed_level, message);
+        // Rotation happens on the worker, so the producer only enqueues and
+        // the closure touches no Python object.
+        let timer = WaitTimer::start();
+        let result = py.detach(|| self.inner.inner.enqueue(record));
+        self.inner.inner.record_wait(
+            timer,
+            WaitSite::new("handler_handle", "rotating"),
+            classify_enqueue(&result),
+        );
+        result
+            .map_err(EnqueueFailure::into_handler_error)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 
     /// Flush queued log records to disk without closing the handler or
     /// triggering a rotation.
     ///
-    /// Uses a fixed 1-second timeout.
+    /// Uses a fixed 1-second timeout, and waits with the interpreter lock
+    /// released.
     ///
     /// Returns
     /// -------
@@ -265,7 +288,30 @@ impl PyRotatingFileHandler {
     /// run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.inner.flush())
+        let timer = WaitTimer::start();
+        let outcome = py.detach(|| self.inner.inner.flush_outcome());
+        self.inner.inner.record_wait(
+            timer,
+            WaitSite::new("handler_flush", "rotating"),
+            outcome.into(),
+        );
+        matches!(outcome, FlushOutcome::Acknowledged)
+    }
+
+    /// Return bounded counters for the Python-facing `handle()`, `flush()`,
+    /// and `close()` waits.
+    ///
+    /// The key set is fixed and never includes logger names, paths, messages,
+    /// or raw timeout values.
+    ///
+    /// Examples
+    /// --------
+    /// >>> diagnostics = handler.wait_diagnostics()
+    /// >>> diagnostics["close_completed"] >= 0
+    /// True
+    #[pyo3(name = "wait_diagnostics")]
+    fn py_wait_diagnostics(&self) -> std::collections::BTreeMap<&'static str, u64> {
+        self.inner.inner.diagnostics().snapshot().to_map()
     }
 
     /// Close the handler and stop its file worker.
@@ -273,7 +319,9 @@ impl PyRotatingFileHandler {
     /// The GIL is released while waiting so a Python callable formatter can
     /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
     /// close can start while another thread still holds the handler in a
-    /// detached flush call.
+    /// detached flush call. Closing does not cancel a `handle` call that is
+    /// already waiting for queue capacity; that call returns only when the
+    /// worker makes room or the channel closes.
     ///
     /// # Examples
     ///
@@ -282,11 +330,26 @@ impl PyRotatingFileHandler {
     /// ```
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let shutdown = {
+        let timer = WaitTimer::start();
+        let (shutdown, diagnostics, policy_bucket) = {
             let handler = slf.borrow(py);
-            handler.take_shutdown()
+            let file_handler = &handler.inner.inner;
+            (
+                handler.take_shutdown(),
+                Arc::clone(file_handler.diagnostics()),
+                file_handler.policy_bucket(),
+            )
         };
-        py.detach(move || shutdown.wait());
+        let outcome = py.detach(move || shutdown.wait());
+        timer.finish(
+            &diagnostics,
+            WaitContext {
+                operation: "handler_close",
+                handler_kind: "rotating",
+                policy_bucket,
+            },
+            outcome.into(),
+        );
     }
 }
 

@@ -1234,16 +1234,21 @@ while maximum refresh reads the index without taking the manager lock.
 
 Only `log()` and `flush()` need Python access. `log()` attaches to Python after
 the threshold check, resolves the target, checks the current level again, and
-then queues the record. File and stream handler `flush()` and `close()` calls
-detach their waits from the GIL. The `close()` bindings take only a shared PyO3
-object borrow: they extract owned shutdown state, release that borrow, and then
-detach, so another Python thread can use the handler while the worker exits.
-Because the shutdown state is shared, concurrent `close()` calls and a
-`close()` running beside a detached `flush()` both wait on the same completion
-broadcast; a closer that arrives after the worker has stopped returns at once,
-and a repeated close stays safe. Existing handler-specific timeouts remain
-authoritative, so a worker that never signals completion is reported and
-skipped rather than waited on indefinitely.
+then queues the record. File handler `handle()`, `flush()`, and `close()`
+calls, and stream handler `flush()` and `close()` calls, detach their waits
+from the GIL. The `close()` bindings take only a shared PyO3 object borrow:
+they extract owned shutdown state, release that borrow, and then detach, so
+another Python thread can use the handler while the worker exits. Because the
+shutdown state is shared, concurrent `close()` calls and a `close()` running
+beside a detached `flush()` both wait on the same completion broadcast; a
+closer that arrives after the worker has stopped returns at once, and a
+repeated close stays safe. The two Python-facing waits carry their own fixed
+deadlines rather than reusing the handler's write or overflow timeout.
+`flush()` gives the enqueue and the acknowledgement one second in total, and
+`close()` waits at most one second for the shared completion signal. Neither
+deadline depends on the overflow policy. A `close()` whose one-second deadline
+expires logs a warning and returns while the worker may still be running, so a
+returned `close()` is not proof that the worker stopped.
 
 These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
 uses no Python access and has no Python exception path. The expected failure
@@ -1269,15 +1274,25 @@ operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 `log::log()` calls from Rust do not contend with handler I/O.
 
 **Python-facing lifecycle waits:** The Python bindings for the stream, file,
-rotating-file, and timed-rotating-file handlers detach from the GIL while they
-wait for their worker in `flush()` and `close()`. `close()` copies the shared
-shutdown state under a scoped borrow, and that borrow ends before the detached
-wait. This keeps caller-side lifecycle waits distinct from worker-side I/O and
-lets both a queued Python callable formatter and a callback that re-enters the
-handler in its closed state make progress. Since the state is shared rather
-than taken exclusively, concurrent closes and a close beside a detached flush
-all observe the same completion, while the handler's own timeout still bounds
-each wait.
+rotating-file, and timed-rotating-file handlers detach from the GIL for every
+wait that can block on their worker. `handle()` parses the level and builds the
+record while the interpreter lock is held, then detaches around the enqueue, so
+a `"block"` or `"timeout:N"` policy parks only the calling thread; the enqueue
+result becomes a Python exception after the detached region returns. The file,
+rotating-file, and timed-rotating-file bindings share that shape, mapping the
+failure to `RuntimeError` and, for the timed-rotating binding, `ValueError`.
+The stream handler enqueues with `try_send`, which never blocks, so only its
+`flush()` and `close()` need to detach. `flush()` detaches around the
+acknowledgement wait, and `close()` copies the shared shutdown state under a
+scoped borrow that ends before the detached wait. This keeps caller-side
+lifecycle waits distinct from worker-side I/O and lets both a queued Python
+callable formatter and a callback that re-enters the handler in its closed
+state make progress. Because the shutdown state is shared rather than taken
+exclusively, a close can start while another thread is blocked inside
+`handle()` or `flush()`; concurrent closes and a close beside a detached flush
+all observe the same completion, while each wait keeps its own fixed bound: one
+second for the flush acknowledgement and one second for the close completion,
+whatever the configured overflow policy.
 
 **flush() Behaviour:**
 

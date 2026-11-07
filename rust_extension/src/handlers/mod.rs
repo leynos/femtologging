@@ -22,6 +22,7 @@ pub mod rotating;
 pub mod rotating_builder;
 pub mod socket_builder;
 pub mod stream_builder;
+pub(crate) mod telemetry;
 #[cfg(test)]
 pub mod test_helpers;
 pub mod timed_rotating;

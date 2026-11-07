@@ -6,6 +6,7 @@
 use super::test_support::{impl_unsupported_seek, install_test_logger, take_logged_messages};
 use super::*;
 use crate::handler::HandlerError;
+use crate::log_record::FemtoLogRecord;
 use log::Level;
 use rstest::rstest;
 use serial_test::serial;

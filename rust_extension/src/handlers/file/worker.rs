@@ -14,7 +14,7 @@ use std::{
 use log::{error, warn};
 
 use super::config::HandlerConfig;
-use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
+use crate::shutdown::{CompleteOnDrop, ShutdownCompletion, TerminalStatus};
 use crate::sync::{JoinHandle, Receiver, RecvError, Sender, bounded, spawn};
 use crate::{formatter::FemtoFormatter, log_record::FemtoLogRecord};
 
@@ -325,13 +325,20 @@ where
 /// - Command sender for enqueueing records and flush requests.
 /// - Completion broadcast signalled when the worker thread exits, shared with
 ///   every closer rather than consumed by one.
+/// - Terminal verdict recorded by the worker as it leaves, so a closer that
+///   no longer owns the join handle still learns whether the exit was clean.
 /// - Join handle for the worker thread.
 pub fn spawn_worker<W, F, R>(
     writer: W,
     formatter: F,
     config: WorkerConfig,
     rotation: R,
-) -> (Sender<FileCommand>, Arc<ShutdownCompletion>, JoinHandle<()>)
+) -> (
+    Sender<FileCommand>,
+    Arc<ShutdownCompletion>,
+    Arc<TerminalStatus>,
+    JoinHandle<()>,
+)
 where
     W: Write + Seek + Send + 'static,
     F: FemtoFormatter + Send + 'static,
@@ -345,12 +352,16 @@ where
     } = config;
     let (tx, rx) = bounded(capacity);
     let completion = ShutdownCompletion::new();
+    let terminal = TerminalStatus::new();
     let worker_completion = Arc::clone(&completion);
+    let worker_terminal = Arc::clone(&terminal);
     let handle = spawn(move || {
         // Declared first so it drops last: the worker state below is torn down
         // before closers are told the worker has stopped, and a panic in that
         // state still signals them instead of leaving every closer to time out.
-        let _signal = CompleteOnDrop::new(worker_completion);
+        // The terminal verdict is recorded from this frame, where a panic is
+        // still visible, so a closer without the join handle can report it.
+        let _signal = CompleteOnDrop::with_terminal(worker_completion, worker_terminal);
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -369,7 +380,7 @@ where
         }
         state.final_flush();
     });
-    (tx, completion, handle)
+    (tx, completion, terminal, handle)
 }
 
 #[cfg(test)]

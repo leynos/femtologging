@@ -6,11 +6,14 @@
 use chrono::NaiveTime;
 use pyo3::{
     Bound,
-    exceptions::{PyIOError, PyTypeError, PyValueError},
+    exceptions::{PyIOError, PyValueError},
     prelude::*,
 };
 use std::any::Any;
+use std::sync::Arc;
 
+use super::python_time::extract_naive_time;
+pub(crate) use super::python_time::extract_naive_time_from_py_time;
 use super::{
     FemtoTimedRotatingFileHandler as CoreTimedRotatingFileHandler, TimedRotationConfig,
     schedule::{TimedRotationSchedule, TimedRotationWhen},
@@ -21,10 +24,13 @@ use super::clock::{clear_injected_times_for_test, set_injected_times_for_test};
 use crate::{
     formatter::DefaultFormatter,
     handler::FemtoHandlerTrait,
-    handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
+    handlers::file::{
+        self, DEFAULT_CHANNEL_CAPACITY, EnqueueFailure, FlushOutcome, HandlerConfig,
+        WorkerShutdown, classify_enqueue,
+    },
+    handlers::telemetry::{WaitContext, WaitSite, WaitTimer},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
-    python::fq_py_type,
 };
 
 /// Python wrapper for the timed rotating file handler core type.
@@ -259,21 +265,55 @@ impl PyTimedRotatingFileHandler {
 
     /// Parses the level and dispatches a record through the worker queue,
     /// mapping delivery failures to a Python value error.
+    ///
+    /// The wait for queue capacity runs with the interpreter lock released, so
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
+    /// the "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+        // Parsing raises `ValueError`, so it must happen while the lock is
+        // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
-        self.inner
-            .handle(FemtoLogRecord::new(logger, parsed_level, message))
+        let record = FemtoLogRecord::new(logger, parsed_level, message);
+        // Rotation happens on the worker, so the producer only enqueues and
+        // the closure touches no Python object.
+        let timer = WaitTimer::start();
+        let result = py.detach(|| self.inner.inner.enqueue(record));
+        self.inner.inner.record_wait(
+            timer,
+            WaitSite::new("handler_handle", "timed_rotating"),
+            classify_enqueue(&result),
+        );
+        result
+            .map_err(EnqueueFailure::into_handler_error)
             .map_err(|err| PyValueError::new_err(format!("Handler error: {err}")))
     }
 
     /// Requests a worker flush and returns whether it acknowledged in time.
     ///
-    /// The GIL is released while waiting so a Python callable formatter can
-    /// run on the worker thread.
+    /// Uses a fixed 1-second timeout, and waits with the interpreter lock
+    /// released so a Python callable formatter can run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.inner.flush())
+        let timer = WaitTimer::start();
+        let outcome = py.detach(|| self.inner.inner.flush_outcome());
+        self.inner.inner.record_wait(
+            timer,
+            WaitSite::new("handler_flush", "timed_rotating"),
+            outcome.into(),
+        );
+        matches!(outcome, FlushOutcome::Acknowledged)
+    }
+
+    /// Return bounded counters for the Python-facing `handle()`, `flush()`,
+    /// and `close()` waits.
+    ///
+    /// The key set is fixed and never includes logger names, paths, messages,
+    /// or raw timeout values.
+    #[pyo3(name = "wait_diagnostics")]
+    fn py_wait_diagnostics(&self) -> std::collections::BTreeMap<&'static str, u64> {
+        self.inner.inner.diagnostics().snapshot().to_map()
     }
 
     /// Closes the worker-backed handler and releases its Python-owned lifecycle
@@ -282,88 +322,31 @@ impl PyTimedRotatingFileHandler {
     /// The GIL is released while waiting so a Python callable formatter can
     /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
     /// close can start while another thread still holds the handler in a
-    /// detached flush call.
+    /// detached flush call. Closing does not cancel a `handle` call that is
+    /// already waiting for queue capacity; that call returns only when the
+    /// worker makes room or the channel closes.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let shutdown = {
+        let timer = WaitTimer::start();
+        let (shutdown, diagnostics, policy_bucket) = {
             let handler = slf.borrow(py);
-            handler.take_shutdown()
+            let file_handler = &handler.inner.inner;
+            (
+                handler.take_shutdown(),
+                Arc::clone(file_handler.diagnostics()),
+                file_handler.policy_bucket(),
+            )
         };
-        py.detach(move || shutdown.wait());
-    }
-}
-
-/// Extract a `NaiveTime` from a Python `datetime.time` object.
-///
-/// # Parameters
-///
-/// - `value`: The Python object to extract from
-/// - `arg_name`: The name of the argument (for error messages)
-/// - `allow_none`: If `true`, `None` values return `Ok(None)`; if `false`, they raise an error
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - `value` is `None` and `allow_none` is `false`
-/// - The time object has a non-None `tzinfo` (timezone-aware)
-/// - The extracted hour/minute/second/microsecond values are invalid
-pub(crate) fn extract_naive_time_from_py_time(
-    value: &Bound<'_, PyAny>,
-    arg_name: &str,
-    allow_none: bool,
-) -> PyResult<Option<NaiveTime>> {
-    if value.is_none() {
-        if allow_none {
-            return Ok(None);
-        }
-
-        return Err(PyTypeError::new_err(format!(
-            "{arg_name} must be datetime.time or None"
-        )));
-    }
-
-    let py = value.py();
-    let time_type = py.import("datetime")?.getattr("time")?;
-    if !value.is_instance(&time_type)? {
-        return Err(PyTypeError::new_err(format!(
-            "{arg_name} must be datetime.time, got {}",
-            fq_py_type(value),
-        )));
-    }
-
-    let hour: u32 = value.getattr("hour")?.extract()?;
-    let minute: u32 = value.getattr("minute")?.extract()?;
-    let second: u32 = value.getattr("second")?.extract()?;
-    let microsecond: u32 = value.getattr("microsecond")?.extract()?;
-    let tzinfo = value.getattr("tzinfo")?;
-
-    if !tzinfo.is_none() {
-        return Err(PyValueError::new_err(format!(
-            "{arg_name} must be timezone-naive"
-        )));
-    }
-
-    NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
-        .ok_or_else(|| {
-            PyTypeError::new_err(format!(
-                "invalid {arg_name} value of type {}",
-                fq_py_type(value)
-            ))
-        })
-        .map(Some)
-}
-
-/// Converts a Python datetime.time value using the common validation helper.
-fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
-    // Local convenience wrapper for the common helper; this retains the
-    // existing `at_time`-specific error messages.
-    match extract_naive_time_from_py_time(&value, "at_time", false)? {
-        Some(time) => Ok(time),
-        // `allow_none` is false, so the helper rejects None before reaching
-        // this arm. A defensive error keeps the contract visible.
-        None => Err(PyTypeError::new_err(
-            "at_time must be datetime.time or None",
-        )),
+        let outcome = py.detach(move || shutdown.wait());
+        timer.finish(
+            &diagnostics,
+            WaitContext {
+                operation: "handler_close",
+                handler_kind: "timed_rotating",
+                policy_bucket,
+            },
+            outcome.into(),
+        );
     }
 }
 
