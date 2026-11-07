@@ -39,9 +39,11 @@ class RotatingContext:
 def rotating_context_factory(
     tmp_path: Path,
 ) -> cabc.Iterator[cabc.Callable[[int, int], RotatingContext]]:
+    """Yield a rotating handler builder and close its handlers at teardown."""
     contexts: list[RotatingContext] = []
 
     def _build(max_bytes: int, backup_count: int) -> RotatingContext:
+        """Create a size-rotating file handler and track it for teardown."""
         path = tmp_path / "rotating.log"
         handler = FemtoRotatingFileHandler(
             str(path),
@@ -63,9 +65,11 @@ def rotating_context_factory(
 def force_rotating_failure(
     request: pytest.FixtureRequest,
 ) -> cabc.Callable[[int, str], None]:
+    """Return a helper that arms a forced reopen failure, cleared after the test."""
     registered = False
 
     def _activate(count: int, reason: str) -> None:
+        """Arm the forced failure and register its cleanup on first use."""
         nonlocal registered
         _force_rotating_fresh_failure_for_test(count, reason)
         if not registered:
@@ -87,6 +91,7 @@ def given_rotating_handler(
     max_bytes: int,
     backup_count: int,
 ) -> RotatingContext:
+    """Build a rotating handler with the given max bytes and backup count."""
     return rotating_context_factory(max_bytes, backup_count)
 
 
@@ -103,6 +108,7 @@ def given_rotating_handler_forcing_reopen_failure(
     backup_count: int,
     force_rotating_failure: cabc.Callable[[int, str], None],
 ) -> RotatingContext:
+    """Arm one forced reopen failure, then build a rotating handler."""
     force_rotating_failure(1, "python scenario")
     return rotating_context_factory(max_bytes, backup_count)
 
@@ -113,11 +119,13 @@ def given_rotating_handler_forcing_reopen_failure(
 def when_log_record(
     rotating_ctx: RotatingContext, message: str, level: str, logger: str
 ) -> None:
+    """Send a record with the given level and logger to the rotating handler."""
     rotating_ctx.handler.handle(logger, level, message)
 
 
 @when("I close the rotating handler")
 def when_close_handler(rotating_ctx: RotatingContext) -> None:
+    """Close the rotating handler and mark the context as closed."""
     rotating_ctx.handler.close()
     rotating_ctx.closed = True
 
@@ -126,6 +134,7 @@ def when_close_handler(rotating_ctx: RotatingContext) -> None:
 def then_log_files_snapshot(
     rotating_ctx: RotatingContext, snapshot: SnapshotAssertion
 ) -> None:
+    """Close the handler if open, then snapshot the rotated log file contents."""
     if not rotating_ctx.closed:
         rotating_ctx.handler.close()
         rotating_ctx.closed = True

@@ -26,18 +26,22 @@ class _PipeHandler:
     """Write handled messages to the pipe shared with the parent."""
 
     def __init__(self, write_fd: int) -> None:
+        """Store the pipe's write descriptor for handled messages."""
         self.write_fd = write_fd
 
     def handle(self, logger_name: str, _level: str, message: str) -> None:
+        """Write the logger name and message to the pipe."""
         os.write(self.write_fd, f"{logger_name}:{message}\n".encode())
 
 
 class _Loggable(typ.Protocol):
     """The logger methods the child process exercises."""
 
-    def info(self, message: str) -> None: ...
+    def info(self, message: str) -> None:
+        """Log a message at INFO level."""
 
-    def flush_handlers(self) -> bool: ...
+    def flush_handlers(self) -> bool:
+        """Flush the logger's handlers and report whether that succeeded."""
 
 
 def _run_child_process(
@@ -46,6 +50,7 @@ def _run_child_process(
     read_fd: int,
     write_fd: int,
 ) -> None:
+    """Log through inherited and new loggers, then report flush results."""
     os.close(read_fd)
     try:
         # The inherited logger must rebind its state, and construction must use

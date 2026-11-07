@@ -67,6 +67,7 @@ def log_capture_context(
 
 @given("a canonical configuration example", target_fixture="config_example")
 def config_example() -> ConfigExample:
+    """Build a ConfigBuilder and a matching dictConfig schema."""
     dict_schema: dict[str, object] = {
         "version": 1,
         "handlers": {"console": {"class": "femtologging.StreamHandler"}},
@@ -92,26 +93,31 @@ def config_example() -> ConfigExample:
 
 @when("I apply the builder configuration")
 def apply_builder_configuration(config_example: ConfigExample) -> None:
+    """Apply the example's builder configuration via build_and_init."""
     config_example.builder.build_and_init()
 
 
 @when("I apply the dictConfig schema")
 def apply_dictconfig_schema(config_example: ConfigExample) -> None:
+    """Apply a deep copy of the example's dictConfig schema."""
     dictConfig(copy.deepcopy(config_example.dict_schema))
 
 
 @when("I drop the root logger from the dictConfig schema")
 def drop_root_logger(config_example: ConfigExample) -> None:
+    """Remove the root section from the example's dictConfig schema."""
     config_example.dict_schema.pop("root", None)
 
 
 @when("I reset the logging system")
 def reset_logging_when() -> None:
+    """Reset femtologging's global logger manager."""
     reset_manager()
 
 
 @when(parsers.parse('I call basicConfig with level "{level}" and stream stdout'))
 def call_basic_config(level: str) -> None:
+    """Call basicConfig at the given level, forcing a stdout stream."""
     basicConfig(level=level, stream=sys.stdout, force=True)
 
 
@@ -122,6 +128,7 @@ def log_and_capture(
     key: str,
     log_capture_context: LogCaptureContext,
 ) -> None:
+    """Log the message at level and store its captured output under key."""
     output = _log_message_and_get_output(message, level, log_capture_context)
     log_capture_context.captured_outputs[key] = output
 
@@ -131,6 +138,7 @@ def outputs_match_snapshot(
     log_capture_context: LogCaptureContext,
     snapshot: SnapshotAssertion,
 ) -> None:
+    """Assert the captured outputs match the recorded snapshot."""
     assert log_capture_context.captured_outputs == snapshot, (
         "Captured outputs must match the expected snapshot"
     )
@@ -143,12 +151,14 @@ def log_matches_snapshot(
     snapshot: SnapshotAssertion,
     log_capture_context: LogCaptureContext,
 ) -> None:
+    """Log from root and assert the output matches the recorded snapshot."""
     output = _log_message_and_get_output(message, level, log_capture_context)
     assert output == snapshot, "Root logger output must match the expected snapshot"
 
 
 @then(parsers.parse('applying the schema via dictConfig fails with "{msg}"'))
 def schema_application_fails(config_example: ConfigExample, msg: str) -> None:
+    """Assert applying the dictConfig schema raises ValueError matching msg."""
     with pytest.raises(ValueError, match=msg):
         dictConfig(copy.deepcopy(config_example.dict_schema))
 

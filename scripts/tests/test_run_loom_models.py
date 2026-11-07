@@ -56,6 +56,7 @@ def reporting(
     """
 
     def run(_command: cabc.Sequence[str]) -> tuple[int, str]:
+        """Return the canned return code and libtest output, ignoring the command."""
         return returncode, libtest_output(results)
 
     return run

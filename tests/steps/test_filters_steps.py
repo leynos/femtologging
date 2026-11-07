@@ -40,11 +40,13 @@ def reset_logger_state() -> cabc.Iterator[None]:
 
 @given("a ConfigBuilder", target_fixture="config_builder")
 def config_builder() -> ConfigBuilder:
+    """Create an empty ConfigBuilder for a filter scenario."""
     return ConfigBuilder()
 
 
 @when(parsers.parse('I add stream handler "{hid}" targeting "{target}"'))
 def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> None:
+    """Add a stderr or stdout stream handler, defaulting to stdout."""
     handler = (
         StreamHandlerBuilder.stderr()
         if target.lower() == "stderr"
@@ -55,12 +57,14 @@ def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> 
 
 @when(parsers.parse('I add level filter "{fid}" with max level "{level}"'))
 def add_level_filter(config_builder: ConfigBuilder, fid: str, level: str) -> None:
+    """Add a level filter that admits records up to the given maximum level."""
     filt = LevelFilterBuilder().with_max_level(level)
     config_builder.with_filter(fid, filt)
 
 
 @when(parsers.parse('I add name filter "{fid}" with prefix "{prefix}"'))
 def add_name_filter(config_builder: ConfigBuilder, fid: str, prefix: str) -> None:
+    """Add a name filter that admits loggers under the given prefix."""
     filt = NameFilterBuilder().with_prefix(prefix)
     config_builder.with_filter(fid, filt)
 
@@ -74,6 +78,7 @@ def add_callback_filter(config_builder: ConfigBuilder, fid: str) -> list[str]:
     observed: list[str] = []
 
     def record_logger_name(record: object) -> bool:
+        """Record the producer logger name, tag the record, and admit it."""
         record_attributes = vars(record)
         observed.append(typ.cast("str", record_attributes["name"]))
         record_attributes["correlation_id"] = "REQ-99"
@@ -102,6 +107,7 @@ def add_stream_handler_with_filter(
 def add_logger_with_filter(
     config_builder: ConfigBuilder, name: str, handler: str, filter_id: str
 ) -> None:
+    """Add a logger that uses the given handler and filter."""
     logger = LoggerConfigBuilder().with_handlers([handler]).with_filters([filter_id])
     config_builder.with_logger(name, logger)
 
@@ -110,12 +116,14 @@ def add_logger_with_filter(
 def add_logger_only_filter(
     config_builder: ConfigBuilder, name: str, filter_id: str
 ) -> None:
+    """Add a logger that uses the given filter and no handlers."""
     logger = LoggerConfigBuilder().with_filters([filter_id])
     config_builder.with_logger(name, logger)
 
 
 @when(parsers.parse('I set root logger with level "{level}"'))
 def set_root(config_builder: ConfigBuilder, level: str) -> None:
+    """Set the root logger level without attaching any handlers."""
     root = LoggerConfigBuilder().with_level(level)
     config_builder.with_root_logger(root)
 
@@ -133,6 +141,7 @@ def set_root_with_handler(
 def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the serialized builder configuration matches the snapshot."""
     assert config_builder.as_dict() == snapshot, (
         "the filter configuration must match the recorded snapshot"
     )
@@ -140,11 +149,13 @@ def configuration_matches_snapshot(
 
 @then("the configuration is built and initialized")
 def configuration_is_built(config_builder: ConfigBuilder) -> None:
+    """Build and initialize the configuration, letting errors propagate."""
     config_builder.build_and_init()
 
 
 @then(parsers.parse('logger "{name}" emits "{level}"'))
 def logger_emits(name: str, level: str) -> None:
+    """Assert the named logger admits a record at the given level."""
     logger = get_logger(name)
     assert logger.log(level, "msg") is not None, (
         f"configured filters must let logger '{name}' emit at level '{level}'"
@@ -153,6 +164,7 @@ def logger_emits(name: str, level: str) -> None:
 
 @then(parsers.parse('logger "{name}" suppresses "{level}"'))
 def logger_suppresses(name: str, level: str) -> None:
+    """Assert the named logger drops a record at the given level."""
     logger = get_logger(name)
     assert logger.log(level, "msg") is None, (
         f"configured filters must suppress level '{level}' on logger '{name}'"
@@ -198,12 +210,14 @@ def _assert_build_error_mentions(
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
+    """Assert building the configuration raises FilterBuildError."""
     with pytest.raises(FilterBuildError):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
 def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
+    """Assert the build raises FilterBuildError whose message contains msg."""
     _assert_build_error_mentions(config_builder, FilterBuildError, msg)
 
 
@@ -211,4 +225,5 @@ def build_fails_with_message(config_builder: ConfigBuilder, msg: str) -> None:
     parsers.parse('building the configuration fails with key error containing "{msg}"')
 )
 def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
+    """Assert the build raises KeyError whose message contains msg."""
     _assert_build_error_mentions(config_builder, KeyError, msg)

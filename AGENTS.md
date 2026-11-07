@@ -225,12 +225,11 @@ directory:
 
 ### Python lint and dead-code gate
 
-`make lint` runs five Python stages in order: Ruff, `interrogate` for
-production docstring coverage, Pylint (on managed PyPy 3.12),
-`df12-python-lints` with its companion `ambrleaks` snapshot scanner, and a
-strict Skylos production dead-code gate. See
-[Python linting](docs/developers-guide.md#python-linting) for the full pipeline
-and pin details, recorded in
+`make lint` runs five Python stages in order: Ruff, `interrogate` for docstring
+coverage, Pylint (on managed PyPy 3.12), `df12-python-lints` with its companion
+`ambrleaks` snapshot scanner, and a strict Skylos production dead-code gate. See
+[Python linting](docs/developers-guide.md#python-linting) for the full
+pipeline and pin details, recorded in
 [ADR-0005](docs/adrs/adr-0005-four-tier-python-lint-architecture.md).
 
 Suppressions must carry reasons; prefer `# ruff: ignore[CODE] reason` over an

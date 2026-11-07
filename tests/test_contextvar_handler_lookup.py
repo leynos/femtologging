@@ -20,6 +20,7 @@ def test_handler_attribute_lookup_runs_in_producer_context() -> None:
     callbacks_finished = threading.Event()
 
     def observe_callback(handler_kind: str) -> None:
+        """Record the handler kind and request ID; signal after two calls."""
         callbacks.append((handler_kind, request_id.get()))
         if len(callbacks) == 2:
             callbacks_finished.set()
@@ -35,9 +36,11 @@ def test_handler_attribute_lookup_runs_in_producer_context() -> None:
         def handle_record(
             self,
         ) -> cabc.Callable[[dict[str, object]], None]:
+            """Record the lookup's request ID and return a structured callback."""
             lookups["structured"].append(request_id.get())
 
             def invoke(_record: dict[str, object]) -> None:
+                """Forward a structured record to observe_callback."""
                 observe_callback("structured")
 
             return invoke
@@ -47,9 +50,11 @@ def test_handler_attribute_lookup_runs_in_producer_context() -> None:
 
         @property
         def handle(self) -> cabc.Callable[[str, str, str], None]:
+            """Record the lookup's request ID and return a legacy callback."""
             lookups["legacy"].append(request_id.get())
 
             def invoke(_logger: str, _level: str, _message: str) -> None:
+                """Forward a legacy call to observe_callback."""
                 observe_callback("legacy")
 
             return invoke

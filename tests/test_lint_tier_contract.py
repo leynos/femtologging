@@ -26,7 +26,7 @@ from tests.make_contract_helpers import recipe_tokens, variable_tokens
 # The tier commands, in the order `lint-python` must run them.
 _LINT_TIER_COMMANDS: typ.Final = (
     ("$(RUFF)", "check"),
-    ("$(INTERROGATE)", "$(INTERROGATE_TARGETS)"),
+    ("$(MAKE)", "--no-print-directory", "interrogate"),
     ("$(PYLINT)", "$(PYLINT_TARGETS)"),
     ("$(DF12_PYLINT)", "$(PYLINT_TARGETS)"),
     ("$(AMBRLEAKS)", "tests", "femtologging/unittests"),
@@ -71,7 +71,8 @@ _DF12_PYLINT_TOKENS: typ.Final = (
     "--load-plugins=df12_python_lints",
     "--enable=$(DF12_PYLINT_MESSAGES)",
 )
-# Docstring coverage is enforced at 100% over the production package only.
+# Docstring coverage is enforced at 100% over every Python tree the repository
+# owns; the `interrogate` target is covered by `tests/test_interrogate_target.py`.
 _INTERROGATE_TOKENS: typ.Final = (
     "$(UV_ENV)",
     "uv",
@@ -80,12 +81,14 @@ _INTERROGATE_TOKENS: typ.Final = (
     "--from",
     "interrogate==$(INTERROGATE_VERSION)",
     "interrogate",
+)
+_INTERROGATE_FLAG_TOKENS: typ.Final = (
+    "-vv",
     "--fail-under",
     "100",
     "--ignore-regex",
     "$(INTERROGATE_IGNORE_REGEX)",
 )
-_INTERROGATE_TARGET_TOKENS: typ.Final = ("femtologging",)
 # Only the overload stubs are exempt; Ruff still requires the implementation's
 # docstring, so this must not widen into a general escape hatch.
 _INTERROGATE_IGNORE_REGEX_TOKENS: typ.Final = ("^basicConfig$$",)
@@ -160,7 +163,7 @@ def test_tier_commands_consume_their_pinned_versions(
     ("variable_name", "expected_tokens"),
     [
         ("PYLINT_TARGETS", _PYLINT_TARGET_TOKENS),
-        ("INTERROGATE_TARGETS", _INTERROGATE_TARGET_TOKENS),
+        ("INTERROGATE_FLAGS", _INTERROGATE_FLAG_TOKENS),
         ("INTERROGATE_IGNORE_REGEX", _INTERROGATE_IGNORE_REGEX_TOKENS),
         ("DF12_PYLINT_MESSAGES", _DF12_PYLINT_MESSAGE_TOKENS),
         ("DF12_PYTHON", _DF12_PYTHON_TOKENS),

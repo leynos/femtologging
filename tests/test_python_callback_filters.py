@@ -54,6 +54,7 @@ def filtered_logger() -> FilteredLoggerFactory:
     """
 
     def build(filter_obj: object) -> RecordCollector:
+        """Install the filter on the app logger and return its collector."""
         collector = RecordCollector()
         (
             ConfigBuilder()
@@ -74,6 +75,7 @@ def test_python_callback_filter_builder_persists_contextvar_enrichment(
     """Accepted callback filters should persist new record attributes."""
 
     def enrich(record: logging.LogRecord) -> bool:
+        """Stamp the record with the current request ID and accept it."""
         record.correlation_id = REQUEST_ID.get()
         return True
 
@@ -124,6 +126,7 @@ def test_python_callback_filter_exceptions_drop_records(
     """Callback exceptions should drop the record without crashing."""
 
     def boom(record: logging.LogRecord) -> bool:
+        """Raise RuntimeError to exercise callback failure handling."""
         message = f"boom: {record.msg}"
         raise RuntimeError(message)
 
@@ -151,11 +154,13 @@ def test_python_callback_filters_preserve_exception_fields(
     seen: dict[str, object] = {}
 
     def require_exception_state(record: logging.LogRecord) -> bool:
+        """Record exc_info and stack_info, accepting only when both are set."""
         seen["exc_info"] = record.exc_info
         seen["stack_info"] = record.stack_info
         return record.exc_info is not None and bool(record.stack_info)
 
     def raise_boom() -> None:
+        """Raise a ValueError so the caller captures exception state."""
         message = "boom"
         raise ValueError(message)
 
@@ -186,6 +191,7 @@ def test_stdlib_handler_adapter_receives_enrichment_fields() -> None:
     """Enrichment should be visible to stdlib formatters via the adapter."""
 
     def enrich(record: logging.LogRecord) -> bool:
+        """Stamp the record with a request ID and accept it."""
         record.request_id = "abc-123"
         return True
 
@@ -221,6 +227,7 @@ def test_contextvar_enrichment_is_thread_local(
     """Concurrent callback filters should preserve per-thread contextvars."""
 
     def enrich(record: logging.LogRecord) -> bool:
+        """Copy the current request ID onto the record and accept it."""
         record.request_id = REQUEST_ID.get()
         return True
 
@@ -228,6 +235,7 @@ def test_contextvar_enrichment_is_thread_local(
     logger = get_logger("app")
 
     def worker(index: int) -> None:
+        """Log one message with a thread-local request ID."""
         token = REQUEST_ID.set(f"req-{index}")
         try:
             logger.log("INFO", f"message-{index}")

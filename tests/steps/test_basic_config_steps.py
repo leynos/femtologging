@@ -18,6 +18,7 @@ scenarios(str(FEATURES / "basic_config.feature"))
 
 @given("root logger has a handler")
 def root_has_handler() -> None:
+    """Attach a stderr stream handler to the root logger."""
     handler = FemtoStreamHandler.stderr()
     get_logger("root").add_handler(handler)
 
@@ -29,11 +30,13 @@ def root_has_handler() -> None:
     )
 )
 def call_basic_config(level: str, force: str | None) -> None:
+    """Call basicConfig with the given level and optional force flag."""
     basicConfig(level=level, force=force is not None)
 
 
 @then(parsers.parse("root logger has {count:d} handler"))
 def root_handler_count(count: int) -> None:
+    """Assert the root logger holds exactly count handlers."""
     handlers = get_logger("root").handler_ptrs_for_test()
     assert len(handlers) == count, (
         f"basicConfig must leave the root logger with {count} handler(s), "
@@ -60,6 +63,7 @@ def _assert_basic_config_handler_conflict(
     )
 )
 def basic_config_invalid(filename: str, tmp_path: Path) -> None:
+    """Assert basicConfig rejects both filename and stream being given."""
     with pytest.raises(ValueError, match="Cannot specify both `filename` and `stream`"):
         basicConfig(filename=str(tmp_path / filename), stream=sys.stdout)
 
@@ -70,6 +74,7 @@ def basic_config_invalid(filename: str, tmp_path: Path) -> None:
     )
 )
 def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
+    """Assert basicConfig rejects handlers combined with a stream argument."""
     _assert_basic_config_handler_conflict(handler, tmp_path, stream=sys.stdout)
 
 
@@ -81,12 +86,14 @@ def basic_config_handler_stream_invalid(handler: str, tmp_path: Path) -> None:
 def basic_config_handler_filename_invalid(
     handler: str, filename: str, tmp_path: Path
 ) -> None:
+    """Assert basicConfig rejects handlers combined with a filename argument."""
     _assert_basic_config_handler_conflict(
         handler, tmp_path, filename=str(tmp_path / filename)
     )
 
 
 def _make_handler(name: str, tmp_path: Path) -> FemtoStreamHandler | FemtoFileHandler:
+    """Build a stream or file handler named by kind, rejecting unknown names."""
     match name:
         case "stream_handler":
             return FemtoStreamHandler.stderr()

@@ -35,6 +35,7 @@ def fixture_open_timed_handler(
     def open_handler(
         options: TimedHandlerOptions | None = None,
     ) -> FemtoTimedRotatingFileHandler:
+        """Open a timed rotating handler in tmp_path and track it."""
         path = str(tmp_path / "timed.log")
         handler = (
             FemtoTimedRotatingFileHandler(path)

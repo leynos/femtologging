@@ -281,6 +281,7 @@ def test_handler_gains_handle_record_after_registration() -> None:
 
     # Dynamically add handle_record after registration
     def late_handle_record(record: FemtoRecord) -> None:
+        """Record a handle_record dispatch made after registration."""
         handler.handle_record_calls.append(record)
 
     handler.handle_record = late_handle_record
@@ -327,6 +328,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
 
     # Add handle_record before registration
     def initial_handle_record(record: FemtoRecord) -> None:
+        """Log an initial dispatch tag and keep the record."""
         dispatch_log.append("initial")
         handler.handle_record_calls.append(record)
 
@@ -337,6 +339,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
 
     # Replace handle_record with a different implementation after registration
     def replacement_handle_record(record: FemtoRecord) -> None:
+        """Log a replacement dispatch tag and keep the record."""
         dispatch_log.append("replacement")
         handler.handle_record_calls.append(record)
 

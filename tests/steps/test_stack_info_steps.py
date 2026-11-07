@@ -57,11 +57,13 @@ def _raise_dynamic_exception(
 
 @given(parsers.parse('a logger named "{name}"'))
 def create_logger(logger_fixture: LoggerState, name: str) -> None:
+    """Create a FemtoLogger with the given name and store it in the fixture."""
     logger_fixture["logger"] = FemtoLogger(name)
 
 
 @given(parsers.parse('an active ValueError exception with message "{message}"'))
 def set_active_value_error(exception_state: ExceptionState, message: str) -> None:
+    """Mark an active ValueError with the given message in the exception state."""
     exception_state["active"] = True
     exception_state["type"] = ValueError
     exception_state["message"] = message
@@ -73,6 +75,7 @@ def log_with_stack_info(
     level: str,
     message: str,
 ) -> None:
+    """Log at the given level with stack_info=True and no exception."""
     logger = logger_fixture["logger"]
     assert logger is not None, "Logger must be initialized"
     logger_fixture["output"] = logger.log(level, message, stack_info=True)
@@ -84,6 +87,7 @@ def log_without_extras(
     level: str,
     message: str,
 ) -> None:
+    """Log the message at the given level without exc_info or stack_info."""
     logger = logger_fixture["logger"]
     assert logger is not None, "Logger must be initialized"
     logger_fixture["output"] = logger.log(level, message)
@@ -101,6 +105,7 @@ def log_with_both(
     level: str,
     message: str,
 ) -> None:
+    """Log with exc_info and stack_info, raising any staged exception first."""
     logger = logger_fixture["logger"]
     assert logger is not None, "Logger must be initialized"
 
@@ -123,6 +128,7 @@ def log_with_both(
 
 @then(parsers.parse('the formatted output contains "{text}"'))
 def output_contains(logger_fixture: LoggerState, text: str) -> None:
+    """Assert the formatted output contains the given text."""
     output = logger_fixture["output"]
     assert output is not None, "Expected output but got None"
     assert text in output, f"Expected '{text}' in output: {output}"
@@ -130,6 +136,7 @@ def output_contains(logger_fixture: LoggerState, text: str) -> None:
 
 @then(parsers.parse('the formatted output equals "{expected}"'))
 def output_equals(logger_fixture: LoggerState, expected: str) -> None:
+    """Assert the formatted output equals the expected string exactly."""
     output = logger_fixture["output"]
     assert output == expected, f"Expected '{expected}' but got '{output}'"
 
@@ -138,6 +145,7 @@ def output_equals(logger_fixture: LoggerState, expected: str) -> None:
 def output_matches_snapshot(
     logger_fixture: LoggerState, snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the normalized stack or exception output matches the snapshot."""
     output = logger_fixture["output"]
     # Normalize paths and line numbers for snapshot stability
     normalized = normalize_traceback_output(output)

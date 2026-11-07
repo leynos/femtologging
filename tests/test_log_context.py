@@ -12,7 +12,10 @@ from femtologging import FemtoLogger, log_context
 
 
 class _RecordCollector:
+    """Handler double that collects structured records into a list."""
+
     def __init__(self) -> None:
+        """Create an empty record list and bind handle_record to append."""
         self.records: list[dict[str, object]] = []
         # The Rust bridge resolves ``handle_record`` with ``getattr`` on the
         # instance, so binding ``list.append`` directly avoids a method that
@@ -20,9 +23,11 @@ class _RecordCollector:
         self.handle_record = self.records.append
 
     def handle(self, logger: str, level: str, message: str) -> None:
+        """Accept a text record and discard it; structured records are kept."""
         _ = (self.records, logger, level, message)
 
     def flush(self) -> bool:
+        """Report success without flushing anything."""
         _ = self.records
         return True
 
@@ -33,12 +38,14 @@ async def _run_interleaved_context_logs(logger: FemtoLogger) -> None:
     allow_scoped_log = asyncio.Event()
 
     async def log_with_context() -> None:
+        """Log inside a request context after the unscoped task has logged."""
         with log_context(request_id="request-a"):
             context_active.set()
             await allow_scoped_log.wait()
             logger.info("scoped")
 
     async def log_without_context() -> None:
+        """Log outside any context, then release the scoped task."""
         await context_active.wait()
         logger.info("unscoped")
         allow_scoped_log.set()
@@ -51,6 +58,7 @@ async def _run_child_context_snapshot_log(logger: FemtoLogger) -> None:
     allow_child_log = asyncio.Event()
 
     async def log_from_child() -> None:
+        """Log from the child task once the parent has changed context."""
         await allow_child_log.wait()
         logger.info("child")
 

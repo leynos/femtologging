@@ -147,6 +147,8 @@ class TestContextVarPropagation:
         """A worker-dispatched filter should observe the caller's context."""
 
         class RequestIdFilter(logging.Filter):
+            """Filter that stamps each record with the producer's request ID."""
+
             @typ.override
             def filter(self, record: logging.LogRecord) -> bool:
                 """Attach the current request ID to the stdlib record."""
@@ -186,6 +188,8 @@ class TestContextVarPropagation:
                 """Discard a record after its filters have observed the context."""
 
         class ContextFilter(logging.Filter):
+            """Filter that records each message with the request ID it saw."""
+
             @typ.override
             def filter(self, record: logging.LogRecord) -> bool:
                 """Record the message and request ID seen by this filter."""

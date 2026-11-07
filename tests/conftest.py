@@ -118,6 +118,7 @@ def file_handler_factory() -> FileHandlerFactory:
     def factory(
         path: Path, capacity: int, flush_interval: int
     ) -> cabc.Generator[FemtoFileHandler, None, None]:
+        """Yield a file handler for ``path``, closing it on exit."""
         handler = FemtoFileHandler(
             str(path),
             capacity=capacity,
@@ -171,6 +172,7 @@ def active_exception() -> cabc.Callable[[str], AbstractContextManager[None]]:
 
     @contextmanager
     def _raise(message: str = "test error") -> cabc.Generator[None, None, None]:
+        """Yield inside an ``except ValueError`` block so ``sys.exc_info()`` is set."""
         try:
             # ruff: ignore[raise-within-try] the raise is the fixture's whole
             # purpose: it populates sys.exc_info() for the generator frame.

@@ -76,6 +76,7 @@ class RecordCollector:
 
 
 def _wait_for(condition: cabc.Callable[[], bool], timeout: float = 1.0) -> None:
+    """Poll condition until it holds, raising AssertionError on timeout."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if condition():
@@ -121,6 +122,7 @@ scenarios(str(FEATURES / "python_callback_filters.feature"))
 
 @pytest.fixture(autouse=True)
 def reset_logger_state() -> cabc.Iterator[None]:
+    """Reset femtologging global state before and after each scenario."""
     reset_manager()
     yield
     reset_manager()
@@ -128,11 +130,13 @@ def reset_logger_state() -> cabc.Iterator[None]:
 
 @given("a ConfigBuilder for python callback filters", target_fixture="config_builder")
 def config_builder() -> ConfigBuilder:
+    """Create an empty ConfigBuilder for a python callback scenario."""
     return ConfigBuilder()
 
 
 @when(parsers.parse('I add python callback filter "{fid}" using the enrich callback'))
 def add_enrich_filter(config_builder: ConfigBuilder, fid: str) -> None:
+    """Add a callback filter that tags records with the active request ID."""
     config_builder.with_filter(fid, PythonCallbackFilterBuilder(enrich_request_id))
 
 
@@ -142,16 +146,19 @@ def add_enrich_filter(config_builder: ConfigBuilder, fid: str) -> None:
     )
 )
 def add_reject_filter(config_builder: ConfigBuilder, fid: str) -> None:
+    """Add a callback filter backed by a filter object that rejects all."""
     config_builder.with_filter(fid, PythonCallbackFilterBuilder(RejectAllFilter()))
 
 
 @when(parsers.parse('I add logger "{name}" with python filter "{filter_id}"'))
 def add_logger(config_builder: ConfigBuilder, name: str, filter_id: str) -> None:
+    """Add a logger that uses only the given python callback filter."""
     config_builder.with_logger(name, LoggerConfigBuilder().with_filters([filter_id]))
 
 
 @when(parsers.parse('I set the python callback root logger level to "{level}"'))
 def set_root(config_builder: ConfigBuilder, level: str) -> None:
+    """Set the root logger level for the callback filter scenario."""
     config_builder.with_root_logger(LoggerConfigBuilder().with_level(level))
 
 
@@ -159,6 +166,7 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
 def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the serialized callback filter config matches the snapshot."""
     assert config_builder.as_dict() == snapshot, (
         "serialized python callback filter config must match the recorded snapshot"
     )
@@ -166,6 +174,7 @@ def configuration_matches_snapshot(
 
 @when("the python callback filter configuration is built")
 def build_config(config_builder: ConfigBuilder) -> None:
+    """Build and initialize the configuration, letting errors propagate."""
     config_builder.build_and_init()
 
 
@@ -174,6 +183,7 @@ def build_config(config_builder: ConfigBuilder) -> None:
     target_fixture="collector",
 )
 def attach_collector(name: str) -> RecordCollector:
+    """Attach a new RecordCollector to the named logger and return it."""
     collector = RecordCollector()
     get_logger(name).add_handler(collector)
     return collector
@@ -185,6 +195,7 @@ def attach_collector(name: str) -> RecordCollector:
     )
 )
 def emit_with_request_id(name: str, level: str, request_id: str) -> None:
+    """Emit a record with request_id bound, asserting it is admitted."""
     token = _REQUEST_ID.set(request_id)
     try:
         assert get_logger(name).log(level, "hello") is not None, (
@@ -202,6 +213,7 @@ def emit_with_request_id(name: str, level: str, request_id: str) -> None:
 def assert_collected_metadata(
     collector: RecordCollector, key: str, expected_value: str
 ) -> None:
+    """Wait for one collected record and assert its metadata value."""
     _wait_for(lambda: len(collector.records) == 1)
     key_values = collector.records[0]["metadata"]["key_values"]
     assert key_values.get(key) == expected_value, (
@@ -216,6 +228,7 @@ def assert_collected_metadata(
     )
 )
 def suppresses_record(name: str, level: str, collector: RecordCollector) -> None:
+    """Assert the logger drops the record and no collector receives it."""
     assert get_logger(name).log(level, "blocked") is None, (
         f"the reject-all filter must stop {level} records from logger {name!r} "
         "before formatting"

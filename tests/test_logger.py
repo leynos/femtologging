@@ -132,12 +132,16 @@ def test_add_handler_requires_handle() -> None:
     logger = FemtoLogger("core")
 
     class MissingHandle:
+        """Object without a handle method, to exercise add_handler's check."""
+
         pass
 
     with pytest.raises(TypeError, match="callable 'handle' method"):
         logger.add_handler(MissingHandle())
 
     class NotCallable:
+        """Object whose handle attribute is a string, not a method."""
+
         handle = "oops"
 
     with pytest.raises(TypeError, match="not callable"):

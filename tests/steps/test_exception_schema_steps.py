@@ -45,6 +45,7 @@ def serialized_json() -> dict[str, str]:
 def create_basic_frame(
     frame_data: dict[str, typ.Any], filename: str, lineno: int, function: str
 ) -> None:
+    """Store a frame with filename, line number, and function name."""
     frame_data.update({
         "filename": filename,
         "lineno": lineno,
@@ -54,6 +55,7 @@ def create_basic_frame(
 
 @given("a stack frame with all optional fields populated")
 def create_full_frame(frame_data: dict[str, typ.Any]) -> None:
+    """Store a frame with every optional field populated."""
     frame_data.update({
         "filename": "example.py",
         "lineno": 10,
@@ -70,6 +72,7 @@ def create_full_frame(frame_data: dict[str, typ.Any]) -> None:
 def create_exception(
     exception_data: dict[str, typ.Any], type_name: str, message: str
 ) -> None:
+    """Store an exception payload with the given type name and message."""
     exception_data.update({
         "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
@@ -79,6 +82,7 @@ def create_exception(
 
 @given(parsers.parse('the exception has cause "{type_name}" with message "{message}"'))
 def add_cause(exception_data: dict[str, typ.Any], type_name: str, message: str) -> None:
+    """Attach a cause exception payload to the stored exception."""
     exception_data["cause"] = {
         "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
@@ -90,6 +94,7 @@ def add_cause(exception_data: dict[str, typ.Any], type_name: str, message: str) 
 def create_exception_group(
     exception_data: dict[str, typ.Any], type_name: str, message: str
 ) -> None:
+    """Store an exception group payload with an empty nested list."""
     exception_data.update({
         "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
@@ -104,6 +109,7 @@ def create_exception_group(
 def add_nested_exception(
     exception_data: dict[str, typ.Any], type_name: str, message: str
 ) -> None:
+    """Append an exception payload to the group's nested exceptions."""
     exception_data["exceptions"].append({
         "schema_version": EXCEPTION_SCHEMA_VERSION,
         "type_name": type_name,
@@ -115,6 +121,7 @@ def add_nested_exception(
 def serialize_frame(
     frame_data: dict[str, typ.Any], serialized_json: dict[str, str]
 ) -> None:
+    """Serialize the stored frame data into the JSON output slot."""
     serialized_json["value"] = json.dumps(frame_data, sort_keys=True)
 
 
@@ -122,6 +129,7 @@ def serialize_frame(
 def serialize_exception(
     exception_data: dict[str, typ.Any], serialized_json: dict[str, str]
 ) -> None:
+    """Serialize the stored exception data into the JSON output slot."""
     serialized_json["value"] = json.dumps(exception_data, sort_keys=True)
 
 
@@ -167,6 +175,7 @@ def _assert_field_equals(
 
 @then(parsers.parse('the JSON contains "{key}" as "{value}"'))
 def json_contains_string(serialized_json: dict[str, str], key: str, value: str) -> None:
+    """Assert the decoded payload maps key to the expected string value."""
     _assert_field_equals(
         _decode(serialized_json), key, value, "string field serialization"
     )
@@ -174,6 +183,7 @@ def json_contains_string(serialized_json: dict[str, str], key: str, value: str) 
 
 @then(parsers.parse('the JSON contains "{key}" as {value:d}'))
 def json_contains_int(serialized_json: dict[str, str], key: str, value: int) -> None:
+    """Assert the decoded payload maps key to the expected integer value."""
     _assert_field_equals(
         _decode(serialized_json), key, value, "integer field serialization"
     )
@@ -181,6 +191,7 @@ def json_contains_int(serialized_json: dict[str, str], key: str, value: int) -> 
 
 @then(parsers.parse('the JSON contains "{key}"'))
 def json_has_key(serialized_json: dict[str, str], key: str) -> None:
+    """Assert the decoded payload contains the given key."""
     _assert_has_key(_decode(serialized_json), key, "optional field serialization")
 
 
@@ -188,6 +199,7 @@ def json_has_key(serialized_json: dict[str, str], key: str) -> None:
 def json_contains_nested(
     serialized_json: dict[str, str], parent: str, key: str, value: str
 ) -> None:
+    """Assert the nested object under parent maps key to the expected value."""
     context = f"nested {parent!r} payload serialization"
     nested = _assert_nested_payload(_decode(serialized_json), parent, context)
     _assert_field_equals(nested, key, value, context)
@@ -216,6 +228,7 @@ def json_array_length(serialized_json: dict[str, str], key: str, count: int) -> 
 def json_matches_snapshot(
     serialized_json: dict[str, str], snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the decoded JSON payload matches the recorded snapshot."""
     assert _decode(serialized_json) == snapshot, (
         "serialized payload must match the recorded exception schema snapshot"
     )
@@ -223,6 +236,7 @@ def json_matches_snapshot(
 
 @then("the schema version matches the Rust constant")
 def schema_version_matches_rust(serialized_json: dict[str, str]) -> None:
+    """Assert the serialized schema_version equals the Rust constant."""
     _assert_field_equals(
         _decode(serialized_json),
         "schema_version",
@@ -233,6 +247,7 @@ def schema_version_matches_rust(serialized_json: dict[str, str]) -> None:
 
 @then("the EXCEPTION_SCHEMA_VERSION constant is accessible from Python")
 def constant_is_accessible() -> None:
+    """Assert EXCEPTION_SCHEMA_VERSION is re-exported and not None."""
     # Import failure would already abort collection; this guards against the
     # constant being exported as a placeholder rather than a real value.
     assert EXCEPTION_SCHEMA_VERSION is not None, (

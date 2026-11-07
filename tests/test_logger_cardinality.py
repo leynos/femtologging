@@ -274,6 +274,7 @@ def test_propagation_still_reaches_root_at_the_cap() -> None:
     records: list[cabc.Mapping[str, object]] = []
 
     def capture(record: cabc.Mapping[str, object]) -> str:
+        """Append the record to the captured list and return a marker."""
         records.append(record)
         return "captured"
 

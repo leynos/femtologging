@@ -87,6 +87,7 @@ def rejecting(lane: str) -> cabc.Callable[[Invocation], tuple[str, str, int]]:
     """
 
     def handler(invocation: Invocation) -> tuple[str, str, int]:
+        """Reject the invocation if it selects the lane; succeed otherwise."""
         if selects(invocation.args, lane):
             return ("", f"error: rejected in {lane}\n", REJECTED)
         return ("", "", 0)

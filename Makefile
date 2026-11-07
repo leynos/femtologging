@@ -1,4 +1,4 @@
-.PHONY: help all clean build release lint lint-python lint-rust lint-rust-clippy \
+.PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
         test typecheck makeutil skylos-allow
@@ -58,22 +58,24 @@ DF12_PYLINT = $(UV_ENV) uv tool run --python $(DF12_PYTHON) \
   --enable=$(DF12_PYLINT_MESSAGES)
 AMBRLEAKS = $(UV_ENV) uv tool run --python $(DF12_PYTHON) \
   --from '$(DF12_PYTHON_LINTS)' ambrleaks
-# Docstring coverage over the production package only, matching the
-# leynos/lading and leynos/cuprum lint stacks. Tests are excluded
-# deliberately: Ruff's D rules already govern them, and tests/steps/*.py
-# ignores D103 because pytest-bdd step names document themselves.
+# Docstring coverage over every Python tree the repository owns, tests and
+# pytest-bdd step functions included. Interrogate scans each target recursively,
+# subject to its default exclusions.
 # Pinned like every other tier: an unpinned interrogate could change the
 # coverage verdict with no repository change.
 INTERROGATE_VERSION ?= 1.7.0
-INTERROGATE_TARGETS ?= femtologging
+INTERROGATE_TARGETS ?= femtologging tests scripts examples rust_extension conftest.py
 # `basicConfig` is exempted because its three @typ.overload stubs cannot carry
 # docstrings (Ruff D418 forbids them) and interrogate 1.7.0 only detects the
 # literal `typing.overload`/`overload` spellings, so --ignore-overloaded-functions
 # misses the `typ.overload` alias this project's import conventions require.
 # Ruff's undocumented-public-function still guards the real implementation.
 INTERROGATE_IGNORE_REGEX ?= ^basicConfig$$
-INTERROGATE = $(UV_ENV) uv tool run --from 'interrogate==$(INTERROGATE_VERSION)' \
-  interrogate --fail-under 100 --ignore-regex '$(INTERROGATE_IGNORE_REGEX)'
+INTERROGATE = $(UV_ENV) uv tool run --from 'interrogate==$(INTERROGATE_VERSION)' interrogate
+# Level 2 prints a MISSED row per undocumented definition, which the
+# `interrogate` target fails on: the rounded percentage alone can pass a lone gap.
+# Stub files (`.pyi`) are not scanned.
+INTERROGATE_FLAGS ?= -vv --fail-under 100 --ignore-regex '$(INTERROGATE_IGNORE_REGEX)'
 SKYLOS_VERSION = 4.33.2
 # Skylos parses source using its own runtime AST; pinning Python 3.14 prevents
 # phantom dead-code findings on syntax newer than an older tool runtime.
@@ -129,9 +131,21 @@ check-fmt: ## Verify formatting
 
 lint: lint-python lint-rust ## Run linters
 
+# Interrogate rounds its percentage to one decimal, so `--fail-under 100` alone
+# can pass a lone gap in a large repository; fail on any MISSED row as well.
+interrogate: ## Enforce complete Python docstring coverage
+	@report="$$($(INTERROGATE) $(INTERROGATE_FLAGS) $(INTERROGATE_TARGETS))"; \
+	  status=$$?; \
+	  printf '%s\n' "$$report"; \
+	  test "$$status" -eq 0 || exit "$$status"; \
+	  if printf '%s\n' "$$report" | grep -q '| *MISSED *|'; then \
+	    printf '%s\n' 'interrogate: undocumented definitions remain; see the MISSED rows above' >&2; \
+	    exit 1; \
+	  fi
+
 lint-python: ## Run Ruff, interrogate, Pylint, df12, ambrleaks, and Skylos
 	$(RUFF) check
-	$(INTERROGATE) $(INTERROGATE_TARGETS)
+	$(MAKE) --no-print-directory interrogate
 	$(PYLINT) $(PYLINT_TARGETS)
 	$(DF12_PYLINT) $(PYLINT_TARGETS)
 	$(AMBRLEAKS) tests femtologging/unittests

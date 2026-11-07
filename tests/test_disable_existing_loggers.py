@@ -25,6 +25,7 @@ def new_info_stderr_builder() -> BuilderFactory:
     """Return builders with an INFO root logger and a shared stderr handler."""
 
     def factory() -> ConfigBuilder:
+        """Build a fresh INFO root and stderr handler configuration."""
         return (
             ConfigBuilder()
             .with_handler(HANDLER_ID, StreamHandlerBuilder.stderr())
@@ -140,10 +141,12 @@ def test_disabled_logger_skips_ancestor_filter_and_formatter(
     formatter_calls: list[str] = []
 
     def counting_filter(record: object) -> bool:
+        """Count the filter call and accept every record."""
         filter_calls.append("filter")
         return True
 
     def counting_formatter(record: cabc.Mapping[str, object]) -> str:
+        """Count the formatter call and render the record message."""
         formatter_calls.append("formatter")
         return str(record["message"])
 

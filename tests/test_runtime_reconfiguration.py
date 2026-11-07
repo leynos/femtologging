@@ -149,6 +149,7 @@ def test_runtime_mutation_preserves_handler_filter_enrichment_and_rejection(
     seen_messages: list[str] = []
 
     def enrich_and_reject(record: object) -> bool:
+        """Record the message, stamp the context, and reject 'rejected'."""
         attributes = vars(record)
         message = typ.cast("str", attributes["msg"])
         seen_messages.append(message)
@@ -156,6 +157,7 @@ def test_runtime_mutation_preserves_handler_filter_enrichment_and_rejection(
         return message != "rejected"
 
     def format_record(record: cabc.Mapping[str, object]) -> str:
+        """Render the record's key-values and message as text."""
         metadata = record["metadata"]
         message = record["message"]
         assert isinstance(metadata, cabc.Mapping), (
@@ -207,6 +209,7 @@ def _context_filter_callback(
     """Build a filter that records messages and adds contextual enrichment."""
 
     def callback(record: object) -> bool:
+        """Record the message, stamp the context, and optionally reject it."""
         attributes = vars(record)
         message = typ.cast("str", attributes["msg"])
         messages.append(message)

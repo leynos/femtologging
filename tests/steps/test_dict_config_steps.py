@@ -16,6 +16,7 @@ scenarios(str(FEATURES / "dict_config.feature"))
 
 @when("I configure dictConfig with a stream handler")
 def configure_dict_config() -> None:
+    """Apply a dictConfig with a root logger using a stream handler."""
     cfg = {
         "version": 1,
         "handlers": {"h": {"class": "femtologging.StreamHandler"}},
@@ -26,6 +27,7 @@ def configure_dict_config() -> None:
 
 @then("calling dictConfig with incremental true raises ValueError")
 def dict_config_incremental_fails() -> None:
+    """Assert dictConfig rejects incremental configuration with ValueError."""
     with pytest.raises(ValueError, match="incremental configuration is not supported"):
         dictConfig({"version": 1, "incremental": True, "root": {}})
 
@@ -35,6 +37,7 @@ def dict_config_incremental_fails() -> None:
     target_fixture="config_error",
 )
 def configure_with_handler_class(cls: str) -> ValueError:
+    """Apply dictConfig with the given handler class and return its ValueError."""
     cfg = {
         "version": 1,
         "handlers": {"h": {"class": cls}},
@@ -50,6 +53,7 @@ def configure_with_handler_class(cls: str) -> ValueError:
 
 @then("dictConfig raises ValueError")
 def dict_config_raises_value_error(config_error: ValueError) -> None:
+    """Assert the captured ValueError carries a non-empty explanatory message."""
     assert str(config_error), (
         "dictConfig must reject the unsupported handler class with an "
         "explanatory message, but the raised ValueError carried no text"

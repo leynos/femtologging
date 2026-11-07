@@ -332,7 +332,10 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
     """Errors when adapting Python formatters include both failure causes."""
 
     class NotFormatter:
+        """Formatter whose string form raises, to exercise error chaining."""
+
         def __str__(self) -> str:  # pragma: no cover - invoked via PyO3
+            """Raise TypeError when the formatter is converted to text."""
             msg = "no string representation available"
             raise TypeError(msg)
 
@@ -354,9 +357,11 @@ def test_builder_formatter_error_chain(tmp_path: Path) -> None:
 class _FilterableHandlerBuilder(typ.Protocol):
     """Describe the shared filter builder interface under test."""
 
-    def with_filters(self, filters: list[str]) -> typ.Self: ...
+    def with_filters(self, filters: list[str]) -> typ.Self:
+        """Attach the named filters and return the builder for chaining."""
 
-    def as_dict(self) -> dict[str, object]: ...
+    def as_dict(self) -> dict[str, object]:
+        """Return the builder's configuration as a plain dictionary."""
 
 
 @pytest.mark.parametrize(
