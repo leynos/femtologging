@@ -1,11 +1,12 @@
 """Behavioural tests for the Makefile's `interrogate` docstring-coverage target.
 
-`make lint` must reach an `interrogate` run over every Python file Git
-tracks, at a threshold of 100, with a guard that fails on any `MISSED` row
-(interrogate rounds its percentage to one decimal, so the threshold alone can
-pass a lone gap in a large repository). These tests read the recipe's variables
-and run the target, so a dropped prerequisite, a relaxed flag or a guard that
-stops failing breaks a test rather than silently restoring the gap.
+`make lint` must reach an `interrogate` run over every tracked `.py` file (paths
+under interrogate's default exclusions are checked separately), at a threshold
+of 100, with a guard that fails on any `MISSED` row (interrogate rounds its
+percentage to one decimal, so the threshold alone can pass a lone gap in a large
+repository). These tests read the recipe's variables and run the target, so a
+dropped invocation or a guard that stops failing breaks a test rather than
+silently restoring the gap.
 """
 
 from __future__ import annotations
@@ -178,8 +179,8 @@ def _make_interrogate(*assignments: str) -> subprocess.CompletedProcess[str]:
 
     A parent Make's flags and a caller's `UV`, `INTERROGATE*` or `PYTHON_TARGETS`
     overrides would change what the target runs, so those variables are removed
-    from the child environment. The target's own prerequisites (the environment
-    build) are treated as up to date: the tests drive the recipe, not the build.
+    from the child environment. Any prerequisites the target declares are marked
+    up to date with `-o`, so the tests drive the recipe and not another target.
 
     Returns
     -------
@@ -289,9 +290,10 @@ def test_the_target_passes_when_the_tool_reports_no_gap(tmp_path: Path) -> None:
 def test_the_target_passes_the_configured_flags_and_targets(tmp_path: Path) -> None:
     """The tool receives the configured flags, then the targets.
 
-    The flags are written out because the shell has already removed the quotes
-    and the doubled dollar sign from the ignore pattern by the time the tool
-    sees it; `tests/test_lint_tier_contract.py` pins the Makefile's own tokens.
+    The flags are written out because Make has already turned the doubled
+    dollar sign of the ignore pattern into one and the shell has removed its
+    quotes by the time the tool sees it; `tests/test_lint_tier_contract.py` pins
+    the Makefile's own tokens.
     """
     _run_target(tmp_path, "exit 0\n")
     received = (tmp_path / "args.txt").read_text(encoding="utf-8").split()

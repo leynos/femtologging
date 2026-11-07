@@ -38,7 +38,7 @@ class _SocketCaptureHandler(socketserver.BaseRequestHandler):
     """Collect framed payloads emitted by FemtoSocketHandler."""
 
     def handle(self) -> None:
-        """Read one length-prefixed frame and queue its payload on the server."""
+        """Read a length header and payload, one recv each, and queue the payload."""
         length_bytes = self.request.recv(4)
         if not length_bytes:
             return

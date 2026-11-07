@@ -89,8 +89,9 @@ _INTERROGATE_FLAG_TOKENS: typ.Final = (
     "--ignore-regex",
     "$(INTERROGATE_IGNORE_REGEX)",
 )
-# Only the overload stubs are exempt; Ruff still requires the implementation's
-# docstring, so this must not widen into a general escape hatch.
+# The pattern skips every definition named `basicConfig`; it exists for the
+# overload stubs, and Ruff still requires the implementation's docstring. It
+# must not widen into a general escape hatch.
 _INTERROGATE_IGNORE_REGEX_TOKENS: typ.Final = ("^basicConfig$$",)
 _AMBRLEAKS_TOKENS: typ.Final = (
     "$(UV_ENV)",

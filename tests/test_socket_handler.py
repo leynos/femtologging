@@ -21,7 +21,7 @@ class _CaptureHandler(socketserver.BaseRequestHandler):
     """Capture framed payloads from the handler under test."""
 
     def handle(self) -> None:
-        """Read one length-prefixed frame and queue its payload on the server."""
+        """Read a length header and payload, one recv each, and queue the payload."""
         length_data = self.request.recv(4)
         if not length_data:
             return

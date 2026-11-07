@@ -966,10 +966,12 @@ its addendum records the addition of the docstring-coverage tier below.
    `INTERROGATE_TARGETS`: the package, the tests (pytest-bdd step functions and
    nested helper closures included), the scripts, the examples, the Rust
    extension's Python fixture and `conftest.py`; `.pyi` stubs are not scanned.
-   The `interrogate` target prints every definition and fails on any `MISSED`
-   row, because interrogate rounds its percentage to one decimal and the
-   threshold alone can pass a lone gap. Only the `basicConfig` overload stubs
-   are exempt, through `INTERROGATE_IGNORE_REGEX`.
+   The `interrogate` target prints every scanned definition and fails on any
+   `MISSED` row, because interrogate rounds its percentage to one decimal and
+   the threshold alone can pass a lone gap. `INTERROGATE_IGNORE_REGEX`
+   (`^basicConfig$`) skips every definition named `basicConfig`, which is how
+   the overload stubs are exempt; Ruff still checks the implementation's
+   docstring.
 3. **Pylint** (`4.0.7`) — runs as a uv tool on managed PyPy 3.12
    (`PYLINT_PYTHON ?= pypy@3.12`), isolated from the project virtual
    environment. `syntax-error` stays enabled, so a module PyPy cannot parse

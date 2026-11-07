@@ -40,7 +40,7 @@ def test_handler_attribute_lookup_runs_in_producer_context() -> None:
             lookups["structured"].append(request_id.get())
 
             def invoke(_record: dict[str, object]) -> None:
-                """Forward a structured record to observe_callback."""
+                """Ignore the record and report the "structured" handler kind."""
                 observe_callback("structured")
 
             return invoke
@@ -54,7 +54,7 @@ def test_handler_attribute_lookup_runs_in_producer_context() -> None:
             lookups["legacy"].append(request_id.get())
 
             def invoke(_logger: str, _level: str, _message: str) -> None:
-                """Forward a legacy call to observe_callback."""
+                """Ignore the call arguments and report the "legacy" handler kind."""
                 observe_callback("legacy")
 
             return invoke

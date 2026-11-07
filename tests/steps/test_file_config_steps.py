@@ -33,7 +33,7 @@ def when_file_config_fails(config_path: str) -> ValueError:
 
 @then("fileConfig raises ValueError")
 def then_file_config_raises(config_error: ValueError) -> None:
-    """Assert the fileConfig ValueError names the handler entry missing its class."""
+    """Assert the fileConfig ValueError message contains "missing class"."""
     # The @when step already asserted the exception type via pytest.raises; this
     # step pins the operator-facing message so the diagnosis stays actionable.
     assert "missing class" in str(config_error), (
