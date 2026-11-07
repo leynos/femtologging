@@ -21,6 +21,7 @@ class _CaptureHandler(socketserver.BaseRequestHandler):
     """Capture framed payloads from the handler under test."""
 
     def handle(self) -> None:
+        """Read a length header and payload, one recv each, and queue the payload."""
         length_data = self.request.recv(4)
         if not length_data:
             return
@@ -36,6 +37,7 @@ class _RecordingTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
     def __init__(self, server_address: tuple[str, int]) -> None:
+        """Bind the recording server and create its payload queue."""
         super().__init__(server_address, _CaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
 

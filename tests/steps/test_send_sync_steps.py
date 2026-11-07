@@ -27,6 +27,7 @@ scenarios(str(FEATURES / "send_sync.feature"))
 
 @given("a stream handler built for stderr", target_fixture="handler")
 def given_handler() -> cabc.Iterator[FemtoStreamHandler]:
+    """Build a stderr stream handler and close it after the scenario."""
     handler = StreamHandlerBuilder.stderr().build()
     try:
         yield handler
@@ -36,6 +37,7 @@ def given_handler() -> cabc.Iterator[FemtoStreamHandler]:
 
 @given("the handler is closed")
 def given_closed(handler: FemtoStreamHandler) -> None:
+    """Close the handler so the scenario can exercise post-close behaviour."""
     handler.close()
 
 
@@ -49,6 +51,7 @@ def _drain_info_lines(capfd: pytest.CaptureFixture[str]) -> list[str]:
 def when_log_one(
     handler: FemtoStreamHandler, capfd: pytest.CaptureFixture[str]
 ) -> list[str]:
+    """Log one INFO record, flush, and return the captured INFO lines."""
     handler.handle("test", "INFO", "drop me")
     is_flushed = handler.flush()
     lines = _drain_info_lines(capfd)
@@ -60,6 +63,7 @@ def when_log_one(
 def when_log_after_close(
     handler: FemtoStreamHandler, capfd: pytest.CaptureFixture[str]
 ) -> list[str]:
+    """Expect RuntimeError on a closed handler and a failed flush; return INFO lines."""
     with pytest.raises(RuntimeError, match="Handler error: handler is closed"):
         handler.handle("test", "INFO", "drop me")
     is_flushed = handler.flush()
@@ -77,7 +81,10 @@ def when_log_threads(
     capfd: pytest.CaptureFixture[str],
     count: int,
 ) -> list[str]:
+    """Log from several threads, flush, and return INFO lines sorted by ordinal."""
+
     def worker(i: int) -> None:
+        """Handle one INFO record numbered i from a worker thread."""
         handler.handle("test", "INFO", f"message {i}")
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(count)]
@@ -92,6 +99,7 @@ def when_log_threads(
     )
 
     def _suffix_num(line: str) -> int | None:
+        """Return the trailing integer of a log line, or None if absent."""
         try:
             return int(line.rsplit(" ", 1)[-1])
         except (ValueError, IndexError):
@@ -107,6 +115,7 @@ def when_log_threads(
 def then_output_snapshot(
     output: cabc.Sequence[str], snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the captured INFO output matches the recorded snapshot."""
     assert output == snapshot, (
         "concurrently emitted records must match the recorded snapshot "
         f"once normalized; got {output!r}"

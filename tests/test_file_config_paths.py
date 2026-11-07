@@ -25,10 +25,12 @@ class _FixedPathLike[AnyStr: (str, bytes)](PathLike[AnyStr]):
     """``PathLike`` returning a fixed ``str`` or ``bytes`` value."""
 
     def __init__(self, value: AnyStr) -> None:
+        """Store the fixed value that __fspath__ returns."""
         self._value = value
 
     @typ.override
     def __fspath__(self) -> AnyStr:
+        """Return the stored str or bytes path unchanged."""
         return self._value
 
 

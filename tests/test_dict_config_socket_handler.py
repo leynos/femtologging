@@ -38,6 +38,7 @@ class _SocketCaptureHandler(socketserver.BaseRequestHandler):
     """Collect framed payloads emitted by FemtoSocketHandler."""
 
     def handle(self) -> None:
+        """Read a length header and payload, one recv each, and queue the payload."""
         length_bytes = self.request.recv(4)
         if not length_bytes:
             return
@@ -48,9 +49,12 @@ class _SocketCaptureHandler(socketserver.BaseRequestHandler):
 
 
 class _SocketServer(socketserver.ThreadingTCPServer):
+    """Threaded TCP server that queues captured payloads for assertions."""
+
     allow_reuse_address = True
 
     def __init__(self, address: tuple[str, int]) -> None:
+        """Bind the capture server to address and create its payload queue."""
         super().__init__(address, _SocketCaptureHandler)
         self.queue: queue.Queue[bytes] = queue.Queue()
 
@@ -164,17 +168,22 @@ def test_dict_config_socket_handler_backoff_legacy_kwargs(
     )
 
     class LegacyBuilder:
+        """Builder double that records TCP host, port and backoff overrides."""
+
         def __init__(self) -> None:
+            """Start with no TCP endpoint or backoff overrides recorded."""
             self.host: str | None = None
             self.port: int | None = None
             self.overrides: dict[str, int | None] | None = None
 
         def with_tcp(self, host: str, port: int) -> LegacyBuilder:
+            """Record the TCP host and port, returning this builder."""
             self.host = host
             self.port = port
             return self
 
         def with_backoff(self, **overrides: int | None) -> LegacyBuilder:
+            """Record backoff overrides, returning this builder."""
             self.overrides = dict(overrides)
             return self
 

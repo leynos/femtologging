@@ -208,6 +208,17 @@ This addition follows the same pattern as the `leynos/lading` and
 `leynos/cuprum` Python lint stacks, which both run a pinned, production-only
 docstring-coverage gate as part of their tiered lint pipelines.
 
+## Addendum: docstring coverage over every Python tree (2026-11-07)
+
+The `interrogate` tier now runs through its own `interrogate` Make target, which
+`lint-python` calls. The target scans `INTERROGATE_TARGETS`: the package, the
+tests (pytest-bdd step functions and nested helper closures included), the
+scripts, the examples, the Rust extension's Python fixture and `conftest.py`.
+It prints every scanned definition (`-vv`) and fails on any `MISSED` row,
+because interrogate rounds its percentage to one decimal and `--fail-under 100`
+alone can pass a lone gap. `.pyi` stubs are not scanned. The previous
+production-only scope above is the historical decision this addendum replaces.
+
 ## Addendum: plain Pylint on PyPy 3.12 (2026-09-25)
 
 The Pylint tier no longer runs through `leynos/pylint-pypy-shim`. PyPy 8

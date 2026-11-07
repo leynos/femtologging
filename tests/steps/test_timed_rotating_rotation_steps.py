@@ -58,9 +58,11 @@ class TimedRotationSpec:
 def timed_rotating_context_factory(
     tmp_path: Path,
 ) -> cabc.Iterator[cabc.Callable[[TimedRotationSpec], TimedRotatingContext]]:
+    """Yield a timed handler builder and close its handlers at teardown."""
     contexts: list[TimedRotatingContext] = []
 
     def _build(spec: TimedRotationSpec) -> TimedRotatingContext:
+        """Create a timed rotating handler from spec and track it for teardown."""
         path = tmp_path / "timed.log"
         options = TimedHandlerOptions(
             when=spec.when,
@@ -84,11 +86,13 @@ def timed_rotating_context_factory(
 
 
 def _parse_time(value: str) -> dt.time:
+    """Parse an HH:MM:SS string into a time of day."""
     hours, minutes, seconds = [int(part) for part in value.split(":")]
     return dt.time(hours, minutes, seconds)
 
 
 def _epoch_millis(value: str) -> int:
+    """Convert an ISO-8601 timestamp to epoch milliseconds, assuming UTC if naive."""
     timestamp = dt.datetime.fromisoformat(value)
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=dt.UTC)
@@ -110,6 +114,7 @@ def given_timed_rotating_handler(
     interval: int,
     backup_count: int,
 ) -> TimedRotatingContext:
+    """Build a UTC timed rotating handler with the given rotation settings."""
     return timed_rotating_context_factory(
         TimedRotationSpec(
             when=when_value,
@@ -122,6 +127,7 @@ def given_timed_rotating_handler(
 
 @given("timed rotation test times:", target_fixture="timed_rotation_test_times")
 def given_timed_rotation_test_times(datatable: list[list[str]]) -> list[int]:
+    """Set the test clock from datatable timestamps and return them."""
     timestamps = [_epoch_millis(row[0]) for row in datatable[1:]]
     _set_timed_rotation_test_times_for_test(timestamps)
     return timestamps
@@ -138,6 +144,7 @@ def given_handler_at_time(
     timed_ctx: TimedRotatingContext,
     time_value: str,
 ) -> TimedRotatingContext:
+    """Close the current timed handler and rebuild it with the given at_time."""
     timed_ctx.handler.close()
     timed_ctx.closed = True
     return timed_rotating_context_factory(
@@ -153,11 +160,13 @@ def given_handler_at_time(
 def when_log_timed_record(
     timed_ctx: TimedRotatingContext, message: str, level: str, logger: str
 ) -> None:
+    """Send a log record to the timed handler with the given level and logger."""
     timed_ctx.handler.handle(logger, level, message)
 
 
 @when("I close the timed rotating handler")
 def when_close_timed_handler(timed_ctx: TimedRotatingContext) -> None:
+    """Close the timed handler and mark the context as closed."""
     timed_ctx.handler.close()
     timed_ctx.closed = True
 
@@ -166,6 +175,7 @@ def when_close_timed_handler(timed_ctx: TimedRotatingContext) -> None:
 def then_timed_log_files_snapshot(
     timed_ctx: TimedRotatingContext, snapshot: SnapshotAssertion
 ) -> None:
+    """Close the handler if open, then snapshot the rotated log file contents."""
     if not timed_ctx.closed:
         timed_ctx.handler.close()
         timed_ctx.closed = True

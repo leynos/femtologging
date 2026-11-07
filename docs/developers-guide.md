@@ -962,12 +962,16 @@ its addendum records the addition of the docstring-coverage tier below.
 1. **Ruff** — fast, broad rule set in preview mode, targeting `py312`. Pinned
    by `RUFF_VERSION` (`0.16.4`); see [Ruff version](#ruff-version) for the
    pin-sync scheme with CI.
-2. **interrogate** (`1.7.0`) — enforces 100% docstring coverage over the
-   production package only (`femtologging`). Tests are excluded deliberately:
-   Ruff's `D` rules already govern docstrings in tests, and `tests/steps/*.py`
-   ignores `undocumented-public-function` (D103) because pytest-bdd step
-   function names document themselves. Without that exclusion, interrogate
-   would also demand docstrings on nested helper closures for little value.
+2. **interrogate** (`1.7.0`) — enforces 100% docstring coverage over
+   `INTERROGATE_TARGETS`: the package, the tests (pytest-bdd step functions and
+   nested helper closures included), the scripts, the examples, the Rust
+   extension's Python fixture and `conftest.py`; `.pyi` stubs are not scanned.
+   The `interrogate` target prints every scanned definition and fails on any
+   `MISSED` row, because interrogate rounds its percentage to one decimal and
+   the threshold alone can pass a lone gap. `INTERROGATE_IGNORE_REGEX`
+   (`^basicConfig$`) skips every definition named `basicConfig`, which is how
+   the overload stubs are exempt; Ruff still checks the implementation's
+   docstring.
 3. **Pylint** (`4.0.7`) — runs as a uv tool on managed PyPy 3.12
    (`PYLINT_PYTHON ?= pypy@3.12`), isolated from the project virtual
    environment. `syntax-error` stays enabled, so a module PyPy cannot parse
@@ -1003,9 +1007,8 @@ To run any of the five tiers locally, invoke the underlying tool directly:
 uvx ruff==0.16.4 check
 
 
-# Tier 2: interrogate (docstring coverage, production package only)
-uv tool run --from 'interrogate==1.7.0' interrogate --fail-under 100 \
-  --ignore-regex '^basicConfig$' femtologging
+# Tier 2: interrogate (docstring coverage, every Python tree the repository owns)
+make interrogate
 
 
 # Tier 3: Pylint under managed PyPy

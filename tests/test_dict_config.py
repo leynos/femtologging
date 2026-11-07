@@ -66,6 +66,7 @@ def _run_timed_dictconfig_rotation_test(
     handler_config: dict[str, object],
     rotated_suffix: str,
 ) -> None:
+    """Check timed rotation moves the first record into the suffixed file."""
     reset_manager()
     path = tmp_path / filename
     # test_times: [0] = handler init time, [1] = first log (no advance, same as init),
@@ -97,10 +98,12 @@ def _run_timed_dictconfig_rotation_test(
 
 
 def _args_config_factory(path: Path) -> dict[str, object]:
+    """Build a timed rotating handler config with positional schedule args."""
     return {"args": [str(path), "S", 1, 1], "kwargs": {"utc": True}}
 
 
 def _kwargs_config_factory(path: Path) -> dict[str, object]:
+    """Build a timed rotating handler config with keyword arguments."""
     return {
         "kwargs": {
             "filename": str(path),

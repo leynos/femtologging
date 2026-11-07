@@ -24,6 +24,7 @@ def reset_logger_state() -> cabc.Iterator[None]:
 
 
 def _write_file_handler_ini(config_path: Path, log_path: Path) -> None:
+    """Write an INI config routing root logging to a FileHandler."""
     config_path.write_text(
         "[loggers]\nkeys = root\n\n"
         "[handlers]\nkeys = file\n\n"

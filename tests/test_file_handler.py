@@ -44,6 +44,7 @@ def _read_lines_with_retry(
     """Read lines, retrying briefly to allow async flush to complete."""
 
     def read_lines() -> list[str]:
+        """Return the file's lines, or an empty list if it is absent."""
         return path.read_text().splitlines() if path.exists() else []
 
     deadline = time.monotonic() + timeout
@@ -111,6 +112,7 @@ def test_file_handler_concurrent_usage(
     with file_handler_factory(path, 8, 1) as handler:
 
         def send(h: FemtoFileHandler, i: int) -> None:
+            """Handle one message from the calling thread."""
             h.handle("core", "INFO", f"msg{i}")
 
         threads = [threading.Thread(target=send, args=(handler, i)) for i in range(10)]
@@ -131,6 +133,7 @@ def test_file_handler_flush(tmp_path: Path) -> None:
     with closing(FemtoFileHandler(str(path))) as handler:
 
         def send(msg: str) -> None:
+            """Handle a message, then assert that flush reports success."""
             handler.handle("core", "INFO", msg)
             assert handler.flush() is True, (
                 f"flush() must report success after handling {msg!r}"
@@ -154,6 +157,7 @@ def test_file_handler_flush_concurrent(
     with file_handler_factory(path, 8, 1) as handler:
 
         def send_and_flush() -> None:
+            """Handle a message and assert that flush succeeds."""
             handler.handle("core", "INFO", "msg")
             assert handler.flush() is True, (
                 "concurrent flush() must report success for every caller"
@@ -208,12 +212,14 @@ def test_overflow_policy_timeout(tmp_path: Path) -> None:
     def release_worker_on_exit(
         event: threading.Event,
     ) -> cabc.Generator[None, None, None]:
+        """Yield once, then set the event so a blocked worker can finish."""
         try:
             yield
         finally:
             event.set()
 
     def blocking_formatter(record: cabc.Mapping[str, object]) -> str:
+        """Format a record, blocking the first call until it is released."""
         logger = record["logger"]
         level = record["level"]
         message = record["message"]

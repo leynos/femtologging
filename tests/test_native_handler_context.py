@@ -173,6 +173,7 @@ class _RecordingHTTPServer(http.server.ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self) -> None:
+        """Bind a loopback server with a payload queue and completion event."""
         super().__init__(("127.0.0.1", 0), _HTTPContextCaptureHandler)
         self.payloads: queue.Queue[bytes] = queue.Queue()
         self.request_completed = threading.Event()

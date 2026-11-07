@@ -123,6 +123,7 @@ def test_get_logger_info_preserves_context_at_root_handler() -> None:
     records: list[cabc.Mapping[str, object]] = []
 
     def capture(record: cabc.Mapping[str, object]) -> str:
+        """Append the record to the captured list and return a marker."""
         records.append(record)
         return "captured"
 

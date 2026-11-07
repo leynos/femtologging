@@ -63,6 +63,7 @@ def new_info_stderr_builder() -> BuilderFactory:
     """
 
     def factory() -> ConfigBuilder:
+        """Build a fresh INFO root and stderr handler configuration."""
         return (
             ConfigBuilder()
             .with_handler(HANDLER_ID, StreamHandlerBuilder.stderr())

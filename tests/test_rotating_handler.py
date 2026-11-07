@@ -46,6 +46,7 @@ def fixture_open_rotating_handler(
     def open_handler(
         options: HandlerOptions | None = None,
     ) -> FemtoRotatingFileHandler:
+        """Open a rotating handler on log_path and track it for closing."""
         handler = FemtoRotatingFileHandler(
             str(log_path),
             options=options if options is not None else HandlerOptions(),

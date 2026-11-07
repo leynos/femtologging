@@ -209,6 +209,7 @@ def call_with_context_and_capture_metadata(
     context_map = parse_pairs(context)
 
     def emit() -> None:
+        """Emit the log call inside a context built from the parsed pairs."""
         with log_context(**context_map):
             FUNC_MAP[func](message, name=name)
 
@@ -231,6 +232,7 @@ def call_with_nested_context_and_capture_metadata(
     inner_map = parse_pairs(inner)
 
     def emit() -> None:
+        """Emit the log call inside nested outer and inner contexts."""
         with log_context(**outer_map), log_context(**inner_map):
             FUNC_MAP[func](message, name=name)
 

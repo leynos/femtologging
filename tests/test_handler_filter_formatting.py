@@ -56,6 +56,7 @@ def test_handler_filter_enriches_records_from_propagated_loggers(
     observed_logger_names: list[str] = []
 
     def add_correlation_id(record: object) -> bool:
+        """Record the logger name and stamp a correlation ID on the record."""
         record_attributes = vars(record)
         observed_logger_names.append(typ.cast("str", record_attributes["name"]))
         record_attributes["correlation_id"] = "REQ-99"
@@ -106,6 +107,7 @@ def test_handler_filter_runs_on_emitter_thread_with_context_and_rejects(
     observations: list[tuple[int, str | None, str]] = []
 
     def enrich_and_filter(record: object) -> bool:
+        """Record the emitter thread and context, then enrich or reject."""
         attributes = vars(record)
         context_id = request_id.get()
         message = typ.cast("str", attributes["msg"])
@@ -159,10 +161,12 @@ def test_handler_filters_keep_their_own_record_snapshot(tmp_path: Path) -> None:
     second_path = tmp_path / "second-handler.log"
 
     def add_first_field(record: object) -> bool:
+        """Stamp the record with the first field and accept it."""
         vars(record)["first_field"] = "first"
         return True
 
     def add_second_field(record: object) -> bool:
+        """Stamp the record with the second field and accept it."""
         vars(record)["second_field"] = "second"
         return True
 
@@ -223,6 +227,7 @@ def test_formatter_renders_structured_callback_field(
     formatter = FormatterBuilder().with_format("%(correlation_id)s %(message)s")
 
     def add_correlation_id(record: object) -> bool:
+        """Stamp the record with a correlation ID and accept it."""
         vars(record)["correlation_id"] = "REQ-99"
         return True
 

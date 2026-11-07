@@ -21,11 +21,14 @@ if typ.TYPE_CHECKING:
 class _ClosableHandler(typ.Protocol):
     """Python methods shared by the worker-backed handler types."""
 
-    def handle(self, logger: str, level: str, message: str) -> None: ...
+    def handle(self, logger: str, level: str, message: str) -> None:
+        """Accept one record for the worker to format and write."""
 
-    def flush(self) -> bool: ...
+    def flush(self) -> bool:
+        """Flush pending records and report whether the flush succeeded."""
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Close the handler and drain its worker."""
 
 
 def _make_reentrant_formatter(
@@ -36,6 +39,7 @@ def _make_reentrant_formatter(
     """Build a formatter that records re-entrant calls during shutdown."""
 
     def format_record(record: cabc.Mapping[str, object]) -> str:
+        """Re-enter the handler from the formatter and record each outcome."""
         if handler_ref:
             try:
                 handler_ref[0].handle("callback", "INFO", "during-close")

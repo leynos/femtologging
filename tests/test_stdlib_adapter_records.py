@@ -104,16 +104,21 @@ class TestDelegation:
         calls: list[str] = []
 
         class SpyHandler(logging.Handler):
+            """Handler double that records flush and close calls."""
+
             @typ.override
             def emit(self, record: logging.LogRecord) -> None:
+                """Discard the record; the spy only tracks flush and close."""
                 pass
 
             @typ.override
             def flush(self) -> None:
+                """Record a flush call on the shared calls list."""
                 calls.append("flush")
 
             @typ.override
             def close(self) -> None:
+                """Record a close call, then delegate to the base handler."""
                 calls.append("close")
                 super().close()
 

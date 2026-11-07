@@ -72,11 +72,13 @@ def exception_state() -> ExceptionState:
 
 @given(parsers.parse('a logger named "{name}"'))
 def create_logger(logger_fixture: LoggerFixture, name: str) -> None:
+    """Create a FemtoLogger with the given name and store it in the fixture."""
     logger_fixture["logger"] = FemtoLogger(name)
 
 
 @given(parsers.parse('an active ValueError exception with message "{message}"'))
 def set_active_value_error(exception_state: ExceptionState, message: str) -> None:
+    """Mark an active ValueError with the given message in the exception state."""
     exception_state["active"] = True
     exception_state["type"] = ValueError
     exception_state["message"] = message
@@ -84,17 +86,20 @@ def set_active_value_error(exception_state: ExceptionState, message: str) -> Non
 
 @given(parsers.parse('an exception instance KeyError with message "{message}"'))
 def create_key_error_instance(exception_state: ExceptionState, message: str) -> None:
+    """Store a KeyError with the given message as the pending exception instance."""
     exception_state["instance"] = KeyError(message)
 
 
 @given("an exception chain: RuntimeError from OSError")
 def create_chained_exception(exception_state: ExceptionState) -> None:
+    """Mark an active exception chain of RuntimeError raised from OSError."""
     exception_state["active"] = True
     exception_state["chained"] = True
 
 
 @given("an exception group with ValueError and TypeError")
 def create_exception_group(exception_state: ExceptionState) -> None:
+    """Mark an active exception group holding ValueError and TypeError."""
     exception_state["active"] = True
     exception_state["group"] = True
 
@@ -153,6 +158,7 @@ def log_with_exc_info_true(
     level: str,
     message: str,
 ) -> None:
+    """Log with exc_info=True, raising any staged exception before logging."""
     logger = logger_fixture["logger"]
     assert logger is not None, "Logger must be initialized"
 
@@ -181,6 +187,7 @@ def log_with_exc_info_instance(
     level: str,
     message: str,
 ) -> None:
+    """Log with exc_info set to the stored exception instance."""
     logger = logger_fixture["logger"]
     assert logger is not None, "Logger must be initialized"
     exc_instance = exception_state["instance"]
@@ -189,6 +196,7 @@ def log_with_exc_info_instance(
 
 @then(parsers.parse('the formatted output contains "{text}"'))
 def output_contains(logger_fixture: LoggerFixture, text: str) -> None:
+    """Assert the formatted output contains the given text."""
     output = logger_fixture["output"]
     assert output is not None, "Expected output but got None"
     assert text in output, f"Expected '{text}' in output: {output}"
@@ -196,6 +204,7 @@ def output_contains(logger_fixture: LoggerFixture, text: str) -> None:
 
 @then(parsers.parse('the formatted output equals "{expected}"'))
 def output_equals(logger_fixture: LoggerFixture, expected: str) -> None:
+    """Assert the formatted output equals the expected string exactly."""
     output = logger_fixture["output"]
     assert output == expected, f"Expected '{expected}' but got '{output}'"
 
@@ -204,6 +213,7 @@ def output_equals(logger_fixture: LoggerFixture, expected: str) -> None:
 def output_matches_snapshot(
     logger_fixture: LoggerFixture, snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the normalized traceback output matches the recorded snapshot."""
     output = logger_fixture["output"]
     # Normalize paths and line numbers for snapshot stability
     normalized = normalize_traceback_output(output)

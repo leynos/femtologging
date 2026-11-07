@@ -75,6 +75,7 @@ class _RecordCaptureHandler:
     """Collect record payloads received through ``handle_record``."""
 
     def __init__(self) -> None:
+        """Create an empty record list and bind handle_record to its append."""
         self.records: list[FemtoRecord] = []
         # femtologging looks up ``handle_record`` on the instance, so binding
         # ``list.append`` directly avoids a forwarding method that would add
@@ -91,7 +92,8 @@ class _RecordCaptureHandler:
 class _Closeable(typ.Protocol):
     """Minimal protocol for handlers this module attaches and tears down."""
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Close the handler and release its resources."""
 
 
 @contextlib.contextmanager
@@ -176,11 +178,13 @@ def when_emit_rust_tracing_event(
 
 
 def _flush_record_handler(logger_name: str) -> None:
+    """Flush the named logger's handlers so queued records reach them."""
     logger = get_logger(logger_name)
     logger.flush_handlers()
 
 
 def _snapshot_record(record: FemtoRecord) -> dict[str, object]:
+    """Reduce a record to its logger, level, message, and key-value metadata."""
     metadata = typ.cast("dict[str, object]", record.get("metadata", {}))
     key_values = typ.cast("dict[str, object]", metadata.get("key_values", {}))
     return {

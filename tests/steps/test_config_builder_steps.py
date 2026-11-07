@@ -26,23 +26,27 @@ scenarios(str(FEATURES / "config_builder.feature"))
 
 @given("a ConfigBuilder", target_fixture="config_builder")
 def given_config_builder() -> ConfigBuilder:
+    """Create an empty ConfigBuilder for a builder scenario."""
     return ConfigBuilder()
 
 
 @when('I add formatter "fmt" with format "{level} {message}"')
 def add_formatter(config_builder: ConfigBuilder) -> None:
+    """Add a formatter named fmt with a level and message format."""
     fmt = FormatterBuilder().with_format("{level} {message}")
     config_builder.with_formatter("fmt", fmt)
 
 
 @when('I add logger "core" with level "INFO"')
 def add_logger(config_builder: ConfigBuilder) -> None:
+    """Add a logger named core at INFO level."""
     logger = LoggerConfigBuilder().with_level("INFO")
     config_builder.with_logger("core", logger)
 
 
 @when(parsers.parse('I add stream handler "{hid}" targeting "{target}"'))
 def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> None:
+    """Add a stderr or stdout stream handler, defaulting to stdout."""
     handler = (
         StreamHandlerBuilder.stderr()
         if target.lower() == "stderr"
@@ -55,6 +59,7 @@ def add_stream_handler(config_builder: ConfigBuilder, hid: str, target: str) -> 
 def add_logger_with_handler(
     config_builder: ConfigBuilder, name: str, handler: str
 ) -> None:
+    """Add a logger that routes its records through the given handler."""
     logger = LoggerConfigBuilder().with_handlers([handler])
     config_builder.with_logger(name, logger)
 
@@ -65,12 +70,14 @@ def add_logger_with_handler(
 def add_logger_with_level_and_handler(
     config_builder: ConfigBuilder, name: str, level: str, handler: str
 ) -> None:
+    """Add a logger at the given level that uses the given handler."""
     logger = LoggerConfigBuilder().with_level(level).with_handlers([handler])
     config_builder.with_logger(name, logger)
 
 
 @when(parsers.parse('I set root logger with level "{level}"'))
 def set_root(config_builder: ConfigBuilder, level: str) -> None:
+    """Set the root logger level without attaching any handlers."""
     root = LoggerConfigBuilder().with_level(level)
     config_builder.with_root_logger(root)
 
@@ -79,6 +86,7 @@ def set_root(config_builder: ConfigBuilder, level: str) -> None:
 def configuration_matches_snapshot(
     config_builder: ConfigBuilder, snapshot: SnapshotAssertion
 ) -> None:
+    """Assert the serialized builder configuration matches the snapshot."""
     assert config_builder.as_dict() == snapshot, (
         "the builder's serialized configuration must match the recorded snapshot"
     )
@@ -86,22 +94,26 @@ def configuration_matches_snapshot(
 
 @then("the configuration is built and initialized")
 def configuration_is_built(config_builder: ConfigBuilder) -> None:
+    """Build and initialize the configuration, letting errors propagate."""
     config_builder.build_and_init()
 
 
 @when("I set version 2")
 def set_version(config_builder: ConfigBuilder) -> None:
+    """Set the configuration schema version to 2."""
     config_builder.with_version(2)
 
 
 @then("building the configuration fails")
 def build_fails(config_builder: ConfigBuilder) -> None:
+    """Assert building the configuration fails on an unsupported version."""
     with pytest.raises(ValueError, match="unsupported configuration version"):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('building the configuration fails with error containing "{msg}"'))
 def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> None:
+    """Assert building the configuration raises ValueError matching msg."""
     with pytest.raises(ValueError, match=msg):
         config_builder.build_and_init()
 
@@ -110,12 +122,14 @@ def build_fails_with_value_error(config_builder: ConfigBuilder, msg: str) -> Non
     parsers.parse('building the configuration fails with key error containing "{msg}"')
 )
 def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
+    """Assert building the configuration raises KeyError matching msg."""
     with pytest.raises(KeyError, match=msg):
         config_builder.build_and_init()
 
 
 @then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
 def loggers_share_handler(first: str, second: str, hid: str) -> None:
+    """Assert both named loggers hold the same handler instance."""
     first_handlers = get_logger(first).handler_ptrs_for_test()
     second_handlers = get_logger(second).handler_ptrs_for_test()
     assert first_handlers, f"logger '{first}' must have handler '{hid}' attached"
