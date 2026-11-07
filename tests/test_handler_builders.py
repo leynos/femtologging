@@ -267,7 +267,7 @@ def test_stream_builder_applies_callable_formatter(
         handler.close()
 
     captured = capfd.readouterr().err
-    assert "callable:hello" in captured, (
+    assert "callable:hello\n" in captured, (
         f"stream handler should apply the callable formatter; stderr={captured!r}"
     )
 
