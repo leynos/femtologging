@@ -10,6 +10,7 @@
     reason = "PyO3 macro-generated wrappers expand Python-call signatures"
 )]
 
+mod config;
 mod shutdown;
 
 use std::{
@@ -28,48 +29,11 @@ use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, sp
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
-    rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
+    rate_limited_warner::RateLimitedWarner,
 };
 
+pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig};
 use shutdown::StreamShutdown;
-
-/// Default queue capacity used when a stream builder does not provide one.
-const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
-
-/// Configuration for constructing a [`FemtoStreamHandler`].
-pub struct HandlerConfig {
-    pub capacity: usize,
-    pub flush_timeout: Duration,
-    pub warner: RateLimitedWarner,
-}
-
-impl Default for HandlerConfig {
-    fn default() -> Self {
-        Self {
-            capacity: DEFAULT_CHANNEL_CAPACITY,
-            flush_timeout: Duration::from_secs(1),
-            warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
-        }
-    }
-}
-
-impl HandlerConfig {
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.capacity = capacity;
-        self
-    }
-
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.flush_timeout = timeout;
-        self
-    }
-
-    #[cfg(feature = "test-util")]
-    pub fn with_warner(mut self, warner: RateLimitedWarner) -> Self {
-        self.warner = warner;
-        self
-    }
-}
 
 /// Handler that writes formatted log records to an `io::Write` stream.
 ///
@@ -216,7 +180,9 @@ impl FemtoStreamHandler {
     /// False
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// run on the worker thread.
+    /// run on the worker thread. The wait is bounded by the handler's flush
+    /// timeout; when it expires, ``False`` is returned and the worker may
+    /// still write later.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         py.detach(|| self.flush())
@@ -224,8 +190,14 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to finish.
     ///
-    /// The GIL is released while waiting, and only a shared PyO3 borrow is
-    /// needed, so a close can run beside a detached flush call.
+    /// The handler stops accepting records, drains the records already queued,
+    /// and waits for the worker to exit. The GIL is released while waiting, so
+    /// a Python callable formatter can run to completion on the worker thread.
+    /// Only a shared PyO3 borrow is needed, so a close can run beside a
+    /// detached flush call.
+    ///
+    /// The wait is bounded by the handler's flush timeout. If it expires,
+    /// close returns while the worker may still write to the stream.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
