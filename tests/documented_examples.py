@@ -9,8 +9,14 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 _IDENTIFIER_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# The source may not contain a closing-fence line, so the match cannot run past
+# the first fence to a later one. The closing fence must then carry nothing but
+# optional same-line whitespace: a language label or other text after it means
+# the fence was a language-tagged opening fence, not the end of this example.
 _PYTHON_FENCE_PATTERN = re.compile(
-    r"\r?\n```python\r?\n(?P<source>.*?)\r?\n```",
+    r"\r?\n```python\r?\n"
+    r"(?P<source>(?:(?!\r?\n```).)*?)"
+    r"\r?\n```[ \t]*(?:\r?\n|\Z)",
     re.DOTALL,
 )
 
