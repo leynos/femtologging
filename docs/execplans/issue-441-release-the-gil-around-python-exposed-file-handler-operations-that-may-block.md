@@ -1052,10 +1052,10 @@ commit implements that rather than deferring it.
 - `rust_extension/src/handlers/telemetry.rs` (new) defines `WaitOutcome`, a
   fixed set of sixteen outcomes: six for `handle`, six for `flush`, and four for
   `close`. Only the close group has `panicked` and `unknown` outcomes.
-  `WaitDiagnostics` holds sixteen relaxed `AtomicU64` counters and two duration
-  totals. `WaitTimer` starts before `py.detach` and finishes after it on the
-  interpreter thread, so the recorded interval is the whole wait, not just the
-  enqueue or the acknowledgement.
+  `WaitDiagnostics` holds sixteen relaxed `AtomicU64` counters plus a total and
+  a maximum wait duration. `WaitTimer` starts before `py.detach` and finishes
+  after it on the interpreter thread, so the recorded interval is the whole
+  wait, not just the enqueue or the acknowledgement.
 - `rust_extension/src/handlers/file/wait_outcomes.rs` (new) owns the
   user-visible results the core used to hide behind `bool` and `()`:
   `FlushOutcome`, `ShutdownOutcome`, and `classify_enqueue`. `WorkerShutdown`
