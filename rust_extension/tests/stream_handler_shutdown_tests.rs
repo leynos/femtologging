@@ -200,6 +200,48 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_block
         .expect("worker should finish thread-local teardown");
 }
 
+/// Formatter that panics on the worker thread and reports that it ran.
+struct PanicFormatter {
+    /// Signals that the worker entered the formatter before it panicked.
+    panicked: Sender<()>,
+}
+
+impl FemtoFormatter for PanicFormatter {
+    fn format(&self, _record: &FemtoLogRecord) -> String {
+        let _ = self.panicked.send(());
+        panic!("formatter panics on purpose");
+    }
+}
+
+#[test]
+fn stream_handler_close_returns_promptly_after_a_worker_panic() {
+    const FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
+
+    let (panicked_tx, panicked_rx) = mpsc::channel();
+    let handler = FemtoStreamHandler::with_capacity_timeout(
+        io::sink(),
+        PanicFormatter {
+            panicked: panicked_tx,
+        },
+        8,
+        FLUSH_TIMEOUT,
+    );
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "boom"));
+    panicked_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker should enter the formatter before it panics");
+
+    let started = Instant::now();
+    handler.close();
+    let elapsed = started.elapsed();
+    // Unwinding signals completion, so the closer must not fall back to the
+    // timeout. The generous factor only catches a hang; it is not a margin.
+    assert!(
+        elapsed < FLUSH_TIMEOUT / 4,
+        "close() waited {elapsed:?}; a panicked worker must still signal completion"
+    );
+}
+
 /// Writer whose first flush blocks until the test releases it.
 struct BlockingFlushBuf {
     /// Signals that the worker has reached the first flush.
