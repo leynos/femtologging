@@ -175,25 +175,40 @@ it.
 
 `logger.flush_handlers()` waits for records already queued by that logger to
 reach its handlers, then flushes each attached handler. The Python wrapper
-releases the GIL while it waits, so Python handlers can run. Enqueueing the
-flush marker and waiting for its acknowledgement share a two-second timeout.
-Flushing attached handlers can take additional time. The method returns `True`
-when the worker acknowledges the marker in time and every handler flush
-succeeds; it returns `False` if the marker cannot be enqueued or acknowledged
-in time, or any handler flush fails.
+releases the GIL while it waits, so Python handlers can run. For a native
+handler such as `FemtoFileHandler`, the wrapper forwards the flush to the
+handler's own `flush()`, so buffered records reach disk even though the handler
+exposes no Python `flush` method. For any other handler object, the wrapper
+calls its `flush()` when it defines one and treats a missing or non-callable
+`flush` as success. Because Python reports a failed flush by raising, a
+`flush()` that returns `None` — as `logging.Handler.flush()` does — counts as
+success, and only an exception counts as failure. Enqueueing the flush marker
+and waiting for its acknowledgement share a two-second timeout. Flushing
+attached handlers can take additional time. The method returns `True` when the
+worker acknowledges the marker in time and every handler flush succeeds; it
+returns `False` if the marker cannot be enqueued or acknowledged in time, or
+any handler flush fails. A failing handler does not stop the remaining handlers
+from being flushed.
 
 <!-- tested-example: flush-handlers-usage -->
 ```python
 import femtologging
 
 logger = femtologging.get_logger("service")
-handler = femtologging.FemtoFileHandler("service.log")
+# A large flush interval keeps the record buffered until an explicit flush.
+handler = femtologging.FemtoFileHandler("service.log", flush_interval=10_000)
 logger.add_handler(handler)
 
 try:
     logger.info("shutting down")
     if not logger.flush_handlers():
         raise RuntimeError("logger handlers did not flush")
+
+    # The record reached disk while the handler was still open, so this
+    # proves logger.flush_handlers() flushed it rather than handler.close().
+    with open("service.log", encoding="utf-8") as log_file:
+        if "shutting down" not in log_file.read():
+            raise RuntimeError("flush did not write the buffered record")
 finally:
     logger.remove_handler(handler)
     handler.close()
@@ -1023,8 +1038,11 @@ is reported.
 ## Operational tips and caveats
 
 - Call `logger.flush_handlers()` before shutting down to drain that logger's
-  queued records and flush its attached handlers. Close handlers that support
-  `close()` as part of shutdown; otherwise buffered records may be lost.
+  queued records and flush its attached handlers. Records propagate to ancestor
+  loggers, so flush every ancestor that receives them as well, including the
+  root logger when it has handlers. Check each call's result before closing
+  handlers, and close handlers that support `close()` as part of shutdown;
+  otherwise buffered records may be lost.
 - Monitor `logger.get_dropped()`, `logger.get_context_dropped()`,
   `logger.get_disabled_drops()`, and the warnings emitted by each handler to
   detect back pressure, Rust context validation failures, or traffic aimed at a

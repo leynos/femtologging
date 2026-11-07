@@ -821,6 +821,26 @@ microseconds. Record payloads and context values are never included. They target
 `femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
 from recursively logging its own instrumentation.
 
+### Flush observability
+
+Every `FemtoLogger::flush_handlers()` call records one bounded outcome and one
+duration in process-wide, cumulative counters. The metric names are:
+
+| Metric                               | Type      | Meaning                                                                                                                                               |
+| ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `femtologging.flush.total{outcome}`  | counter   | Flush attempts by outcome: `success`, `ack_timeout`, `channel_closed`, or `handler_failure`.                                                          |
+| `femtologging.flush.duration_us`     | histogram | Flush duration in microseconds, with cumulative buckets at 100, 500, 1,000, 5,000, 10,000, 50,000, 100,000, and 1,000,000 µs plus an overflow bucket. |
+| `femtologging.flush.bridge_failures` | counter   | Logger flushes that returned `false` while `log::Log::flush` swept the registered loggers.                                                            |
+
+With `tracing-compat` enabled, each flush also emits a `logger_flush` span
+targeting `femtologging::internal`. The span carries
+`operation = "logger_flush"` and records `flush_outcome` and `elapsed_us`; the
+outcome values match the counter labels. Acknowledgement timeouts, handler
+failures, and bridge failures also emit rate-limited warnings (at most one per
+five seconds per boundary) that report only a count. Neither the span nor the
+warnings include record payloads or logger names, because both are unbounded
+user data.
+
 ### Python-facing `flush()` and `close()` waits
 
 The stream, file, rotating-file, and timed-rotating-file handlers run their I/O

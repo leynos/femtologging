@@ -1328,6 +1328,12 @@ method returns `True` when the worker acknowledges the marker in time and every
 handler flush succeeds, and `False` when marker enqueue or acknowledgement
 fails or a handler flush fails.
 
+`flush_configured_handlers()` copies the handler list under the read guard,
+releases the guard, and then calls `flush()` on every entry. A failing handler
+does not short-circuit the loop: later handlers are still flushed, and the
+method returns the conjunction of the individual results. Both the collected
+list and the per-handler result are therefore independent of attachment order.
+
 For `log::Log::flush`, `FemtoLogAdapter` snapshots the registered logger
 references under the `MANAGER` read guard, releases the guard, then detaches
 each logger's blocking flush. This avoids holding the manager lock while a
@@ -1336,10 +1342,10 @@ honour the trait's `()` return contract.
 
 Handler flushes use each handler's own mechanism:
 
-- **Best-effort guarantee:** `flush()` attempts to flush all handlers but does
-  not apply a second global timeout after the logger barrier. Each handler has
-  its own configurable flush timeout (defaulting to the handler's write
-  timeout).
+- **Best-effort guarantee:** `flush()` invokes every attached handler, even
+  after one reports failure, and does not apply a second global timeout after
+  the logger barrier. Each handler has its own configurable flush timeout
+  (defaulting to the handler's write timeout).
 - **Buffered handlers:** Handlers using `BufWriter` (e.g., `FemtoFileHandler`,
   `FemtoRotatingFileHandler`) flush their internal buffers to the underlying
   file descriptor.
@@ -1475,10 +1481,13 @@ sequenceDiagram
         PythonApp->>PythonFemtoLogging: logger.flush_handlers()
         PythonFemtoLogging->>PyO3Bridge: flush_handlers() (releases GIL)
         PyO3Bridge->>FemtoLogger: detach and flush logger
-        FemtoLogger->>LoggerWorker: enqueue marker and wait for acknowledgement
-        LoggerWorker->>Handler: deliver queued records, then flush
-        Handler-->>LoggerWorker: result
-        LoggerWorker-->>PyO3Bridge: acknowledge marker
+        FemtoLogger->>LoggerWorker: enqueue flush marker
+        LoggerWorker->>Handler: deliver records queued before marker
+        Handler-->>LoggerWorker: callback complete
+        LoggerWorker-->>FemtoLogger: acknowledge marker
+        FemtoLogger->>Handler: flush attached handlers
+        Handler-->>FemtoLogger: flush result(s)
+        FemtoLogger-->>PyO3Bridge: return flush result
         PyO3Bridge-->>PythonApp: return flush result
     end
 
@@ -1489,11 +1498,13 @@ sequenceDiagram
         Manager-->>FemtoLogCompat: references (guard released)
         loop each logger
             FemtoLogCompat->>FemtoLogger: detach and flush logger
-            FemtoLogger->>LoggerWorker: enqueue marker and wait for acknowledgement
-            LoggerWorker->>Handler: deliver queued records, then flush
-            Handler-->>LoggerWorker: result
+            FemtoLogger->>LoggerWorker: enqueue flush marker
+            LoggerWorker->>Handler: deliver records queued before marker
+            Handler-->>LoggerWorker: callback complete
             LoggerWorker-->>FemtoLogger: acknowledge marker
-            FemtoLogger-->>FemtoLogCompat: flush result (ignored)
+            FemtoLogger->>Handler: flush attached handlers
+            Handler-->>FemtoLogger: flush result(s)
+            FemtoLogger-->>FemtoLogCompat: flush result (counted on failure)
         end
         FemtoLogCompat-->>RustLog: return
     end
