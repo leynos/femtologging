@@ -92,17 +92,25 @@ fn run_stream_worker<W, F>(
     W: Write,
     F: FemtoFormatter,
 {
-    // Declared first so it drops last: the writer is dropped before closers
-    // are told the worker stopped, and a panic still signals them.
+    // Declared first so it drops last: the writer and formatter are dropped
+    // before closers are told the worker stopped, and a panic still signals
+    // them. The work runs inside a closure so its captures are dropped when
+    // the call ends, including while unwinding; a formatter whose destructor
+    // blocks must not let a closer's unbounded join outlive the flush timeout.
     let _signal = CompleteOnDrop::new(completion);
-    let mut writer = writer;
-    for cmd in rx {
-        match cmd {
-            StreamCommand::Record(record) => handle_record_command(&mut writer, &formatter, record),
-            StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
+    let work = move || {
+        let mut writer = writer;
+        for cmd in rx {
+            match cmd {
+                StreamCommand::Record(record) => {
+                    handle_record_command(&mut writer, &formatter, record);
+                }
+                StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
+            }
         }
-    }
-    flush_with_warning(&mut writer);
+        flush_with_warning(&mut writer);
+    };
+    work();
 }
 
 #[pyclass]
