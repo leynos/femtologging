@@ -5,6 +5,8 @@
 //! records and flush commands over a bounded channel so the producer never
 //! blocks on I/O. The handler supports explicit flushing to ensure all pending
 //! records are written.
+
+mod config;
 mod shutdown;
 
 use std::{
@@ -23,55 +25,11 @@ use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, sp
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
-    rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner},
+    rate_limited_warner::RateLimitedWarner,
 };
 
+pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig};
 use shutdown::StreamShutdown;
-
-/// Default queue capacity used when a stream builder does not provide one.
-const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
-
-/// Configuration for constructing a [`FemtoStreamHandler`].
-pub struct HandlerConfig {
-    /// Bounded queue size, in commands, between callers and the worker. Records arriving
-    /// while the queue is full are dropped.
-    pub capacity: usize,
-    /// How long `flush` waits to enqueue its command and, separately, for the worker's acknowledgement.
-    pub flush_timeout: Duration,
-    /// Rate limiter that throttles warnings about dropped records.
-    pub warner: RateLimitedWarner,
-}
-
-impl Default for HandlerConfig {
-    fn default() -> Self {
-        Self {
-            capacity: DEFAULT_CHANNEL_CAPACITY,
-            flush_timeout: Duration::from_secs(1),
-            warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
-        }
-    }
-}
-
-impl HandlerConfig {
-    /// Set the worker queue capacity, in commands.
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
-        self.capacity = capacity;
-        self
-    }
-
-    /// Set how long each of `flush`'s two waits (enqueue, acknowledgement) may take.
-    pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.flush_timeout = timeout;
-        self
-    }
-
-    /// Replace the rate limiter used for drop warnings. Available with the `test-util` feature.
-    #[cfg(feature = "test-util")]
-    pub fn with_warner(mut self, warner: RateLimitedWarner) -> Self {
-        self.warner = warner;
-        self
-    }
-}
 
 /// Commands the worker thread takes from the queue, in order.
 #[expect(
@@ -212,7 +170,9 @@ impl FemtoStreamHandler {
     /// False
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// run on the worker thread.
+    /// run on the worker thread. The wait is bounded by the handler's flush
+    /// timeout; when it expires, ``False`` is returned and the worker may
+    /// still write later.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         py.detach(|| self.flush())
@@ -220,8 +180,14 @@ impl FemtoStreamHandler {
 
     /// Close the handler and wait for the worker thread to finish.
     ///
-    /// The GIL is released while waiting, and only a shared PyO3 borrow is
-    /// needed, so a close can run beside a detached flush call.
+    /// The handler stops accepting records, drains the records already queued,
+    /// and waits for the worker to exit. The GIL is released while waiting, so
+    /// a Python callable formatter can run to completion on the worker thread.
+    /// Only a shared PyO3 borrow is needed, so a close can run beside a
+    /// detached flush call.
+    ///
+    /// The wait is bounded by the handler's flush timeout. If it expires,
+    /// close returns while the worker may still write to the stream.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
@@ -231,6 +197,7 @@ impl FemtoStreamHandler {
         py.detach(move || shutdown.wait());
     }
 }
+
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
@@ -334,6 +301,7 @@ impl FemtoStreamHandler {
         StreamShutdown::new(handle, completion, self.flush_timeout)
     }
 }
+
 
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
