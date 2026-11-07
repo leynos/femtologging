@@ -196,9 +196,8 @@ use femtologging_rs::{
     ExceptionPayload, SchemaVersionError, SchemaVersioned,
 };
 
-fn process_payload(json: &str) -> Result<(), SchemaVersionError> {
-    let payload: ExceptionPayload =
-        serde_json::from_str(json).expect("valid JSON");
+fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let payload: ExceptionPayload = serde_json::from_str(json)?;
     match payload.validate_version() {
         Ok(()) => {
             // Normal processing path.
@@ -208,7 +207,7 @@ fn process_payload(json: &str) -> Result<(), SchemaVersionError> {
             found,
             max_supported,
         }) => {
-            // Degrade safely: keep raw payload and skip schema-dependent logic.
+            // Reject too-new payloads explicitly.
             eprintln!(
                 "payload schema {} is newer than supported {}",
                 found, max_supported
@@ -216,7 +215,8 @@ fn process_payload(json: &str) -> Result<(), SchemaVersionError> {
             Err(SchemaVersionError::VersionTooNew {
                 found,
                 max_supported,
-            })
+            }
+            .into())
         }
         Err(SchemaVersionError::VersionTooOld {
             found,
@@ -230,11 +230,15 @@ fn process_payload(json: &str) -> Result<(), SchemaVersionError> {
             Err(SchemaVersionError::VersionTooOld {
                 found,
                 min_supported,
-            })
+            }
+            .into())
         }
     }
 }
 ```
+
+Malformed JSON propagates as `serde_json::Error` inside the boxed error, and
+version validation runs only after a successful parse.
 
 When consuming payloads in Python from external sources, compare
 `payload["schema_version"]` with `femtologging.EXCEPTION_SCHEMA_VERSION` and
