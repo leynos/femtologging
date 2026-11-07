@@ -14,7 +14,7 @@ use std::{
     any::Any,
     io::{self, Write},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use log::warn;
@@ -89,7 +89,7 @@ fn run_stream_worker<W, F>(
     // before closers are told the worker stopped, and a panic still signals
     // them. The work runs inside a closure so its captures are dropped when
     // the call ends, including while unwinding; a formatter whose destructor
-    // blocks must not let a closer's unbounded join outlive the flush timeout.
+    // blocks must not let a closer's wait outlive the flush timeout.
     let _signal = CompleteOnDrop::new(completion);
     let work = move || {
         let mut writer = writer;
@@ -103,11 +103,16 @@ fn run_stream_worker<W, F>(
         }
         flush_with_warning(&mut writer);
     };
-    work();
+    // No closer joins this thread (a join would wait for thread-local
+    // destructors that user code can make block), so the worker reports its
+    // own panic instead of leaving the join result unread.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).is_err() {
+        warn!("FemtoStreamHandler: worker thread panicked");
+    }
 }
 
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
-/// the caller never waits for the write. `flush` bounds each of its two waits by `flush_timeout`.
+/// the caller never waits for the write. `flush` bounds its whole wait by `flush_timeout`.
 #[pyclass]
 pub struct FemtoStreamHandler {
     /// Queue sender taken during close; shared so no closer needs an exclusive borrow.
@@ -122,7 +127,6 @@ pub struct FemtoStreamHandler {
     /// Timeout for flush operations.
     flush_timeout: Duration,
 }
-
 
 #[pymethods]
 impl FemtoStreamHandler {
@@ -180,9 +184,10 @@ impl FemtoStreamHandler {
     /// False
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// run on the worker thread. The wait is bounded by the handler's flush
-    /// timeout; when it expires, ``False`` is returned and the worker may
-    /// still write later.
+    /// run on the worker thread. A single deadline, derived from the handler's
+    /// flush timeout, bounds the whole call: queueing the flush command and
+    /// waiting for the worker's acknowledgement share it. When it expires,
+    /// ``False`` is returned and the worker may still write later.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         py.detach(|| self.flush())
@@ -197,7 +202,10 @@ impl FemtoStreamHandler {
     /// detached flush call.
     ///
     /// The wait is bounded by the handler's flush timeout. If it expires,
-    /// close returns while the worker may still write to the stream.
+    /// close returns while the worker may still write to the stream. On
+    /// success the worker has written and flushed its queued records, but the
+    /// thread is detached rather than joined, because a join would also wait
+    /// for thread-local destructors that user code can make block.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
@@ -207,8 +215,6 @@ impl FemtoStreamHandler {
         py.detach(move || shutdown.wait());
     }
 }
-
-
 
 impl FemtoStreamHandler {
     /// Create a new handler writing to `stdout` with a `DefaultFormatter`.
@@ -313,8 +319,6 @@ impl FemtoStreamHandler {
     }
 }
 
-
-
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         // Clone under the lock and release it before sending: a blocking send
@@ -354,13 +358,19 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                     warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
                 });
                 let (ack_tx, ack_rx) = bounded(1);
+                // One deadline covers both waits. The channel send can block
+                // when the queue is full and the acknowledgement can take a
+                // further interval, so applying the timeout to each in turn
+                // would let a flush wait nearly twice the configured limit.
+                let deadline = Instant::now() + self.flush_timeout;
                 if tx
                     .send_timeout(StreamCommand::Flush(ack_tx), self.flush_timeout)
                     .is_err()
                 {
                     return false;
                 }
-                matches!(ack_rx.recv_timeout(self.flush_timeout), Ok(Ok(())))
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
             }
             None => false,
         }

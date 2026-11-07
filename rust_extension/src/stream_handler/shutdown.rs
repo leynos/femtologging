@@ -55,28 +55,30 @@ impl StreamShutdown {
         }
     }
 
-    /// Waits for completion and joins the worker when it reports a clean exit.
+    /// Waits for completion without joining the worker thread.
     ///
     /// Every caller waits on the shared completion, including one that finds
-    /// no join handle left: another closer may still be joining a worker that
-    /// has not finished writing its queued records.
+    /// no join handle left: another closer may still be joining, so the
+    /// completion signal—not the join handle—is what orders queued writes
+    /// before a closer returns.
     ///
-    /// The worker signals only after dropping its writer and formatter, so the
-    /// join that follows a successful wait is bounded by thread teardown
-    /// rather than by user code. When the timed wait expires no join is
-    /// attempted, so a worker stuck in user code cannot extend the timeout.
+    /// The handle is dropped rather than joined. A successful wait means the
+    /// worker finished its body and dropped the writer and formatter, but not
+    /// that the thread has exited: thread-local destructors run after the
+    /// body returns, and `join` waits for them. A formatter that initialises a
+    /// blocking thread-local destructor would then hold a closer past its
+    /// configured timeout, and `JoinHandle::is_finished` cannot distinguish
+    /// that window—it reports `true` once the thread function returns, while
+    /// `join` continues to wait. Dropping the handle detaches the thread,
+    /// which the operating system reclaims when it exits. The worker reports
+    /// its own panics, so nothing is lost by abandoning the join result.
     pub(super) fn wait(self) {
         if !self.completion.wait(self.timeout) {
             warn!(
                 "FemtoStreamHandler: worker thread did not shut down within {:?}",
                 self.timeout
             );
-            return;
         }
-        if let Some(handle) = self.handle
-            && handle.join().is_err()
-        {
-            warn!("FemtoStreamHandler: worker thread panicked");
-        }
+        drop(self.handle);
     }
 }

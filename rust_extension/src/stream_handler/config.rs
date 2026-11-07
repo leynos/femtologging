@@ -15,7 +15,8 @@ pub struct HandlerConfig {
     /// Bounded queue size, in commands, between callers and the worker. Records arriving
     /// while the queue is full are dropped.
     pub capacity: usize,
-    /// How long `flush` waits to enqueue its command and, separately, for the worker's acknowledgement.
+    /// Deadline shared by `flush`'s enqueue and acknowledgement waits, and the bound
+    /// `close` waits for the worker's completion signal.
     pub flush_timeout: Duration,
     /// Rate limiter that throttles warnings about dropped records.
     pub warner: RateLimitedWarner,
@@ -38,7 +39,7 @@ impl HandlerConfig {
         self
     }
 
-    /// Set how long each of `flush`'s two waits (enqueue, acknowledgement) may take.
+    /// Set the deadline shared by `flush`'s enqueue and acknowledgement waits.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.flush_timeout = timeout;
         self

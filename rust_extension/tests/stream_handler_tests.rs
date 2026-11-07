@@ -166,6 +166,57 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks()
     thread::sleep(DROP_HOLD);
 }
 
+/// How long the thread-local destructor holds the worker thread.
+const TLS_DROP_HOLD: Duration = Duration::from_millis(400);
+
+thread_local! {
+    /// Thread-local initialised on the worker thread. Its destructor runs
+    /// after the worker body returns, which is exactly the window in which a
+    /// closer must not block on an unbounded join.
+    static SLOW_TLS_DTOR: SlowTlsDtor = const { SlowTlsDtor };
+}
+
+/// Value whose destructor blocks during thread teardown.
+struct SlowTlsDtor;
+
+impl Drop for SlowTlsDtor {
+    fn drop(&mut self) {
+        thread::sleep(TLS_DROP_HOLD);
+    }
+}
+
+/// Formatter that initialises the blocking thread-local on the worker thread.
+struct TlsDtorFormatter;
+
+impl FemtoFormatter for TlsDtorFormatter {
+    fn format(&self, record: &FemtoLogRecord) -> String {
+        SLOW_TLS_DTOR.with(|_| ());
+        DefaultFormatter.format(record)
+    }
+}
+
+#[test]
+fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_blocks() {
+    const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
+
+    let handler =
+        FemtoStreamHandler::with_capacity_timeout(io::sink(), TlsDtorFormatter, 8, FLUSH_TIMEOUT);
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
+
+    let started = Instant::now();
+    handler.close();
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < TLS_DROP_HOLD / 2,
+        "close() waited {elapsed:?}; a blocking thread-local destructor must \
+         not extend the flush timeout"
+    );
+    // Let the detached worker finish its thread-local teardown so the test
+    // leaves no sleeping thread behind.
+    thread::sleep(TLS_DROP_HOLD);
+}
+
 #[rstest]
 fn stream_handler_flush_after_close(
     #[from(handler_tuple)] (_buffer, handler): (Arc<Mutex<Vec<u8>>>, FemtoStreamHandler),

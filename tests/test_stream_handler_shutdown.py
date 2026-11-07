@@ -36,23 +36,28 @@ class _FormatterNotReleasedError(Exception):
     """The test formatter was not released before its timeout."""
 
     def __init__(self) -> None:
+        """Record that the formatter gate timed out before release."""
         super().__init__("test formatter was not released")
 
 
 class _StreamHandler(typ.Protocol):
     """Python methods shared by the worker-backed stream handler."""
 
-    def handle(self, logger: str, level: str, message: str) -> None: ...
+    def handle(self, logger: str, level: str, message: str) -> None:
+        """Queue one record for the worker."""
 
-    def flush(self) -> bool: ...
+    def flush(self) -> bool:
+        """Drain queued records and report whether the worker acknowledged."""
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Stop accepting records and wait for the worker to finish."""
 
 
 class _FormatterGate:
     """Coordinate a callable formatter that blocks until the test releases it."""
 
     def __init__(self) -> None:
+        """Create the events that gate and observe the formatter."""
         self.entered = threading.Event()
         self.release = threading.Event()
         self.completed = threading.Event()
@@ -69,6 +74,7 @@ class _FormatterGate:
         """Start a helper thread that releases the formatter after a short delay."""
 
         def release_gate() -> None:
+            """Release the formatter after the configured delay."""
             time.sleep(_RELEASE_DELAY_SECONDS)
             self.release.set()
 
