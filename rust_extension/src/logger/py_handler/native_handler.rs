@@ -2,7 +2,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
-use pyo3::{Bound, PyAny};
+use pyo3::{Bound, PyAny, PyClass};
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::handlers::{
@@ -54,6 +54,22 @@ impl NativeHandlerKind {
         }
     }
 
+    /// Flush the wrapped built-in handler, releasing the GIL while it waits.
+    ///
+    /// The handler's own Python `flush` method releases the GIL for the same
+    /// reason: a Python callable formatter needs it on the worker thread
+    /// before the flush can be acknowledged.
+    pub(super) fn flush(self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
+        match self {
+            Self::Stream => flush_builtin::<FemtoStreamHandler>(py, obj),
+            Self::File => flush_builtin::<FemtoFileHandler>(py, obj),
+            Self::RotatingFile => flush_builtin::<PyRotatingFileHandler>(py, obj),
+            Self::TimedRotatingFile => flush_builtin::<PyTimedRotatingFileHandler>(py, obj),
+            Self::Socket => flush_builtin::<FemtoSocketHandler>(py, obj),
+            Self::Http => flush_builtin::<FemtoHTTPHandler>(py, obj),
+        }
+    }
+
     /// Dispatch the record through the matching built-in handler while
     /// retaining its metadata, including structured key/value fields.
     ///
@@ -90,6 +106,28 @@ impl NativeHandlerKind {
                 .extract::<PyRef<'_, FemtoHTTPHandler>>()
                 .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+        }
+    }
+}
+
+/// Flush one built-in handler with the interpreter detached for the wait.
+///
+/// Extraction needs the GIL, but the wait must not hold it: a built-in whose
+/// formatter is a Python callable needs the GIL on its worker thread before
+/// it can acknowledge. `T` is `Sync`, so the shared borrow is safe to carry
+/// into the detached closure.
+fn flush_builtin<T>(py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool
+where
+    T: FemtoHandlerTrait + PyClass + Sync,
+{
+    match obj.extract::<PyRef<'_, T>>() {
+        Ok(handler) => {
+            let handler: &T = &handler;
+            py.detach(|| handler.flush())
+        }
+        Err(err) => {
+            map_py_err(py, err.into(), "extract handler for flush");
+            false
         }
     }
 }
