@@ -60,6 +60,11 @@ impl StreamShutdown {
     /// Every caller waits on the shared completion, including one that finds
     /// no join handle left: another closer may still be joining a worker that
     /// has not finished writing its queued records.
+    ///
+    /// The worker signals only after dropping its writer and formatter, so the
+    /// join that follows a successful wait is bounded by thread teardown
+    /// rather than by user code. When the timed wait expires no join is
+    /// attempted, so a worker stuck in user code cannot extend the timeout.
     pub(super) fn wait(self) {
         if !self.completion.wait(self.timeout) {
             warn!(

@@ -6,7 +6,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use _femtologging_rs::{
-    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
+    DefaultFormatter, FemtoFormatter, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord,
+    FemtoStreamHandler,
 };
 use rstest::*;
 
@@ -117,6 +118,52 @@ fn stream_handler_close_flushes_pending(
     handler.close();
 
     assert_eq!(read_output(&buffer), "core [INFO] close\n");
+}
+
+/// Formatter whose destructor blocks, so the test can prove that `close()` is
+/// bounded by the flush timeout rather than by the formatter's teardown.
+struct SlowDropFormatter {
+    /// How long the destructor holds the worker thread.
+    hold: Duration,
+}
+
+impl FemtoFormatter for SlowDropFormatter {
+    fn format(&self, record: &FemtoLogRecord) -> String {
+        DefaultFormatter.format(record)
+    }
+}
+
+impl Drop for SlowDropFormatter {
+    fn drop(&mut self) {
+        thread::sleep(self.hold);
+    }
+}
+
+#[test]
+fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks() {
+    const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
+    const DROP_HOLD: Duration = Duration::from_millis(400);
+
+    let handler = FemtoStreamHandler::with_capacity_timeout(
+        io::sink(),
+        SlowDropFormatter { hold: DROP_HOLD },
+        8,
+        FLUSH_TIMEOUT,
+    );
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
+
+    let started = Instant::now();
+    handler.close();
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < DROP_HOLD / 2,
+        "close() waited {elapsed:?}; completion must not be signalled before \
+         the formatter is dropped"
+    );
+    // Let the worker finish its formatter teardown so the test leaves no
+    // sleeping thread behind.
+    thread::sleep(DROP_HOLD);
 }
 
 #[rstest]
