@@ -12,7 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from femtologging import FemtoFileHandler, FileHandlerBuilder, OverflowPolicy
+from femtologging import (
+    FemtoFileHandler,
+    FemtoLogger,
+    FileHandlerBuilder,
+    OverflowPolicy,
+)
 
 type FileHandlerFactory = cabc.Callable[
     [Path, int, int], AbstractContextManager[FemtoFileHandler]
@@ -144,6 +149,30 @@ def test_file_handler_flush(tmp_path: Path) -> None:
             _rendered([("INFO", "one"), ("INFO", "two")]),
             "after second flush",
         )
+
+
+def test_logger_flush_handlers_flushes_attached_file_handler(tmp_path: Path) -> None:
+    """A file handler attached through Python is flushed by the logger.
+
+    ``FemtoFileHandler`` exposes no Python ``flush`` method, so the wrapper
+    must forward to the native handler. Otherwise the logger would report a
+    successful flush while the record stayed in the handler's buffer.
+    """
+    path = tmp_path / "logger_flush.log"
+    logger = FemtoLogger("core")
+    handler = FemtoFileHandler(str(path), flush_interval=10_000)
+    try:
+        logger.add_handler(handler)
+        logger.info("buffered")
+        assert logger.flush_handlers() is True, "logger flush must report success"
+        _assert_log_lines(
+            path,
+            _rendered([("INFO", "buffered")]),
+            "after logger.flush_handlers()",
+        )
+    finally:
+        logger.remove_handler(handler)
+        handler.close()
 
 
 def test_file_handler_flush_concurrent(

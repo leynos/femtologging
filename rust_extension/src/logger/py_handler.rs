@@ -178,6 +178,20 @@ impl FemtoHandlerTrait for PyHandler {
         })
     }
 
+    /// Flush the wrapped handler.
+    ///
+    /// A recognized built-in handler is flushed through its native
+    /// implementation, which reaches buffered records even when the Python
+    /// wrapper exposes no `flush` method. Any other Python object is flushed
+    /// through its own `flush` method when it has a callable one, so a
+    /// user-defined Python handler controls its own buffer.
+    fn flush(&self) -> bool {
+        Python::attach(|py| match self.native_handler {
+            Some(native_handler) => native_handler.flush(py, self.obj.bind(py)),
+            None => self.call_python_flush(py),
+        })
+    }
+
     fn is_python_backed(&self) -> bool {
         true
     }

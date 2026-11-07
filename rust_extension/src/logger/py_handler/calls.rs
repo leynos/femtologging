@@ -4,7 +4,8 @@
 //! `handle_record` and the legacy three-argument `handle` — each with a plain
 //! form and a form that runs inside the producer's captured context. The
 //! plumbing they share lives here: look up the method, call it, and map any
-//! Python failure to a [`HandlerError`].
+//! Python failure to a [`HandlerError`]. Flushing is also a Python method call,
+//! so it is handled the same way.
 
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
@@ -123,6 +124,49 @@ impl PyHandler {
             .call1(args)
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, method.call_operation))
+    }
+
+    /// Forward a flush to a user-defined Python handler.
+    ///
+    /// A handler with no `flush` attribute has nothing to flush, matching the
+    /// trait's no-op default. A handler that has the attribute but is not
+    /// callable is treated the same way rather than as a failure: it never
+    /// opted in to flushing.
+    ///
+    /// Python reports a failed flush by raising, not by returning a value:
+    /// `logging.Handler.flush` and `io.IOBase.flush` both return `None` on
+    /// success. A `None` return therefore means the handler flushed without
+    /// complaint, and only an exception reports failure. Any other return
+    /// value is still honoured, so a handler that explicitly returns `False`
+    /// can report failure without raising.
+    pub(super) fn call_python_flush(&self, py: Python<'_>) -> bool {
+        let handler = self.obj.bind(py);
+        let flush = match handler.getattr("flush") {
+            Ok(flush) => flush,
+            Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
+                return true;
+            }
+            Err(err) => {
+                map_py_err(py, err, "get flush");
+                return false;
+            }
+        };
+        if !flush.is_callable() {
+            return true;
+        }
+        match flush.call0() {
+            // Python's flush protocol reports failure by raising, not by
+            // returning a value: `logging.Handler.flush` and `io.IOBase.flush`
+            // both return None. None therefore means the handler flushed
+            // without complaint. Any other value is honoured so a handler that
+            // explicitly returns False can still report failure.
+            Ok(result) if result.is_none() => true,
+            Ok(result) => result.is_truthy().unwrap_or(false),
+            Err(err) => {
+                map_py_err(py, err, "flush");
+                false
+            }
+        }
     }
 
     /// Copies the captured context and invokes a prepared methodcaller on the handler.

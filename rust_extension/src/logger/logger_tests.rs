@@ -182,6 +182,74 @@ fn a_handler_error_does_not_skip_later_handlers() {
     );
 }
 
+/// Handler whose flush result and call count a test controls.
+///
+/// Kept beside the best-effort test rather than in the shared helper module:
+/// it exists only to prove that a failing handler does not stop the flush of
+/// the handlers after it.
+struct FlushOutcomeHandler {
+    /// Result this handler reports from every flush.
+    succeeds: bool,
+    /// Number of flush calls observed so far.
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FlushOutcomeHandler {
+    /// Create a handler that always reports *succeeds* from `flush`.
+    fn new(succeeds: bool) -> Self {
+        Self {
+            succeeds,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Return how many times `flush` has been called.
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl FemtoHandlerTrait for FlushOutcomeHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> bool {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.succeeds
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[test]
+fn a_failing_handler_flush_does_not_skip_later_handlers() {
+    let failing = Arc::new(FlushOutcomeHandler::new(false));
+    let succeeding = Arc::new(FlushOutcomeHandler::new(true));
+    let logger =
+        FemtoLogger::new("flush-best-effort".into()).expect("test logger should be constructible");
+    logger
+        .add_handler(failing.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native failing flush handler should register");
+    logger
+        .add_handler(succeeding.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native succeeding flush handler should register");
+
+    assert!(
+        !logger.flush_handlers(),
+        "a handler that fails to flush must make the logger's flush report failure"
+    );
+    assert_eq!(failing.calls(), 1, "the failing handler must be flushed");
+    assert_eq!(
+        succeeding.calls(),
+        1,
+        "a flush must continue past a handler that reported failure"
+    );
+}
+
 // Drop behaviour tests live in a separate module to respect
 // the 400-line limit.
 #[path = "logger_tests_drop.rs"]

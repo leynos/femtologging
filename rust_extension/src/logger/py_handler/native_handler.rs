@@ -13,6 +13,26 @@ use crate::{FemtoFileHandler, FemtoHTTPHandler, FemtoSocketHandler, FemtoStreamH
 
 use super::map_py_err;
 
+/// Flush a built-in handler extracted from its Python wrapper.
+///
+/// The wrapper is the only handle the logger holds, so the native handler is
+/// reached by extracting it again. A failed extraction is reported as a failed
+/// flush rather than silently succeeding: the caller asked for buffered records
+/// to reach their destination, and a wrapper that cannot be unwrapped cannot
+/// promise that.
+fn flush_native<T>(py: Python<'_>, obj: &Bound<'_, PyAny>, label: &str) -> bool
+where
+    T: FemtoHandlerTrait + pyo3::PyClass,
+{
+    match obj.extract::<PyRef<'_, T>>() {
+        Ok(handler) => FemtoHandlerTrait::flush(&*handler),
+        Err(err) => {
+            map_py_err(py, err.into(), label);
+            false
+        }
+    }
+}
+
 /// Built-in handlers that can retain the original Rust record across Python registration.
 #[derive(Clone, Copy)]
 pub(super) enum NativeHandlerKind {
@@ -90,6 +110,34 @@ impl NativeHandlerKind {
                 .extract::<PyRef<'_, FemtoHTTPHandler>>()
                 .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+        }
+    }
+
+    /// Flush the matching built-in handler through its native implementation.
+    ///
+    /// Going through the trait rather than a Python-visible `flush` method
+    /// means a handler wrapped for Python flushes even when it exposes no such
+    /// method — `FemtoFileHandler` buffers records without exposing `flush`,
+    /// so relying on the Python attribute would report success while records
+    /// stayed in its buffer.
+    pub(super) fn flush(self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
+        match self {
+            Self::Stream => {
+                flush_native::<FemtoStreamHandler>(py, obj, "extract FemtoStreamHandler")
+            }
+            Self::File => flush_native::<FemtoFileHandler>(py, obj, "extract FemtoFileHandler"),
+            Self::RotatingFile => {
+                flush_native::<PyRotatingFileHandler>(py, obj, "extract FemtoRotatingFileHandler")
+            }
+            Self::TimedRotatingFile => flush_native::<PyTimedRotatingFileHandler>(
+                py,
+                obj,
+                "extract FemtoTimedRotatingFileHandler",
+            ),
+            Self::Socket => {
+                flush_native::<FemtoSocketHandler>(py, obj, "extract FemtoSocketHandler")
+            }
+            Self::Http => flush_native::<FemtoHTTPHandler>(py, obj, "extract FemtoHTTPHandler"),
         }
     }
 }
