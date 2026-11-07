@@ -309,10 +309,16 @@ pub(crate) fn replace_runtime_state(
     )
 }
 
-/// Flush every registered logger for the Rust `log` bridge; ignore failures.
+/// Flush every registered logger for the Rust `log` bridge.
+///
 /// Snapshot under lock, then flush outside it: a GIL-holding `get_logger`
 /// writer could otherwise starve the queued handler a flush barrier awaits.
 /// `reset_manager` also drops loggers outside the lock.
+///
+/// A failed logger flush is counted and warned about rather than discarded.
+/// The bridge cannot report a failure to its caller — `log::Log::flush` returns
+/// nothing — so the counter and the rate-limited warning are the only evidence
+/// an operator gets that a handler is not draining.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
     let loggers: Vec<Py<FemtoLogger>> = {
@@ -326,7 +332,9 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
     for logger in loggers {
         let borrowed_logger = logger.borrow(py);
         let logger_ref: &FemtoLogger = &borrowed_logger;
-        let _ = py.detach(|| logger_ref.flush_handlers());
+        if !py.detach(|| logger_ref.flush_handlers()) {
+            crate::logger::record_bridge_flush_failure();
+        }
     }
 }
 

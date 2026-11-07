@@ -11,6 +11,7 @@ mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
 mod flush;
+mod flush_metrics;
 #[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) mod flush_test;
 #[cfg(not(loom))]
@@ -48,7 +49,8 @@ pub use dispatcher::DispatcherError;
     any(feature = "log-compat", feature = "tracing-compat")
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
-pub(crate) use dispatcher::{LoggerBudget, Shard};
+pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
+pub(crate) use flush_metrics::record_bridge_flush_failure;
 
 pub use py_handler::{PyHandler, validate_handler};
 // The consuming unit tests are excluded under `--cfg loom`, so the re-export
@@ -152,7 +154,12 @@ impl FemtoLogger {
     }
 
     /// Attach a handler with filters evaluated on the producer thread.
-    #[cfg(all(test, feature = "python"))]
+    ///
+    /// Only the producer tests use this helper, and those use real threads.
+    /// The Loom models reach the same attachment through the public API, so
+    /// the helper is not compiled into a Loom test build, where feature
+    /// unification from the self dev-dependency would otherwise leave it dead.
+    #[cfg(all(test, feature = "python", not(loom)))]
     pub(crate) fn add_handler_with_filters(
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,
