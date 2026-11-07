@@ -324,6 +324,23 @@ Reference or ADR is required.
       the event target, the five bounded fields, and that counters still
       record with no subscriber. The writer and its helpers live in their own
       module so no test file exceeds 400 lines.
+- [x] Rebased the 49-commit series onto `origin/main` at `aed7f5af`, which
+      carries #590's `missing_docs` deny and #581's locked-dependency fetch.
+      `range-diff` reports every commit identical except `785732f6`, where the
+      replay merges main's new `flush()` doc comment into this branch's
+      rewritten body. `Makefile` and `rust_extension/Cargo.toml` are
+      byte-identical to the target, so neither of main's changes was lost.
+- [x] Closed the third review round's five findings. The lifecycle state
+      machine now tolerates only the failure its overflow policy documents:
+      `queue full` for `drop`, an expired send deadline for `timeout`, and
+      nothing at all for `block`. The assertion moved out of the `except`
+      handler to satisfy Ruff's `pytest-assert-in-except`, so a disconnected
+      worker still fails the example. The plan's telemetry description now
+      says sixteen outcomes and sixteen counters and names `classify_enqueue`.
+      The users guide no longer calls `"block"` a delivery guarantee.
+      `telemetry_event_tests.rs` now drives the Python `flush()` binding
+      through a real `FlushOutcome::AckTimedOut` and asserts both the counter
+      and the emitted event.
 
 ## Negative control (evidence that the tests detect the defect)
 
