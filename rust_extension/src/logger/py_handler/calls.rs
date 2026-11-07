@@ -140,20 +140,14 @@ impl PyHandler {
     /// value is still honoured, so a handler that explicitly returns `False`
     /// can report failure without raising.
     pub(super) fn call_python_flush(&self, py: Python<'_>) -> bool {
-        let handler = self.obj.bind(py);
-        let flush = match handler.getattr("flush") {
-            Ok(flush) => flush,
-            Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => {
-                return true;
-            }
+        let flush = match self.python_flush_method(py) {
+            Ok(Some(flush)) => flush,
+            Ok(None) => return true,
             Err(err) => {
                 map_py_err(py, err, "get flush");
                 return false;
             }
         };
-        if !flush.is_callable() {
-            return true;
-        }
         match flush.call0() {
             // Python's flush protocol reports failure by raising, not by
             // returning a value: `logging.Handler.flush` and `io.IOBase.flush`
@@ -166,6 +160,20 @@ impl PyHandler {
                 map_py_err(py, err, "flush");
                 false
             }
+        }
+    }
+
+    /// Return the handler's callable `flush`, or `None` when it opted out.
+    ///
+    /// A missing attribute is an opt-out, not an error: a handler that never
+    /// defined `flush` has nothing to flush. So is an attribute that is not
+    /// callable. Any other lookup failure is a real error the caller reports.
+    fn python_flush_method<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        match self.obj.bind(py).getattr("flush") {
+            Ok(flush) if flush.is_callable() => Ok(Some(flush)),
+            Ok(_) => Ok(None),
+            Err(err) if err.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => Ok(None),
+            Err(err) => Err(err),
         }
     }
 
