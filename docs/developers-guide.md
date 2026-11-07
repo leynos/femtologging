@@ -715,17 +715,27 @@ from recursively logging its own instrumentation.
 
 ### Python-facing `flush()` and `close()` waits
 
-The stream, file, rotating-file, and timed-rotating-file handlers run their I/O
-on worker threads. Their Python bindings release the GIL with
-`Python::detach()` before waiting for that worker in `flush()` and `close()`,
-so a Python callable formatter queued on the worker can run to completion
-instead of deadlocking against a producer that still holds the GIL. `close()`
-takes only a shared Python-object borrow: it copies the shutdown state and the
-owning worker handle out of the handler, releases the borrow, then detaches and
-waits outside it. A Python callback that re-enters the handler during shutdown
-therefore observes the closed state instead of blocking on a borrow held by the
-waiter. `tests/test_handler_close_reentry.py` is the regression test for that
-path.
+Every built-in handler runs its I/O on a worker thread. The Python bindings of
+the stream, file, rotating-file, timed-rotating-file, socket, and HTTP handlers
+release the GIL with `Python::detach()` before waiting for that worker in
+`flush()` and `close()`, so a Python callable formatter queued on the worker
+can run to completion instead of deadlocking against a producer that still
+holds the GIL, and other Python threads keep running during a slow network
+shutdown. `FemtoLogger.flush_handlers()` follows the same rule, because the
+dispatch worker takes the GIL to reach handlers attached from Python.
+`flush_handlers()` then flushes every configured handler, and a handler
+registered from Python is flushed through `PyHandler::flush()`: a built-in
+handler is flushed through its native implementation with the GIL detached, and
+a user-defined handler is asked to flush through its own `flush` method. A
+missing `flush` method counts as success; one that raises counts as failure.
+`tests/test_flush_releases_gil.py` pins the formatter and flush cases, and
+`tests/test_network_handler_gil_release.py` pins the network shutdown case.
+`close()` takes only a shared Python-object borrow: it copies the shutdown
+state and the owning worker handle out of the handler, releases the borrow,
+then detaches and waits outside it. A Python callback that re-enters the
+handler during shutdown therefore observes the closed state instead of blocking
+on a borrow held by the waiter. `tests/test_handler_close_reentry.py` is the
+regression test for that path.
 
 Because the shutdown state is shared rather than moved out by an exclusive
 borrow, several threads may close the same handler, and a close may start while
