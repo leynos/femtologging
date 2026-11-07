@@ -15,6 +15,7 @@
 
 use std::io::{self, Read};
 use std::net::{SocketAddr, TcpListener};
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,6 +25,8 @@ use rstest::rstest;
 use super::{build_http_handler, send_info_record, spawn_retry_server, tcp_listener};
 use crate::http_handler::FemtoHTTPHandler;
 use crate::http_handler::config::{HTTPHandlerConfig, HTTPMethod};
+use crate::http_handler::queue::HTTPCommand;
+use crate::shutdown_signal::ShutdownSignal;
 
 /// Spawn a server that accepts connections, reads each request, and never
 /// replies.
@@ -260,5 +263,71 @@ fn a_close_whose_worker_answers_does_not_report_abandoning_it(
         abandoned.is_empty(),
         "a worker that acknowledged shutdown must be joined, not abandoned; \
          close logged {abandoned:?}"
+    );
+}
+
+/// Scenario: the worker leaves on the shutdown signal without ever reading the
+/// queued shutdown command.
+///
+/// Invariant: `close` returns well inside its budget and joins the worker
+/// rather than reporting it abandoned. This is the case the `drop(tx)` in
+/// `request_shutdown` exists for. The command owns the only real
+/// acknowledgement sender; while the handler's own sender lived beside it, the
+/// wait could neither receive nor observe a disconnect, so it ran out the
+/// whole budget and called a worker that had already exited abandoned.
+///
+/// The worker leaves between the handler's send and its read. That exact
+/// window cannot be raced for deterministically, so the fixture constructs it:
+/// the worker waits on the signal and then drops its receiver without
+/// dequeueing. crossbeam does not drop queued messages when the receiver goes:
+/// with the handler's sender still alive the acknowledgement times out, it
+/// does not disconnect. Dropping the receiver is therefore not an alternative
+/// route to the right answer, and the test isolates the one the regression
+/// changed.
+///
+/// `channel_property_tests.rs` pins the queue property this depends on. This
+/// pins the close path that uses it.
+#[rstest]
+#[serial_test::serial]
+fn a_worker_that_leaves_on_the_signal_is_joined_not_abandoned() {
+    crate::handlers::file::test_support::install_test_logger();
+    let (tx, rx) = crossbeam_channel::bounded::<HTTPCommand>(1);
+    let signal = Arc::new(ShutdownSignal::new());
+    let worker_signal = Arc::clone(&signal);
+    let (left_tx, left_rx) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        // Wait for the signal, not the command, and leave the queue unread.
+        let _ = worker_signal.wait(Duration::from_secs(30));
+        drop(rx);
+        let _ = left_tx.send(());
+    });
+    let flush_timeout = Duration::from_millis(200);
+    let mut handler = FemtoHTTPHandler::with_worker_for_test(tx, signal, handle, flush_timeout);
+
+    let started = Instant::now();
+    handler.close();
+    let elapsed = started.elapsed();
+
+    left_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the worker should have left");
+    // The defect this guards against waits out the whole budget, so a margin
+    // below it still fails an abandoned worker while leaving a loaded host
+    // room to schedule the two threads. Comparing against `flush_timeout`
+    // exactly would make the assertion a race with the host's scheduler.
+    assert!(
+        elapsed < flush_timeout / 2,
+        "close must return as soon as the worker is seen to have left, not wait \
+         out its budget: took {elapsed:?}, allowed at most {:?}",
+        flush_timeout / 2
+    );
+    let abandoned: Vec<_> = crate::handlers::file::test_support::take_logged_messages()
+        .into_iter()
+        .filter(|entry| entry.message.contains(ABANDON_MARKER))
+        .collect();
+    assert!(
+        abandoned.is_empty(),
+        "a worker that left on the signal was joined, not abandoned; close \
+         logged {abandoned:?}"
     );
 }

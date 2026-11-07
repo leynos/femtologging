@@ -444,8 +444,11 @@ socket_handler = (
   rather than joined past the deadline. Records still queued when the deadline
   passes are discarded, and the count is warned about, so a queue that cannot
   be delivered inside the timeout costs those records rather than extending the
-  close. The same bound applies when the handler is dropped without an explicit
-  `close()`, and the wait runs with the GIL released.
+  close. The bound is on `close()` itself, not on the detached worker's exit: a
+  request already in flight when the deadline falls may outlive it, and TCP
+  hostname resolution has no interruptible timeout. The same bound applies when
+  the handler is dropped without an explicit `close()`, and the wait runs with
+  the GIL released.
 
 ### Custom Python handlers
 

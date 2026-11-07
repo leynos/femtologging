@@ -1,9 +1,9 @@
 //! Owned worker state for closing a stream handler outside its Python borrow.
 //!
 //! `FemtoStreamHandler::close` may run from `Drop`, which a Python caller can
-//! trigger while still holding the GIL. Attaching to an interpreter the
-//! dropping thread is not already attached to would deadlock, so the drop
-//! decision lives here beside the shutdown operation it drives.
+//! trigger while still holding the GIL. PyO3 attachment can be unavailable
+//! during interpreter shutdown or GC traversal, so the drop decision lives
+//! here beside the shutdown operation it drives.
 
 use std::{sync::Arc, time::Duration};
 
@@ -20,8 +20,11 @@ impl Drop for FemtoStreamHandler {
         }
         // Release the GIL before waiting: a worker still formatting a record
         // can call back into Python, which needs the GIL this thread holds.
-        // `try_attach` fails when the thread is already attached, in which case
-        // the borrow is ours and closing directly is safe.
+        // `try_attach` runs the closure when the thread is already attached,
+        // and returns `None` only when the interpreter cannot be attached to:
+        // before initialization, while finalizing, or during GC traversal.
+        // Those are exactly the cases with no GIL to release, and closing
+        // directly stays bounded because its wait is on a timeout.
         if Python::try_attach(|py| py.detach(|| self.close())).is_none() {
             self.close();
         }

@@ -175,9 +175,11 @@ suggested. `Drop` calls `close()`, so the same bound applies to a handler that
 is simply dropped.
 
 A worker that does not acknowledge within the budget is abandoned rather than
-joined. It finishes the network call it was in, sends what is still queued up
-to the deadline, discards the rest, and exits on its own with nothing left to
-join it. This changes three observable behaviours:
+joined. Until the deadline, a worker draining its queue makes one best-effort
+attempt per record; once `close()` abandons it, the signal is aborted, so the
+worker finishes only the network call it was already in, discards whatever is
+still queued, and exits on its own with nothing left to join it. This changes
+three observable behaviours:
 
 - **`close()` returns on time.** Code that relied on `close()` blocking until
   every queued record had been sent must call `flush()` first, and must accept
@@ -190,10 +192,12 @@ join it. This changes three observable behaviours:
   of budget mid-write reports how many of its bytes were sent. The connection
   is closed rather than retried, so the collector may observe a truncated frame.
 
-The bound is on what the worker *starts*: no standard-library API cancels a
-blocking `connect`, `write`, or TLS handshake, so a close can take up to the
-budget plus one network call already in flight when the deadline fell. Nothing
-new starts after the deadline.
+The bound on `close()` itself is the budget: a worker that misses the deadline
+is detached, so the caller is never held past it. The bound on the worker's own
+exit is looser, because it is on what the worker *starts*: no standard-library
+API cancels a blocking `connect`, `write`, or TLS handshake, so the worker may
+live on for up to one network call already in flight when the deadline fell.
+Nothing new starts after the deadline.
 
 No API changed. The contract is unchanged for callers that already treat
 `close()` as best-effort, and `flush()` keeps its existing boolean return.

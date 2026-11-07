@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use rstest::rstest;
 
 use super::{Phase, ShutdownSignal, WaitOutcome};
-use crate::monotonic_clock::{ManualClock, SharedClock};
+use crate::monotonic_clock::{ManualClock, MonotonicClock, SharedClock};
 
 /// A delay long enough that only an early wakeup can beat it, and short enough
 /// that a signal which fails to interrupt costs the suite a moment rather than
@@ -297,23 +297,29 @@ fn abort_supersedes_an_earlier_deadline() {
 
 /// Scenario: a second `begin_shutdown` arrives with a different deadline.
 ///
-/// Invariant: the first deadline stands. Two closers racing, or a close after
-/// a close, must not extend the budget the first one promised to the caller
-/// who is waiting on it.
+/// Invariant: the first deadline stands, exactly. Two closers racing, or a
+/// close after a close, must neither extend the budget the first one promised
+/// to the caller who is waiting on it nor shorten it to the second arrival.
+///
+/// The clock is manual and never advances, which is what makes an exact
+/// oracle possible. Against a real clock the remainder would have drifted by
+/// however long the thread took, and a delay longer than the first budget
+/// would fail a signal that had preserved it. An inequality would be weaker
+/// for the same reason: a later deadline still satisfies `remaining <= first`
+/// when it is *earlier*, because the remainder it leaves is the smaller one.
 #[rstest]
 fn a_second_shutdown_keeps_the_first_deadline() {
-    let signal = ShutdownSignal::new();
-    let first = Instant::now() + Duration::from_millis(50);
-    signal.begin_shutdown(first);
+    let clock = Arc::new(ManualClock::new());
+    let signal = ShutdownSignal::with_clock(Arc::clone(&clock) as SharedClock);
+    let first_budget = Duration::from_millis(50);
+    signal.begin_shutdown(clock.now() + first_budget);
 
-    signal.begin_shutdown(Instant::now() + LONG_DELAY);
+    signal.begin_shutdown(clock.now() + LONG_DELAY);
 
-    let remaining = signal
-        .remaining()
-        .expect("the first budget should still be running");
-    assert!(
-        remaining <= Duration::from_millis(50),
-        "the later shutdown extended the budget to {remaining:?}"
+    assert_eq!(
+        signal.remaining(),
+        Some(first_budget),
+        "the first deadline must stand unchanged"
     );
 }
 

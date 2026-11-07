@@ -200,20 +200,19 @@ proptest! {
         // the oracle the same way is what keeps this test about "which
         // deadline won" rather than about the boundary, which
         // `the_deadline_instant_itself_is_spent` pins separately.
+        //
+        // Equality rather than a bound: the clock is manual and fixed, so an
+        // exact expectation is available, and `<=` would accept a later
+        // deadline that *shortened* the budget by displacing `first`. Only
+        // exact equality rejects both extension and shortening.
         let expected = first
             .checked_duration_since(clock.now())
             .filter(|left| !left.is_zero());
         let actual = signal.remaining();
-        prop_assert!(
-            match (expected, actual) {
-                (None, None) => true,
-                (Some(most), Some(left)) => left <= most,
-                _ => false,
-            },
-            "the second shutdown replaced the first deadline: expected at most \
-             {:?}, got {:?}",
+        prop_assert_eq!(
+            actual,
             expected,
-            actual
+            "the second shutdown replaced the first deadline"
         );
     }
 

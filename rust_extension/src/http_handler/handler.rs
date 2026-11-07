@@ -106,6 +106,39 @@ impl FemtoHTTPHandler {
         }
     }
 
+    /// Build a handler around a worker the caller supplies.
+    ///
+    /// Exists so the close path can be tested against a worker that leaves on
+    /// the signal without ever reading the shutdown command - a real worker
+    /// does that when it is asleep when the signal is raised. Racing a live
+    /// worker for that window is not possible to do deterministically, so the
+    /// window is constructed instead.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (tx, rx) = crossbeam_channel::bounded(1);
+    /// let (signal, handle) = spawn_test_worker(rx);
+    /// let mut handler = FemtoHTTPHandler::with_worker_for_test(
+    ///     tx, signal, handle, Duration::from_millis(200),
+    /// );
+    /// ```
+    #[cfg(test)]
+    pub(crate) fn with_worker_for_test(
+        tx: crossbeam_channel::Sender<HTTPCommand>,
+        signal: Arc<ShutdownSignal>,
+        handle: thread::JoinHandle<()>,
+        flush_timeout: Duration,
+    ) -> Self {
+        Self {
+            tx: Some(tx),
+            handle: Mutex::new(Some(handle)),
+            warner: RateLimitedWarner::new(Duration::from_secs(1)),
+            signal: Some(signal),
+            flush_timeout,
+        }
+    }
+
     /// Clone the live worker sender, if the handler has not closed.
     ///
     /// Example: a missing sender makes `handle` return `HandlerError::Closed`.

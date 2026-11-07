@@ -130,7 +130,9 @@ is left when the deadline passes is counted and discarded.
 Each now raises the signal *before* sending the shutdown command - so the
 signal, not the queued command, is what wakes a sleeping worker - sends with
 `send_deadline`, reads the acknowledgement with `recv_deadline`, and joins only
-when the worker answered. Its Python `close` and `flush` run under `py.detach`.
+for `ShutdownOutcome::Finished` - which covers the acknowledgement, but also a
+command or acknowledgement channel that disconnected, so a worker can be joined
+without having answered. Its Python `close` and `flush` run under `py.detach`.
 
 `rust_extension/src/http_handler/queue.rs` and `response.rs` are new, split out
 of the HTTP worker to keep it under the 400-line file limit: the command enum
@@ -160,12 +162,17 @@ not what a worker is doing, but three other things:
 The design takes all three. The signal wakes the sleeps; `clamp` bounds the
 operations; and `close` declines to join a worker that has not answered.
 
-The deadline therefore bounds termination by *budget plus one network call
-already in flight when the deadline fell*. That residual is not a gap in the
-implementation, it is the shape of the problem: a worker blocked in `write` to
-a peer that has stopped reading will not return until its write timeout
-expires, and no amount of signalling changes that. The contract the code
-documents says so, and `close` handles it by not waiting.
+`close()` is bounded for the caller by the budget, but worker *termination* is
+not: it can take the budget plus one network call already in flight when the
+deadline fell. That residual is not a gap in the implementation, it is the
+shape of the problem: a worker blocked in `write` to a peer that has stopped
+reading will not return until its write timeout expires, and no amount of
+signalling changes that. Two cases have no interruptible timeout at all, so the
+call can outlast the budget however it was clamped: an already-started
+Unix-domain connect, and TCP hostname resolution. An abandoned worker can
+therefore remain alive for the duration of its in-flight call, while `close()`
+has already returned. The contract the code documents says so, and `close`
+handles it by not waiting.
 
 The second problem is a choice about what a close *means*. Once the deadline
 passes, processing the queue is the one thing that cannot be allowed, because
@@ -327,9 +334,11 @@ notification is sent while holding the guard, which is the discipline
 `ShutdownSignal` uses.
 
 Residual gap, named rather than hidden: an abandoned worker outlives `close` by
-up to one network timeout. It is not joined, so nothing observes its exit, and
-a test cannot assert it has gone without reintroducing the unbounded wait the
-change removes. The durable guarantee is that it starts nothing further.
+up to one network timeout, and longer for the two calls that have no
+interruptible timeout - an already-started Unix-domain connect and TCP hostname
+resolution. It is not joined, so nothing observes its exit, and a test cannot
+assert it has gone without reintroducing the unbounded wait the change removes.
+The durable guarantee is that it starts nothing further.
 
 ## Conformance basis
 
@@ -630,7 +639,7 @@ Trace links, from issue #436 to milestone:
   `make typecheck` onward is blocked behind it, because each of those gates
   compiles: `make test`, the Loom lanes, and the four `make lint-python` stages
   that have still never run.
-- 2026-10-16 checkpoint: CodeRabbit review, push and draft pull request had not
+- 2026-10-16 checkpoint: CodeRabbit review, push, and draft pull request had not
   started. Deterministic gates had priority over review.
 - 2026-10-16: `make lint-python` run in full for the first time, and green -
   all six stages. Two things had to happen first. Pylint's `C0302` had to be
@@ -770,7 +779,7 @@ Trace links, from issue #436 to milestone:
   file-level Ruff assertion suppression, and two related races in the HTTP
   retry-delay test. Removed the suppression in favour of `pytest.fail`,
   corrected the comments, and made the HTTP test pause the worker until close
-  publishes shutdown before releasing it. Its backoff is five seconds so an
+  publishes shutdown before releasing it. Its backoff is five seconds, so an
   uninterruptible wait also has a clear wall-clock failure. Rerun all
   deterministic gates before the final review and publication.
 - 2026-10-25: retry 15 passed formatting, lint, and typecheck, then found the
@@ -1127,6 +1136,47 @@ Both properties are pinned by mutation: making `remaining_budget` ignore
 shutdown fails the test, and the join path a fast collector reaches passes it.
 The lesson generalizes: a test whose two outcomes race must assert the *path
 taken*, not merely that the process ended.
+
+### The second review round corrected claims, not behaviour
+
+CodeRabbit's review of `24a5e68c` raised ten findings. None was a product
+defect; six were documentation that overstated or misdescribed what the code
+does, and three were tests weaker than their names implied. All ten were
+verified against the source before being actioned.
+
+- The three documents that described the abandoned-worker path said the
+  detached worker "sends what is still queued up to the deadline". That is
+  wrong. `abandon_worker` calls `signal.abort()`, and `clamp` answers `None` in
+  the `Aborted` phase, so `ensure_connection` and `write_frame` start nothing
+  further; the worker finishes only the call it is already in and discards the
+  queue. The pre-deadline drain and the post-abort discard are now stated
+  separately.
+- `close()`'s bound and the worker's own exit were conflated. `close()`
+  returns inside its budget because it detaches a worker that misses the
+  deadline, but termination is not bounded: it is the budget plus one call in
+  flight, and unbounded for the two calls with no interruptible timeout, an
+  already-started Unix-domain connect and TCP hostname resolution.
+- `a_second_shutdown_keeps_the_first_deadline` ran on the real clock with a
+  `remaining <= first` oracle. The bound was too weak in one direction - a
+  later deadline that *shortened* the remainder still satisfied it - and the
+  real clock made an exact oracle impossible. It now uses `ManualClock`, which
+  does not advance, and asserts exact equality. The property test's `<=` became
+  `prop_assert_eq` for the same reason.
+- The `drop(tx)` regression in `request_shutdown` was covered only by
+  `channel_property_tests.rs`, which asserts a queue property and never calls
+  `close`. A new close test builds the window instead of racing for it: a
+  worker waits on the signal and drops its receiver unread. Mutation-proof:
+  removing `drop(tx)` makes `close` wait out its full budget and the test fails
+  at 206ms of 200ms.
+
+The last one is worth recording as a lesson in constructing a fixture. The
+first version had the worker *hold* the queued command to keep the
+acknowledgement channel connected, and it failed even against correct code. A
+probe showed why: crossbeam does not drop queued messages when the receiver
+goes, so with the handler's sender alive the acknowledgement times out rather
+than disconnecting. The second version therefore has to drop the receiver, not
+hold the message. Guessing which of the two kept the channel alive produced a
+test that measured the wrong thing; one 50ms probe settled it.
 
 ## Outcomes & retrospective
 

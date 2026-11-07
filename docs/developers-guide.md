@@ -274,8 +274,12 @@ The deadline is a bound on what a worker *starts*, not on what it has already
 started: no `std` API cancels a blocking `connect`, a `write`, or a TLS
 handshake. Nothing new begins once the deadline has passed or the phase is
 aborted, and nothing started after a drain began outlasts the budget's
-remainder. Actual exit is therefore bounded by the budget plus one call already
-in flight when the deadline fell.
+remainder. Worker termination is therefore bounded only loosely: by the budget
+plus one call already in flight when the deadline fell, and not at all for the
+two calls with no interruptible timeout, an already-started Unix-domain connect
+and TCP hostname resolution. `close()` stays bounded regardless because it
+detaches a worker that misses the deadline; worker termination itself carries
+no such promise.
 
 `discard_rest` in each worker's module is the record of what that bound costs.
 Records still queued at the deadline are dropped and counted rather than sent,

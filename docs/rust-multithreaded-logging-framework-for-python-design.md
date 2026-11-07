@@ -1293,14 +1293,18 @@ leaves.
 
 The bound is on what a worker _starts_, not on what it has already started: no
 `std` API cancels a blocking socket operation, so termination is the budget
-plus one call already in flight when the deadline fell. Everything still queued
-at the deadline is discarded and counted rather than sent, and a frame that
-runs out of budget mid-write reports how many of its bytes went out. Each
-handler's `close()` still runs on a single deadline covering the signal, the
-command that requests an acknowledgement, the acknowledgement itself, and the
-join. A worker that does not answer within it is abandoned instead of joined;
-abandoning aborts the signal first, so the detached worker cannot be told there
-is budget left past a deadline it has already reached.
+plus one call already in flight when the deadline fell. Only timeout-bounded
+calls started during draining receive that guarantee; an already-started
+Unix-domain connect and TCP hostname resolution have no interruptible timeout
+and can outlast the remaining budget, so an abandoned worker may live on after
+`close()` returns. Everything still queued at the deadline is discarded and
+counted rather than sent, and a frame that runs out of budget mid-write reports
+how many of its bytes went out. Each handler's `close()` still runs on a single
+deadline covering the signal, the command that requests an acknowledgement, the
+acknowledgement itself, and the join. A worker that does not answer within it
+is abandoned instead of joined; abandoning aborts the signal first, so the
+detached worker cannot be told there is budget left past a deadline it has
+already reached.
 
 Both clock and condition variable are seams. Deadline queries read an injected
 monotonic clock that production sets to `Instant::now` and tests replace with a
