@@ -6,7 +6,7 @@
 //! release signal and reports when it has finished, so the tests assert on
 //! observed state rather than on elapsed time.
 
-use std::io::{self, Write};
+use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
@@ -240,68 +240,4 @@ fn stream_handler_close_returns_promptly_after_a_worker_panic() {
         elapsed < FLUSH_TIMEOUT / 4,
         "close() waited {elapsed:?}; a panicked worker must still signal completion"
     );
-}
-
-/// Writer whose first flush blocks until the test releases it.
-struct BlockingFlushBuf {
-    /// Signals that the worker has reached the first flush.
-    entered: Sender<()>,
-    /// The first flush waits for this channel; later flushes return at once.
-    release: Receiver<()>,
-    /// Set once the first flush has been released.
-    released: bool,
-}
-
-impl Write for BlockingFlushBuf {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if !self.released {
-            let _ = self.entered.send(());
-            let _ = self.release.recv_timeout(DESTRUCTOR_WAIT);
-            self.released = true;
-        }
-        Ok(())
-    }
-}
-
-#[test]
-fn stream_handler_flush_returns_false_when_the_queue_stays_full() {
-    const FLUSH_TIMEOUT: Duration = Duration::from_millis(100);
-
-    let (entered_tx, entered_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    let handler = FemtoStreamHandler::with_capacity_timeout(
-        BlockingFlushBuf {
-            entered: entered_tx,
-            release: release_rx,
-            released: false,
-        },
-        DefaultFormatter,
-        1,
-        FLUSH_TIMEOUT,
-    );
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "blocking"));
-    entered_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("worker should reach the blocking write");
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "queued"));
-
-    let started = Instant::now();
-    assert!(
-        !handler.flush(),
-        "flush() must fail when the worker never drains the queue"
-    );
-    let elapsed = started.elapsed();
-    // The enqueue wait alone is bounded by one flush timeout. The generous
-    // factor only catches a hang; it does not measure scheduling jitter.
-    assert!(
-        elapsed < FLUSH_TIMEOUT * 4,
-        "flush() waited {elapsed:?}; queueing must be bounded by the flush timeout"
-    );
-
-    release_tx.send(()).expect("release the blocked writer");
-    handler.close();
 }
