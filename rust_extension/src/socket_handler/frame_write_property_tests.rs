@@ -60,33 +60,147 @@ fn any_step() -> impl Strategy<Value = Step> {
     ]
 }
 
+/// A signal in the phase `departure` names, and the drain budget it carries.
+///
+/// The budget is returned only for a real drain, because it is the ceiling the
+/// clamp assertions compare against. `Abort` deliberately reports `None`: its
+/// budget is never consulted, since an aborted signal answers `None` to every
+/// budget query.
+fn signal_for(departure: Departure) -> (ShutdownSignal, Option<Duration>) {
+    let signal = ShutdownSignal::new();
+    let budget = match departure {
+        Departure::KeepRunning => None,
+        Departure::DrainInMillis(millis) => {
+            let budget = Duration::from_millis(millis);
+            signal.begin_shutdown(Instant::now() + budget);
+            Some(budget)
+        }
+        Departure::Abort => {
+            signal.begin_shutdown(Instant::now() + Duration::from_secs(30));
+            signal.abort();
+            None
+        }
+    };
+    (signal, budget)
+}
+
+/// Assert the loop never rewound, repeated or skipped a byte.
+///
+/// Each call must have been offered exactly the frame from the offset the
+/// accepted bytes have reached, so the acceptances form one contiguous prefix.
+/// An interrupted call transfers nothing, which is why the check runs over the
+/// *offered* buffers rather than the accepted bytes alone.
+fn check_offsets(frame: &[u8], sink: &ScriptedSink) -> Result<(), TestCaseError> {
+    let mut offset = 0_usize;
+    for (index, (offered, accepted)) in sink.calls.iter().enumerate() {
+        let accepted = *accepted;
+        prop_assert!(
+            frame
+                .get(offset..)
+                .is_some_and(|rest| rest.starts_with(offered)),
+            "call {index} at offset {offset} was offered {:?}, which is not \
+             the frame from that offset",
+            offered.len()
+        );
+        prop_assert!(
+            accepted <= offered.len(),
+            "call {index} accepted {accepted} of the {} bytes offered",
+            offered.len()
+        );
+        offset += accepted;
+    }
+    prop_assert_eq!(
+        offset,
+        sink.accepted.len(),
+        "the accepted counts and the accepted bytes must agree"
+    );
+    prop_assert!(
+        frame.starts_with(&sink.accepted),
+        "the sink accepted {} bytes, which are not a prefix of the {} byte frame",
+        sink.accepted.len(),
+        frame.len()
+    );
+    Ok(())
+}
+
+/// Assert every timeout handed over was bounded, and by the right ceiling.
+///
+/// Three rules share one pass over the recorded timeouts because they are
+/// statements about the same list: a zero would mean "block forever", a drain
+/// may not hand out more than its own deadline leaves, and a running handler
+/// may not shrink the configured per-call ceiling at all.
+fn check_budgets(
+    departure: Departure,
+    drain_budget: Option<Duration>,
+    sink: &ScriptedSink,
+) -> Result<(), TestCaseError> {
+    prop_assert!(
+        sink.timeouts.iter().all(|timeout| !timeout.is_zero()),
+        "every call needs a non-zero budget, got {:?}",
+        sink.timeouts
+    );
+    if let Some(budget) = drain_budget {
+        prop_assert!(
+            sink.timeouts.iter().all(|timeout| *timeout <= budget),
+            "a call may not outlast the {:?} drain budget, got {:?}",
+            budget,
+            sink.timeouts
+        );
+    } else if !departure.is_stopping() {
+        prop_assert!(
+            sink.timeouts
+                .iter()
+                .all(|timeout| *timeout == WRITE_TIMEOUT),
+            "a running handler gives every call the configured timeout, got {:?}",
+            sink.timeouts
+        );
+    }
+    Ok(())
+}
+
+/// Assert a frame past its budget under a shutdown never reaches the wire.
+///
+/// The mirror image of the running case in [`check_budgets`]: while the frame
+/// clock is consulted, a frame whose whole budget is already spent must make no
+/// call and report `TimedOut` rather than write a partial frame.
+fn check_spent_budget(
+    departure: Departure,
+    multiple: u32,
+    sink: &ScriptedSink,
+    result: &io::Result<()>,
+) -> Result<(), TestCaseError> {
+    if !departure.is_stopping() || multiple == 0 {
+        return Ok(());
+    }
+    prop_assert!(
+        sink.timeouts.is_empty(),
+        "a frame that started {:?} ago, past its {:?} budget, must not make a \
+         call, but made {}",
+        WRITE_TIMEOUT * multiple,
+        WRITE_TIMEOUT,
+        sink.timeouts.len()
+    );
+    prop_assert_eq!(
+        result.as_ref().err().map(io::Error::kind),
+        Some(io::ErrorKind::TimedOut),
+        "an exhausted frame budget must report TimedOut, got {:?}",
+        result
+    );
+    Ok(())
+}
+
 /// The property that ties the loop's rules together across generated input.
 ///
-/// Four invariants must hold for every generated combination:
-///
-/// 1. **Byte order and count.** Every buffer handed to the sink continues
-///    exactly where the previous one ended, and all of them together are an
-///    in-order prefix of the frame. A loop that rewound, repeated or skipped an
-///    offset would corrupt the stream, which is invisible in the scripted cases
-///    because the sink there only ever checks what it was given.
-/// 2. **No call without budget.** Every timeout handed to the sink is non-zero.
-///    A zero would mean "block forever", the unbounded wait the budget exists
-///    to forbid.
-/// 3. **A drain clamp holds at every call.** Once draining, no call may outlast
-///    what the deadline leaves, whatever the configured timeout is.
-/// 4. **Nothing starts after the budget is spent.** Under a shutdown, a frame
-///    that began at least one whole write timeout ago gets no further call and
-///    reports `TimedOut` without touching the sink at all.
+/// Four invariants must hold for every generated combination, each checked by
+/// one helper above: byte order and count ([`check_offsets`]), no call without
+/// a budget and a drain clamp at every call ([`check_budgets`]), and nothing
+/// starting once the frame's budget is spent ([`check_spent_budget`]).
 ///
 /// An interrupted call is retried by the loop, so the script can contain more
 /// steps than there are bytes; that is deliberate, and is why the byte-order
 /// check is expressed as "a prefix" rather than "the whole frame".
 #[test]
 fn the_frame_loop_preserves_order_and_never_writes_without_a_budget() {
-    // A drain budget that spans both sides of the configured timeout: below it,
-    // the signal's remainder is the tighter ceiling and the clamp is visible;
-    // above it, the frame's own clock is. A budget of zero exercises the
-    // already-expired case, where nothing may start at all.
     let any_departure = prop_oneof![
         Just(Departure::KeepRunning),
         (0_u64..=120).prop_map(Departure::DrainInMillis),
@@ -100,25 +214,10 @@ fn the_frame_loop_preserves_order_and_never_writes_without_a_budget() {
         // `0..=4` spans both sides of the frame clock: at 0 the frame is
         // fresh, so a drain's clamp is what decides each call's timeout; from
         // 1 up the frame has spent its whole budget already, so the loop must
-        // start nothing. The multiplier is deliberately not `..0`-based: a
-        // frame that began even one whole write timeout ago is spent
-        // arithmetically, not by however fast the host happens to run.
+        // start nothing.
         multiple in 0_u32..=4,
     )| {
-        let signal = ShutdownSignal::new();
-        let drain_budget = match departure {
-            Departure::KeepRunning => None,
-            Departure::DrainInMillis(millis) => {
-                let budget = Duration::from_millis(millis);
-                signal.begin_shutdown(Instant::now() + budget);
-                Some(budget)
-            }
-            Departure::Abort => {
-                signal.begin_shutdown(Instant::now() + Duration::from_secs(30));
-                signal.abort();
-                None
-            }
-        };
+        let (signal, drain_budget) = signal_for(departure);
         let mut sink = ScriptedSink::new(script);
         let mut writer = FrameWriter {
             connection: &mut sink,
@@ -129,84 +228,8 @@ fn the_frame_loop_preserves_order_and_never_writes_without_a_budget() {
 
         let result = writer.write_frame(&frame);
 
-        // 1. The loop never rewound, repeated or skipped a byte. Each call must
-        //    have been offered exactly the frame from the offset the accepted
-        //    bytes have reached, so the offered buffers are contiguous and the
-        //    acceptances are an in-order prefix.
-        let mut offset = 0_usize;
-        for (index, (offered, accepted)) in sink.calls.iter().enumerate() {
-            let accepted = *accepted;
-            prop_assert!(
-                frame.get(offset..).is_some_and(|rest| rest.starts_with(offered)),
-                "call {index} at offset {offset} was offered {:?}, which is not \
-                 the frame from that offset",
-                offered.len()
-            );
-            prop_assert!(
-                accepted <= offered.len(),
-                "call {index} accepted {accepted} of the {} bytes offered",
-                offered.len()
-            );
-            offset += accepted;
-        }
-        prop_assert_eq!(
-            offset,
-            sink.accepted.len(),
-            "the accepted counts and the accepted bytes must agree"
-        );
-        prop_assert!(
-            frame.starts_with(&sink.accepted),
-            "the sink accepted {} bytes, which are not a prefix of the {} byte \
-             frame",
-            sink.accepted.len(),
-            frame.len()
-        );
-
-        // 2. No call was ever handed an unbounded (zero) timeout.
-        prop_assert!(
-            sink.timeouts.iter().all(|timeout| !timeout.is_zero()),
-            "every call needs a non-zero budget, got {:?}",
-            sink.timeouts
-        );
-
-        // 3. While draining, no call outlasts what the deadline leaves.
-        if let Some(budget) = drain_budget {
-            prop_assert!(
-                sink.timeouts.iter().all(|timeout| *timeout <= budget),
-                "a call may not outlast the {:?} drain budget, got {:?}",
-                budget,
-                sink.timeouts
-            );
-        }
-
-        // 4. A frame already past its budget never reaches the connection,
-        //    *when a budget applies at all*. While the handler runs the frame
-        //    clock is not consulted, so the same frame must still be written.
-        if departure.is_stopping() && multiple >= 1 {
-            prop_assert!(
-                sink.timeouts.is_empty(),
-                "a frame that started {:?} ago, past its {:?} budget, must not \
-                 make a call, but made {}",
-                WRITE_TIMEOUT * multiple,
-                WRITE_TIMEOUT,
-                sink.timeouts.len()
-            );
-            prop_assert_eq!(
-                result.as_ref().err().map(io::Error::kind),
-                Some(io::ErrorKind::TimedOut),
-                "an exhausted frame budget must report TimedOut, got {:?}",
-                result
-            );
-        }
-        if !departure.is_stopping() {
-            // The mirror image: a running handler must ignore the frame clock,
-            // which is what lets a slow but progressing collector finish.
-            prop_assert!(
-                sink.timeouts.iter().all(|timeout| *timeout == WRITE_TIMEOUT),
-                "a running handler gives every call the configured timeout, \
-                 got {:?}",
-                sink.timeouts
-            );
-        }
+        check_offsets(&frame, &sink)?;
+        check_budgets(departure, drain_budget, &sink)?;
+        check_spent_budget(departure, multiple, &sink, &result)?;
     });
 }

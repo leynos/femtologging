@@ -85,6 +85,7 @@ class StallingServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
     def __init__(self) -> None:
+        """Listen on an ephemeral loopback port, and stall every connection."""
         super().__init__(("127.0.0.1", 0), StallingHandler)
         self.connections: list[socket.socket] = []
         self.arrived = threading.Event()

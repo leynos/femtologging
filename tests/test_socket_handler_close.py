@@ -44,6 +44,54 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 
+class _GILProbe:
+    """A background thread that counts how often it is scheduled.
+
+    A GIL-holding ``close`` or ``flush`` lets other Python threads run only
+    before it starts and after it returns. Counting the polls made *during*
+    the call is therefore what distinguishes a released interpreter from one
+    held for the whole wait; both GIL tests assert the count clears their
+    floor.
+
+    The probe sleeps between polls rather than spinning. A tight loop would
+    hold the GIL for almost all of its own interval, which both starves the
+    thread under test and reports a count that says more about the scheduler
+    than about the release.
+    """
+
+    def __init__(self) -> None:
+        """Start the probe thread, not yet counting."""
+        self._polls = 0
+        self._is_probing = False
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> _GILProbe:
+        """Begin counting polls."""
+        self._is_probing = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        """Stop counting and wait for the thread to finish."""
+        self._is_probing = False
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+
+    @property
+    def polls(self) -> int:
+        """The polls counted so far, including any made after stopping."""
+        return self._polls
+
+    def _run(self) -> None:
+        """Count polls until the enclosing ``with`` block leaves."""
+        while self._is_probing:
+            self._polls += 1
+            self._stop.wait(timeout=0.001)
+
+
 @pytest.fixture(name="stalling_server")
 def fixture_stalling_server() -> cabc.Iterator[StallingServer]:
     """Serve a loopback TCP endpoint that accepts and never reads."""
@@ -114,30 +162,18 @@ def test_close_releases_the_gil_while_it_waits(
     """
     handler = stall_the_worker(stalling_server)
 
-    polls = 0
-    is_probing = True
-
-    def probe() -> None:
-        nonlocal polls
-        while is_probing:
-            polls += 1
-            time.sleep(0.001)
-
-    probe_thread = threading.Thread(target=probe, daemon=True)
-    probe_thread.start()
-    started = time.monotonic()
-    try:
-        handler.close()
-    finally:
-        elapsed = time.monotonic() - started
-        is_probing = False
-        probe_thread.join(timeout=1)
+    with _GILProbe() as probe:
+        started = time.monotonic()
+        try:
+            handler.close()
+        finally:
+            elapsed = time.monotonic() - started
 
     assert elapsed < CLOSE_ALLOWANCE_SECONDS, (
         f"close took {elapsed:.3f}s, allowed {CLOSE_ALLOWANCE_SECONDS}s"
     )
-    assert polls >= GIL_POLLS_REQUIRED, (
-        f"the probe thread ran only {polls} times across the close; the "
+    assert probe.polls >= GIL_POLLS_REQUIRED, (
+        f"the probe thread ran only {probe.polls} times across the close; the "
         "interpreter was not available while close was waiting"
     )
 
@@ -245,7 +281,10 @@ def test_records_delivered_before_the_deadline_still_arrive() -> None:
     arrived = threading.Event()
 
     class _Collector(socketserver.BaseRequestHandler):
+        """Collect one framed record so its payload can be read back."""
+
         def handle(self) -> None:
+            """Read one framed record, keeping its payload for the assertion."""
             header = recv_exactly(self.request, 4)
             if len(header) < 4:
                 return
@@ -254,6 +293,8 @@ def test_records_delivered_before_the_deadline_still_arrive() -> None:
             arrived.set()
 
     class _CollectorServer(socketserver.ThreadingTCPServer):
+        """Serve `_Collector` on loopback for the delivered-record test."""
+
         allow_reuse_address = True
         daemon_threads = True
 
@@ -300,24 +341,12 @@ def test_flush_releases_the_gil_while_the_worker_is_blocked(
     """
     handler = stall_the_worker(stalling_server)
 
-    polls = 0
-    is_probing = True
-
-    def probe() -> None:
-        nonlocal polls
-        while is_probing:
-            polls += 1
-            time.sleep(0.001)
-
-    probe_thread = threading.Thread(target=probe, daemon=True)
-    probe_thread.start()
-    started = time.monotonic()
-    try:
-        acknowledged = handler.flush()
-    finally:
-        elapsed = time.monotonic() - started
-        is_probing = False
-        probe_thread.join(timeout=1)
+    with _GILProbe() as probe:
+        started = time.monotonic()
+        try:
+            acknowledged = handler.flush()
+        finally:
+            elapsed = time.monotonic() - started
 
     assert acknowledged is False, (
         "a flush against a worker blocked in a write cannot be acknowledged, "
@@ -327,7 +356,7 @@ def test_flush_releases_the_gil_while_the_worker_is_blocked(
         f"flush took {elapsed:.3f}s, allowed {CLOSE_ALLOWANCE_SECONDS}s; "
         f"the worker stays busy for {BUSY_WINDOW_SECONDS}s"
     )
-    assert polls >= GIL_POLLS_REQUIRED, (
-        f"the probe thread ran only {polls} times across the flush; the "
+    assert probe.polls >= GIL_POLLS_REQUIRED, (
+        f"the probe thread ran only {probe.polls} times across the flush; the "
         "interpreter was not available while flush was waiting"
     )

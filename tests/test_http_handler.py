@@ -63,6 +63,7 @@ class _StallingServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self) -> None:
+        """Listen on an ephemeral loopback port, and stall every request."""
         super().__init__(("127.0.0.1", 0), _StallingHandler)
         self.connections: list[typ.Any] = []
         self.arrived = threading.Event()
@@ -169,6 +170,7 @@ def test_close_releases_the_gil_while_it_waits(
     probing = True
 
     def probe() -> None:
+        """Count how often this thread is scheduled until told to stop."""
         nonlocal polls
         while probing:
             polls += 1
