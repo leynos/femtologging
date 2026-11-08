@@ -45,7 +45,7 @@ pub(super) fn emit_rejected_native_dispatch() -> Result<(), String> {
     if !record_accepted {
         return Err("rejected dispatch should have accepted its producer record".to_owned());
     }
-    if !logger.flush_handlers_blocking() {
+    if !logger.flush_handlers() {
         return Err("test handler should drain after it is released".to_owned());
     }
     drop(logger);
@@ -68,6 +68,10 @@ impl FemtoHandlerTrait for BlockingNativeTestHandler {
             .recv()
             .map_err(|_| HandlerError::Closed)?;
         Ok(())
+    }
+
+    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

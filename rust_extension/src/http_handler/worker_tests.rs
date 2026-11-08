@@ -4,6 +4,7 @@
 //! and is not repeated here: what is left in the worker is the authentication
 //! encoding that no other module owns.
 
+use super::super::request::base64_encode;
 use super::*;
 use std::{
     io::Read,

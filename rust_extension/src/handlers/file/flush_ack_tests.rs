@@ -9,7 +9,7 @@ use super::*;
 use std::io::{self, ErrorKind, Write};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Cloneable writer whose flush calls wait for explicit test release.
 #[derive(Clone)]
@@ -188,6 +188,146 @@ fn flush_waits_for_its_own_acknowledgement() {
         .expect("second flush worker thread must complete cleanly");
 
     writer.release_all_flushes();
+    let Ok(handler) = Arc::try_unwrap(handler) else {
+        panic!("flush test must release all handler references before shutdown");
+    };
+    handler.close();
+}
+
+/// Build a file handler whose worker blocks in the writer's flush.
+///
+/// The first flush occupies the worker, so anything queued behind it cannot be
+/// acknowledged, and the returned receiver reports when the worker reaches the
+/// writer.
+fn stalled_file_handler(
+    capacity: usize,
+) -> (
+    Arc<FemtoFileHandler>,
+    BlockingFlushWriter,
+    thread::JoinHandle<()>,
+    mpsc::Receiver<bool>,
+    mpsc::Receiver<usize>,
+) {
+    let (started_tx, started_rx) = mpsc::channel();
+    let writer = BlockingFlushWriter::new(started_tx);
+    let mut config = TestConfig::new(writer.clone(), DefaultFormatter);
+    config.capacity = capacity;
+    config.flush_interval = 16;
+    config.overflow_policy = OverflowPolicy::Block;
+
+    let handler = Arc::new(FemtoFileHandler::with_writer_for_test(config));
+    let stalling = Arc::clone(&handler);
+    let (stall_done_tx, stall_done_rx) = mpsc::channel();
+    let stall = thread::spawn(move || {
+        stall_done_tx
+            .send(stalling.flush())
+            .expect("stall result receiver must stay connected");
+    });
+    (handler, writer, stall, stall_done_rx, started_rx)
+}
+
+/// The supplied deadline, not the handler's one-second timeout, bounds an
+/// acknowledgement the stalled worker never sends.
+#[test]
+fn flush_deadline_bounds_a_stalled_acknowledgement() {
+    let (handler, writer, stall, stall_done_rx, started_rx) = stalled_file_handler(4);
+    assert_eq!(
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the stalling flush must reach the writer"),
+        1
+    );
+
+    // Admission has the whole budget; the acknowledgement has none.
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(30);
+    let mut samples = 0_u8;
+    let mut now = || {
+        samples += 1;
+        if samples == 1 {
+            start
+        } else {
+            start + Duration::from_secs(31)
+        }
+    };
+    let began = Instant::now();
+    let confirmed = handler.flush_by_at(deadline, &mut now);
+
+    assert!(
+        !confirmed,
+        "a worker blocked inside the writer cannot acknowledge this flush"
+    );
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "the acknowledgement wait must stop at the supplied deadline, not the one-second timeout"
+    );
+    assert_eq!(
+        samples, 3,
+        "the cap, queue admission and acknowledgement must each sample the clock"
+    );
+
+    writer.release_all_flushes();
+    // The stalling flush has its own one-second budget, so whether the released
+    // write finishes inside it is a scheduling detail. Only its completion
+    // matters here; the assertion above covers the deadline under test.
+    let _ = stall_done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the stalling flush must report its outcome");
+    stall.join().expect("the stalling flush thread must exit");
+    let Ok(handler) = Arc::try_unwrap(handler) else {
+        panic!("flush test must release all handler references before shutdown");
+    };
+    handler.close();
+}
+
+/// A full queue must refuse the marker once the supplied deadline has no
+/// budget left, even though the handler's timeout would still allow a wait.
+#[test]
+fn flush_deadline_bounds_a_stalled_queue_admission() {
+    let (handler, writer, stall, stall_done_rx, started_rx) = stalled_file_handler(1);
+    assert_eq!(
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the stalling flush must reach the writer"),
+        1
+    );
+
+    // The stalled worker cannot drain this record, so it holds the only slot.
+    handler
+        .handle(FemtoLogRecord::new(
+            "flush-deadline",
+            FemtoLevel::Info,
+            "occupies the queue",
+        ))
+        .expect("the free slot should accept one record");
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(30);
+    let mut samples = 0_u8;
+    let mut now = || {
+        samples += 1;
+        start + Duration::from_secs(31)
+    };
+    let began = Instant::now();
+    let confirmed = handler.flush_by_at(deadline, &mut now);
+
+    assert!(!confirmed, "a full queue cannot admit the flush marker");
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "queue admission must stop at the supplied deadline, not wait for room"
+    );
+    assert_eq!(
+        samples, 2,
+        "a refused admission must still sample the cap and the admission budget"
+    );
+
+    writer.release_all_flushes();
+    // As above: the stalling flush's own one-second budget decides its result,
+    // which is not the deadline this test asserts on.
+    let _ = stall_done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the stalling flush must report its outcome");
+    stall.join().expect("the stalling flush thread must exit");
     let Ok(handler) = Arc::try_unwrap(handler) else {
         panic!("flush test must release all handler references before shutdown");
     };

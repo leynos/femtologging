@@ -48,6 +48,8 @@ pub struct RateLimitedWarner {
     last_warn: AtomicU64,
     /// Number of dropped records waiting for the next warning emission.
     dropped: AtomicU64,
+    /// Due warning counts whose flush command could not enter a worker queue.
+    retry_drops: AtomicU64,
     /// Minimum interval between warning callbacks, stored in milliseconds.
     interval_ms: u64,
     /// Shared clock seam used by production code and deterministic tests.
@@ -66,6 +68,7 @@ impl RateLimitedWarner {
         Self {
             last_warn: AtomicU64::new(u64::MAX),
             dropped: AtomicU64::new(0),
+            retry_drops: AtomicU64::new(0),
             interval_ms,
             clock,
         }
@@ -86,20 +89,51 @@ impl RateLimitedWarner {
     /// failures would report one per interval however many it lost. The count
     /// includes the record whose call triggers the warning.
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
+        if let Some(count) = self.take_due() {
+            warn(count);
+        }
+    }
+
+    /// Take a due warning count without invoking its callback.
+    ///
+    /// Flush callers move the count onto the existing handler worker so a
+    /// synchronous `log` callback cannot hold the caller beyond its deadline.
+    pub(crate) fn take_due(&self) -> Option<u64> {
+        let retry_count = self.retry_drops.swap(0, Ordering::Relaxed);
+        if retry_count > 0 {
+            self.last_warn
+                .store(self.clock.now_millis(), Ordering::Relaxed);
+            return Some(retry_count);
+        }
+
         let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
         if prev == u64::MAX || now.saturating_sub(prev) >= self.interval_ms {
             let count = self.dropped.swap(0, Ordering::Relaxed);
-            if count > 0 {
-                warn(count);
-            }
             self.last_warn.store(now, Ordering::Relaxed);
+            (count > 0).then_some(count)
+        } else {
+            // Keep suppressed drops pending so the next warning accounts for
+            // the whole interval, including calls that arrived during it.
+            None
         }
     }
 
+    /// Retry a due warning when a handler could not enqueue its flush.
+    pub(crate) fn restore_drops(&self, count: u64) {
+        self.retry_drops.fetch_add(count, Ordering::Relaxed);
+    }
+
     /// Immediately warn about pending drops and restart the rate limit interval.
+    ///
+    /// A count held back because an earlier flush could not enter the worker
+    /// queue is reported here too, so a restored count is never stranded.
     pub fn flush(&self, mut warn: impl FnMut(u64)) {
-        let count = self.dropped.swap(0, Ordering::Relaxed);
+        let retry_count = self.retry_drops.swap(0, Ordering::Relaxed);
+        let count = self
+            .dropped
+            .swap(0, Ordering::Relaxed)
+            .saturating_add(retry_count);
         if count > 0 {
             self.last_warn
                 .store(self.clock.now_millis(), Ordering::Relaxed);
@@ -115,140 +149,5 @@ impl Default for RateLimitedWarner {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Tests for rate-limited warning emission.
-
-    use super::*;
-    use rstest::*;
-    use std::sync::atomic::AtomicU64;
-
-    /// Atomic clock fixture that lets warning intervals advance deterministically.
-    struct FakeClock {
-        /// Current fake time in milliseconds.
-        now: AtomicU64,
-    }
-
-    impl Default for FakeClock {
-        fn default() -> Self {
-            Self {
-                now: AtomicU64::new(0),
-            }
-        }
-    }
-
-    impl Clock for FakeClock {
-        fn now_millis(&self) -> u64 {
-            self.now.load(Ordering::Relaxed)
-        }
-    }
-
-    impl FakeClock {
-        fn advance(&self, ms: u64) {
-            self.now.fetch_add(ms, Ordering::Relaxed);
-        }
-    }
-
-    #[fixture]
-    fn clock() -> Arc<FakeClock> {
-        Arc::new(FakeClock::default())
-    }
-
-    #[fixture]
-    fn warner() -> (RateLimitedWarner, Arc<FakeClock>) {
-        let clock = Arc::new(FakeClock::default());
-        (
-            RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone() as Arc<dyn Clock>),
-            clock,
-        )
-    }
-
-    #[fixture]
-    fn warnings() -> Vec<u64> {
-        Vec::new()
-    }
-
-    #[rstest]
-    #[case(1)]
-    #[case(3)]
-    fn accumulates_drops_and_emits_warning(
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-        mut warnings: Vec<u64>,
-        #[case] drop_count: u64,
-    ) {
-        let (warner, _clock) = warner;
-        for _ in 0..drop_count {
-            warner.record_drop();
-        }
-        warner.warn_if_due(|c| warnings.push(c));
-        assert_eq!(warnings, vec![drop_count]);
-    }
-
-    #[rstest]
-    fn rate_limits_warnings_and_flushes_pending_drops(
-        mut warnings: Vec<u64>,
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-    ) {
-        let (warner, clock) = warner;
-        warner.record_drop();
-        warner.warn_if_due(|c| warnings.push(c));
-        // Suppressed by the interval, but not forgotten: the count stays
-        // pending and is reported with the next warning.
-        warner.record_drop();
-        warner.warn_if_due(|c| warnings.push(c));
-        assert_eq!(warnings, vec![1]);
-        clock.advance(1000);
-        warner.record_drop();
-        warner.warn_if_due(|c| warnings.push(c));
-        assert_eq!(
-            warnings,
-            vec![1, 2],
-            "the record suppressed with the interval must be counted by the \
-             warning that follows it, not discarded"
-        );
-
-        // A flush restarts the interval even when a warning is already due.
-        warner.record_drop();
-        warner.flush(|c| warnings.push(c));
-        assert_eq!(warnings, vec![1, 2, 1]);
-
-        clock.advance(500);
-        warner.record_drop();
-        warner.warn_if_due(|count| warnings.push(count));
-        assert_eq!(
-            warnings,
-            vec![1, 2, 1],
-            "a flush restarts the interval, so a warning half an interval \
-             later must be suppressed"
-        );
-
-        clock.advance(500);
-        warner.record_drop();
-        warner.warn_if_due(|count| warnings.push(count));
-        assert_eq!(
-            warnings,
-            vec![1, 2, 1, 2],
-            "the record suppressed after the flush must be counted by the \
-             next warning"
-        );
-    }
-
-    #[rstest]
-    fn no_warning_when_no_drops(
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-        mut warnings: Vec<u64>,
-    ) {
-        let (warner, _) = warner;
-        warner.warn_if_due(|c| warnings.push(c));
-        assert!(warnings.is_empty());
-    }
-
-    #[rstest]
-    fn flush_with_no_drops_does_nothing(
-        warner: (RateLimitedWarner, Arc<FakeClock>),
-        mut warnings: Vec<u64>,
-    ) {
-        let (warner, _) = warner;
-        warner.flush(|c| warnings.push(c));
-        assert!(warnings.is_empty());
-    }
-}
+#[path = "rate_limited_warner_tests.rs"]
+mod tests;

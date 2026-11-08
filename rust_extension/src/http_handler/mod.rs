@@ -29,6 +29,7 @@ mod filtered;
 mod handler;
 mod queue;
 mod record;
+mod request;
 mod response;
 mod serialize;
 mod url_encoding;

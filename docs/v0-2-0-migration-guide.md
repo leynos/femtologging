@@ -329,6 +329,48 @@ For the complete parameter and error contract, see
 [the users guide section on frame filtering][user-filtering].
 
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
+[user-flushing]: users-guide.md#flushing-logger-handlers
+
+______________________________________________________________________
+
+## Deadline-aware Rust handler flushing
+
+`FemtoLogger::flush_handlers()` now applies one two-second deadline to marker
+insertion, the non-empty handler snapshot, worker acknowledgement and every
+handler flush. It returns `false` when any part of that barrier is unconfirmed.
+Built-in handlers keep their shorter configured timeouts.
+
+Custom Rust handlers that implement only synchronous `flush()` now fail closed:
+the barrier does not call that method and returns `false`. Override
+`flush_until(deadline)` to opt in. The implementation must use bounded waits
+against the supplied absolute deadline and report `false` when completion is
+not confirmed. The logger cannot interrupt arbitrary synchronous handler code
+once it starts; calling an unbounded `flush()` from `flush_until()` can still
+occupy the shared worker after the caller returns. In normal builds, logger
+drop waits only for that logger's in-flight records, up to the bounded drain
+timeout; it does not join the process-wide worker. Loom models join their
+logger-owned worker during cleanup.
+
+Python-facing calls release the GIL while waiting for the worker. CPython must
+reacquire the interpreter before returning to Python, so interpreter contention
+can delay the Python return beyond the Rust barrier deadline; a late handoff
+changes the result to `false`.
+
+`FemtoLogger.get_flush_diagnostics()` exposes fixed-cardinality counters for
+barrier attempts, confirmations, failure stages and elapsed-time buckets. Those
+buckets are disjoint ranges (up to 10 ms, over 10 to 100 ms, over 100 to 500
+ms, over 500 ms to 2 s, and over 2 s), so each attempt increments exactly one
+rather than a cumulative series. The keys are stable and contain no logger
+names, paths, messages or payloads. Values are a best-effort snapshot read from
+relaxed atomics, so concurrent updates may appear at different instants.
+Exporting them through a shared metrics adapter remains the application's
+responsibility. See [flushing logger handlers][user-flushing] for the counter
+contract.
+
+See the [user guide](users-guide.md#flushing-logger-handlers), the
+[developer guide](developers-guide.md#logger-handler-flush-barrier), and the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the public contract and implementation details.
 
 ______________________________________________________________________
 

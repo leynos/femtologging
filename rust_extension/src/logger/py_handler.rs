@@ -3,15 +3,21 @@
 //! This module provides [`PyHandler`], which wraps Python handler objects
 //! to allow them to be used by the Rust logging infrastructure.
 
+#[cfg(feature = "python")]
+use pyo3::Py;
+use pyo3::PyAny;
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::types::PyAnyMethods;
-use pyo3::{Py, PyAny};
+#[cfg(feature = "python")]
 use std::any::Any;
 
 #[cfg(feature = "python")]
 use crate::formatter::python::record_to_dict;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(feature = "python")]
+use crate::handler::FemtoHandlerTrait;
+use crate::handler::HandlerError;
+#[cfg(feature = "python")]
 use crate::log_record::FemtoLogRecord;
 use log::warn;
 
@@ -312,6 +318,21 @@ impl FemtoHandlerTrait for PyHandler {
         true
     }
 
+    /// Flush a wrapped built-in handler under the barrier's deadline.
+    ///
+    /// A user-defined Python handler runs synchronously on the shard worker,
+    /// so the barrier's acknowledgement already covers every record it was
+    /// given and there is no separate buffer to drain. A built-in handler
+    /// keeps its own queue and buffer, so the barrier must ask it to flush;
+    /// reporting success without doing so would confirm records that are
+    /// still buffered.
+    fn flush_until(&self, deadline: std::time::Instant) -> bool {
+        let Some(native_handler) = self.native_handler else {
+            return true;
+        };
+        Python::attach(|py| native_handler.flush_until(py, self.obj.bind(py), deadline))
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -352,41 +373,7 @@ mod tests {
     }
 }
 
-/// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]
-pub struct PyHandler {
-    /// Python handler object retained by the feature-disabled wrapper.
-    pub obj: Py<PyAny>,
-}
-
+mod no_python;
 #[cfg(not(feature = "python"))]
-impl PyHandler {
-    /// Wrap the Python object without feature-specific capability inspection.
-    pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
-        Self { obj }
-    }
-}
-
-#[cfg(not(feature = "python"))]
-impl FemtoHandlerTrait for PyHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Python::attach(|py| {
-            self.obj
-                .call_method1(
-                    py,
-                    "handle",
-                    (record.logger(), record.level_str(), record.message()),
-                )
-                .map(|_| ())
-                .map_err(|err| map_py_err(py, err, "handle"))
-        })
-    }
-
-    fn is_python_backed(&self) -> bool {
-        true
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
+pub use self::no_python::PyHandler;

@@ -11,9 +11,7 @@
 //! warned about rather than swallowed, because a shutdown that quietly loses
 //! logs is the failure this handler's deadline exists to make visible.
 
-use std::time::{Duration, Instant};
-
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use log::warn;
 
 use crate::{
@@ -29,8 +27,9 @@ use crate::{
 pub enum HTTPCommand {
     /// Carry one record for HTTP serialization and delivery.
     Record(FemtoLogRecord),
-    /// Flush earlier commands and acknowledge completion.
-    Flush(Sender<()>),
+    /// Flush earlier commands, then acknowledge with any drop count the caller
+    /// took from the warner.
+    Flush(Sender<()>, Option<u64>),
     /// Begin shutdown and acknowledge after worker cleanup.
     Shutdown(Sender<()>),
 }
@@ -55,8 +54,11 @@ pub(crate) fn discard_rest(rx: &Receiver<HTTPCommand>, shutdown_acks: &mut Vec<S
     loop {
         match rx.try_recv() {
             Ok(HTTPCommand::Record(_)) => discarded += 1,
-            Ok(HTTPCommand::Flush(ack)) => {
+            Ok(HTTPCommand::Flush(ack, pending_drops)) => {
                 let _ = ack.send(());
+                if let Some(count) = pending_drops {
+                    warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+                }
             }
             Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,
@@ -111,30 +113,4 @@ pub fn enqueue_record(
             Err(HandlerError::Closed)
         }
     }
-}
-
-/// Sends a flush command to the HTTP worker and waits for acknowledgment.
-///
-/// Uses a deadline-based approach to ensure the total wait time does not
-/// exceed `timeout`, even if the send operation consumes part of the budget.
-///
-/// # Arguments
-///
-/// * `tx` - Sender channel to the HTTP worker thread
-/// * `timeout` - Maximum time to wait for both sending and receiving the ack
-///
-/// # Returns
-///
-/// `true` if the flush was acknowledged within the timeout, `false` otherwise.
-pub fn flush_queue(tx: &Sender<HTTPCommand>, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    let (ack_tx, ack_rx) = bounded(1);
-    if tx
-        .send_timeout(HTTPCommand::Flush(ack_tx), timeout)
-        .is_err()
-    {
-        return false;
-    }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    ack_rx.recv_timeout(remaining).is_ok()
 }

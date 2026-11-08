@@ -1,5 +1,7 @@
 //! Native dispatch for built-in handlers registered through Python.
 
+use std::time::Instant;
+
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
 use pyo3::{Bound, PyAny};
@@ -90,6 +92,47 @@ impl NativeHandlerKind {
                 .extract::<PyRef<'_, FemtoHTTPHandler>>()
                 .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+        }
+    }
+
+    /// Flush the matching built-in handler under the supplied deadline.
+    ///
+    /// A Python registration must not report a confirmed barrier while the
+    /// wrapped handler still buffers records, so the handler's own
+    /// deadline-aware flush runs here. Failing to extract the wrapped handler
+    /// returns `false`: the barrier cannot confirm a flush it did not perform.
+    pub(super) fn flush_until(
+        self,
+        py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+        deadline: Instant,
+    ) -> bool {
+        let confirmed = match self {
+            Self::Stream => obj
+                .extract::<PyRef<'_, FemtoStreamHandler>>()
+                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+            Self::File => obj
+                .extract::<PyRef<'_, FemtoFileHandler>>()
+                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+            Self::RotatingFile => obj
+                .extract::<PyRef<'_, PyRotatingFileHandler>>()
+                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+            Self::TimedRotatingFile => obj
+                .extract::<PyRef<'_, PyTimedRotatingFileHandler>>()
+                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+            Self::Socket => obj
+                .extract::<PyRef<'_, FemtoSocketHandler>>()
+                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+            Self::Http => obj
+                .extract::<PyRef<'_, FemtoHTTPHandler>>()
+                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+        };
+        match confirmed {
+            Ok(confirmed) => confirmed,
+            Err(err) => {
+                let _ = map_py_err(py, err.into(), "extract native handler for flush");
+                false
+            }
         }
     }
 }

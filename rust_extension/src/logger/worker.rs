@@ -31,7 +31,13 @@ use super::dispatcher::DispatcherError;
 #[cfg(loom)]
 use super::dispatcher::LOOM_RECORDS_PER_LOGGER;
 #[cfg(not(loom))]
+use super::flush_clock::FlushDeadline;
+#[cfg(not(loom))]
 use super::pid_reservation::PidReservation;
+
+#[cfg(all(test, not(loom)))]
+#[path = "worker_test_constructors.rs"]
+mod test_constructors;
 
 /// How a logger refers to the shard its records are dispatched on.
 ///
@@ -116,6 +122,76 @@ impl FemtoLogger {
         }
     }
 
+    /// Resolve dispatch state without spending longer than a flush deadline.
+    ///
+    /// A logger inherited across `fork` can contend with another caller that
+    /// is starting the child process's dispatcher. The ordinary producer path
+    /// waits for that reservation; a flush gives up when its shared deadline
+    /// expires instead.
+    #[cfg(not(loom))]
+    pub(super) fn dispatch_state_until(
+        &self,
+        deadline: &FlushDeadline,
+    ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
+        let process_id = std::process::id();
+        loop {
+            if deadline.is_late() {
+                return Ok(None);
+            }
+            if self
+                .dispatch
+                .process_id
+                .load(std::sync::atomic::Ordering::Acquire)
+                == process_id
+            {
+                return Ok(Some(self.dispatch.handles()));
+            }
+
+            match PidReservation::try_reserve(&self.dispatch.starting_process, process_id) {
+                Ok(_reservation) => {
+                    return self.dispatch_state_reserved_until(process_id, deadline);
+                }
+                Err(owner) => {
+                    let owner_released = PidReservation::wait_or_clear_stale_until(
+                        &self.dispatch.starting_process,
+                        process_id,
+                        owner,
+                        deadline,
+                    );
+                    if !owner_released {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resolve dispatch state after claiming the process-local reservation.
+    ///
+    /// The process ID must be checked again under the reservation: a competing
+    /// caller may have published the current process's shard after this caller
+    /// observed the stale ID but before it acquired the reservation.
+    #[cfg(not(loom))]
+    fn dispatch_state_reserved_until(
+        &self,
+        process_id: u32,
+        deadline: &FlushDeadline,
+    ) -> Result<Option<(&Shard, &std::sync::Arc<LoggerBudget>)>, DispatcherError> {
+        if self
+            .dispatch
+            .process_id
+            .load(std::sync::atomic::Ordering::Acquire)
+            == process_id
+        {
+            return Ok(Some(self.dispatch.handles()));
+        }
+        let Some(dispatcher) = Dispatcher::shared_until(deadline)? else {
+            return Ok(None);
+        };
+        let handles = self.publish_dispatch_state(process_id, dispatcher);
+        Ok((!deadline.is_late()).then_some(handles))
+    }
+
     /// Reserve and rebind this logger, or wait for its current process owner.
     #[cfg(not(loom))]
     fn try_rebind_dispatch_state(
@@ -154,6 +230,16 @@ impl FemtoLogger {
         }
 
         let dispatcher = Dispatcher::shared()?;
+        Ok(self.publish_dispatch_state(process_id, dispatcher))
+    }
+
+    /// Publish a replacement shard while this process owns the logger reservation.
+    #[cfg(not(loom))]
+    fn publish_dispatch_state(
+        &self,
+        process_id: u32,
+        dispatcher: &'static Dispatcher,
+    ) -> (&Shard, &std::sync::Arc<LoggerBudget>) {
         let shard = dispatcher.assign_shard();
         self.dispatch.budget.reset_after_fork();
         self.dispatch.shard.store(
@@ -163,7 +249,7 @@ impl FemtoLogger {
         self.dispatch
             .process_id
             .store(process_id, std::sync::atomic::Ordering::Release);
-        Ok((shard, &self.dispatch.budget))
+        (shard, &self.dispatch.budget)
     }
 
     /// Drain work this logger sent to its current dispatch state.
@@ -222,45 +308,6 @@ impl FemtoLogger {
         Ok(Self::from_shard(name, parent, std::sync::Arc::new(shard)))
     }
 
-    /// Create a logger whose producer formatter a test supplies.
-    ///
-    /// A logger's formatter is fixed at construction, so a test that must
-    /// observe whether the producer path reached formatting needs this seam
-    /// rather than a public setter.
-    #[cfg(all(test, feature = "python", not(loom)))]
-    pub(crate) fn with_formatter_for_test(name: String, formatter: SharedFormatter) -> Self {
-        let mut logger = Self::with_parent(name, None).expect("test dispatcher should start");
-        logger.formatter = formatter;
-        logger
-    }
-
-    /// Create a logger with a test-controlled context snapshot provider.
-    #[cfg(all(feature = "python", test, not(loom)))]
-    pub(super) fn with_context_snapshot_provider(
-        name: String,
-        parent: Option<String>,
-        context_snapshot_provider: std::sync::Arc<dyn ContextSnapshotProvider>,
-    ) -> Self {
-        let dispatcher = Dispatcher::shared().expect("test dispatcher should start");
-        Self::assembled(
-            name,
-            parent,
-            dispatcher.assign_shard(),
-            context_snapshot_provider,
-        )
-    }
-
-    /// Assemble a logger on a shard a test has chosen.
-    ///
-    /// Tests that assert what one logger's flush does to a shard it *shares*
-    /// have to place the logger on that shard; the process-wide pool assigns
-    /// round robin and gives no control over which logger lands where. Outside
-    /// Loom only, like the pool it borrows from.
-    #[cfg(all(test, not(loom)))]
-    pub(crate) fn assembled_for_test(name: String, shard: ShardHandle) -> Self {
-        Self::from_shard(name, None, shard)
-    }
-
     /// Assemble a logger on a shard with the default context snapshot provider.
     fn from_shard(name: String, parent: Option<String>, shard: ShardHandle) -> Self {
         Self::assembled(
@@ -306,6 +353,7 @@ impl FemtoLogger {
             dropped_records: std::sync::atomic::AtomicU64::new(0),
             context_dropped_records: std::sync::atomic::AtomicU64::new(0),
             disabled_dropped_records: std::sync::atomic::AtomicU64::new(0),
+            flush_diagnostics: super::flush_diagnostics::FlushDiagnostics::default(),
             drop_warner: RateLimitedWarner::default(),
             #[cfg(feature = "python")]
             context_snapshot_provider,
@@ -322,3 +370,7 @@ impl FemtoLogger {
         }
     }
 }
+
+#[cfg(all(test, not(loom)))]
+#[path = "worker_tests.rs"]
+mod tests;

@@ -140,12 +140,10 @@ impl LoggerBudget {
     /// Return how many of this logger's records the shard has not finished.
     ///
     /// Read by `Drop` to decide whether waiting for the shard could possibly
-    /// help: a logger with nothing in flight has nothing of its own to drain.
-    ///
-    /// Gated out under Loom like its only caller: a model's shard is the
-    /// logger's own, so its drop shuts the shard down and joins the worker
-    /// rather than waiting on a shared barrier, and nothing reads the count.
-    #[cfg(not(loom))]
+    /// help, and by the flush barrier to decide whether an empty handler list
+    /// still has records to wait for. Both readers exist in a Loom model too:
+    /// a model's drop shuts its own shard down rather than waiting on a
+    /// barrier, but the barrier itself still consults this count.
     pub(crate) fn in_flight(&self) -> usize {
         self.in_flight.load(Ordering::Acquire)
     }
