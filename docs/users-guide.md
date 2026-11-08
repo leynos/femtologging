@@ -595,6 +595,19 @@ The handler's `handle` method must be callable and thread-safe. Exceptions are
 printed to stderr and counted as handler errors, so prefer defensive code and
 avoid raising from `handle`.
 
+`FemtoLogger.flush_handlers()` also calls the handler's `flush` method when it
+has one, so a custom handler that buffers records can persist them. The call
+runs on the thread that called `flush_handlers()`, after the logger's queued
+records have been dispatched, and every registered handler is flushed even when
+an earlier one fails. A missing or non-callable `flush` counts as success, so
+handlers without one need no change; a `flush` that returns a `bool` is read
+for its value, while `None` or any other return value counts as success. An
+exception raised by `flush` is printed to stderr and makes `flush_handlers()`
+return `False`. The calling thread releases the GIL while it waits for queued
+records and native handlers. A custom `flush` runs with the interpreter
+attached. Whether other Python threads can run while it blocks depends on the
+blocking operation.
+
 #### Handler stability contract
 
 Handler capabilities are inspected **once** when `add_handler()` is called:
