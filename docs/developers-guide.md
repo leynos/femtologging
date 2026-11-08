@@ -975,8 +975,9 @@ The counters are diagnostic signals, not error rates:
   one-second bound, so queued records may still be unwritten. `close_panicked`
   means the worker signalled completion but its thread had panicked, so the
   final flush may not have run. `close_unknown` means completion was observed
-  but no verdict was recorded, which happens when the worker left without
-  running its exit guard, for example under `panic = "abort"`.
+  but no verdict was recorded. A worker that installs its exit guard records a
+  verdict before signalling completion, so this is the initial value and a
+  defensive fallback rather than an expected outcome.
 - A `max_wait_micros` close to `total_wait_micros` with few operations
   suggests one slow wait rather than sustained pressure; the reverse suggests
   steady queueing.

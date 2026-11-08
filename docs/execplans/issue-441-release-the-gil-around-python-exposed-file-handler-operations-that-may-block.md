@@ -37,11 +37,13 @@ Observable outcomes:
 
 ## Constraints
 
-- Python-visible signatures must not change; the `.pyi` stubs stay as they are.
+- Existing Python-visible signatures must not change. `wait_diagnostics()` is
+  the one new method, and the `.pyi` stubs add only its declaration for the
+  rotating and timed-rotating wrappers.
 - Argument parsing and Python exception construction stay on the GIL-owning
   side of the boundary.
-- The Rust `flush()`/`close()` implementations, their one-second deadlines, and
-  `Drop` are unchanged.
+- The one-second `flush()` and `close()` deadlines and `Drop` are unchanged;
+  only the GIL release around the waits is new.
 - `--no-default-features` and `--cfg loom` builds must keep compiling. Loom
   compiles the bindings but does not invoke Python methods or model the GIL; no
   cfg guard is needed around `Python::detach` in these bindings.
@@ -100,15 +102,14 @@ Reference or ADR is required.
   these tests. The negative control reintroduced the original GIL-holding call
   and failed exactly the three direct file-handler tests, so the oracle rejects
   the intended defect.
-- **Backpressure and shutdown contract:** the existing Rust implementations,
-  one-second flush and close deadlines, and `Drop` remain unchanged. The
-  scenarios check timeout failure, accepted-record output, `flush() == False`
-  after its deadline, and that a concurrent Python `close()` starts while a
-  blocked call retains its shared PyO3 borrow, takes the shutdown state and
-  waits on the shared completion signal without raising. They also check that a
-  `close()` started while the worker is parked exposes a closed handler:
-  `handle()` raises, `flush()` returns `False`, and a second `close()` shares
-  the same completion wait.
+- **Backpressure and shutdown contract:** the one-second flush and close
+  deadlines and `Drop` remain unchanged. The scenarios check timeout failure,
+  accepted-record output, `flush() == False` after its deadline, and that a
+  concurrent Python `close()` starts while a blocked call retains its shared
+  PyO3 borrow, takes the shutdown state and waits on the shared completion
+  signal without raising. They also check that a `close()` started while the
+  worker is parked exposes a closed handler: `handle()` raises, `flush()`
+  returns `False`, and a second `close()` shares the same completion wait.
 - **External interface assumptions:** the version-matched PyO3 0.30.1 API
   documents `Python::detach` and its `Ungil` bound at
   <https://docs.rs/pyo3/0.30.1/pyo3/marker/struct.Python.html#method.detach>.
@@ -341,6 +342,13 @@ Reference or ADR is required.
       `telemetry_event_tests.rs` now drives the Python `flush()` binding
       through a real `FlushOutcome::AckTimedOut` and asserts both the counter
       and the emitted event.
+- [x] Closed the fourth review round's three findings. This plan's constraints
+      and verification bullet are additive: existing signatures stay, and
+      `wait_diagnostics()` is the one new method. The worker closure rebinds
+      `rx` and `formatter` as body locals so they drop before `_signal` fires
+      instead of after it. `WorkerTerminal::Unknown` and the developer guide
+      now describe `Unknown` as the initial value and a defensive fallback
+      rather than an observable `panic = "abort"` outcome.
 
 ## Negative control (evidence that the tests detect the defect)
 

@@ -362,6 +362,10 @@ where
         // The terminal verdict is recorded from this frame, where a panic is
         // still visible, so a closer without the join handle can report it.
         let _signal = CompleteOnDrop::with_terminal(worker_completion, worker_terminal);
+        // Captured variables drop after this body's locals, so `rx` and
+        // `formatter` would outlive `_signal`. Rebinding makes them drop first,
+        // so every resource the worker owns is released before closers wake.
+        let (rx, formatter) = (rx, formatter);
         if let Some(b) = start_barrier {
             b.wait();
         }

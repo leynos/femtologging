@@ -141,8 +141,12 @@ impl ShutdownCompletion {
 /// from inside the worker lets those closers report the same answer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WorkerTerminal {
-    /// No verdict was recorded: the worker has not exited, or it left without
-    /// running the guard at all (for example under `panic = "abort"`).
+    /// No verdict was recorded.
+    ///
+    /// This is the initial value and a defensive fallback. A worker that
+    /// installs [`CompleteOnDrop::with_terminal`] stores a verdict before it
+    /// signals completion, so a closer woken by that signal does not read this
+    /// value from such a worker.
     #[default]
     Unknown,
     /// The worker's closure returned normally.
