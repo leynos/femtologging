@@ -330,11 +330,26 @@ impl FemtoLogger {
     }
 
     /// Flush every configured handler and report whether all succeeded.
+    ///
+    /// Every handler is flushed even after one reports failure, the same rule
+    /// dispatch follows for `handle`: a handler that cannot flush must not
+    /// leave the records buffered in the handlers after it. The results are
+    /// combined afterwards, so the return value still reports whether any
+    /// handler failed.
+    ///
+    /// The handler list is snapshotted before the calls. A custom `flush` may
+    /// reconfigure the logger that is flushing it, and `add_handler` and
+    /// `remove_handler` take the same list's write lock; holding the read
+    /// guard across the calls would deadlock against them. The snapshot also
+    /// fixes the set of handlers this flush promises to reach, so one added
+    /// during the pass is left for the next flush, as it is for dispatch.
     fn flush_configured_handlers(&self) -> bool {
-        self.handlers
-            .read()
-            .iter()
-            .all(|attachment| attachment.handler.flush())
+        let attachments = self.handlers.read().clone();
+        let mut all_flushed = true;
+        for attachment in &attachments {
+            all_flushed &= attachment.handler.flush();
+        }
+        all_flushed
     }
 
     /// Dispatch a record to the logger's handlers through its dispatch shard.

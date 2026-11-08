@@ -16,6 +16,8 @@ use crate::log_record::FemtoLogRecord;
 use log::warn;
 
 #[cfg(feature = "python")]
+mod flush;
+#[cfg(feature = "python")]
 mod native_handler;
 #[cfg(feature = "python")]
 use self::native_handler::NativeHandlerKind;
@@ -312,45 +314,20 @@ impl FemtoHandlerTrait for PyHandler {
         true
     }
 
+    /// Flush the wrapped handler so `flush_handlers` covers Python-registered
+    /// handlers too.
+    fn flush(&self) -> bool {
+        self.flush_registered_handler()
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
 #[cfg(all(test, feature = "python"))]
-mod tests {
-    //! Tests for native handler recognition in the Python wrapper.
-
-    use super::NativeHandlerKind;
-    use crate::{FemtoHTTPHandler, FemtoSocketHandler, HTTPHandlerConfig, SocketHandlerConfig};
-    use pyo3::{Py, Python};
-
-    /// Built-in socket and HTTP handlers are recognized for native dispatch.
-    #[test]
-    fn native_handler_kind_recognizes_network_handlers() {
-        Python::attach(|py| {
-            let socket = Py::new(
-                py,
-                FemtoSocketHandler::with_config(SocketHandlerConfig::default()),
-            )
-            .expect("socket handler should be constructible as a Python object");
-            assert!(matches!(
-                NativeHandlerKind::from_object(socket.bind(py)),
-                Some(NativeHandlerKind::Socket)
-            ));
-
-            let http = Py::new(
-                py,
-                FemtoHTTPHandler::with_config(HTTPHandlerConfig::default()),
-            )
-            .expect("HTTP handler should be constructible as a Python object");
-            assert!(matches!(
-                NativeHandlerKind::from_object(http.bind(py)),
-                Some(NativeHandlerKind::Http)
-            ));
-        });
-    }
-}
+#[path = "py_handler/tests.rs"]
+mod tests;
 
 /// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]

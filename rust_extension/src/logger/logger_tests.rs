@@ -5,6 +5,7 @@ use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::logger_tests_helpers::{CollectingHandler, collected_messages};
 
@@ -179,6 +180,116 @@ fn a_handler_error_does_not_skip_later_handlers() {
         collected_messages(&collecting_handler),
         vec!["survives"],
         "a handler error must not deprive later handlers of the record"
+    );
+}
+
+#[test]
+fn a_failed_flush_does_not_skip_later_handlers() {
+    /// Handler that counts its flushes and can be made to fail them.
+    struct FlushRecorder {
+        /// Whether each flush reports failure.
+        fails: bool,
+        /// How many times the handler's flush ran.
+        flushes: AtomicUsize,
+    }
+
+    impl FlushRecorder {
+        /// Build a recorder that reports `fails` from every flush.
+        fn new(fails: bool) -> Self {
+            Self {
+                fails,
+                flushes: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl FemtoHandlerTrait for FlushRecorder {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            Ok(())
+        }
+
+        fn flush(&self) -> bool {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+            !self.fails
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    let failing = Arc::new(FlushRecorder::new(true));
+    let recording = Arc::new(FlushRecorder::new(false));
+    let logger =
+        FemtoLogger::new("flush-order".into()).expect("test logger should be constructible");
+    logger
+        .add_handler(failing.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native failing test handler should register");
+    logger
+        .add_handler(recording.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native recording test handler should register");
+
+    assert!(
+        !logger.flush_handlers(),
+        "a handler that failed to flush must be reported"
+    );
+    assert_eq!(
+        failing.flushes.load(Ordering::SeqCst),
+        1,
+        "the failing handler must be flushed once"
+    );
+    assert_eq!(
+        recording.flushes.load(Ordering::SeqCst),
+        1,
+        "a failed flush must not skip the handlers after it"
+    );
+}
+
+/// Handler that rewrites the logger's handler list from inside `flush`.
+struct ReconfiguringHandler {
+    /// The logger's handler list, shared so `flush` can take its write lock.
+    handlers: Arc<parking_lot::RwLock<Vec<HandlerAttachment>>>,
+}
+
+impl FemtoHandlerTrait for ReconfiguringHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> bool {
+        // `add_handler` and `remove_handler` take this same write lock. If the
+        // flush path still held the read guard, this call would deadlock.
+        self.handlers.write().clear();
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[test]
+fn flushing_a_handler_that_reconfigures_the_logger_does_not_deadlock() {
+    let logger =
+        FemtoLogger::new("flush-reconfigure".into()).expect("test logger should be constructible");
+    let handler = Arc::new(ReconfiguringHandler {
+        handlers: Arc::clone(&logger.handlers),
+    });
+    logger
+        .add_handler(handler as Arc<dyn FemtoHandlerTrait>)
+        .expect("native reconfiguring test handler should register");
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done_tx.send(logger.flush_handlers());
+    });
+
+    let flushed = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("flush_handlers deadlocked while a handler reconfigured the logger");
+    assert!(
+        flushed,
+        "the reconfiguring handler reports a successful flush"
     );
 }
 
