@@ -1200,6 +1200,35 @@ managed sccache server was unavailable, so the gates compiled uncached and
 queued through compile admission; no gate failed on admission and none was
 killed or retried.
 
+## Hosted lint outage from the rolling Whitaker suite
+
+The first hosted run on `d8612ee8` (run 42455964240) failed all four
+`build-test` jobs at the `Lint` step after five to six minutes. The failing
+command is the Dylint driver probe, not consumer code:
+
+```text
+thread 'rustc' panicked at compiler/rustc_lint/src/context.rs:215:17:
+duplicate specification of lint string_continuation_style
+Error: Compilation failed with toolchain `nightly-2026-05-28`
+```
+
+The cause is upstream and unrelated to this branch, which adds no lint.
+`install-whitaker` refuses a suite pin, so every consumer takes the rolling
+lint archive from Whitaker's default-branch tip. That archive began shipping
+`libstring_continuation_style.so` alongside `libwhitaker_suite.so`, which
+already registers the same lint; the pinned installer `0.2.11` predates the new
+crate, so its pruning loop leaves the standalone library in place and
+`cargo dylint --all` registers the lint twice. Whitaker tracks this as issue
+565 with a filename-based pruning fix planned for installer `0.2.12`.
+
+Two independent checks place the fault outside this candidate: femtologging PR
+549, an unrelated branch, fails the same way in run 42456651881 at the same
+step, and the pre-rebase `16ecca09` run never reached this probe because
+interrogate failed first. Local `make lint` passes because the host's installed
+suite predates the duplicate. The candidate stays as it is; the hosted lint
+jobs need a rerun once installer `0.2.12` (or an archive without the standalone
+libraries) is available.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
