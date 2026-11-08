@@ -192,3 +192,7 @@ fn frame_budget_spent(written: usize, total: usize) -> io::Error {
 #[cfg(test)]
 #[path = "frame_write_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "frame_write_property_tests.rs"]
+mod property_tests;

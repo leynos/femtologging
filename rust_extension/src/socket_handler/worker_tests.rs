@@ -152,3 +152,70 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
             .contains("FemtoSocketHandler dropped 1 records during shutdown")
     }));
 }
+
+/// A flush spends one budget across both halves, not one on each.
+///
+/// The wait for queue space and the acknowledgement wait used to be given the
+/// flush timeout separately, so a flush whose send spent most of the budget
+/// still waited another full timeout for the answer. That is the path this
+/// pins: the send has to *succeed* late for the two behaviours to differ. (A
+/// send that times out returns `false` before the acknowledgement is reached at
+/// all, so a permanently full queue cannot distinguish them - hence a worker
+/// that reads here rather than one that never does.)
+///
+/// The worker holds the flush command for most of the budget and then
+/// acknowledges promptly. Under one shared deadline the acknowledgement gets
+/// only the remainder and fails; under separate deadlines it would get a fresh
+/// budget and succeed. The bound sits between those two outcomes.
+#[test]
+#[serial_test::serial]
+fn a_late_flush_send_leaves_too_little_budget_for_the_acknowledgement() {
+    let flush_timeout = Duration::from_millis(200);
+    let (tx, rx) = bounded(1);
+    // A worker that picks the command up only after the send has spent most of
+    // the budget, then answers at once. It keeps its receiver alive so the
+    // acknowledgement channel stays open and the wait runs to its timeout
+    // rather than ending as a disconnect.
+    // The worker must leave the record queued for most of the budget, then take
+    // it and acknowledge. Sleeping *before* the receive is what makes the send
+    // below block; taking the record first would free the slot at once and the
+    // send would never spend anything.
+    let worker = thread::spawn(move || {
+        thread::sleep(flush_timeout * 4 / 5);
+        rx.recv()
+            .expect("receive the occupying record once the send is waiting");
+        let command = rx.recv().expect("receive the flush command");
+        let SocketCommand::Flush(ack) = command else {
+            panic!("the queued command must be the flush this test sent");
+        };
+        // Answer too late for the remainder the send left behind.
+        thread::sleep(flush_timeout / 4);
+        let _ = ack.send(());
+        // Stay alive so the channel is not disconnected while the caller waits.
+        thread::sleep(flush_timeout * 2);
+    });
+    // Block the single slot, so the send below waits until the worker frees it.
+    tx.send(SocketCommand::Record(FemtoLogRecord::new(
+        "test.logger",
+        FemtoLevel::Info,
+        "occupy the only slot",
+    )))
+    .expect("fill the queue so the flush command has to wait");
+
+    let started = Instant::now();
+    let acknowledged = flush_queue(&tx, flush_timeout);
+    let elapsed = started.elapsed();
+
+    assert!(
+        !acknowledged,
+        "the acknowledgement arrived only after {elapsed:?}, past the one \
+         {flush_timeout:?} budget a flush is allowed; waiting {flush_timeout:?} \
+         for the send and then another for the answer is the two-budget \
+         behaviour this test exists to prevent"
+    );
+    assert!(
+        elapsed < flush_timeout * 3 / 2,
+        "flush took {elapsed:?}, longer than one budget plus scheduling slack"
+    );
+    worker.join().expect("the test worker must not panic");
+}

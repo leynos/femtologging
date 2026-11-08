@@ -191,6 +191,14 @@ three observable behaviours:
 - **A partially written frame stays partially written.** A frame that runs out
   of budget mid-write reports how many of its bytes were sent. The connection
   is closed rather than retried, so the collector may observe a truncated frame.
+- **A socket `flush()` is bounded by one budget, not two.** Its flush timeout
+  is now a single deadline shared by the wait for queue space and the
+  acknowledgement. Previously each was given the full timeout, so a flush could
+  take up to twice the configured value before returning `False`. It now returns
+  `False` once that one budget is spent. Treat the return as "the worker
+  answered within one flush timeout", not "the worker had a timeout of its own
+  to answer". `FemtoHTTPHandler.flush()` already shared one deadline and is
+  unchanged.
 
 The bound on `close()` itself is the budget: a worker that misses the deadline
 is detached, so the caller is never held past it. The bound on the worker's own

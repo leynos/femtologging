@@ -278,3 +278,56 @@ def test_records_delivered_before_the_deadline_still_arrive() -> None:
     assert b"before the close" in received[0], (
         "the delivered frame must carry the record it was sent for"
     )
+
+
+def test_flush_releases_the_gil_while_the_worker_is_blocked(
+    stalling_server: StallingServer,
+) -> None:
+    """A flush must not hold the interpreter while it waits for its worker.
+
+    ``py_flush`` runs the Rust flush inside ``py.detach``, and that release is
+    invisible to Rust: only a Python thread can observe whether the interpreter
+    stayed available. The probe counts how often it is scheduled during the
+    flush, so a flush that held the GIL would let it run only before and after,
+    never in between.
+
+    The worker is stalled deliberately. An idle worker acknowledges in well
+    under a millisecond, which would leave the probe too few polls to tell
+    "released the GIL" from "never held it".
+
+    Kept apart from the close test on purpose: they hold different code paths
+    to the same rule, and one failing must say which.
+    """
+    handler = stall_the_worker(stalling_server)
+
+    polls = 0
+    is_probing = True
+
+    def probe() -> None:
+        nonlocal polls
+        while is_probing:
+            polls += 1
+            time.sleep(0.001)
+
+    probe_thread = threading.Thread(target=probe, daemon=True)
+    probe_thread.start()
+    started = time.monotonic()
+    try:
+        acknowledged = handler.flush()
+    finally:
+        elapsed = time.monotonic() - started
+        is_probing = False
+        probe_thread.join(timeout=1)
+
+    assert acknowledged is False, (
+        "a flush against a worker blocked in a write cannot be acknowledged, "
+        "so it must report False rather than wait for the stalled worker"
+    )
+    assert elapsed < CLOSE_ALLOWANCE_SECONDS, (
+        f"flush took {elapsed:.3f}s, allowed {CLOSE_ALLOWANCE_SECONDS}s; "
+        f"the worker stays busy for {BUSY_WINDOW_SECONDS}s"
+    )
+    assert polls >= GIL_POLLS_REQUIRED, (
+        f"the probe thread ran only {polls} times across the flush; the "
+        "interpreter was not available while flush was waiting"
+    )

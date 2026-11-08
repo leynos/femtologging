@@ -28,10 +28,19 @@
 //! A worker cannot be stopped mid-`connect`: the standard library has no
 //! cancellation for a blocking socket call. What this module bounds is what the
 //! worker begins. Nothing new starts once a drain deadline has passed or the
-//! phase is aborted, and nothing started after a drain began runs longer than
-//! the budget's remainder. Termination is therefore bounded by the budget plus
-//! one network call already in flight when the deadline fell - the figure the
-//! handler's `close` already allows for when it declines to join.
+//! phase is aborted, and a timeout-bounded call started after a drain began
+//! runs no longer than the budget's remainder. Termination is therefore bounded
+//! by the budget plus one network call already in flight when the deadline
+//! fell - the figure the handler's `close` already allows for when it declines
+//! to join.
+//!
+//! Two calls on the socket path are not timeout-bounded and so do not obey
+//! that remainder: an already-started Unix-domain `connect`, which blocks until
+//! a slot frees or the listener closes, and TCP hostname resolution, which has
+//! no interruptible timeout in `ureq`. The deadline is checked before each is
+//! attempted, so neither begins after it has passed, but a call already blocked
+//! in one runs to its own completion. Both are documented in
+//! `socket_handler::transport` and in the users' guide.
 
 use std::time::{Duration, Instant};
 

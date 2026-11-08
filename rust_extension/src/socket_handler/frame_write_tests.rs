@@ -19,11 +19,11 @@ use crate::shutdown_signal::ShutdownSignal;
 use crate::socket_handler::frame_write::{FrameSink, FrameWriter, spent_within_frame};
 
 /// The write timeout the scripted cases configure.
-const WRITE_TIMEOUT: Duration = Duration::from_millis(50);
+pub(super) const WRITE_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// What one scripted `write_some` call does.
 #[derive(Debug, Clone, Copy)]
-enum Step {
+pub(super) enum Step {
     /// Accept at most this many bytes, as a partial write does.
     Accept(usize),
     /// Report an interrupted call, transferring nothing.
@@ -37,25 +37,33 @@ enum Step {
 /// Each scripted step is spent once; a call with an empty script accepts
 /// everything still offered, which is how a test expresses "and then the rest
 /// goes through".
-struct ScriptedSink {
+pub(super) struct ScriptedSink {
     /// Steps still to be performed, in call order.
     steps: VecDeque<Step>,
     /// Write timeouts the loop set, in call order.
-    timeouts: Vec<Duration>,
+    pub(super) timeouts: Vec<Duration>,
     /// The timeout in force when `flush` was reached, if it was.
     flush_timeout: Option<Duration>,
     /// Every byte the sink accepted, in order.
-    accepted: Vec<u8>,
+    pub(super) accepted: Vec<u8>,
+    /// What each call was offered and how much of it was accepted.
+    ///
+    /// Recorded so a property test can check the loop's offsets, not only the
+    /// bytes that survived: an interrupted call transfers nothing, so a record
+    /// of acceptances alone cannot tell "offered the right bytes at the right
+    /// offset" from "offered them again".
+    pub(super) calls: Vec<(Vec<u8>, usize)>,
 }
 
 impl ScriptedSink {
     /// A sink that performs `steps` and then accepts the remainder.
-    fn new(steps: Vec<Step>) -> Self {
+    pub(super) fn new(steps: Vec<Step>) -> Self {
         Self {
             steps: steps.into(),
             timeouts: Vec::new(),
             flush_timeout: None,
             accepted: Vec::new(),
+            calls: Vec::new(),
         }
     }
 }
@@ -67,17 +75,25 @@ impl FrameSink for ScriptedSink {
     }
 
     fn write_some(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.steps.pop_front().unwrap_or(Step::Accept(buf.len())) {
+        let step = self.steps.pop_front().unwrap_or(Step::Accept(buf.len()));
+        match step {
             Step::Accept(most) => {
                 let count = most.min(buf.len());
                 self.accepted.extend_from_slice(&buf[..count]);
+                self.calls.push((buf.to_vec(), count));
                 Ok(count)
             }
-            Step::Interrupted => Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "a signal arrived during the write",
-            )),
-            Step::Fail(kind) => Err(io::Error::new(kind, "the scripted connection failed")),
+            Step::Interrupted => {
+                self.calls.push((buf.to_vec(), 0));
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "a signal arrived during the write",
+                ))
+            }
+            Step::Fail(kind) => {
+                self.calls.push((buf.to_vec(), 0));
+                Err(io::Error::new(kind, "the scripted connection failed"))
+            }
         }
     }
 

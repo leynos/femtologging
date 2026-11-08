@@ -6,41 +6,55 @@ This ExecPlan is a living document. The sections `Constraints`,
 `Conformance basis` and `Verification plan` must be kept up to date as work
 proceeds.
 
-Status: IN PROGRESS
+Status: COMPLETE
 
-All four milestones are implemented. An earlier candidate was rebased onto the
-`origin/main` of `d234990f7f4c3a7c000215cf9b90ad87d5d43c25`, replaying five
-feature commits unchanged; the branch has since been rebased and reviewed
-further. Retry 19 passed all deterministic gates, including formatting, lint,
-typecheck, Rust and Python tests, Markdown lint and Mermaid validation. Pytest
-reported 791 passed, 5 skipped and 1 warning, with 66 snapshots passed.
-CodeRabbit found two paths that silently dropped the in-flight record when its
-shutdown budget expired. Both are fixed and covered by worker tests. The
-follow-up ExecPlan update also passed its documentation gates. Two later
-CodeRabbit requests were rate-limited and returned no review findings; their
-cooldowns and retry history are recorded below. CodeRabbit then completed a
-review on `cb8a81e` and identified five findings. The current follow-up
-serializes two log-capture tests, flushes shutdown drops immediately, and uses
-`Python::try_attach` in both destructors. The full formatting, lint, typecheck
-and test gates have since passed; pytest reported 791 passed, 5 skipped and 1
-warning, with 66 snapshots passed. A Markdown spelling error was fixed, and the
-final formatting, Markdown lint and Mermaid gates passed. The hosted CodeScene
-check on `b790035` then identified duplicated warning tests. Those cases have
-been consolidated while retaining the rate-limit and immediate-flush
-assertions; rerun all deterministic gates before the next CodeRabbit review. A
-subsequent test run exposed the stream handler's GIL wait while invoking Python
-formatters; its Python `flush`, `close` and drop paths now detach while
-waiting, and the guide documents that behaviour. CodeRabbit then identified
-inaccurate HTTP and shutdown-signal docs plus a missing Loom lock constructor.
-Those findings are fixed. CodeRabbit never reviewed the ensuing head
-`fe58f995`: it auto-paused there after the preceding commit series, and its only
-`CHANGES_REQUESTED` review remains anchored at `7f12c636`. The pre-merge
-assessment table from that older review had never been reconciled, so it was
-re-checked row by row against `fe58f995`. Four of its five rows were still
-genuine and are fixed in the reconciliation commit: the `MonotonicClock` seam,
-the `ShutdownSignal` property tests, and both documentation rows. The fifth,
-Observability, is declined with evidence and tracked in issue #551. The full
-gate sequence must pass before requesting another review.
+All four milestones are implemented and every review round to date is
+dispositioned. An earlier candidate was rebased onto the `origin/main` of
+`d234990f7f4c3a7c000215cf9b90ad87d5d43c25`, replaying five feature commits
+unchanged; the branch has since been rebased and reviewed further. Retry 19
+passed all deterministic gates, including formatting, lint, typecheck, Rust and
+Python tests, Markdown lint and Mermaid validation. Pytest reported 791 passed,
+5 skipped and 1 warning, with 66 snapshots passed. CodeRabbit found two paths
+that silently dropped the in-flight record when its shutdown budget expired.
+Both are fixed and covered by worker tests. The follow-up ExecPlan update also
+passed its documentation gates. Two later CodeRabbit requests were rate-limited
+and returned no review findings; their cooldowns and retry history are recorded
+below. CodeRabbit then completed a review on `cb8a81e` and identified five
+findings. The current follow-up serializes two log-capture tests, flushes
+shutdown drops immediately, and uses `Python::try_attach` in both destructors.
+The full formatting, lint, typecheck and test gates have since passed; pytest
+reported 791 passed, 5 skipped and 1 warning, with 66 snapshots passed. A
+Markdown spelling error was fixed, and the final formatting, Markdown lint and
+Mermaid gates passed. The hosted CodeScene check on `b790035` then identified
+duplicated warning tests. Those cases have been consolidated while retaining
+the rate-limit and immediate-flush assertions; rerun all deterministic gates
+before the next CodeRabbit review. A subsequent test run exposed the stream
+handler's GIL wait while invoking Python formatters; its Python `flush`,
+`close` and drop paths now detach while waiting, and the guide documents that
+behaviour. CodeRabbit then identified inaccurate HTTP and shutdown-signal docs
+plus a missing Loom lock constructor. Those findings are fixed. CodeRabbit
+never reviewed the ensuing head `fe58f995`: it auto-paused there after the
+preceding commit series, and its only `CHANGES_REQUESTED` review remains
+anchored at `7f12c636`. The pre-merge assessment table from that older review
+had never been reconciled, so it was re-checked row by row against `fe58f995`.
+Four of its five rows were still genuine and are fixed in the reconciliation
+commit: the `MonotonicClock` seam, the `ShutdownSignal` property tests, and
+both documentation rows. The fifth, Observability, is declined with evidence
+and tracked in issue #551.
+
+A later review on `b1d9e930` raised one inline finding and seven pre-merge
+rows. The inline finding was real: this module's own "The deadline bounds what
+a worker starts" paragraph claimed a newly started call never outlasts the
+budget's remainder while the next paragraph named two calls that do. It now
+distinguishes the two cases. Of the seven rows, four described work this PR had
+genuinely left undone and are fixed here - documentation of the socket
+`flush()` GIL release and its now-shared flush deadline, a matching
+migration-guide signpost, a socket `flush()` GIL test and a Rust test for the
+shared flush deadline, and this document's own `Status` line. *Unit
+Architecture* was already satisfied by the sampled-`Instant` seam and the
+exact-deadline tests it asks for. *Testing (Property / Proof)* was real and is
+fixed by `frame_write_property_tests.rs`. *Observability* remains declined with
+evidence, as recorded above.
 
 Related: [Issue #436](https://github.com/leynos/femtologging/issues/436).
 
@@ -1177,6 +1191,70 @@ goes, so with the handler's sender alive the acknowledgement times out rather
 than disconnecting. The second version therefore has to drop the receiver, not
 hold the message. Guessing which of the two kept the channel alive produced a
 test that measured the wrong thing; one 50ms probe settled it.
+
+### The third review round, and two tests that needed proving
+
+CodeRabbit's review of `b1d9e930` raised one inline finding and three errors
+plus four warnings in its pre-merge table. All were checked against the source
+before being actioned.
+
+The inline finding was correct and was the sharpest of the round: this module's
+own "The deadline bounds what a worker starts" paragraph asserted that nothing
+started after a drain runs longer than the budget's remainder, two paragraphs
+after stating that a worker cannot be stopped mid-`connect`. Both cannot hold.
+The paragraph now says what it means - the bound applies to timeout-bounded
+calls, with an already-started Unix-domain `connect` and TCP hostname
+resolution named as the two that run to their own completion - and points at
+`socket_handler::transport` and the users' guide, where both were already
+documented. The lesson is about distance: the qualification existed and was
+three paragraphs away from the claim it qualified.
+
+Two of the rows were tests, and both needed proving rather than writing. A test
+that passes on correct code demonstrates nothing about the defect it names, so
+each was run against a deliberately broken source first:
+
+- **The socket `flush()` GIL release.** `py_flush` gained `py.detach` in this
+  PR, and no Python test exercised a flush that actually waits. The new test
+  stalls the worker in a write and counts how often a probe thread is scheduled
+  during the flush. With `py.detach` removed and the extension rebuilt it polls
+  2 times against a required 10; on real code it clears the threshold
+  comfortably.
+- **The shared flush deadline.** `flush_queue` used to hand the send and the
+  acknowledgement the full timeout each, and now spends one budget across both.
+  The first Python attempt at this could not discriminate: the socket handler
+  sets its flush timeout equal to its write timeout (`handler.rs:66`), so the
+  stalled worker's own write times out at exactly the budget and dequeues,
+  making the send fail before the acknowledgement is ever reached. The test
+  that could discriminate is a Rust one with a receiver the test controls:
+  `a_late_flush_send_leaves_too_little_budget_for_the_acknowledgement`. Its
+  first version was also non-discriminating - an instrumented run showed the
+  send completing in 3.42µs with 199.99ms of budget left - because the worker
+  slept *after* `rx.recv()`, freeing the queue slot at once. Sleeping before
+  the receive is what makes the send actually spend the budget. Reverting
+  `flush_queue` to `let remaining = timeout;` then fails the test at 0.61s.
+
+The *Testing (Property / Proof)* row asked for a property test over the frame
+write loop, and it found a place where the loop's rules could only be checked
+together. `frame_write_property_tests.rs` generates a call script (partial
+accepts, `Interrupted`, `BrokenPipe`, `ConnectionReset`), a frame, a departure
+mode and a frame age, then asserts that the buffers offered at each call are
+contiguous with the bytes accepted so far, that no call is given a zero
+timeout, that a drain clamps every call, and that a frame past its budget under
+a shutdown makes no call at all while a running handler still gets the full
+configured timeout per call. The last pair is why the property carries
+`Departure::is_stopping()`: the asymmetry between running and stopping is the
+contract, not an exception to it. Mutation-checked by making `remaining_budget`
+skip the frame clock, which fails on the minimal input
+`script = [], frame = [], departure = DrainInMillis(1), multiple = 2`.
+
+That last detail is worth keeping: `proptest!`'s `name: Type` argument form
+resolves the strategy to `any::<Type>()` and ignores an outer binding, so a
+custom `Strategy` has to be written inline as `name in strategy`. The first
+version of the property failed to compile with
+`the trait Arbitrary is not implemented for Departure` for exactly that reason.
+The property also pushed `frame_write_tests.rs` past the 400-line ceiling, so
+it lives in its own `#[path]` module beside it, the form `transport_tests.rs`
+and `shutdown_signal_property_tests.rs` already use.
 
 ## Outcomes & retrospective
 

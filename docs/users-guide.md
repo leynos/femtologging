@@ -395,7 +395,14 @@ socket_handler = (
   length prefix.
 - The worker reconnects automatically using exponential backoff. Payloads that
   exceed the configured `max_frame_size` are dropped.
-- `handler.flush()` forces the worker to flush the active socket.
+- `handler.flush()` forces the worker to flush the active socket, and returns
+  `True` only when the worker acknowledges. One deadline of the handler's flush
+  timeout covers both the wait for queue space and the acknowledgement, so a
+  flush returns `False` once that single budget is spent rather than waiting a
+  second full timeout for the worker to answer. It returns `False` when the
+  handler is closed, the worker channel is gone, or the budget expires. Python
+  `flush()` releases the GIL while it waits, so other Python threads keep
+  running during a flush that blocks on a full queue or a slow collector.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -449,6 +456,10 @@ socket_handler = (
   hostname resolution has no interruptible timeout. The same bound applies when
   the handler is dropped without an explicit `close()`, and the wait runs with
   the GIL released.
+- `handler.flush()` forces the worker to flush what it has queued, and returns
+  `True` only when the worker acknowledges within the handler's flush timeout.
+  Python `flush()` releases the GIL while it waits, so other Python threads
+  keep running during a flush that blocks on a full queue or a slow endpoint.
 
 ### Custom Python handlers
 
