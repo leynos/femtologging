@@ -228,7 +228,7 @@ three observable behaviours:
 
 The bound on `close()` itself is the budget: a worker that misses the deadline
 is detached, so the caller is never held past it. The bound on the worker's own
-exit is looser, because it is on what the worker *starts*: no standard-library
+exit is looser, because it is on what the worker _starts_: no standard-library
 API cancels a blocking `connect`, `write`, or TLS handshake, so the worker may
 live on for up to one network call already in flight when the deadline fell.
 Nothing new starts after the deadline.

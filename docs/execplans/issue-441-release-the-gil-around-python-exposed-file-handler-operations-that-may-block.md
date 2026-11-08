@@ -1229,6 +1229,31 @@ suite predates the duplicate. The candidate stays as it is; the hosted lint
 jobs need a rerun once installer `0.2.12` (or an archive without the standalone
 libraries) is available.
 
+## Rebase onto `origin/main` at `de2d40d7`
+
+`origin/main` advanced from `0f116690` to `de2d40d7`, which lands #549 and
+bounds HTTP and socket handler shutdown by one deadline. The PR then reported
+`mergeStateStatus: DIRTY`, so the green hosted run on `d6526105` had tested a
+merge ref computed against the old base and could not be relied on.
+
+The 56-commit series was replayed onto `de2d40d7` with Weave disabled
+(`-c core.attributesFile=/dev/null`) and `zdiff3`. One commit conflicted:
+`feaecba9` numbers the sections of `docs/v0-2-0-migration-guide.md`, and main
+adds a close() section at the same point. The resolution keeps both. Main's
+"Handler `close()` is bounded end to end" section stays unnumbered, as the
+other main-authored sections are, and the branch's numbering of
+`StdlibHandlerAdapter` as section 6 remains, ahead of sections 7 to 10.
+
+`git range-diff` reports 53 commits identical and three whose hunks differ only
+in context: `e807ac63`, the conflict resolution, plus `5673c343` and
+`9df53956`, where main's new headings now sit where the branch inserts prose.
+The rebased head is `c5ce399b`.
+
+The upstream lint fault recorded above also cleared. Whitaker `64a5011a` marks
+the lint experimental and ships only prunable libraries, so the rolling archive
+no longer contains `libstring_continuation_style.so`. The four failed
+`build-test` jobs on `d6526105` were rerun against it and all passed.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
