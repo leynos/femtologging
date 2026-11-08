@@ -349,6 +349,17 @@ Reference or ADR is required.
       instead of after it. `WorkerTerminal::Unknown` and the developer guide
       now describe `Unknown` as the initial value and a defensive fallback
       rather than an observable `panic = "abort"` outcome.
+- [x] Rebased the 53-commit series onto `origin/main` at `0f116690`, whose
+      DF12-104 change moved interrogate into its own target over `tests`,
+      `scripts`, `examples`, and `rust_extension`. The pre-rebase and
+      post-rebase trees differ by exactly that commit's 50-file, 635-insertion,
+      40-deletion delta, so no branch work was lost; `git range-diff` reports 52
+      commits identical and one whose hunk differs only because main's new
+      docstring line is now context. Seven test helpers and
+      `HandlerLifecycle.__init__` gained docstrings, and `make interrogate`
+      reports 100.0% with no MISSED rows. The full gate chain then passed on
+      `eb9ffb47`: `make test` reported 1116 passed, 6 skipped, and 66 snapshots
+      in about 39 minutes, with all four cargo lanes and pytest green.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -1146,6 +1157,48 @@ Still outstanding in #551, and deliberately not built here:
 Counting, key-set stability, and the trace event contract belong here because
 these waits introduce them; the exporter and the bridge metrics are separate
 work with their own interfaces.
+
+## Rebase onto `origin/main` at `0f116690`
+
+`origin/main` gained #595 after `aed7f5af`: docstring coverage moved into its
+own target and now spans `tests`, `scripts`, `examples` and `rust_extension`.
+The hosted `build-test` jobs run against `refs/pull/550/merge`, which merges
+the head into the current main, so local gates on the branch's own base passed
+while all four hosted lint jobs failed at 99.6% coverage.
+
+The 53-commit series was replayed onto `0f116690`. The pre-rebase and
+post-rebase trees differ by exactly #595's 50-file, 635-insertion, 40-deletion
+diff. `git range-diff` reports 52 commits identical and one (`863a0523`) whose
+hunk differs only because main's new docstring line is now context. The replay
+selected Weave from the host's global attributes file and auto-resolved five
+entities in `tests/test_file_handler.py` with no conflicts; comparing the two
+trees confirmed nothing was lost, and future unattended rebases here pass
+`-c core.attributesFile=/dev/null`.
+
+`make interrogate` then named eight undocumented definitions: seven helpers in
+`tests/test_wait_diagnostics.py` and `HandlerLifecycle.__init__`. They now
+carry docstrings, and the gate reports 100.0% with no MISSED rows.
+
+## Commit gates on the docstring-gate candidate
+
+The chain ran once, sequentially, over `dc93ffba` plus the docstring edits,
+which `eb9ffb47` then committed unchanged:
+
+| Gate                | Result                             | Duration  |
+| ------------------- | ---------------------------------- | --------- |
+| `make fmt`          | pass, no files rewritten           | under 1m  |
+| `make check-fmt`    | pass                               | under 1m  |
+| `make markdownlint` | pass, 0 issues in 66 files         | under 1m  |
+| `make nixie`        | pass                               | about 1m  |
+| `make lint`         | pass, all eight Clippy lanes green | about 6m  |
+| `make typecheck`    | pass, `All checks passed!`         | about 1m  |
+| `make test`         | pass, 1116 passed / 6 skipped      | about 39m |
+
+`make test` ran the four cargo feature lanes and then pytest; all 76 test
+binaries reported `ok`, pytest finished in 190 s, and 66 snapshots passed. The
+managed sccache server was unavailable, so the gates compiled uncached and
+queued through compile admission; no gate failed on admission and none was
+killed or retried.
 
 ## Decision log
 
