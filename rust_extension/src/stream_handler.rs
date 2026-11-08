@@ -202,16 +202,18 @@ impl FemtoStreamHandler {
     /// Close the handler and wait for the worker to finish its queued work.
     ///
     /// The handler stops accepting records, drains the records already queued,
-    /// and waits for the worker to write them. The GIL is released while waiting, so
-    /// a Python callable formatter can run to completion on the worker thread.
-    /// Only a shared PyO3 borrow is needed, so a close can run beside a
-    /// detached flush call.
+    /// and waits for the worker to write them. The GIL is released while
+    /// waiting, so a Python callable formatter can run to completion on the
+    /// worker thread. Only a shared PyO3 borrow is needed, so a close can run
+    /// beside a detached flush call.
     ///
     /// The wait is bounded by the handler's flush timeout. If it expires,
-    /// close returns while the worker may still write to the stream. On
-    /// success the worker has written and flushed its queued records, but the
-    /// thread is detached rather than joined, because a join would also wait
-    /// for thread-local destructors that user code can make block.
+    /// close returns while the worker may still write to the stream. A
+    /// successful close means the worker finished its queue, not that every
+    /// record was delivered: a worker panic still raises the completion signal
+    /// with records queued, and write errors are logged rather than returned.
+    /// The thread is detached rather than joined, because a join would also
+    /// wait for thread-local destructors that user code can make block.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
