@@ -544,9 +544,11 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
 
 ### How to migrate stream handler shutdown
 
-- Treat `flush()` returning `False` as "not acknowledged within one timeout".
-  Retry, or raise the timeout with
-  `StreamHandlerBuilder.with_flush_after_ms()`, if the worker needs longer.
+- `flush()` returns `False` for three distinct reasons: the shared deadline
+  expired, the handler was already closed, or the worker reported an I/O error.
+  Only a timeout is worth a bounded retry or a larger
+  `StreamHandlerBuilder.with_flush_after_ms()`. A closed handler must be
+  rebuilt, and an I/O error needs the underlying stream repaired.
 - Do not use `close()` as a barrier for thread-local teardown. If teardown must
   finish before process exit, perform it in the formatter's own code before the
   worker body returns, or synchronize on a signal your code owns.

@@ -314,10 +314,13 @@ fields with safe defaults does not require a version bump.
   `StreamHandlerBuilder.with_flush_after_ms()` sets. If the timeout expires,
   `close()` returns without the worker having finished; the worker keeps
   processing its queue and can still write to the stream after `close()`
-  returns. A successful `close()` returns once the worker has written and
-  flushed its queued records, without joining the worker thread: joining would
-  also wait for thread-local destructors, which user code can make block, so
-  the worker is detached and reclaimed by the operating system when it exits.
+  returns. A successful `close()` returns once the worker raises its completion
+  signal, without joining the worker thread: joining would also wait for
+  thread-local destructors, which user code can make block, so the worker is
+  detached and reclaimed by the operating system when it exits. Completion does
+  not guarantee delivery, because a worker panic still signals completion with
+  records queued, and write errors are logged rather than reported to the
+  caller.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
