@@ -119,6 +119,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
     """
 
     def __init__(self, log_path: str, builder_name: str) -> None:
+        """Bind the machine to one log path and one handler builder."""
         super().__init__()
         self._log_path = log_path
         self._builder_name = builder_name

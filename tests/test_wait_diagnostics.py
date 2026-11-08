@@ -97,14 +97,17 @@ EXPECTED_KEYS = frozenset({
 
 
 def _file_handler(path: Path) -> FemtoFileHandler:
+    """Return a plain file handler appending to ``path``."""
     return FemtoFileHandler(str(path))
 
 
 def _rotating_handler(path: Path) -> FemtoRotatingFileHandler:
+    """Return a rotating file handler appending to ``path``."""
     return FemtoRotatingFileHandler(str(path), HandlerOptions())
 
 
 def _timed_rotating_handler(path: Path) -> FemtoTimedRotatingFileHandler:
+    """Return a timed rotating file handler appending to ``path``."""
     return FemtoTimedRotatingFileHandler(str(path), TimedHandlerOptions())
 
 
@@ -194,14 +197,17 @@ def test_operations_after_close_record_closed_outcomes(
 
 
 def _file_builder(path: Path) -> HandlerBuilder:
+    """Return a builder for a plain file handler writing to ``path``."""
     return FileHandlerBuilder(str(path))
 
 
 def _rotating_builder(path: Path) -> HandlerBuilder:
+    """Return a builder for a rotating file handler writing to ``path``."""
     return RotatingFileHandlerBuilder(str(path))
 
 
 def _timed_rotating_builder(path: Path) -> HandlerBuilder:
+    """Return a builder for a timed rotating handler writing to ``path``."""
     return TimedRotatingFileHandlerBuilder(str(path))
 
 
@@ -224,6 +230,7 @@ def test_queue_full_under_drop_policy_is_counted(
     release_worker = threading.Event()
 
     def blocking_formatter(record: cabc.Mapping[str, object]) -> str:
+        """Signal the worker started, then block until the test releases it."""
         worker_started.set()
         release_worker.wait(timeout=5)
         return f"{record['logger']} [{record['level']}] {record['message']}"
