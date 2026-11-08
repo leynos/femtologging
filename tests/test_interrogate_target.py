@@ -139,6 +139,8 @@ _MAKE_STATE = frozenset({
     "MAKEOVERRIDES",
     "UV",
     "PYTHON_TARGETS",
+    "CARGO_TARGET_DIR",
+    "CARGO_BUILD_TARGET_DIR",
 })
 # Interrogate 1.7.0 skips a path whose first component below a target begins with
 # one of these (virtual environments and version-control directories).
@@ -174,7 +176,9 @@ def _assignment(name: str, *words: Path | str) -> str:
     return f"{name}={value.replace('$', '$$')}"
 
 
-def _make_interrogate(*assignments: str) -> subprocess.CompletedProcess[str]:
+def _make_interrogate(
+    *assignments: str, workdir: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run `make interrogate` with the given variable assignments.
 
     A parent Make's flags and a caller's `UV`, `INTERROGATE*` or `PYTHON_TARGETS`
@@ -189,6 +193,17 @@ def _make_interrogate(*assignments: str) -> subprocess.CompletedProcess[str]:
     """
     make = shutil.which("make")
     assert make, "make must be on PATH"
+    # Exclusions resolve against the working directory, so a run over a
+    # generated package starts there and reads the Makefile by path.
+    location = [make, "-C", str(ROOT)]
+    if workdir is not None:
+        # The tool caches are relative paths, so keep them out of the package.
+        location = [
+            make,
+            "-f",
+            str(MAKEFILE),
+            f"UV_ENV=UV_CACHE_DIR={ROOT}/.uv-cache UV_TOOL_DIR={ROOT}/.uv-tools",
+        ]
     environment = {
         name: value
         for name, value in os.environ.items()
@@ -200,7 +215,8 @@ def _make_interrogate(*assignments: str) -> subprocess.CompletedProcess[str]:
         for argument in ("-o", prerequisite)
     ]
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv
-        [make, "-C", str(ROOT), *skipped, "interrogate", *assignments],
+        [*location, *skipped, "interrogate", *assignments],
+        cwd=workdir,
         capture_output=True,
         text=True,
         check=False,
@@ -227,13 +243,17 @@ def _run_target(tmp_path: Path, script: str) -> subprocess.CompletedProcess[str]
 
 
 def _run_real_tool(
-    tmp_path: Path, definitions: int, undocumented: int
+    tmp_path: Path,
+    definitions: int,
+    undocumented: int,
+    build_output: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     """Run `make interrogate` with the real tool over a generated package.
 
     The package holds ``definitions`` documented functions and then
-    ``undocumented`` functions without a docstring. The tool is the pinned
-    release the Makefile runs through ``uv tool run``.
+    ``undocumented`` functions without a docstring. Each ``build_output`` path,
+    relative to the package, receives an undocumented module. The tool is the
+    pinned release the Makefile runs through ``uv tool run``.
 
     Returns
     -------
@@ -252,7 +272,13 @@ def _run_real_tool(
     (package / "mod.py").write_text(
         '"""Generated module."""\n\n\n' + documented + bare, encoding="utf-8"
     )
-    return _make_interrogate(_assignment("INTERROGATE_TARGETS", package))
+    for name in build_output:
+        generated = package / name
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text("def generated() -> None:\n    pass\n", encoding="utf-8")
+    return _make_interrogate(
+        _assignment("INTERROGATE_TARGETS", package), workdir=package
+    )
 
 
 def test_a_documented_package_passes_the_real_gate(tmp_path: Path) -> None:
@@ -303,6 +329,10 @@ def test_the_target_passes_the_configured_flags_and_targets(tmp_path: Path) -> N
         "100",
         "--ignore-regex",
         "^basicConfig$",
+        "--exclude",
+        "target/*",
+        "--exclude",
+        "*/target/*",
         *_expanded("INTERROGATE_TARGETS").split(),
     ]
     assert received == expected, f"the tool received {received}, not {expected}"
