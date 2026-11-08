@@ -76,6 +76,20 @@ INTERROGATE = $(UV_ENV) uv tool run --from 'interrogate==$(INTERROGATE_VERSION)'
 # `interrogate` target fails on: the rounded percentage alone can pass a lone gap.
 # Stub files (`.pyi`) are not scanned.
 INTERROGATE_FLAGS ?= -vv --fail-under 100 --ignore-regex '$(INTERROGATE_IGNORE_REGEX)'
+# Cargo target directories (`rust_extension/target` holds maturin artefacts and
+# generated stubs) are build output the repository does not own. Interrogate
+# 1.7.0 resolves each `--exclude` to an absolute path and skips a file when its
+# path matches "<exclude>*" under fnmatch, where `*` also crosses `/`. A pattern
+# must therefore end in `/*`: a bare `target` would also skip `target_utils.py`.
+# `target/*` prunes the root directory and `*/target/*` a nested crate's.
+# `CARGO_TARGET_DIR` and `CARGO_BUILD_TARGET_DIR` are excluded too, with the
+# fnmatch metacharacters in their values escaped so that they match literally.
+# Limitation: owned Python under a directory literally named `target` would be
+# skipped by `*/target/*`, so the recipe fails if Git tracks any such file.
+fnmatch_escape =$(subst ?,[?],$(subst *,[*],$(subst [,[[],$(1))))
+INTERROGATE_EXCLUDES ?= --exclude 'target/*' --exclude '*/target/*' \
+  $(if $(CARGO_TARGET_DIR),--exclude '$(call fnmatch_escape,$(CARGO_TARGET_DIR))/*') \
+  $(if $(CARGO_BUILD_TARGET_DIR),--exclude '$(call fnmatch_escape,$(CARGO_BUILD_TARGET_DIR))/*')
 SKYLOS_VERSION = 4.33.2
 # Skylos parses source using its own runtime AST; pinning Python 3.14 prevents
 # phantom dead-code findings on syntax newer than an older tool runtime.
@@ -134,7 +148,12 @@ lint: lint-python lint-rust ## Run linters
 # Interrogate rounds its percentage to one decimal, so `--fail-under 100` alone
 # can pass a lone gap in a large repository; fail on any MISSED row as well.
 interrogate: ## Enforce complete Python docstring coverage
-	@report="$$($(INTERROGATE) $(INTERROGATE_FLAGS) $(INTERROGATE_TARGETS))"; \
+	@owned="$$(git ls-files -- ':(glob)target/**/*.py' ':(glob)**/target/**/*.py' 2>/dev/null)"; \
+	  if [ -n "$$owned" ]; then \
+	    printf '%s\n' "interrogate: tracked Python under a target/ directory is excluded from the gate; move it:" "$$owned" >&2; \
+	    exit 1; \
+	  fi
+	@report="$$($(INTERROGATE) $(INTERROGATE_FLAGS) $(INTERROGATE_EXCLUDES) $(INTERROGATE_TARGETS))"; \
 	  status=$$?; \
 	  printf '%s\n' "$$report"; \
 	  test "$$status" -eq 0 || exit "$$status"; \
