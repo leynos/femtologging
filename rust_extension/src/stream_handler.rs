@@ -390,9 +390,3 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         self
     }
 }
-
-impl Drop for FemtoStreamHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
