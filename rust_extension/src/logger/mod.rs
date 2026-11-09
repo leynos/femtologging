@@ -50,6 +50,9 @@ pub use dispatcher::DispatcherError;
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
+// The `log` bridge is the only caller, so the re-export follows that feature
+// or `-D unused-imports` fails a lane with the bridge compiled out.
+#[cfg(feature = "log-compat")]
 pub(crate) use flush_metrics::record_bridge_flush_failure;
 
 pub use py_handler::{PyHandler, validate_handler};

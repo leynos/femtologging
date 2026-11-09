@@ -97,12 +97,17 @@ struct FlushMetrics {
     /// Sum of every recorded flush duration, in microseconds.
     duration_sum_us: AtomicU64,
     /// Logger flushes that failed while the `log` bridge flushed every logger.
+    ///
+    /// Only the `log` bridge reports this outcome, so the counter and its
+    /// warner are compiled out when that feature is disabled.
+    #[cfg(feature = "log-compat")]
     bridge_failures: AtomicU64,
     /// Rate limiter for acknowledgement-timeout warnings.
     timeout_warner: RateLimitedWarner,
     /// Rate limiter for handler-failure warnings.
     handler_failure_warner: RateLimitedWarner,
     /// Rate limiter for log-bridge flush-failure warnings.
+    #[cfg(feature = "log-compat")]
     bridge_failure_warner: RateLimitedWarner,
 }
 
@@ -114,9 +119,11 @@ impl FlushMetrics {
             duration_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
             duration_count: AtomicU64::new(0),
             duration_sum_us: AtomicU64::new(0),
+            #[cfg(feature = "log-compat")]
             bridge_failures: AtomicU64::new(0),
             timeout_warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
             handler_failure_warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
+            #[cfg(feature = "log-compat")]
             bridge_failure_warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
         }
     }
@@ -137,6 +144,7 @@ impl FlushMetrics {
     }
 
     /// Record a logger flush that failed during a `log`-bridge flush sweep.
+    #[cfg(feature = "log-compat")]
     fn record_bridge_failure(&self) {
         self.bridge_failures.fetch_add(1, Ordering::Relaxed);
         self.bridge_failure_warner.record_drop();
@@ -182,6 +190,7 @@ impl FlushMetrics {
             }),
             duration_count: self.duration_count.load(Ordering::Relaxed),
             duration_sum_us: self.duration_sum_us.load(Ordering::Relaxed),
+            #[cfg(feature = "log-compat")]
             bridge_failures: self.bridge_failures.load(Ordering::Relaxed),
         }
     }
@@ -199,6 +208,7 @@ pub(crate) struct FlushMetricsSnapshot {
     /// Sum of every recorded flush duration, in microseconds.
     pub(crate) duration_sum_us: u64,
     /// Logger flushes that failed while the `log` bridge flushed every logger.
+    #[cfg(feature = "log-compat")]
     pub(crate) bridge_failures: u64,
 }
 
@@ -222,6 +232,7 @@ pub(crate) fn record_flush(outcome: FlushOutcome, elapsed: Duration) {
 }
 
 /// Record a logger flush that failed during a `log`-bridge flush sweep.
+#[cfg(feature = "log-compat")]
 pub(crate) fn record_bridge_flush_failure() {
     metrics().record_bridge_failure();
 }
@@ -275,6 +286,7 @@ mod tests {
     }
 
     /// The bridge failure counter rises without touching the per-logger outcomes.
+    #[cfg(feature = "log-compat")]
     #[test]
     fn bridge_failures_have_their_own_counter() {
         let metrics = FlushMetrics::new();
