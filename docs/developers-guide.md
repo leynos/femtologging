@@ -362,15 +362,26 @@ configuration names it, so a build without it fails at link time. The pin is
 the stable `1.99.1`, so the nightly-only parallel frontend flag (`-Zthreads=8`)
 is not used.
 
+Every target that compiles Rust depends on `make check-build-tools`, which
+reports a missing pinned toolchain or `mold` with the command that installs it.
+`make install-build-tools` installs the toolchain from `rust-toolchain.toml`
+and, on Linux, the `mold` package. The check is a capability probe: it installs
+nothing, so it is safe to run before every gate. Installed tooling need not be
+active in every job; release, coverage and Whitaker routes deliberately exclude
+parts of the development standard, as described below.
+
 An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
 `[build] rustflags` and each build that assigns `RUSTFLAGS` decides about the
 linker itself:
 
-- CI's `setup-rust` exports `RUSTFLAGS=-D warnings`, so those builds keep the
-  platform linker. The step still installs `mold` (`install-mold: 'true'`),
-  because the compile-time UI tests (trybuild) build a nested crate under
-  `target/` that finds `.cargo/config.toml` without that `RUSTFLAGS`, so the
-  Linux `mold` default applies to it.
+- CI's `setup-rust` exports
+  `rustflags: '-D warnings -Clink-arg=-fuse-ld=mold'`, restating the linker
+  flag the export would otherwise displace, and installs `mold`
+  (`install-mold: 'true'`). The coverage step assigns a warning-only
+  `RUSTFLAGS` again, because the instrumented measurement excludes the
+  development linker. The compile-time UI tests (trybuild) build a nested crate
+  under `target/` that finds `.cargo/config.toml`; with the flag restated, that
+  nested build keeps the same linker as the surrounding job.
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
@@ -413,16 +424,17 @@ metadata key (`[unstable] embed-metadata`) does not apply and the configuration
 must not carry it.
 
 `tests/test_build_standard_contract.py` holds all of this: the Linux-only
-`mold` table, the profile settings, the Loom steps, the release-wheel override
-and the Whitaker boundary, and it proves the defaults and both overrides at the
-Cargo boundary by building a one-file crate under the repository's own
-configuration. That fixture also drops the wrapper variables from its
-environment and passes empty `build.rustc-wrapper` and
-`build.rustc-workspace-wrapper` values on the Cargo command line. A host that
-configures a compiler wrapper in its own Cargo configuration would otherwise
-queue the one-file build behind that wrapper, and the measurement would
-describe the host instead of this repository. The fixture also builds with a
-private `CARGO_HOME`, so it reads no host configuration at all.
+`mold` table, the profile settings, the Loom steps, the CI restatement and
+coverage exclusion, the preflight wiring, the release-wheel override and the
+Whitaker boundary. It proves the defaults and both overrides at the Cargo
+boundary by building a one-file crate under the repository's own configuration.
+That fixture also drops the wrapper variables from its environment and passes
+empty `build.rustc-wrapper` and `build.rustc-workspace-wrapper` values on the
+Cargo command line. A host that configures a compiler wrapper in its own Cargo
+configuration would otherwise queue the one-file build behind that wrapper, and
+the measurement would describe the host instead of this repository. The fixture
+also builds with a private `CARGO_HOME`, so it reads no host configuration at
+all.
 
 ### Cranelift
 

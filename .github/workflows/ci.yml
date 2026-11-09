@@ -62,12 +62,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: ${{ matrix.experimental }}
       - name: Install rust
-        # install-mold: the compile-time UI tests (trybuild) build a nested
-        # crate under target/, which finds .cargo/config.toml without the
-        # RUSTFLAGS this job exports, so the Linux mold default applies there.
+        # restate the development standard: an exported RUSTFLAGS replaces the
+        # repository's rustflags, so `-D warnings` alone would silently drop
+        # the Linux mold default from every Rust step in this job. The
+        # coverage step below assigns a warning-only RUSTFLAGS again, because
+        # the measurement route deliberately excludes the development linker.
+        # install-mold also serves the compile-time UI tests (trybuild), whose
+        # nested crate finds .cargo/config.toml.
         uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
         with:
           install-mold: 'true'
+          rustflags: '-D warnings -Clink-arg=-fuse-ld=mold'
       - name: Cache ~/.cargo and target/
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
@@ -164,6 +169,9 @@ jobs:
         env:
           FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
           UV_CONFIG_FILE: ${{ github.workspace }}/.github/uv-test-util.toml
+          # The coverage route excludes the development linker: the
+          # instrumented build is reproducible and must not depend on mold.
+          RUSTFLAGS: -D warnings
         with:
           # The Cache uv step above owns the uv cache; the Rust caches are the
           # Swatinem and cargo steps earlier in this job.

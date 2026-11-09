@@ -343,3 +343,23 @@ def test_the_release_wheel_builds_displace_the_linux_linker_flag() -> None:
             f"{step.get('name')}: an empty RUSTFLAGS must displace the repository's "
             "Linux mold table, because the manylinux container has no mold"
         )
+
+
+def test_ci_restates_the_development_linker_and_excludes_it_from_coverage() -> None:
+    """CI keeps mold for the suite and drops it for the instrumented build."""
+    document = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text("utf-8"))
+    steps = document["jobs"]["build-test"]["steps"]
+    setup = next(step for step in steps if "setup-rust" in str(step.get("uses", "")))
+    flags = str(setup.get("with", {}).get("rustflags", ""))
+    assert "-D warnings" in flags, "the suite keeps the warnings policy"
+    assert MOLD_FLAG in flags, (
+        "an exported RUSTFLAGS replaces the repository rustflags, so CI must "
+        "restate the mold flag it would otherwise lose"
+    )
+    coverage = next(
+        step for step in steps if "generate-coverage" in str(step.get("uses", ""))
+    )
+    coverage_flags = str((coverage.get("env") or {}).get("RUSTFLAGS", ""))
+    assert coverage_flags == "-D warnings", (
+        "the coverage route must explicitly exclude the development linker"
+    )
