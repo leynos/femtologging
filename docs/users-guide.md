@@ -139,7 +139,9 @@ it.
 - `log()` and the `debug`, `info`, `warning`, `error`, and `critical`
   convenience methods accept the keyword-only argument `extra` for validated
   inline structured fields. `extra` must be a mapping with string keys and
-  `str`, `int`, `float`, `bool`, or `None` values.
+  `str`, `int`, `float`, `bool`, or `None` values. Reserved names that collide
+  with built-in record fields raise `ValueError`; see
+  [Scoped structured context](#scoped-structured-context) for the reserved sets.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info` for
   capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:
@@ -443,6 +445,17 @@ socket_handler = (
 - `with_headers(...)`, `with_capacity(...)`, timeout setters, and
   `.with_json_format()` mirror the socket/file builder style. Validation
   failures raise `ValueError` before the handler is built.
+- Authoritative fields (`name`, `levelname`, `msg`, `created`, `filename`,
+  `lineno`, `module`, `thread`, and the optional `threadName`, `exc_info`, and
+  `stack_info`) stay at the top level in both JSON and URL-encoded payloads.
+  Legitimate custom structured fields are flat, string-valued top-level members
+  alongside them.
+- Reserved structured names are omitted from custom metadata in every HTTP
+  format, so lower-trust metadata cannot replace an authoritative value even
+  when a record is constructed without admission validation.
+  `.with_record_fields([...])` selects built-in fields by name and projects
+  permitted custom fields by their top-level name. A reserved name in that list
+  selects only the built-in field, and unknown names are omitted.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -1103,8 +1116,20 @@ Behavioural guarantees:
 - Callback-filter enrichment uses the same scalar contract: keys must be
   non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
   `None`.
-- Keys must not collide with stdlib `logging.LogRecord` attributes or
-  femtologging-reserved metadata names.
+- Keys must not collide with built-in record fields. Matching is exact and
+  case-sensitive. The reserved stdlib `logging.LogRecord` names are `name`,
+  `msg`, `args`, `levelname`, `levelno`, `pathname`, `filename`, `module`,
+  `exc_info`, `exc_text`, `stack_info`, `lineno`, `funcName`, `created`,
+  `msecs`, `relativeCreated`, `thread`, `threadName`, `process`, `processName`,
+  `message`, `asctime`, and `taskName`. The reserved femtologging names are
+  `logger`, `level`, `metadata`, `module_path`, `line_number`, `timestamp`,
+  `thread_id`, `thread_name`, and `key_values`. Names such as `Name`,
+  `logger_name`, `msg_id`, and `request_id` are not reserved.
+- Python `extra` and `log_context(...)` raise `ValueError` when given a
+  reserved name. Rust `push_log_context` returns
+  `LogContextError::ReservedKey`, and `log_with_metadata` drops the record and
+  increments `get_context_dropped()`. Validation runs before the logger's level
+  gate, so a reserved name is rejected even when the level is disabled.
 - Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
   1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
   enrichment per record.
@@ -1136,8 +1161,10 @@ Accepted enrichment must satisfy all of the following:
 
 - Keys are non-empty `str` instances.
 - Values are limited to `str`, `int`, `float`, `bool`, or `None`.
-- Keys do not overwrite built-in `logging.LogRecord` fields such as `name`,
-  `msg`, `levelname`, `created`, or femtologging-reserved metadata fields.
+- Keys are not in the reserved sets listed under
+  [Scoped structured context](#scoped-structured-context). Unlike `extra` and
+  `log_context(...)`, a callback addition that uses a reserved name is ignored
+  with a warning rather than raising.
 - The serialized payload stays within 64 keys, 64 UTF-8 bytes per key,
   1,024 UTF-8 bytes per value, and 16 KiB total.
 

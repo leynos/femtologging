@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
 
+use crate::log_context::is_reserved_structured_key;
 use crate::python::fq_py_type;
 
 /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
@@ -14,49 +15,9 @@ const MAX_VALUE_BYTES: usize = 1024;
 /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
 const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
-/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
-const RESERVED_STD_RECORD_KEYS: &[&str] = &[
-    "name",
-    "msg",
-    "args",
-    "levelname",
-    "levelno",
-    "pathname",
-    "filename",
-    "module",
-    "exc_info",
-    "exc_text",
-    "stack_info",
-    "lineno",
-    "funcName",
-    "created",
-    "msecs",
-    "relativeCreated",
-    "thread",
-    "threadName",
-    "process",
-    "processName",
-    "message",
-    "asctime",
-    "taskName",
-];
-
-/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
-const RESERVED_FEMTO_KEYS: &[&str] = &[
-    "logger",
-    "level",
-    "metadata",
-    "module_path",
-    "line_number",
-    "timestamp",
-    "thread_id",
-    "thread_name",
-    "key_values",
-];
-
-/// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.
+/// Report whether a callback enrichment key collides with a built-in field.
 pub(crate) fn is_reserved_enrichment_key(key: &str) -> bool {
-    RESERVED_STD_RECORD_KEYS.contains(&key) || RESERVED_FEMTO_KEYS.contains(&key)
+    is_reserved_structured_key(key)
 }
 
 /// Bridges Python calls into Rust while maintaining PyO3 ownership and exception propagation boundaries.

@@ -47,12 +47,12 @@ fn emit_json_field<T: Serialize>(
 /// Emit key-value pairs as URL-encoded pairs if included by the filter.
 fn emit_key_values<'a>(
     pairs: &mut Vec<String>,
-    key_values: impl Iterator<Item = (&'a String, &'a String)>,
+    key_values: impl Iterator<Item = (&'a str, &'a str)>,
     has: &impl Fn(&str) -> bool,
 ) {
-    for (k, v) in key_values {
-        if has(k) {
-            pairs.push(format!("{}={}", url_encode(k), url_encode(v)));
+    for (key, value) in key_values {
+        if has(key) {
+            pairs.push(format!("{}={}", url_encode(key), url_encode(value)));
         }
     }
 }
@@ -98,7 +98,7 @@ fn emit_all_fields(
         ));
     }
     emit_optional_string_field(pairs, "threadName", r.thread_name, has);
-    emit_key_values(pairs, r.key_values.iter(), has);
+    emit_key_values(pairs, r.custom_key_values(), has);
     emit_json_field(pairs, "exc_info", r.exc_info, has)?;
     emit_json_field(pairs, "stack_info", r.stack_info, has)?;
     Ok(())
@@ -175,52 +175,4 @@ pub fn serialize_json(record: &FemtoLogRecord, fields: Option<&[String]>) -> io:
 }
 
 #[cfg(test)]
-mod tests {
-    //! Tests for HTTP record serialization.
-
-    use super::*;
-    use crate::level::FemtoLevel;
-    use crate::log_record::RecordMetadata;
-    use rstest::{fixture, rstest};
-
-    #[fixture]
-    fn test_record() -> FemtoLogRecord {
-        let metadata = RecordMetadata {
-            module_path: "test.module".into(),
-            filename: "test.rs".into(),
-            line_number: 42,
-            ..RecordMetadata::default()
-        };
-        FemtoLogRecord::with_metadata("test.logger", FemtoLevel::Info, "Hello World", metadata)
-    }
-
-    #[rstest]
-    fn url_encoded_contains_expected_fields(test_record: FemtoLogRecord) {
-        let encoded = serialize_url_encoded(&test_record, None).expect("serialize");
-        assert!(encoded.contains("name=test.logger"));
-        assert!(encoded.contains("levelname=INFO"));
-        assert!(encoded.contains("msg=Hello+World"));
-        assert!(encoded.contains("lineno=42"));
-    }
-
-    #[rstest]
-    fn json_contains_expected_fields(test_record: FemtoLogRecord) {
-        let json = serialize_json(&test_record, None).expect("serialize");
-        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(parsed["name"], "test.logger");
-        assert_eq!(parsed["levelname"], "INFO");
-        assert_eq!(parsed["msg"], "Hello World");
-        assert_eq!(parsed["lineno"], 42);
-    }
-
-    #[rstest]
-    fn field_filter_limits_output(test_record: FemtoLogRecord) {
-        let fields = vec!["name".into(), "msg".into()];
-        let json = serialize_json(&test_record, Some(&fields)).expect("serialize");
-        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
-        assert_eq!(parsed["name"], "test.logger");
-        assert_eq!(parsed["msg"], "Hello World");
-        assert!(parsed.get("levelname").is_none());
-        assert!(parsed.get("lineno").is_none());
-    }
-}
+mod tests;

@@ -27,6 +27,13 @@ pub struct RecordMetadata {
     /// Name of the thread that created the record (if any).
     pub thread_name: Option<String>,
     /// Structured key-value pairs attached to the record.
+    ///
+    /// Keys that collide with a built-in record or metadata field are rejected
+    /// when this map enters through structured-field admission, such as
+    /// [`crate::FemtoLogger::log_with_metadata`] or scoped context. Metadata
+    /// constructed directly with [`FemtoLogRecord::with_metadata`] bypasses
+    /// that admission; HTTP serialization silently omits reserved keys from
+    /// such records rather than letting them override authoritative fields.
     pub key_values: BTreeMap<String, String>,
 }
 
@@ -148,6 +155,11 @@ impl FemtoLogRecord {
     }
 
     /// Construct a log record with explicit source location and key-values.
+    ///
+    /// This constructor does not validate [`RecordMetadata::key_values`].
+    /// Entries that collide with built-in fields are preserved on the record,
+    /// but HTTP serialization omits them so they cannot override the
+    /// authoritative wire fields.
     pub fn with_metadata(
         logger: &str,
         level: FemtoLevel,

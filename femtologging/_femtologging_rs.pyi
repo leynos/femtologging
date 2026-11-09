@@ -79,7 +79,8 @@ class FemtoLogger:
             If ``True``, capture the current call stack.
         extra
             Optional structured fields. These override active scoped context
-            fields with the same key.
+            fields with the same key. Reserved names that collide with built-in
+            record fields raise ``ValueError``.
 
         Returns
         -------
@@ -87,6 +88,14 @@ class FemtoLogger:
             The formatted log message if the logger is enabled and the record
             passes level and filter checks, otherwise ``None``. A disabled
             logger returns ``None`` without processing or propagating the record.
+
+        Raises
+        ------
+        TypeError
+            If *extra* is not a mapping or a value is not a supported scalar.
+        ValueError
+            If *extra* contains a reserved name or exceeds the structured-field
+            size limits.
 
         """
         ...
