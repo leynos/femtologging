@@ -191,8 +191,9 @@ Rust-side validation returns stable variants from `SchemaVersionError`:
 
 Use these variants to choose explicit behaviour when versions mismatch:
 
+<!-- tested-example: process-payload-schema-versioning -->
 ```rust
-use femtologging_rs::{
+use _femtologging_rs::{
     ExceptionPayload, SchemaVersionError, SchemaVersioned,
 };
 
