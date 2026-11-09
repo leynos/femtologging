@@ -1,15 +1,13 @@
 //! Regression tests for the `process_payload` example in the user guide.
 //!
-//! The guide publishes the example under a `tested-example` marker, but this
-//! repository has no shared Markdown loader that compiles fenced Rust. The
-//! function below mirrors the published text, and `guide_publishes_the_tested_function`
-//! checks that the two stay in step.
+//! `build.rs` loads every marked Rust fence out of `docs/users-guide.md` into
+//! `tests/generated`, and the `include!` below compiles the published text.
+//! These tests therefore call the shipped example itself rather than a copy of
+//! it, so the guide cannot drift from the behaviour it claims.
 
-use _femtologging_rs::{ExceptionPayload, SchemaVersionError, SchemaVersioned};
+include!("generated/process_payload_schema_versioning.rs");
+
 use rstest::rstest;
-
-/// Marker that identifies the published example in `docs/users-guide.md`.
-const MARKER: &str = "<!-- tested-example: process-payload-schema-versioning -->";
 
 /// Minimal v1 payload that exercises the supported parsing path.
 const MINIMAL_V1: &str = r#"{
@@ -17,60 +15,6 @@ const MINIMAL_V1: &str = r#"{
     "type_name": "Error",
     "message": "test"
 }"#;
-
-/// The example published in the user guide.
-fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let payload: ExceptionPayload = serde_json::from_str(json)?;
-    match payload.validate_version() {
-        Ok(()) => Ok(()),
-        Err(SchemaVersionError::VersionTooNew {
-            found,
-            max_supported,
-        }) => Err(SchemaVersionError::VersionTooNew {
-            found,
-            max_supported,
-        }
-        .into()),
-        Err(SchemaVersionError::VersionTooOld {
-            found,
-            min_supported,
-        }) => Err(SchemaVersionError::VersionTooOld {
-            found,
-            min_supported,
-        }
-        .into()),
-    }
-}
-
-/// Return the body of the Rust fence that follows the tested-example marker.
-fn published_example() -> &'static str {
-    let guide = include_str!("../../docs/users-guide.md");
-    let after_marker = guide
-        .split_once(MARKER)
-        .expect("the guide should mark the process_payload example")
-        .1;
-    let after_newline = after_marker.strip_prefix('\n').unwrap_or(after_marker);
-    let fence = after_newline
-        .strip_prefix("```rust\n")
-        .expect("the marker should precede a Rust fence");
-    fence
-        .split_once("\n```")
-        .expect("the Rust fence should be terminated")
-        .0
-}
-
-/// The guide publishes a fallible parser rather than a panicking one.
-#[test]
-fn guide_publishes_the_tested_function() {
-    let example = published_example();
-    assert!(example.contains("use _femtologging_rs::{"));
-    assert!(example.contains("serde_json::from_str(json)?"));
-    assert!(example.contains("match payload.validate_version()"));
-    assert!(
-        !example.contains("expect(\"valid JSON\")"),
-        "the example must not panic on malformed JSON"
-    );
-}
 
 /// Malformed JSON is propagated as an error, not a panic.
 #[test]
@@ -89,34 +33,37 @@ fn valid_v1_payload_succeeds() {
 }
 
 /// Assert that `process_payload` rejects a schema version as `expected`.
-fn assert_version_error(schema_version: u16, expected: SchemaVersionError) {
+fn assert_version_error(schema_version: u16, expected: _femtologging_rs::SchemaVersionError) {
     let json = MINIMAL_V1.replace(
         "\"schema_version\": 1",
         &format!("\"schema_version\": {schema_version}"),
     );
     let err = process_payload(&json).expect_err("an unsupported version must fail");
-    assert_eq!(err.downcast_ref::<SchemaVersionError>(), Some(&expected));
+    assert_eq!(
+        err.downcast_ref::<_femtologging_rs::SchemaVersionError>(),
+        Some(&expected)
+    );
 }
 
 /// An unsupported schema version is reported after a successful parse.
 #[rstest]
 #[case(
     999,
-    SchemaVersionError::VersionTooNew {
+    _femtologging_rs::SchemaVersionError::VersionTooNew {
         found: 999,
         max_supported: 1,
     }
 )]
 #[case(
     0,
-    SchemaVersionError::VersionTooOld {
+    _femtologging_rs::SchemaVersionError::VersionTooOld {
         found: 0,
         min_supported: 1,
     }
 )]
 fn unsupported_version_is_reported(
     #[case] schema_version: u16,
-    #[case] expected: SchemaVersionError,
+    #[case] expected: _femtologging_rs::SchemaVersionError,
 ) {
     assert_version_error(schema_version, expected);
 }

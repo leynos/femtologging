@@ -225,3 +225,6 @@ bin/act
 # Skylos whitelist lock and analysis cache
 .skylos-whitelist.lock
 .skylos/
+
+# Rust examples loaded from the user guide by `rust_extension/build.rs`.
+rust_extension/tests/generated/

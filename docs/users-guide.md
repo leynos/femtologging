@@ -197,6 +197,7 @@ use _femtologging_rs::{
     ExceptionPayload, SchemaVersionError, SchemaVersioned,
 };
 
+/// Parse a payload and reject schema versions outside the supported range.
 fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
     let payload: ExceptionPayload = serde_json::from_str(json)?;
     match payload.validate_version() {
