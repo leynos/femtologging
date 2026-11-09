@@ -120,10 +120,12 @@ impl Write for GatedFlushBuf {
 /// shared deadline may be spent waiting, so a second full timeout is
 /// distinguishable from the expected short wait.
 ///
-/// The hold starts when the flusher reports it is about to call `flush()`, not
-/// when its thread is spawned. A thread the scheduler delays past the hold
-/// would otherwise begin its deadline late and appear to wait too long after
-/// the release, which is a slow host rather than a second timeout.
+/// The flusher reports entry immediately before the call whose deadline is
+/// under test and measures its own return, so neither a delayed thread start
+/// nor a delayed test thread can distort the measured wait. After the deadline
+/// expires, the worker is released and must then consume the flush command:
+/// entering its third flush proves the command really was queued, which the
+/// timing alone cannot show.
 #[test]
 fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
@@ -137,7 +139,10 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
         GatedFlushBuf {
             entered: entered_tx,
             releases: release_rx,
-            gates: 2,
+            // Three gates: the first record's flush, the second record's
+            // flush, and the flush command's flush. The last can only be
+            // reached if the command was queued.
+            gates: 3,
         },
         DefaultFormatter,
         1,
@@ -152,7 +157,7 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
 
     let (started_tx, started_rx) = mpsc::channel();
-    let (ack_tx, ack_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
     let flusher = {
         let handler = Arc::clone(&handler);
         thread::spawn(move || {
@@ -163,7 +168,11 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
             started_tx
                 .send(())
                 .expect("signal that the flusher is entering its wait");
-            let _ = ack_tx.send(handler.flush());
+            let started = Instant::now();
+            let flushed = handler.flush();
+            // Measure the wait in the thread that performs it, so a delayed
+            // test thread cannot inflate the result into a second timeout.
+            let _ = finished_tx.send((flushed, started.elapsed()));
         })
     };
     started_rx
@@ -171,7 +180,6 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
         .expect("flusher should enter its wait before the queue is held");
 
     thread::sleep(ENQUEUE_HOLD);
-    let released_at = Instant::now();
     release_tx
         .send(())
         .expect("release the worker's first flush");
@@ -181,32 +189,42 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
         .recv_timeout(RELEASE_WAIT)
         .expect("worker should block in its second flush");
 
-    let acknowledged = ack_rx
+    let (flushed, waited) = finished_rx
         .recv_timeout(RELEASE_WAIT)
         .expect("flush should report within the shared deadline");
     assert!(
-        !acknowledged,
+        !flushed,
         "flush() must fail when the worker never acknowledges"
     );
-    let waited_after_release = released_at.elapsed();
-    // The remaining wait must be the unspent part of one deadline, not a
-    // fresh timeout (too long) and not nothing (the flush never queued).
+    // The queue stayed full for the whole hold, so a flush that returned
+    // sooner never waited to enqueue, and one that took a fresh timeout after
+    // enqueueing would exceed the upper bound below.
     assert!(
-        waited_after_release >= FLUSH_TIMEOUT / 4,
-        "flush() gave up after {waited_after_release:?}; the flush command never queued"
+        waited >= ENQUEUE_HOLD,
+        "flush() returned after {waited:?}, without waiting out the {ENQUEUE_HOLD:?} hold"
     );
     assert!(
-        waited_after_release < FLUSH_TIMEOUT * 3 / 4,
+        waited < FLUSH_TIMEOUT + ENQUEUE_HOLD / 2,
         concat!(
-            "flush() waited {:?} after the queue freed; ",
+            "flush() waited {:?}; ",
             "queueing and acknowledgement did not share one deadline"
         ),
-        waited_after_release
+        waited
     );
 
+    // The worker was blocked when the deadline expired, so the call can only
+    // have reached its acknowledgement wait if the command was queued behind
+    // the blocked record. Releasing the second flush lets the worker take that
+    // command next; entering the third flush is proof of the enqueue.
     release_tx
         .send(())
         .expect("release the worker's second flush");
+    entered_rx
+        .recv_timeout(RELEASE_WAIT)
+        .expect("the flush command was never queued for the worker");
+    release_tx
+        .send(())
+        .expect("release the flush command's flush");
     flusher.join().expect("flusher thread panicked");
     handler.close();
 }
