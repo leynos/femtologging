@@ -223,6 +223,11 @@ mod slow_collector;
 #[path = "unit_tests.rs"]
 mod unit;
 
+// Jitter, cap, deadline, and reset contracts, kept in their own file so this
+// integration-style module stays within the file-size limit.
+#[path = "backoff_tests.rs"]
+mod backoff_contracts;
+
 #[rstest]
 fn tls_handshake_respects_timeout(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
