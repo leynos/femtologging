@@ -408,7 +408,9 @@ below are pinned by `rust_extension/src/http_handler/request_shape_tests.rs` and
   `RootCerts::PlatformVerifier`, so certificates are validated against the
   host's trust store, as they were under ureq 2. ureq 3 otherwise defaults to
   Rustls with bundled WebPKI roots, which would silently change which
-  certificates the handler trusts.
+  certificates the handler trusts. The dependency disables ureq's default
+  features (keeping only `gzip` and `native-tls`), so that Rustls stack is not
+  compiled at all.
 - **Timeouts.** `connect_timeout` maps to `timeout_connect` and covers TCP
   connection establishment and the TLS handshake. `write_timeout` maps to
   `timeout_global`, which bounds the whole attempt: request, response headers,

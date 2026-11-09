@@ -143,6 +143,12 @@ fn apply_headers<Any>(
 ///
 /// Error messages never include a header value, because one of them is a
 /// credential.
+///
+/// A rejection is returned as an ordinary transport error, not a distinct
+/// permanent verdict. Under ureq 2 the same misconfiguration failed as a
+/// `BadHeader` error when the request was written, so it reached the worker as
+/// a transport failure and followed the retry policy; classifying it
+/// differently here would change that contract.
 fn resolve_headers(config: &HTTPHandlerConfig) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     if let Some(value) = auth_header_value(&config.auth)? {

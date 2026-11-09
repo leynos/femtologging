@@ -8,6 +8,8 @@
 
 use std::collections::HashMap;
 
+use rstest::rstest;
+
 use super::*;
 
 /// Build a configuration whose only interesting parts are the given values.
@@ -120,19 +122,37 @@ fn a_get_request_carries_no_content_type() {
     assert!(headers.get(CONTENT_TYPE).is_none());
 }
 
-#[test]
-fn an_invalid_header_name_is_rejected_without_echoing_its_value() {
+/// Scenario: a header name, a header value, or a bearer token that cannot be
+/// encoded as an HTTP header.
+///
+/// Invariant: the rejection never echoes the configured secret. Each case
+/// reaches a different branch: the name is rejected before its value is
+/// examined, the value is rejected on its own, and the bearer token is rejected
+/// while rendering the `Authorization` value.
+#[rstest]
+#[case::invalid_name(AuthConfig::None, &[("bad header", "secret-value")])]
+#[case::invalid_value(AuthConfig::None, &[("x-token", "secret-value\n")])]
+#[case::invalid_bearer(
+    AuthConfig::Bearer {
+        token: "secret-value\n".to_owned(),
+    },
+    &[]
+)]
+fn a_rejected_header_or_credential_is_never_echoed(
+    #[case] auth: AuthConfig,
+    #[case] headers: &[(&str, &str)],
+) {
     let config = config(
         HTTPMethod::POST,
-        AuthConfig::None,
+        auth,
         SerializationFormat::UrlEncoded,
-        &[("bad header", "secret-value")],
+        headers,
     );
 
-    let err = resolve_headers(&config).expect_err("a space is not valid in a header name");
+    let err = resolve_headers(&config).expect_err("the input is not a valid header");
 
     assert!(
         !err.contains("secret-value"),
-        "the error must not echo a configured header value: {err}"
+        "the error must not echo a configured secret: {err}"
     );
 }

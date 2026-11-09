@@ -40,7 +40,10 @@ native-tls = { version = "0.2", features = ["vendored"] }
 rand = "0.8"
 encoding_rs = "0.8"
 ini = { package = "rust-ini", version = "0.21.3" }
-ureq = { version = "3.4", features = ["native-tls"] }
+# The HTTP transport always selects native-tls, so ureq's default Rustls stack
+# would be compiled and never used. `gzip` keeps the default decompression and
+# `Accept-Encoding` behaviour the handler had before the migration.
+ureq = { version = "3.4", default-features = false, features = ["gzip", "native-tls"] }
 percent-encoding = "2.3"
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

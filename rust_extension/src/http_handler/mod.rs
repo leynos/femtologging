@@ -37,7 +37,12 @@ mod worker;
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
+// The TLS fixture is an rcgen ECDSA certificate. native-tls's Schannel backend
+// imports PKCS#8 identities through an RSA provider, so the fixture cannot be
+// loaded on Windows, and rcgen's ring backend cannot generate an RSA key to
+// replace it. Only the fixture is platform-bound; the transport it exercises
+// is not.
+#[cfg(all(test, not(target_os = "windows")))]
 mod tls_tests;
 
 pub use config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
