@@ -8,9 +8,12 @@ than by returning a value.
 
 from __future__ import annotations
 
+import time
+import typing as typ
+
 import pytest
 
-from femtologging import FemtoLogger
+from femtologging import FemtoLogger, FileHandlerBuilder
 from tests.logger_support import (
     FLUSH_TEST_HOOKS_AVAILABLE,
     CollectingHandler,
@@ -18,6 +21,14 @@ from tests.logger_support import (
     RecordCollectingHandler,
     handler_payloads,
 )
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    from pathlib import Path
+
+# Long enough to outlast the logger's detached drain of its own queue, and well
+# inside the native handler's one-second flush deadline.
+_FORMATTER_GATE_SECONDS = 0.4
 
 
 @pytest.mark.parametrize(
@@ -50,6 +61,41 @@ def test_flush_handlers_releases_gil_for_python_handlers(
             assert payloads == expected_payloads, f"bad payloads: {payloads!r}"
     finally:
         logger.remove_handler(handler)
+
+
+def test_native_handler_flush_releases_gil_for_python_formatter(
+    tmp_path: Path,
+) -> None:
+    """A native handler's flush must not starve its own Python formatter.
+
+    ``FemtoFileHandler`` formats records on its worker thread, and a Python
+    formatter has to reacquire the GIL to run. A logger that waits for the
+    worker while holding the GIL therefore cannot receive the flush
+    acknowledgement before its one-second deadline: the worker is stuck
+    waiting for the interpreter the waiter is holding.
+    """
+    path = tmp_path / "native_flush.log"
+
+    def slow_formatter(record: cabc.Mapping[str, object]) -> str:
+        # Sleeping releases the GIL, so a flush that waits detached lets this
+        # formatter finish while one that waits attached starves it.
+        time.sleep(_FORMATTER_GATE_SECONDS)
+        return f"{record['logger']} [{record['level']}] {record['message']}"
+
+    handler = FileHandlerBuilder(str(path)).with_formatter(slow_formatter).build()
+    logger = FemtoLogger("native.flush")
+    try:
+        logger.add_handler(handler)
+        logger.info("formatted during the flush")
+        assert logger.flush_handlers(), (
+            "the flush must wait for the formatter without holding the GIL"
+        )
+        assert path.read_text(encoding="utf-8") == (
+            "native.flush [INFO] formatted during the flush\n"
+        ), "the flush reported success before the record reached the file"
+    finally:
+        logger.remove_handler(handler)
+        handler.close()
 
 
 class _RecordingFlushHandler(CollectingHandler):

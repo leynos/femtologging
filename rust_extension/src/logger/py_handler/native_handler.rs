@@ -25,7 +25,15 @@ where
     T: FemtoHandlerTrait + pyo3::PyClass,
 {
     match obj.extract::<PyRef<'_, T>>() {
-        Ok(handler) => FemtoHandlerTrait::flush(&*handler),
+        // A native flush waits for the handler's worker, and that worker may
+        // be running a Python formatter that needs the GIL. Holding the GIL
+        // here would deadlock until the handler's flush deadline expired, so
+        // the wait runs detached. Borrowing as `&T` keeps the closure free of
+        // the `PyRef` guard while the handler stays alive in `obj`.
+        Ok(handler) => {
+            let handler_ref: &T = &handler;
+            py.detach(|| FemtoHandlerTrait::flush(handler_ref))
+        }
         Err(err) => {
             map_py_err(py, err.into(), label);
             false
