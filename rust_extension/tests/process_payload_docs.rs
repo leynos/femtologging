@@ -6,6 +6,7 @@
 //! checks that the two stay in step.
 
 use _femtologging_rs::{ExceptionPayload, SchemaVersionError, SchemaVersioned};
+use rstest::rstest;
 
 /// Marker that identifies the published example in `docs/users-guide.md`.
 const MARKER: &str = "<!-- tested-example: process-payload-schema-versioning -->";
@@ -87,30 +88,35 @@ fn valid_v1_payload_succeeds() {
     assert!(process_payload(MINIMAL_V1).is_ok());
 }
 
-/// A newer schema version is reported after a successful parse.
-#[test]
-fn too_new_version_is_reported() {
-    let json = MINIMAL_V1.replace("\"schema_version\": 1", "\"schema_version\": 999");
-    let err = process_payload(&json).expect_err("too-new version must fail");
-    assert_eq!(
-        err.downcast_ref::<SchemaVersionError>(),
-        Some(&SchemaVersionError::VersionTooNew {
-            found: 999,
-            max_supported: 1,
-        })
+/// Assert that `process_payload` rejects a schema version as `expected`.
+fn assert_version_error(schema_version: u16, expected: SchemaVersionError) {
+    let json = MINIMAL_V1.replace(
+        "\"schema_version\": 1",
+        &format!("\"schema_version\": {schema_version}"),
     );
+    let err = process_payload(&json).expect_err("an unsupported version must fail");
+    assert_eq!(err.downcast_ref::<SchemaVersionError>(), Some(&expected));
 }
 
-/// An older schema version is reported after a successful parse.
-#[test]
-fn too_old_version_is_reported() {
-    let json = MINIMAL_V1.replace("\"schema_version\": 1", "\"schema_version\": 0");
-    let err = process_payload(&json).expect_err("too-old version must fail");
-    assert_eq!(
-        err.downcast_ref::<SchemaVersionError>(),
-        Some(&SchemaVersionError::VersionTooOld {
-            found: 0,
-            min_supported: 1,
-        })
-    );
+/// An unsupported schema version is reported after a successful parse.
+#[rstest]
+#[case(
+    999,
+    SchemaVersionError::VersionTooNew {
+        found: 999,
+        max_supported: 1,
+    }
+)]
+#[case(
+    0,
+    SchemaVersionError::VersionTooOld {
+        found: 0,
+        min_supported: 1,
+    }
+)]
+fn unsupported_version_is_reported(
+    #[case] schema_version: u16,
+    #[case] expected: SchemaVersionError,
+) {
+    assert_version_error(schema_version, expected);
 }
