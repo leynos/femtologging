@@ -77,8 +77,16 @@ def test_native_handler_flush_releases_gil_for_python_formatter(
     path = tmp_path / "native_flush.log"
 
     def slow_formatter(record: cabc.Mapping[str, object]) -> str:
-        # Sleeping releases the GIL, so a flush that waits detached lets this
-        # formatter finish while one that waits attached starves it.
+        """Render a record slowly enough to expose a flush that holds the GIL.
+
+        Sleeping releases the GIL, so a flush that waits detached lets this
+        formatter finish while one that waits attached starves it.
+
+        Returns
+        -------
+        str
+            The formatted record, matching the handler's default layout.
+        """
         time.sleep(_FORMATTER_GATE_SECONDS)
         return f"{record['logger']} [{record['level']}] {record['message']}"
 
