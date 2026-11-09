@@ -119,6 +119,11 @@ impl Write for GatedFlushBuf {
 /// worker then blocks again without acknowledging. Only the remainder of the
 /// shared deadline may be spent waiting, so a second full timeout is
 /// distinguishable from the expected short wait.
+///
+/// The hold starts when the flusher reports it is about to call `flush()`, not
+/// when its thread is spawned. A thread the scheduler delays past the hold
+/// would otherwise begin its deadline late and appear to wait too long after
+/// the release, which is a slow host rather than a second timeout.
 #[test]
 fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
@@ -146,13 +151,24 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
     // command has to wait for space.
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
 
+    let (started_tx, started_rx) = mpsc::channel();
     let (ack_tx, ack_rx) = mpsc::channel();
     let flusher = {
         let handler = Arc::clone(&handler);
         thread::spawn(move || {
+            // Report entry from inside the flusher, immediately before the
+            // call whose deadline is under test. Timing the hold from the
+            // spawn instead would let a delayed thread start late and spend
+            // more of its deadline after the release below.
+            started_tx
+                .send(())
+                .expect("signal that the flusher is entering its wait");
             let _ = ack_tx.send(handler.flush());
         })
     };
+    started_rx
+        .recv_timeout(RELEASE_WAIT)
+        .expect("flusher should enter its wait before the queue is held");
 
     thread::sleep(ENQUEUE_HOLD);
     let released_at = Instant::now();
@@ -181,8 +197,11 @@ fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement
     );
     assert!(
         waited_after_release < FLUSH_TIMEOUT * 3 / 4,
-        "flush() waited {waited_after_release:?} after the queue freed; \
-         queueing and acknowledgement did not share one deadline"
+        concat!(
+            "flush() waited {:?} after the queue freed; ",
+            "queueing and acknowledgement did not share one deadline"
+        ),
+        waited_after_release
     );
 
     release_tx

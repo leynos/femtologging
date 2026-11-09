@@ -16,8 +16,11 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler,
 };
 
+#[path = "test_utils/captured_log.rs"]
+mod captured_log;
 #[path = "test_utils/handle_expect.rs"]
 mod handle_expect;
+use captured_log::captured_log;
 use handle_expect::HandleExpect;
 
 /// Upper bound on how long a test destructor waits for its release signal.
@@ -26,8 +29,23 @@ use handle_expect::HandleExpect;
 /// passing test releases the destructor long before it expires.
 const DESTRUCTOR_WAIT: Duration = Duration::from_secs(10);
 
+/// Slack allowed above a configured timeout before a measured wait counts as
+/// unbounded.
+///
+/// A closer that honours its timeout returns within it; one that joins the
+/// worker instead waits for the destructor, which is held for at most
+/// [`DESTRUCTOR_WAIT`]. Five seconds keeps that ten-second difference intact
+/// on a loaded host while tolerating genuine scheduling delay.
+const SCHEDULING_MARGIN: Duration = Duration::from_secs(5);
+
 /// Formatter whose destructor blocks until the test releases it.
 struct SlowDropFormatter {
+    /// Signals that the destructor has been entered and is about to block.
+    ///
+    /// The test waits for this before claiming that a closer is still blocked,
+    /// so a worker that never reached teardown cannot make the claim
+    /// vacuously true.
+    entered: Sender<()>,
     /// The destructor waits on this channel before returning.
     release: Mutex<Receiver<()>>,
     /// The destructor reports completion on this channel.
@@ -42,6 +60,9 @@ impl FemtoFormatter for SlowDropFormatter {
 
 impl Drop for SlowDropFormatter {
     fn drop(&mut self) {
+        // Report arrival before blocking, so the test knows teardown has
+        // started rather than merely being slow to begin.
+        let _ = self.entered.send(());
         let release = self.release.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = release.recv_timeout(DESTRUCTOR_WAIT);
         let _ = self.dropped.send(());
@@ -52,11 +73,13 @@ impl Drop for SlowDropFormatter {
 fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
 
+    let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let (dropped_tx, dropped_rx) = mpsc::channel();
     let handler = FemtoStreamHandler::with_capacity_timeout(
         io::sink(),
         SlowDropFormatter {
+            entered: entered_tx,
             release: Mutex::new(release_rx),
             dropped: dropped_tx,
         },
@@ -65,11 +88,25 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks()
     );
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
 
+    let started = Instant::now();
     handler.close();
+    let elapsed = started.elapsed();
 
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker should enter the formatter destructor");
     assert!(
         dropped_rx.try_recv().is_err(),
         "close() returned only after the formatter was dropped"
+    );
+    // The configured timeout, not the blocked destructor, must bound the wait.
+    assert!(
+        elapsed >= FLUSH_TIMEOUT,
+        "close() returned after {elapsed:?}, before its {FLUSH_TIMEOUT:?} timeout"
+    );
+    assert!(
+        elapsed < FLUSH_TIMEOUT + SCHEDULING_MARGIN,
+        "close() waited {elapsed:?} for a destructor that outlived its {FLUSH_TIMEOUT:?} timeout"
     );
     release_tx
         .send(())
@@ -83,11 +120,13 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks()
 fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
+    let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let (dropped_tx, dropped_rx) = mpsc::channel();
     let handler = Arc::new(FemtoStreamHandler::with_capacity_timeout(
         io::sink(),
         SlowDropFormatter {
+            entered: entered_tx,
             release: Mutex::new(release_rx),
             dropped: dropped_tx,
         },
@@ -96,14 +135,27 @@ fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
     ));
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
 
+    let (started_tx, started_rx) = mpsc::channel();
     let (closed_tx, closed_rx) = mpsc::channel();
     let closer = {
         let handler = Arc::clone(&handler);
         thread::spawn(move || {
+            started_tx
+                .send(())
+                .expect("signal that the closer is entering close()");
             handler.close();
             let _ = closed_tx.send(());
         })
     };
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("closer should start");
+    // Both conditions hold before the blocking claim below is made: the
+    // closer is inside `close()`, and the worker has entered the destructor
+    // that will not return until this test releases it.
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker should enter the formatter destructor");
 
     // The destructor is still blocked, so a closer that waits for teardown
     // cannot have returned. This is a state assertion, not a timing margin:
@@ -127,6 +179,8 @@ fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
 /// Channels shared between the thread-local destructor and its test.
 #[derive(Debug)]
 struct TlsSync {
+    /// The destructor reports entry, before it blocks, on this channel.
+    entered: Mutex<Sender<()>>,
     /// The destructor blocks until the test sends on this channel.
     release: Mutex<Receiver<()>>,
     /// The destructor reports completion on this channel.
@@ -151,6 +205,9 @@ impl Drop for SlowTlsDtor {
         let Some(sync) = TLS_SYNC.get() else {
             return;
         };
+        let entered = sync.entered.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = entered.send(());
+        drop(entered);
         let release = sync.release.lock().unwrap_or_else(PoisonError::into_inner);
         let _ = release.recv_timeout(DESTRUCTOR_WAIT);
         drop(release);
@@ -173,10 +230,12 @@ impl FemtoFormatter for TlsDtorFormatter {
 fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_blocks() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
 
+    let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let (dropped_tx, dropped_rx) = mpsc::channel();
     TLS_SYNC
         .set(TlsSync {
+            entered: Mutex::new(entered_tx),
             release: Mutex::new(release_rx),
             dropped: Mutex::new(dropped_tx),
         })
@@ -186,11 +245,23 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_block
         FemtoStreamHandler::with_capacity_timeout(io::sink(), TlsDtorFormatter, 8, FLUSH_TIMEOUT);
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
 
+    let started = Instant::now();
     handler.close();
+    let elapsed = started.elapsed();
 
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker thread should enter the thread-local destructor");
     assert!(
         dropped_rx.try_recv().is_err(),
         "close() returned only after the thread-local destructor finished"
+    );
+    // Completion is signalled when the worker body ends, before thread-local
+    // destruction, so close must not spend its configured timeout waiting for
+    // the blocked destructor.
+    assert!(
+        elapsed < FLUSH_TIMEOUT + SCHEDULING_MARGIN,
+        "close() waited {elapsed:?}; the thread-local destructor outlived the {FLUSH_TIMEOUT:?} timeout"
     );
     release_tx
         .send(())
@@ -213,10 +284,35 @@ impl FemtoFormatter for PanicFormatter {
     }
 }
 
+/// Text the worker logs when its body panics.
+const WORKER_PANIC_WARNING: &str = "worker thread panicked";
+
+/// Waits until the capture log receives a warning containing `needle`.
+///
+/// The capture logger is process-wide and other tests in this binary log
+/// alongside this one, so records are matched by text rather than counted.
+/// Waiting for the warning makes the worker's panic an observed event before
+/// the closer below is measured.
+fn wait_for_warning(logger: &mut logtest::Logger, needle: &str, wait: Duration) -> bool {
+    let deadline = Instant::now() + wait;
+    loop {
+        while let Some(record) = logger.pop() {
+            if record.args().to_string().contains(needle) {
+                return true;
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn stream_handler_close_returns_promptly_after_a_worker_panic() {
-    const FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
+    const FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 
+    let mut logger = captured_log();
     let (panicked_tx, panicked_rx) = mpsc::channel();
     let handler = FemtoStreamHandler::with_capacity_timeout(
         io::sink(),
@@ -230,14 +326,22 @@ fn stream_handler_close_returns_promptly_after_a_worker_panic() {
     panicked_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("worker should enter the formatter before it panics");
+    // The warning is logged inside the worker's panic handler, before it
+    // signals completion, so seeing it proves the failure path ran rather
+    // than the closer merely racing an empty queue.
+    assert!(
+        wait_for_warning(&mut logger, WORKER_PANIC_WARNING, Duration::from_secs(5)),
+        "the worker's panic must be reported through the log facade"
+    );
 
     let started = Instant::now();
     handler.close();
     let elapsed = started.elapsed();
-    // Unwinding signals completion, so the closer must not fall back to the
-    // timeout. The generous factor only catches a hang; it is not a margin.
+    // Unwinding signals completion, so the closer must not fall back to its
+    // configured timeout. Ten seconds with five seconds of scheduling slack
+    // still fails a closer that waited out the timeout.
     assert!(
-        elapsed < FLUSH_TIMEOUT / 4,
+        elapsed + SCHEDULING_MARGIN < FLUSH_TIMEOUT,
         "close() waited {elapsed:?}; a panicked worker must still signal completion"
     );
 }
