@@ -315,3 +315,6 @@ mod channel_property;
 // Response classification tests (unit tests for the worker module)
 #[path = "response_classification_tests.rs"]
 mod response_classification;
+// Contracts for the bytes one request puts on the wire.
+#[path = "request_shape_tests.rs"]
+mod request_shape;

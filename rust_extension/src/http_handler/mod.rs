@@ -31,11 +31,14 @@ mod queue;
 mod record;
 mod response;
 mod serialize;
+mod transport;
 mod url_encoding;
 mod worker;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tls_tests;
 
 pub use config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
 pub use handler::FemtoHTTPHandler;
