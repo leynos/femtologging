@@ -180,10 +180,11 @@ handler such as `FemtoFileHandler`, the wrapper forwards the flush to the
 handler's own `flush()`, so buffered records reach disk even though the handler
 exposes no Python `flush` method. For any other handler object, the wrapper
 calls its `flush()` when it defines one and treats a missing or non-callable
-`flush` as success. Because Python reports a failed flush by raising, a
-`flush()` that returns `None` — as `logging.Handler.flush()` does — counts as
-success, and only an exception counts as failure. Enqueueing the flush marker
-and waiting for its acknowledgement share a two-second timeout. Flushing
+`flush` as success. A `flush()` that returns `None` — as
+`logging.Handler.flush()` does — counts as success, and any other falsy return
+value counts as failure. An exception, or an error other than a missing or
+non-callable `flush` attribute, also counts as failure. Enqueueing the flush
+marker and waiting for its acknowledgement share a two-second timeout. Flushing
 attached handlers can take additional time. The method returns `True` when the
 worker acknowledges the marker in time and every handler flush succeeds; it
 returns `False` if the marker cannot be enqueued or acknowledged in time, or
@@ -1037,12 +1038,15 @@ is reported.
 
 ## Operational tips and caveats
 
-- Call `logger.flush_handlers()` before shutting down to drain that logger's
-  queued records and flush its attached handlers. Records propagate to ancestor
-  loggers, so flush every ancestor that receives them as well, including the
-  root logger when it has handlers. Check each call's result before closing
-  handlers, and close handlers that support `close()` as part of shutdown;
-  otherwise buffered records may be lost.
+- Stop and join every thread that logs before shutting down, then call
+  `logger.flush_handlers()` to drain that logger's queued records and flush its
+  attached handlers. A flush is a barrier over the records already queued when
+  it runs, so a producer that logs afterwards can leave a record queued when
+  the handler closes even though the flush returned `True`. Records propagate
+  to ancestor loggers, so flush every ancestor that receives them as well,
+  including the root logger when it has handlers. Check each call's result
+  before closing handlers, and close handlers that support `close()` as part of
+  shutdown; otherwise buffered records may be lost.
 - Monitor `logger.get_dropped()`, `logger.get_context_dropped()`,
   `logger.get_disabled_drops()`, and the warnings emitted by each handler to
   detect back pressure, Rust context validation failures, or traffic aimed at a
