@@ -714,12 +714,14 @@ can delay one another.
 The barrier drains records ahead of it on the same shard; an idle logger does
 not consume a queue slot or wait for unrelated work. The Python wrapper
 releases the GIL while the worker acknowledges the barrier and attached
-handlers flush, so Python handlers can run. Enqueueing the flush marker and
-waiting for its acknowledgement share a two-second timeout. Flushing attached
-handlers can take additional time. The method returns `True` only when the
-worker acknowledges the marker in time and every handler flush succeeds; it
-returns `False` if the marker cannot be enqueued or acknowledged in time, or a
-handler flush fails.
+handlers flush, so Python handlers can run. That includes a built-in handler
+flushed through its native implementation: a Python formatter on its worker
+thread needs the same GIL the flush would otherwise hold while waiting for the
+acknowledgement. Enqueueing the flush marker and waiting for its
+acknowledgement share a two-second timeout. Flushing attached handlers can take
+additional time. The method returns `True` only when the worker acknowledges
+the marker in time and every handler flush succeeds; it returns `False` if the
+marker cannot be enqueued or acknowledged in time, or a handler flush fails.
 
 The Rust `log::Log::flush` bridge snapshots logger references under the
 `MANAGER` read guard, releases the guard, then detaches each logger's blocking
@@ -824,7 +826,9 @@ from recursively logging its own instrumentation.
 ### Flush observability
 
 Every `FemtoLogger::flush_handlers()` call records one bounded outcome and one
-duration in process-wide, cumulative counters. The metric names are:
+duration in process-wide, cumulative counters. No exporter publishes these
+counters yet: the names below are the internal contract a future exporter must
+match, not a metric endpoint an operator can scrape today.
 
 | Metric                               | Type      | Meaning                                                                                                                                               |
 | ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
