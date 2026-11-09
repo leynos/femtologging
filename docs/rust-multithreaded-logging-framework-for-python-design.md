@@ -1241,16 +1241,16 @@ they extract owned shutdown state, release that borrow, and then detach, so
 another Python thread can use the handler while the worker exits. Because the
 shutdown state is shared, concurrent `close()` calls and a `close()` running
 beside a detached `flush()` both wait on the same completion broadcast; a
-closer that arrives after the worker has stopped returns at once, and a
-repeated close stays safe. The file handler's two Python-facing waits carry
-their own fixed deadlines rather than reusing the handler's write or overflow
-timeout: `flush()` gives the enqueue and the acknowledgement one second in
-total, and `close()` waits at most one second for the shared completion signal.
-Neither deadline depends on the overflow policy. A `close()` whose one-second
-deadline expires logs a warning and returns while the worker may still be
-running, so a returned `close()` is not proof that the worker stopped. The
-stream handler instead reuses its configurable `flush_timeout` for both waits,
-as described under "Python-facing lifecycle waits" below.
+closer that arrives after the worker has raised its completion signal returns
+at once, and a repeated close stays safe. The file handler's two Python-facing
+waits carry their own fixed deadlines rather than reusing the handler's write or
+overflow timeout: `flush()` gives the enqueue and the acknowledgement one
+second in total, and `close()` waits at most one second for the shared
+completion signal. Neither deadline depends on the overflow policy. A `close()`
+whose one-second deadline expires logs a warning and returns while the worker
+may still be running, so a returned `close()` is not proof that the worker
+stopped. The stream handler instead reuses its configurable `flush_timeout` for
+both waits, as described under "Python-facing lifecycle waits" below.
 
 These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
 uses no Python access and has no Python exception path. The expected failure
@@ -1343,6 +1343,20 @@ subscriber never has to attach to Python from a thread that holds no GIL. In a
 build without `tracing-compat` the emit is a compiled no-op and the per-wait
 cost is a counter update; the feature gate therefore decides whether the
 observability is present, while `wait_diagnostics()` works in every build.
+
+Two properties of that bound are easy to get wrong. `flush()` derives one
+deadline and spends it on both waits: queueing the flush command on a channel
+that may be full, then waiting for the worker's acknowledgement. Giving each
+wait its own timeout would let one call take nearly twice the configured limit.
+`close()` waits for the completion signal, which the worker raises as its body
+ends, and does not join the thread. Joining would also wait for thread-local
+destructors, which user code can make block, so the closer drops the join
+handle and detaches the worker, which the operating system reclaims when it
+exits. A successful close therefore orders the records the worker did write
+before the closer returns, but it does not promise delivery: a worker panic
+raises the signal with records still queued, and write errors are logged rather
+than returned. As with the other handlers, it is the completion signal, not
+thread exit, that every closer observes.
 
 The socket and HTTP handlers reach the same guarantee by a different route,
 because their workers make blocking network calls rather than waiting only on a

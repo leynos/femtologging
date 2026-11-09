@@ -927,9 +927,12 @@ path.
 Because the shutdown state is shared rather than moved out by an exclusive
 borrow, several threads may close the same handler, and a close may start while
 a detached flush is still running. Each closer waits on one completion
-broadcast: every caller observes the worker's exit, and a closer that arrives
-after the worker has already stopped returns without waiting out its timeout. A
-repeated `close()` is therefore safe and observes the same bounded wait.
+broadcast: every caller observes the completion signal the worker raises as its
+body ends, and a closer that arrives after that signal returns without waiting
+out its timeout. A repeated `close()` is therefore safe and still returns only
+once the worker has raised it. The signal is not the thread's exit:
+thread-local destructors run after the worker body returns, so the thread can
+outlive a closer that is no longer waiting for it.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush
