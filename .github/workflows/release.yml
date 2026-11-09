@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
       - name: Check the Rust extension version against the tag
         id: cargo-version
-        uses: leynos/shared-actions/.github/actions/ensure-cargo-version@2f58fab140cc8dfe69756aaa6a3bbb987c426023
+        uses: leynos/shared-actions/.github/actions/ensure-cargo-version@0eabb6bc07148981de5da395e30cd78d83f5c7c2
         with:
           manifests: rust_extension/Cargo.toml
       - name: Check the Python project version against the tag
