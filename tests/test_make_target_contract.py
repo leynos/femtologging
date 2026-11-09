@@ -126,8 +126,9 @@ def _prerequisites(target: str) -> Tokens:
 
 def test_typecheck_recipe_uses_the_project_extension_environment() -> None:
     """`typecheck` must direct the pinned ty tool at the built project venv."""
-    assert _prerequisites("typecheck") == ("build",), (
-        "typecheck must build the extension before static analysis"
+    assert _prerequisites("typecheck") == ("check-build-tools", "build"), (
+        "typecheck must check the build tools, then build the extension, "
+        "before static analysis"
     )
     assert _commands("typecheck") == (
         ("$(TY)", "check", "--python", ".venv", "--extra-search-path", "scripts"),
