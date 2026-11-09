@@ -163,6 +163,44 @@ logger creation.
 
 ______________________________________________________________________
 
+## `FemtoLogger.flush_handlers()` releases the GIL and flushes Python handlers
+
+`FemtoLogger.flush_handlers()` now releases the GIL for the whole operation,
+not only the wait for the logger's dispatch shard to drain. The barrier still
+waits behind the records already queued for that logger, but the attached
+handlers are then flushed while the caller is detached from the interpreter. A
+Python formatter queued on a native handler's worker thread, or a Python
+handler's own `flush()`, can therefore run instead of starving behind the
+thread that called the flush.
+
+Three observable behaviours change:
+
+- **Python handler `flush()` methods run.** A handler object that is not a
+  built-in femtologging handler is now asked to flush through its callable
+  `flush` attribute. Previously the flush stopped at a default no-op, so a
+  custom handler that buffered data never saw the call. A handler with no
+  `flush`, or with a non-callable one, still succeeds silently.
+- **Python handler failures reach the caller.** `flush_handlers()` returns
+  `False` when a Python handler's `flush()` raises, returns a falsy value other
+  than `None`, or fails during attribute lookup for a reason other than a
+  missing or non-callable `flush`. `logging.Handler.flush()` returns `None`, so
+  a well-behaved standard handler still counts as success.
+- **A failed flush is visible in the Rust bridge.** When `log::Log::flush`
+  sweeps the registered loggers, a failed logger flush now increments a
+  process-wide counter and emits a rate-limited warning instead of being
+  discarded. `log`'s trait still returns nothing, so the warning and counter
+  are the only evidence an operator gets.
+
+Shutdown order matters more than before. A flush is a barrier over the records
+queued when it runs; a producer that logs afterwards can leave a record queued
+even though the flush returned `True`. Stop and join every logging producer
+before flushing loggers and closing their handlers.
+
+No method signature changed. A caller that already treats `flush_handlers()` as
+a best-effort barrier guarded by its boolean result needs no change.
+
+______________________________________________________________________
+
 ## Handler `close()` is bounded end to end
 
 `FemtoSocketHandler.close()` and `FemtoHTTPHandler.close()` now run on one
