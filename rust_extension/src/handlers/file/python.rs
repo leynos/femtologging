@@ -13,7 +13,7 @@ use super::{
     DEFAULT_CHANNEL_CAPACITY, FemtoFileHandler, HandlerConfig, classify_enqueue,
     io_utils::open_log_file, policy, validate_params,
 };
-use crate::handlers::telemetry::{WaitContext, WaitSite, WaitTimer};
+use crate::handlers::telemetry::{WaitContext, WaitScope, WaitSite};
 use crate::{formatter::DefaultFormatter, log_record::FemtoLogRecord};
 
 #[pymethods]
@@ -73,10 +73,8 @@ impl FemtoFileHandler {
         // still held; only the enqueue below can wait on the worker.
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
         let record = FemtoLogRecord::new(logger, parsed_level, message);
-        let timer = WaitTimer::start();
-        let in_flight = self.diagnostics().begin_wait();
-        let result = py.detach(|| self.enqueue(record));
-        drop(in_flight);
+        let (result, timer) =
+            WaitScope::start(self.diagnostics()).run(|| py.detach(|| self.enqueue(record)));
         self.record_wait(
             timer,
             WaitSite::new("handler_handle", "file"),
@@ -114,10 +112,8 @@ impl FemtoFileHandler {
     /// run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        let timer = WaitTimer::start();
-        let in_flight = self.diagnostics().begin_wait();
-        let outcome = py.detach(|| self.flush_outcome());
-        drop(in_flight);
+        let (outcome, timer) =
+            WaitScope::start(self.diagnostics()).run(|| py.detach(|| self.flush_outcome()));
         self.record_wait(
             timer,
             WaitSite::new("handler_flush", "file"),
@@ -133,9 +129,10 @@ impl FemtoFileHandler {
     /// -------
     /// dict
     ///     A fixed key set: one counter per outcome, plus
-    ///     ``total_wait_micros`` and ``max_wait_micros``. Nothing here
-    ///     carries logger names, paths, messages, or raw timeout values, so
-    ///     the set stays bounded however much traffic the handler sees.
+    ///     ``total_wait_micros``, ``max_wait_micros``, and the
+    ///     ``waits_in_flight`` gauge. Nothing here carries logger names,
+    ///     paths, messages, or raw timeout values, so the set stays bounded
+    ///     however much traffic the handler sees.
     ///
     /// Examples
     /// --------
@@ -162,7 +159,6 @@ impl FemtoFileHandler {
     /// channel closes. See the user guide for the shutdown contract.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let timer = WaitTimer::start();
         // Capture the counters and the bounded policy bucket while the borrow
         // is held; the shutdown wait itself must not touch the object.
         let (shutdown, diagnostics, policy_bucket) = {
@@ -173,9 +169,8 @@ impl FemtoFileHandler {
                 handler.policy_bucket(),
             )
         };
-        let in_flight = diagnostics.begin_wait();
-        let outcome = py.detach(move || shutdown.wait());
-        drop(in_flight);
+        let (outcome, timer) =
+            WaitScope::start(&diagnostics).run(move || py.detach(move || shutdown.wait()));
         timer.finish(
             &diagnostics,
             WaitContext {

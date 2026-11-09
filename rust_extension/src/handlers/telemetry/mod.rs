@@ -26,7 +26,7 @@ mod timer;
 
 pub(crate) use diagnostics::WaitDiagnostics;
 pub(crate) use outcome::WaitOutcome;
-pub(crate) use timer::{WaitContext, WaitSite, WaitTimer};
+pub(crate) use timer::{WaitContext, WaitScope, WaitSite, WaitTimer};
 
 #[cfg(test)]
 mod tests;

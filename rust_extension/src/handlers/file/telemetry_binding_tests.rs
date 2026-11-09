@@ -120,6 +120,72 @@ fn the_python_handle_binding_records_a_real_timeout() {
     });
 }
 
+/// The Python `flush()` binding records a real enqueue timeout.
+///
+/// A flush that never reaches the worker because the queue stayed full is a
+/// different fault from an acknowledgement timeout: the worker never saw the
+/// request. The counter and the event must name the enqueue timeout rather
+/// than folding it into the acknowledgement case.
+#[test]
+fn the_python_flush_binding_records_a_real_enqueue_timeout() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let writer = ScriptedWriter::blocking(entered_tx);
+    let handler = handler_with(writer.clone(), OverflowPolicy::Drop);
+    let diagnostics = Arc::clone(handler.diagnostics());
+
+    let collector = EventCollector::default();
+    let subscriber = tracing_subscriber::registry().with(collector.clone());
+    let handler = tracing::subscriber::with_default(subscriber, || {
+        Python::attach(|py| {
+            let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
+            handler
+                .call_method1(py, "handle", ("core", "INFO", "first"))
+                .expect("the first record must be accepted");
+            expect_stage(&entered_rx, Stage::Write);
+            handler
+                .call_method1(py, "handle", ("core", "INFO", "second"))
+                .expect("the second record must fill the queue");
+            let acknowledged: bool = handler
+                .call_method0(py, "flush")
+                .expect("flush must not raise")
+                .extract(py)
+                .expect("flush must return a bool");
+            assert!(
+                !acknowledged,
+                "a flush that never reached the worker must return False",
+            );
+            handler
+        })
+    });
+
+    assert_eq!(
+        diagnostics
+            .snapshot()
+            .count(WaitOutcome::FlushEnqueueTimedOut),
+        1,
+        "the binding must record the real enqueue timeout exactly once",
+    );
+    let events = collector.captured();
+    let enqueue_timeouts: Vec<_> = events
+        .iter()
+        .filter(|event| event.fields["wait_outcome"] == "flush_enqueue_timed_out")
+        .collect();
+    assert_eq!(
+        enqueue_timeouts.len(),
+        1,
+        "one enqueue timeout must emit one event: {events:?}"
+    );
+    assert_eq!(enqueue_timeouts[0].fields["operation"], "handler_flush");
+    assert_eq!(enqueue_timeouts[0].fields["policy_bucket"], "drop");
+
+    writer.release();
+    Python::attach(|py| {
+        handler
+            .call_method0(py, "close")
+            .expect("close must not raise");
+    });
+}
+
 /// The Python `flush()` binding records a real I/O failure.
 ///
 /// A failed worker flush is different from a timeout: the worker answered, and

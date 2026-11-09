@@ -1283,17 +1283,26 @@ a `"block"` or `"timeout:N"` policy parks only the calling thread; the enqueue
 result becomes a Python exception after the detached region returns. The file,
 rotating-file, and timed-rotating-file bindings share that shape, mapping the
 failure to `RuntimeError` and, for the timed-rotating binding, `ValueError`.
-The stream, socket, and HTTP bindings enqueue with `try_send`, which never
-blocks: their `handle()` drops under pressure instead of waiting, so it has no
-lock-holding wait to release and stays attached. `flush()` detaches around the
-acknowledgement wait, and `close()` copies the shared shutdown state under a
-scoped borrow that ends before the detached wait. This keeps caller-side
-lifecycle waits distinct from worker-side I/O and lets both a queued Python
-callable formatter and a callback that re-enters the handler in its closed
-state make progress. Because the shutdown state is shared rather than taken
-exclusively, a close can start while another thread is blocked inside
-`handle()` or `flush()`; concurrent closes and a close beside a detached flush
-all observe the same completion.
+The stream binding enqueues with `try_send`, which never blocks: its `handle()`
+drops under pressure instead of waiting, so it has no lock-holding wait to
+release and stays attached. `flush()` detaches around the acknowledgement wait,
+and `close()` copies the shared shutdown state under a scoped borrow that ends
+before the detached wait. This keeps caller-side lifecycle waits distinct from
+worker-side I/O and lets both a queued Python callable formatter and a callback
+that re-enters the handler in its closed state make progress. Because the
+stream and file-family shutdown state is shared rather than taken exclusively,
+a close can start while another thread is blocked inside `handle()` or
+`flush()`; concurrent closes and a close beside a detached flush all observe
+the same completion.
+
+The socket and HTTP bindings also enqueue with `try_send` and stay attached in
+`handle()`, but their `close()` holds a mutable PyO3 borrow (`&mut self`) for
+the whole wait. A close that overlaps a detached `flush()` or another `close()`
+on the same object is refused by PyO3's borrow check with a `RuntimeError`
+("Already borrowed") rather than queuing behind it, so call `flush()` before
+`close()` and do not close from two threads at once. The wait still runs with
+the GIL released; the refusal comes from the Rust borrow, not the interpreter
+lock.
 
 The bounds are family-specific rather than one global rule. The file family
 uses fixed bounds that do not depend on the overflow policy: one second for the
@@ -1307,11 +1316,16 @@ the write-timeout-based single shutdown deadline described below.
 
 **Wait observability:** Because a detached wait is invisible to another
 thread's stack, each Python-facing wait on a file handler also records evidence
-of what it did. The record is a fixed-key counter map plus two duration totals
-and an in-flight gauge, exposed through `wait_diagnostics()` and implemented in
-`handlers/telemetry.rs`. One counter per outcome keeps the cardinality bounded:
-the key set carries an outcome name, an operation name, and a policy bucket,
-never a logger name, path, message, payload, or raw timeout value. The gauge is
+of what it did. The record is a fixed-key counter map plus the
+`total_wait_micros` and `max_wait_micros` totals and the `waits_in_flight`
+gauge, exposed through `wait_diagnostics()`. It is implemented in the
+`handlers/telemetry/` module, split so no one file carries the whole surface:
+`outcome.rs` owns the closed outcome vocabulary, `diagnostics.rs` owns the
+counters and the snapshot, and `timer.rs` owns timing, the in-flight guard, and
+the event contract. One counter per outcome keeps the cardinality bounded: the
+snapshot keys are the outcome names plus the two totals and the gauge, never a
+logger name, path, message, payload, or raw timeout value; the operation name
+and policy bucket appear only in the optional trace event. The gauge is
 incremented before the detached section and decremented by an RAII guard, so it
 returns to zero on the normal path and while unwinding; a wait that never
 returns is exactly the state the gauge exists to expose, since the outcome

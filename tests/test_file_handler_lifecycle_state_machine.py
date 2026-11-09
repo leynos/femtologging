@@ -64,8 +64,13 @@ _BUILDERS: dict[str, cabc.Callable[[str], HandlerBuilder]] = {
 
 #: The exception each binding raises when an enqueue is refused. The file and
 #: rotating bindings use ``RuntimeError``; the timed-rotating binding maps the
-#: same condition to ``ValueError``.
-_ENQUEUE_ERRORS = (RuntimeError, ValueError)
+#: same condition to ``ValueError``. Pinning the type per builder keeps that
+#: documented Python surface distinct instead of accepting either exception.
+_ENQUEUE_EXCEPTIONS: dict[str, type[Exception]] = {
+    "file": RuntimeError,
+    "rotating": RuntimeError,
+    "timed-rotating": ValueError,
+}
 
 #: The failure each dropping policy may report for an open handler. ``block``
 #: waits instead of refusing, so it permits no failure at all. A disconnected
@@ -135,6 +140,11 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
         assert self._handler is not None, "init_handler must run before every rule"
         return self._handler
 
+    @property
+    def _enqueue_exception(self) -> type[Exception]:
+        """The exception this example's binding raises for a refused enqueue."""
+        return _ENQUEUE_EXCEPTIONS[self._builder_name]
+
     @stateful.initialize(
         policy=strategies.sampled_from(_POLICIES),
         capacity=strategies.integers(min_value=1, max_value=4),
@@ -162,7 +172,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
 
     def _assert_closed_refusal(self, message: str) -> None:
         """Check that a closed handler refuses the record and names the closure."""
-        with pytest.raises(_ENQUEUE_ERRORS) as excinfo:
+        with pytest.raises(self._enqueue_exception) as excinfo:
             self._active_handler.handle("core", "INFO", message)
         assert "closed" in str(excinfo.value), (
             f"a closed handler must name the closure, got {excinfo.value!r}"
@@ -180,7 +190,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
         """
         try:
             self._active_handler.handle("core", "INFO", message)
-        except _ENQUEUE_ERRORS as err:
+        except self._enqueue_exception as err:
             refusal = err
         else:
             refusal = None

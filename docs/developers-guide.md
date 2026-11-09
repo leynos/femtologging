@@ -957,11 +957,13 @@ Activation is per accessor and per build. `wait_diagnostics()` always works and
 needs no configuration; the trace events exist only when the crate is built with
 `tracing-compat`, where each event costs one `tracing` call on the interpreter
 thread. In a build without that feature `emit_event` is a compiled no-op, so
-the only per-wait cost is the counter update: two relaxed `fetch_add` calls and
-one relaxed `fetch_max`, with no allocation, formatting, or lock. The timer
-also reads the clock twice, once before the detached section and once after it,
-so `elapsed_us` includes the time taken to reattach to the interpreter as well
-as the wait itself. No benchmark has measured this overhead; treat the cost
+the only per-wait cost is the counter update: one relaxed `fetch_add` when the
+wait is marked in flight, and on return one relaxed `fetch_sub` for the gauge
+plus two relaxed `fetch_add` calls and one relaxed `fetch_max` for the outcome
+and durations, with no allocation, formatting, or lock. The timer also reads
+the clock twice, once before the detached section and once after it, so
+`elapsed_us` includes the time taken to reattach to the interpreter as well as
+the wait itself. No benchmark has measured this overhead; treat the cost
 description as a design statement rather than a measured figure. Readings are
 cumulative for the life of the handler, so an operator reports a delta between
 two snapshots rather than reinterpreting a total.
@@ -990,11 +992,15 @@ The counters are diagnostic signals, not error rates:
   but no verdict was recorded. A worker that installs its exit guard records a
   verdict before signalling completion, so this is the initial value and a
   defensive fallback rather than an expected outcome.
-- `waits_in_flight` above zero means a caller is still inside a wait: a
-  producer has not yet been accepted, a flush is still unacknowledged, or a
-  closer is still waiting. A gauge that stays at zero while latency rises means
-  the delay is upstream of the wait; one that stays above zero with no
-  `close_completed` after a `close()` identifies a worker that will not stop.
+- `waits_in_flight` is a snapshot, not a verdict. A value above zero means at
+  least one caller was still inside a wait when the snapshot was taken: a
+  producer not yet accepted, a flush still unacknowledged, or a closer still
+  waiting. A zero reading does not identify the cause of latency that has
+  already ended, and a non-zero reading does not prove the worker has stopped
+  for good: a `handle()` blocked behind a busy worker keeps the gauge above
+  zero after a `close()` times out, and that worker may still recover and
+  drain. Sample the gauge over time and read it beside the outcome counters
+  rather than treating one reading as a diagnosis.
 - A `max_wait_micros` close to `total_wait_micros` with few operations
   suggests one slow wait rather than sustained pressure; the reverse suggests
   steady queueing.

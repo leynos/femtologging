@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::diagnostics::WaitDiagnostics;
+use super::diagnostics::{WaitDiagnostics, WaitGuard};
 use super::outcome::WaitOutcome;
 
 /// Names the Python entry point and handler class a wait belongs to.
@@ -73,6 +73,43 @@ impl WaitTimer {
         let elapsed = self.started.elapsed();
         diagnostics.record(outcome, elapsed);
         emit_event(context, outcome, elapsed);
+    }
+}
+
+/// Brackets one blocking section with the in-flight gauge and the timer.
+///
+/// Every Python-facing wait has the same shape: mark the wait in flight, run
+/// the blocking section, release the gauge, and only then record the outcome.
+/// Keeping that order in one type stops the three bindings from drifting, and
+/// makes "release before record" structural rather than a comment each call
+/// site has to remember.
+pub(crate) struct WaitScope<'a> {
+    /// Guard that keeps the gauge raised while the wait runs.
+    guard: WaitGuard<'a>,
+    /// Timer started before the blocking section.
+    timer: WaitTimer,
+}
+
+impl<'a> WaitScope<'a> {
+    /// Start timing a wait and mark it in flight on `diagnostics`.
+    pub(crate) fn start(diagnostics: &'a WaitDiagnostics) -> Self {
+        Self {
+            guard: diagnostics.begin_wait(),
+            timer: WaitTimer::start(),
+        }
+    }
+
+    /// Run the blocking section, release the gauge, and return its result.
+    ///
+    /// The timer travels back with the result because the outcome can only be
+    /// classified once the section returns. Dropping the guard here, before
+    /// the caller records, means a snapshot taken immediately afterwards does
+    /// not still count the wait as in flight. An unwind out of `block` drops
+    /// the guard too, so the gauge cannot stay stuck above zero.
+    pub(crate) fn run<T>(self, block: impl FnOnce() -> T) -> (T, WaitTimer) {
+        let result = block();
+        drop(self.guard);
+        (result, self.timer)
     }
 }
 

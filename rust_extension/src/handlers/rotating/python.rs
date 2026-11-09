@@ -16,7 +16,7 @@ use crate::{
         self, DEFAULT_CHANNEL_CAPACITY, EnqueueFailure, FlushOutcome, HandlerConfig,
         WorkerShutdown, classify_enqueue,
     },
-    handlers::telemetry::{WaitContext, WaitSite, WaitTimer},
+    handlers::telemetry::{WaitContext, WaitScope, WaitSite},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
 };
@@ -249,10 +249,8 @@ impl PyRotatingFileHandler {
         let record = FemtoLogRecord::new(logger, parsed_level, message);
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
-        let timer = WaitTimer::start();
-        let in_flight = self.inner.inner.diagnostics().begin_wait();
-        let result = py.detach(|| self.inner.inner.enqueue(record));
-        drop(in_flight);
+        let (result, timer) = WaitScope::start(self.inner.inner.diagnostics())
+            .run(|| py.detach(|| self.inner.inner.enqueue(record)));
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_handle", "rotating"),
@@ -290,10 +288,8 @@ impl PyRotatingFileHandler {
     /// run on the worker thread.
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        let timer = WaitTimer::start();
-        let in_flight = self.inner.inner.diagnostics().begin_wait();
-        let outcome = py.detach(|| self.inner.inner.flush_outcome());
-        drop(in_flight);
+        let (outcome, timer) = WaitScope::start(self.inner.inner.diagnostics())
+            .run(|| py.detach(|| self.inner.inner.flush_outcome()));
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_flush", "rotating"),
@@ -305,8 +301,14 @@ impl PyRotatingFileHandler {
     /// Return bounded counters for the Python-facing `handle()`, `flush()`,
     /// and `close()` waits.
     ///
-    /// The key set is fixed and never includes logger names, paths, messages,
-    /// or raw timeout values.
+    /// Returns
+    /// -------
+    /// dict
+    ///     A fixed key set: one counter per outcome, plus
+    ///     ``total_wait_micros``, ``max_wait_micros``, and the
+    ///     ``waits_in_flight`` gauge. Nothing here carries logger names,
+    ///     paths, messages, or raw timeout values, so the set stays bounded
+    ///     however much traffic the handler sees.
     ///
     /// Examples
     /// --------
@@ -334,7 +336,6 @@ impl PyRotatingFileHandler {
     /// ```
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let timer = WaitTimer::start();
         let (shutdown, diagnostics, policy_bucket) = {
             let handler = slf.borrow(py);
             let file_handler = &handler.inner.inner;
@@ -344,9 +345,8 @@ impl PyRotatingFileHandler {
                 file_handler.policy_bucket(),
             )
         };
-        let in_flight = diagnostics.begin_wait();
-        let outcome = py.detach(move || shutdown.wait());
-        drop(in_flight);
+        let (outcome, timer) =
+            WaitScope::start(&diagnostics).run(move || py.detach(move || shutdown.wait()));
         timer.finish(
             &diagnostics,
             WaitContext {

@@ -341,6 +341,8 @@ mod shutdown_paths_tests;
 mod telemetry_binding_tests;
 #[cfg(all(test, feature = "tracing-compat"))]
 mod telemetry_event_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_observation_tests;
 #[cfg(test)]
 mod telemetry_tests;
 #[cfg(test)]
