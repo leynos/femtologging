@@ -80,6 +80,28 @@ block and cannot be resolved from the project environment;
 `make lint-lanes-test` runs that script, and its examples, in the environment
 that can.
 
+### Documented examples
+
+User-facing documents mark each executable Python fence with
+`<!-- tested-example: <identifier> -->`. `tests/documented_examples.py` loads
+that fence from the published document, so a test executes the shipped text
+rather than a copy of it.
+`load_tested_python_example(document_path, identifier)` returns the fence body
+and raises `ValueError` when:
+
+- the identifier is not lowercase kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`);
+- the marker appears zero times or more than once in the document;
+- the marker is not immediately followed by a `python`-tagged fence;
+- the closing fence carries anything but trailing whitespace, which means the
+  match reached a language-tagged opening fence rather than the end of the
+  example.
+
+`tests/test_documented_examples.py` pins those constraints and runs the user
+guide's `flush-handlers-usage` example with `runpy`, then checks that the
+record it logs reached the file it flushes. The policy that every executable
+fence in a user-facing document carries a marker is in the
+[documentation style guide](documentation-style-guide.md).
+
 ## Typos spelling checker
 
 Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)
