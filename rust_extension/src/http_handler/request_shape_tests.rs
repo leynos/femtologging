@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -44,14 +44,20 @@ fn header_values<'a>(request: &'a CapturedRequest, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-/// Spawn a server that reads one request and never answers it.
+/// Spawn a server that runs `respond`, then holds the connection open.
 ///
 /// The stream is held until `release` is signalled, so the client waits inside
 /// its request rather than failing on a closed connection. The returned
-/// receiver yields once the request has been read.
-fn spawn_silent_server(
+/// receiver yields once `respond` has run. A `respond` error ends the thread
+/// without the signal, so a broken fixture fails the test rather than being
+/// mistaken for a client that stopped reading.
+fn spawn_held_server<F>(
     listener: TcpListener,
-) -> io::Result<(SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>)> {
+    respond: F,
+) -> io::Result<(SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>)>
+where
+    F: FnOnce(&mut TcpStream) -> io::Result<()> + Send + 'static,
+{
     let addr = listener.local_addr()?;
     let (read_tx, read_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -59,13 +65,24 @@ fn spawn_silent_server(
         let Ok((mut stream, _)) = listener.accept() else {
             return;
         };
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-        let mut sink = [0_u8; 1024];
-        let _ = stream.read(&mut sink);
+        if respond(&mut stream).is_err() {
+            return;
+        }
         let _ = read_tx.send(());
         let _ = release_rx.recv_timeout(Duration::from_secs(10));
     });
     Ok((addr, read_rx, release_tx))
+}
+
+/// Spawn a server that reads one request and never answers it.
+fn spawn_silent_server(
+    listener: TcpListener,
+) -> io::Result<(SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>)> {
+    spawn_held_server(listener, |stream| {
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let mut sink = [0_u8; 1024];
+        stream.read(&mut sink).map(|_| ())
+    })
 }
 
 /// Spawn a server that answers with a huge declared body and then stalls.
@@ -75,22 +92,10 @@ fn spawn_silent_server(
 fn spawn_stalled_body_server(
     listener: TcpListener,
 ) -> io::Result<(SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>)> {
-    let addr = listener.local_addr()?;
-    let (read_tx, read_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let Ok(_request) = read_http_request(&mut stream) else {
-            return;
-        };
-        let _ = stream
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n");
-        let _ = read_tx.send(());
-        let _ = release_rx.recv_timeout(Duration::from_secs(10));
-    });
-    Ok((addr, read_rx, release_tx))
+    spawn_held_server(listener, |stream| {
+        read_http_request(stream)?;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n")
+    })
 }
 
 /// Spawn a server that answers its one request with a redirect to `location`.
