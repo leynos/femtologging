@@ -94,3 +94,43 @@ fn a_later_closer_reports_a_panic_after_an_earlier_timeout() {
     );
     first_closer.join().expect("the first closer must finish");
 }
+
+/// A closer that sees completion with no recorded verdict reports `Unknown`.
+///
+/// The worker records its verdict before signalling completion, so this state
+/// should not arise in production. It is constructed here directly because the
+/// alternative is an untested fallback: a wrong mapping would silently count a
+/// clean exit as unknown, or drop the outcome entirely.
+#[test]
+fn a_closer_without_a_verdict_reports_unknown() {
+    let completion = crate::shutdown::ShutdownCompletion::new();
+    completion.complete();
+    let shutdown = WorkerShutdown::new(
+        None,
+        Arc::clone(&completion),
+        crate::shutdown::TerminalStatus::new(),
+    );
+
+    let outcome = shutdown.wait();
+    assert_eq!(
+        outcome,
+        ShutdownOutcome::Unknown,
+        "completion without a verdict must not be reported as a clean exit",
+    );
+
+    let diagnostics = WaitDiagnostics::new();
+    WaitTimer::start().finish(
+        &diagnostics,
+        WaitContext {
+            operation: "handler_close",
+            handler_kind: "file",
+            policy_bucket: "drop",
+        },
+        outcome.into(),
+    );
+    assert_eq!(
+        diagnostics.snapshot().count(WaitOutcome::CloseUnknown),
+        1,
+        "the unknown outcome must reach its own counter",
+    );
+}

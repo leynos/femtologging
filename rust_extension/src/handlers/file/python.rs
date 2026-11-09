@@ -74,7 +74,9 @@ impl FemtoFileHandler {
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
         let record = FemtoLogRecord::new(logger, parsed_level, message);
         let timer = WaitTimer::start();
+        let in_flight = self.diagnostics().begin_wait();
         let result = py.detach(|| self.enqueue(record));
+        drop(in_flight);
         self.record_wait(
             timer,
             WaitSite::new("handler_handle", "file"),
@@ -113,7 +115,9 @@ impl FemtoFileHandler {
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         let timer = WaitTimer::start();
+        let in_flight = self.diagnostics().begin_wait();
         let outcome = py.detach(|| self.flush_outcome());
+        drop(in_flight);
         self.record_wait(
             timer,
             WaitSite::new("handler_flush", "file"),
@@ -169,7 +173,9 @@ impl FemtoFileHandler {
                 handler.policy_bucket(),
             )
         };
+        let in_flight = diagnostics.begin_wait();
         let outcome = py.detach(move || shutdown.wait());
+        drop(in_flight);
         timer.finish(
             &diagnostics,
             WaitContext {

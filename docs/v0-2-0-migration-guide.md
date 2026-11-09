@@ -26,8 +26,11 @@ ______________________________________________________________________
 | Review if enabled  | `StdlibHandlerAdapter`          | Review handler levels and `contextvars`-dependent filters now that dispatch honours both.                                       |
 | Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                            |
 | Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                        |
+| Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting, or set `disable_existing_loggers=False`; an omitted logger is now disabled.          |
+| Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.          |
 | Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                  |
 | Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                     |
+| Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.        |
 
 _Table 1: Obligations when moving to v0.2.0._
 
@@ -390,6 +393,33 @@ The behaviour that stays the same is the one that makes this safe to adopt:
 For the full contract and the concurrency scenarios that pin it, see
 "Concurrency and the GIL for file handlers" in the user guide.
 
+### Observing the detached waits
+
+A wait that no longer holds the interpreter lock is also harder to see from
+outside a stack trace, so each of the three handlers now exposes bounded
+observability for it:
+
+- `handler.wait_diagnostics()` returns a dictionary with a fixed key set: one
+  counter per outcome for `handle()`, `flush()`, and `close()`, the duration
+  totals `total_wait_micros` and `max_wait_micros`, and the `waits_in_flight`
+  gauge, which is non-zero while a caller is still waiting. Reading it takes no
+  worker command and records no wait, so a monitoring loop cannot inflate the
+  numbers it reports. It never carries logger names, paths, messages, or raw
+  timeout values.
+- With the `tracing-compat` feature, each wait also emits one
+  `femtologging::internal` trace event carrying `operation`, `handler_kind`,
+  `policy_bucket`, `wait_outcome`, and `elapsed_us`. The `femtologging` tracing
+  bridge ignores that target, so enabling the events cannot feed wait outcomes
+  back into the logs being written.
+
+Both surfaces are additive: no existing signature changes, and nothing must be
+configured to keep the current logging behaviour. They exist so an operator can
+distinguish a dropped record from a slow worker, and a settled close from one
+that timed out, without inspecting the process. See "Handler wait diagnostics"
+in the [developers' guide](developers-guide.md#handler-wait-diagnostics) and
+"Concurrency and the GIL for file handlers" in the
+[users' guide](users-guide.md#concurrency-and-the-gil-for-file-handlers).
+
 ## Production wheels omit the timed-rotation test hooks
 
 The persistent `[tool.maturin]` feature set is now `["python"]` rather than
@@ -506,19 +536,33 @@ ______________________________________________________________________
 
 ## Migration checklist
 
-- [ ] Handle the fallible Rust logger constructors, and update callers that
-      used their results directly as a `FemtoLogger`.
-- [ ] Remove assignments to undeclared `BasicConfig` attributes.
-- [ ] Check dynamically built logger names against the shape and registry
-      limits.
-- [ ] Move handler state that relied on a per-logger thread to `contextvars`
-      or into the handler itself.
-- [ ] Review `StdlibHandlerAdapter` levels, filters, and formatters.
-- [ ] Move shared enrichment from logger filters to a filter on the shared
-      handler.
-- [ ] Add explicit synchronization where a file-handler call was relied on to
-      exclude other Python threads.
-- [ ] Optional: adopt `extra=` and the exception-payload limits.
+Each item carries the same obligation label as the matching row in
+[Table 1](#impact-at-a-glance).
+
+- [ ] **Required:** Handle the fallible Rust logger constructors, and update
+      callers that used their results directly as a `FemtoLogger`.
+- [ ] **Required if called:** Remove assignments to undeclared `BasicConfig`
+      attributes.
+- [ ] **Required if called:** Check dynamically built logger names against the
+      shape and registry limits.
+- [ ] **Review if enabled:** Move handler state that relied on a per-logger
+      thread to `contextvars` or into the handler itself.
+- [ ] **Review if enabled:** Review `StdlibHandlerAdapter` levels, filters, and
+      formatters.
+- [ ] **Review if enabled:** Move shared enrichment from logger filters to a
+      filter on the shared handler.
+- [ ] **Review if enabled:** Add explicit synchronization where a file-handler
+      call was relied on to exclude other Python threads.
+- [ ] **Review if enabled:** Name every logger that must keep emitting, or set
+      `disable_existing_loggers=False`, because an omitted logger is now
+      disabled.
+- [ ] **Review if enabled:** Call `flush()` before `close()` on socket and HTTP
+      handlers, and accept that a stalled worker drops queued records at the
+      single shutdown deadline.
+- [ ] **Optional:** Adopt `extra=` and the exception-payload limits.
+- [ ] **Optional:** Watch `wait_diagnostics()` and, where the crate is built
+      with `tracing-compat`, the `femtologging::internal` wait events to
+      diagnose blocked or dropped handler calls.
 
 ______________________________________________________________________
 

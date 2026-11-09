@@ -279,7 +279,9 @@ impl PyTimedRotatingFileHandler {
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
         let timer = WaitTimer::start();
+        let in_flight = self.inner.inner.diagnostics().begin_wait();
         let result = py.detach(|| self.inner.inner.enqueue(record));
+        drop(in_flight);
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_handle", "timed_rotating"),
@@ -297,7 +299,9 @@ impl PyTimedRotatingFileHandler {
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
         let timer = WaitTimer::start();
+        let in_flight = self.inner.inner.diagnostics().begin_wait();
         let outcome = py.detach(|| self.inner.inner.flush_outcome());
+        drop(in_flight);
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_flush", "timed_rotating"),
@@ -337,7 +341,9 @@ impl PyTimedRotatingFileHandler {
                 file_handler.policy_bucket(),
             )
         };
+        let in_flight = diagnostics.begin_wait();
         let outcome = py.detach(move || shutdown.wait());
+        drop(in_flight);
         timer.finish(
             &diagnostics,
             WaitContext {

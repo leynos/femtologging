@@ -46,11 +46,13 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
 
+    from tests.test_wait_diagnostics import Handler, HandlerBuilder
+
 
 #: Every builder funnels ``handle()`` into the same core enqueue, so all three
 #: must share one lifecycle contract. The rotating thresholds are pushed out of
 #: reach: rotation is not what these properties are about.
-_BUILDERS: dict[str, cabc.Callable[[str], typ.Any]] = {
+_BUILDERS: dict[str, cabc.Callable[[str], HandlerBuilder]] = {
     "file": FileHandlerBuilder,
     "rotating": lambda path: (
         RotatingFileHandlerBuilder(path).with_max_bytes(1 << 40).with_backup_count(1)
@@ -123,9 +125,15 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
         super().__init__()
         self._log_path = log_path
         self._builder_name = builder_name
-        self._handler: typ.Any = None
+        self._handler: Handler | None = None
         self._policy = ""
         self._closed = False
+
+    @property
+    def _active_handler(self) -> Handler:
+        """The handler ``init_handler`` built for this example."""
+        assert self._handler is not None, "init_handler must run before every rule"
+        return self._handler
 
     @stateful.initialize(
         policy=strategies.sampled_from(_POLICIES),
@@ -148,20 +156,30 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
     def handle(self, message: str) -> None:
         """Send one record, or observe that the handler refuses it."""
         if self._closed:
-            with pytest.raises(_ENQUEUE_ERRORS) as excinfo:
-                self._handler.handle("core", "INFO", message)
-            assert "closed" in str(excinfo.value), (
-                f"a closed handler must name the closure, got {excinfo.value!r}"
-            )
-            return
-        # An open handler may refuse the record only in the way its overflow
-        # policy documents: ``drop`` reports a full queue, ``timeout`` reports
-        # an expired deadline, and ``block`` waits instead of refusing. A
-        # disconnected worker or any other failure must fail the example. The
-        # refusal is captured rather than asserted inside the handler so the
-        # check stays a plain assertion instead of a ``pytest.raises`` call.
+            self._assert_closed_refusal(message)
+        else:
+            self._assert_open_outcome(message)
+
+    def _assert_closed_refusal(self, message: str) -> None:
+        """Check that a closed handler refuses the record and names the closure."""
+        with pytest.raises(_ENQUEUE_ERRORS) as excinfo:
+            self._active_handler.handle("core", "INFO", message)
+        assert "closed" in str(excinfo.value), (
+            f"a closed handler must name the closure, got {excinfo.value!r}"
+        )
+
+    def _assert_open_outcome(self, message: str) -> None:
+        """Check that an open handler accepts the record or refuses it as documented.
+
+        An open handler may refuse the record only in the way its overflow
+        policy documents: ``drop`` reports a full queue, ``timeout`` reports an
+        expired deadline, and ``block`` waits instead of refusing. A
+        disconnected worker or any other failure must fail the example. The
+        refusal is captured rather than asserted inside the handler so the
+        check stays a plain assertion instead of a ``pytest.raises`` call.
+        """
         try:
-            self._handler.handle("core", "INFO", message)
+            self._active_handler.handle("core", "INFO", message)
         except _ENQUEUE_ERRORS as err:
             refusal = err
         else:
@@ -176,7 +194,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
     @stateful.rule()
     def flush(self) -> None:
         """Flush the handler and check the result against its state."""
-        result = self._handler.flush()
+        result = self._active_handler.flush()
         if self._closed:
             assert result is False, (
                 f"flush() after close() must report False, got {result!r}"
@@ -192,7 +210,7 @@ class HandlerLifecycle(stateful.RuleBasedStateMachine):
         # ``close()`` returns ``None`` and waits at most one second for the
         # worker, so an unexpected raise fails the example rather than being
         # swallowed. The wait is bounded, so a stuck worker cannot hang the run.
-        self._handler.close()
+        self._active_handler.close()
         self._closed = True
 
     def teardown(self) -> None:

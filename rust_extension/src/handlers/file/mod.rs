@@ -338,6 +338,8 @@ mod scripted_writer;
 #[cfg(test)]
 mod shutdown_paths_tests;
 #[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_binding_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
 mod telemetry_event_tests;
 #[cfg(test)]
 mod telemetry_tests;

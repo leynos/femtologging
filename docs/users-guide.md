@@ -321,15 +321,29 @@ fields with safe defaults does not require a version bump.
 - Use `handler.flush()` and `handler.close()` to move queued records to disk,
   and check what `flush()` reports. `flush()` returns `True` only when the
   worker acknowledged the flush within its one-second timeout; a `False` result
-  means the records were not confirmed written. Always close the handler when
-  the application shuts down. `close()` is idempotent and safe to call multiple
+  means the records were not confirmed written. `True` confirms the flush
+  operation itself, not that every queued record was written or durably stored:
+  an individual record whose write failed is logged and skipped, and the worker
+  can still acknowledge a later flush. Always close the handler when the
+  application shuts down. `close()` is idempotent and safe to call multiple
   times; only the first call performs shutdown work, and every call waits on
   the same completion signal. That wait is bounded to one second: if the worker
   does not signal completion within that second, `close()` logs a warning and
   returns while the worker may still be running, so a timed-out close is not
-  confirmation that queued records have been written. Prefer calling `close()`
-  explicitly: the destructor performs the same shutdown, but it runs with the
-  interpreter lock held, so it cannot offer the GIL release described below.
+  confirmation that queued records have been written, and a second `close()`
+  that also times out does not confirm completion either. Prefer calling
+  `close()` explicitly: the destructor performs the same shutdown, but it runs
+  with the interpreter lock held, so it cannot offer the GIL release described
+  below.
+
+  On CPython 3.12 and earlier, a worker that is still running when the
+  interpreter starts finalizing can abort the whole process instead of failing
+  quietly. A worker that runs a Python-callable formatter attaches to the
+  interpreter to call it, and PyO3 only guards that attach during finalization
+  on CPython 3.13 and later. A timed-out `close()`, including a repeated one,
+  therefore leaves that window open. Restore worker progress first — do not
+  park the worker and exit — then confirm completion through
+  `wait_diagnostics()` before the process ends.
 - In Rust, `close()` takes `&self` and may be called concurrently on a shared
   handler, including while another thread flushes it. Every closer observes the
   same completion signal, and a closer that arrives after the worker has
@@ -338,9 +352,14 @@ fields with safe defaults does not require a version bump.
   returns without joining it.
 - `handler.wait_diagnostics()` returns counters for the Python-facing waits: one
   entry per outcome across `handle()`, `flush()`, and `close()`, plus
-  `total_wait_micros` and `max_wait_micros`. The key set is fixed and never
-  includes logger names, paths, messages, or raw timeout values. With the
-  `tracing-compat` feature the same outcomes are emitted as
+  `total_wait_micros`, `max_wait_micros`, and `waits_in_flight`. The last of
+  these is a gauge rather than a counter: it is non-zero while any thread is
+  still inside a wait, so a reader can tell an idle handler from one whose
+  caller is parked, and can see a `close()` that has not yet settled the
+  worker. The key set is fixed and never includes logger names, paths,
+  messages, or raw timeout values. Reading the diagnostics is itself cheap and
+  records nothing, so a monitoring loop cannot inflate the numbers it reports.
+  With the `tracing-compat` feature the same outcomes are emitted as
   `femtologging::internal` trace events; see
   [Handler wait diagnostics](developers-guide.md#handler-wait-diagnostics).
 - `FileHandlerBuilder` mirrors these options and also exposes

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import threading
+import time
 import typing as typ
 from contextlib import closing
 from pathlib import Path
@@ -72,8 +73,8 @@ class HandlerBuilder(typ.Protocol):
 
 
 #: The complete key set ``wait_diagnostics()`` exposes: one counter per
-#: outcome plus the two duration totals. Nothing here carries a logger name,
-#: path, message, or raw timeout value.
+#: outcome, the two duration totals, and the in-flight gauge. Nothing here
+#: carries a logger name, path, message, or raw timeout value.
 EXPECTED_KEYS = frozenset({
     "handle_accepted",
     "handle_queue_full",
@@ -93,6 +94,7 @@ EXPECTED_KEYS = frozenset({
     "close_unknown",
     "total_wait_micros",
     "max_wait_micros",
+    "waits_in_flight",
 })
 
 
@@ -155,9 +157,17 @@ def test_successful_operations_record_their_outcomes(
 
         handler.close()
         diagnostics = handler.wait_diagnostics()
+        assert diagnostics["close_completed"] == 1, (
+            f"the explicit close must be counted once: {diagnostics!r}"
+        )
 
-    assert diagnostics["close_completed"] == 1, (
-        f"a completed close must be counted once: {diagnostics!r}"
+    # ``closing`` issues a second close on exit. It shares the first close's
+    # completion signal, so it must return promptly and be counted too; reading
+    # the snapshot from inside the block would miss it.
+    diagnostics = handler.wait_diagnostics()
+    assert diagnostics["close_completed"] == 2, (
+        "the explicit close and the closing() exit must both be counted: "
+        f"{diagnostics!r}"
     )
     assert diagnostics["total_wait_micros"] >= diagnostics["max_wait_micros"] >= 0, (
         f"total wait time must bound the longest wait: {diagnostics!r}"
@@ -261,6 +271,105 @@ def test_queue_full_under_drop_policy_is_counted(
         )
         assert diagnostics["handle_queue_full"] == 1, (
             f"the dropped record must be counted as queue-full: {diagnostics!r}"
+        )
+    finally:
+        release_worker.set()
+        handler.close()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [_file_handler, _rotating_handler, _timed_rotating_handler],
+    ids=["file", "rotating", "timed_rotating"],
+)
+def test_repeated_reads_leave_the_counters_unchanged(
+    tmp_path: Path, factory: HandlerFactory
+) -> None:
+    """Reading the diagnostics repeatedly must not record a wait or move a counter.
+
+    ``wait_diagnostics()`` is an observation, not an operation: it takes no
+    worker command and emits no internal event, so a scrape loop cannot inflate
+    the numbers it reports.
+    """
+    with closing(factory(tmp_path / "out.log")) as handler:
+        handler.handle("core", "INFO", "one")
+        first = handler.wait_diagnostics()
+        repeated = [handler.wait_diagnostics() for _ in range(5)]
+
+    for snapshot in repeated:
+        assert snapshot == first, (
+            "a repeated read must report the same counters, got "
+            f"{snapshot!r} after {first!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    "builder_factory",
+    [_file_builder, _rotating_builder, _timed_rotating_builder],
+    ids=["file", "rotating", "timed_rotating"],
+)
+def test_a_blocked_handle_is_visible_as_in_flight(
+    tmp_path: Path,
+    builder_factory: cabc.Callable[[Path], HandlerBuilder],
+) -> None:
+    """A wait that is still blocked must be visible before it records an outcome.
+
+    The counters only move when a wait finishes, so without the gauge an
+    operator cannot tell a handler that is idle from one whose producer is
+    parked on a full queue.
+    """
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    def blocking_formatter(record: cabc.Mapping[str, object]) -> str:
+        """Signal the worker started, then block until the test releases it."""
+        worker_started.set()
+        release_worker.wait(timeout=5)
+        return f"{record['logger']} [{record['level']}] {record['message']}"
+
+    handler = (
+        builder_factory(tmp_path / "blocked.log")
+        .with_capacity(1)
+        .with_flush_after_records(10_000)
+        .with_overflow_policy(OverflowPolicy.block())
+        .with_formatter(blocking_formatter)
+        .build()
+    )
+    producer = threading.Thread(
+        target=handler.handle, args=("core", "INFO", "third"), daemon=True
+    )
+
+    try:
+        # The worker parks inside the formatter, the second record fills the
+        # queue, and the third call has nowhere to go until the worker moves.
+        handler.handle("core", "INFO", "first")
+        assert worker_started.wait(5), "the worker never reached the formatter"
+        handler.handle("core", "INFO", "second")
+        producer.start()
+
+        deadline = time.monotonic() + 5
+        while (
+            handler.wait_diagnostics()["waits_in_flight"] != 1
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+
+        diagnostics = handler.wait_diagnostics()
+        assert diagnostics["waits_in_flight"] == 1, (
+            f"a blocked handle must be visible in flight: {diagnostics!r}"
+        )
+        assert producer.is_alive(), "the producer must still be waiting for capacity"
+
+        release_worker.set()
+        producer.join(timeout=5)
+        assert not producer.is_alive(), "the released producer must finish"
+
+        diagnostics = handler.wait_diagnostics()
+        assert diagnostics["waits_in_flight"] == 0, (
+            f"a finished wait must leave the gauge: {diagnostics!r}"
+        )
+        assert diagnostics["handle_accepted"] == 3, (
+            f"every record must be accepted once the worker moves: {diagnostics!r}"
         )
     finally:
         release_worker.set()

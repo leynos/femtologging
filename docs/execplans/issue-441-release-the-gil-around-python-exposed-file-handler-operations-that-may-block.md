@@ -360,6 +360,23 @@ Reference or ADR is required.
       reports 100.0% with no MISSED rows. The full gate chain then passed on
       `eb9ffb47`: `make test` reported 1116 passed, 6 skipped, and 66 snapshots
       in about 39 minutes, with all four cargo lanes and pytest green.
+- [x] Split the wait-telemetry module along its three responsibilities because
+      Whitaker's `module-max-lines` lint rejected the 464-line file. `outcome`
+      owns the closed vocabulary, `diagnostics` owns the counters and the
+      snapshot, and `timer` owns the timing and the event contract, with the
+      unit tests in a fourth sibling. The file-handler event tests were split
+      the same way: `telemetry_event_tests` keeps the capture machinery and the
+      synthetic event-shape assertions, and `telemetry_binding_tests` holds the
+      five tests that drive the real Python `flush()`, `handle()`, and `close()`
+      bindings. Both suites share one collector so an event cannot be rendered
+      two ways.
+- [x] Fixed the later-close binding test, which asserted two events from one
+      subscriber scope. `tracing::subscriber::with_default` scopes capture, so
+      the second `close()` now runs under its own collector; the timeout stays
+      counted once and the completion is counted and emitted once.
+- [x] Refactored the lifecycle state machine's `handle` rule into
+      `_assert_closed_refusal` and `_assert_open_outcome`, removing the bare
+      `return` and pairing the closed and open checks.
 
 ## Negative control (evidence that the tests detect the defect)
 
@@ -819,15 +836,19 @@ child with
 `Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` /
 `Python runtime state: finalizing`.
 
-**Diagnosis.** The abort is in test scaffolding, not in the product. The
-close-during-close body parks the worker, starts a closer, then runs a second
-`close()` from the probing thread. That second close waits out the closer's
-one-second completion deadline. Only after both have returned does the epilogue
-release the worker, so the child reaches interpreter finalization with a
-detached worker that may still attach to call the Python formatter. CPython
-does not guard that window. The comment already in
-`tests/file_handler_gil_wait_scenarios.py` records the same hazard for its own
-close body.
+**Diagnosis.** The abort was observed in test scaffolding, but the hazard it
+exposes is in the product. The close-during-close body parks the worker, starts
+a closer, then runs a second `close()` from the probing thread. That second
+close waits out the closer's one-second completion deadline. Only after both
+have returned does the epilogue release the worker, so the child reaches
+interpreter finalization with a detached worker that may still attach to call
+the Python formatter. CPython does not guard that window. The scaffolding only
+made the window reachable on demand: any application that exits while a
+detached worker can still call a Python-callable formatter reaches the same
+window, and on CPython 3.12 and earlier the attach aborts the process. The
+comment already in `tests/file_handler_gil_wait_scenarios.py` records the same
+hazard for its own close body, and the user guide now documents it for
+applications.
 
 **Fix (`c5338464`).** `_CLOSE_EPILOGUE` now calls `handler.close()` after
 releasing the worker and joining the closer. The trailing close shares the same
@@ -1071,10 +1092,12 @@ commit implements that rather than deferring it.
 - `rust_extension/src/handlers/telemetry.rs` (new) defines `WaitOutcome`, a
   fixed set of sixteen outcomes: six for `handle`, six for `flush`, and four for
   `close`. Only the close group has `panicked` and `unknown` outcomes.
-  `WaitDiagnostics` holds sixteen relaxed `AtomicU64` counters plus a total and
-  a maximum wait duration. `WaitTimer` starts before `py.detach` and finishes
-  after it on the interpreter thread, so the recorded interval is the whole
-  wait, not just the enqueue or the acknowledgement.
+  `WaitDiagnostics` holds sixteen relaxed `AtomicU64` counters, a total and a
+  maximum wait duration, and an in-flight gauge. `WaitTimer` starts before
+  `py.detach` and finishes after it on the interpreter thread, so the recorded
+  interval is the whole wait, not just the enqueue or the acknowledgement. The
+  gauge is raised by `begin_wait()` before the detached section and lowered by a
+  `WaitGuard`'s `Drop`, so it also falls while a binding unwinds.
 - `rust_extension/src/handlers/file/wait_outcomes.rs` (new) owns the
   user-visible results the core used to hide behind `bool` and `()`:
   `FlushOutcome`, `ShutdownOutcome`, and `classify_enqueue`. `WorkerShutdown`
@@ -1095,11 +1118,13 @@ commit implements that rather than deferring it.
   the events need `tracing-compat`), the per-wait cost in each build, and how
   to read the counters: saturation and timeouts under `drop`/`timeout` mean
   producers outran the worker, `flush_failed` points at the device,
-  `close_timed_out` and `close_panicked` mean shutdown did not finish, and a
+  `close_timed_out` and `close_panicked` mean shutdown did not finish, a
   `max_wait_micros` close to `total_wait_micros` marks one slow wait rather
-  than sustained pressure. `docs/users-guide.md` describes the accessor from
-  the caller's side and names the `handler_kind` values for the rotating
-  classes.
+  than sustained pressure, and a non-zero `waits_in_flight` shows a caller
+  still parked. `docs/users-guide.md` describes the accessor from the caller's
+  side, names the `handler_kind` values for the rotating classes, and explains
+  the gauge. `docs/v0-2-0-migration-guide.md` records both the accessor and the
+  optional trace events as additive observability.
 - `femtologging/_femtologging_rs.pyi` declares `wait_diagnostics()` on both
   concrete rotating handler classes, so the structural `Handler` protocol in
   the new test file type-checks. `FemtoFileHandler` is already typed as `_Any`
@@ -1119,10 +1144,22 @@ commit implements that rather than deferring it.
 - `rust_extension/src/handlers/file/telemetry_event_tests.rs` (new), compiled
   only with `tracing-compat`, pins the event contract: one event per wait on the
   `femtologging::internal` target, exactly the five bounded fields, and
-  counters that still record when no subscriber is installed.
+  counters that still record when no subscriber is installed. It also drives
+  the real Python bindings, so `handle()`, `flush()`, and `close()` are checked
+  against a real timed-out enqueue, a real I/O failure, a real shutdown timeout
+  followed by a later completion, and a real worker panic rather than only
+  against synthetic outcomes.
+- `rust_extension/src/handlers/file/shutdown_paths_tests.rs` also constructs a
+  completion signalled before any verdict is stored, so the `Unknown` fallback
+  is asserted directly instead of being left as the one untested match arm.
 - `tests/test_wait_diagnostics.py` pins the exposed key set, the zeroed initial
-  state, successful outcomes, post-close outcomes, and a queue-full drop for
-  all three handler kinds.
+  state, successful outcomes, post-close outcomes, a queue-full drop, a
+  repeated read that changes nothing, and a block-policy wait observed as
+  in-flight for all three handler kinds.
+- `tests/test_file_handler.py` pins that a raising Python formatter does not
+  prevent `close()` from completing: the exception is printed on the worker and
+  replaced with a placeholder rather than propagated, and the handler still
+  shuts down and reports itself closed.
 
 Evidence on the candidate:
 `cargo check --no-default-features --features python`,
@@ -1254,6 +1291,41 @@ the lint experimental and ships only prunable libraries, so the rolling archive
 no longer contains `libstring_continuation_style.so`. The four failed
 `build-test` jobs on `d6526105` were rerun against it and all passed.
 
+## Commit gates on the split-telemetry candidate
+
+The telemetry module split, the binding-level event tests, and the review
+follow-ups ran as one sequential chain over `92ba7c28` plus the working-tree
+changes:
+
+| Gate                | Result                                          | Duration |
+| ------------------- | ----------------------------------------------- | -------- |
+| `make fmt`          | pass, no files rewritten                        | under 1m |
+| `make check-fmt`    | pass, 246 files already formatted               | under 1m |
+| `make markdownlint` | pass, 0 issues in 67 files                      | under 1m |
+| `make nixie`        | pass, all diagrams validated                    | under 1m |
+| `make lint`         | pass, 15 Rust lint lanes plus every Python tier | about 1h |
+| `make typecheck`    | pass, `All checks passed!`                      | about 6m |
+| `make test`         | pass, 1134 passed and 6 skipped                 | 2h 31m   |
+
+`make lint` ran all five Python stages: Ruff clean, `interrogate` at 100 %
+docstring coverage, Pylint 10.00/10 under both the managed PyPy 3.12 and the
+3.14 interpreter, `df12-python-lints` with `ambrleaks` clean, and the strict
+Skylos dead-code gate. It then ran all 15 Rust lint lanes: Clippy across the
+feature matrix with `-D warnings`, the test-support documentation contract
+tests, and the full Whitaker Dylint suite, which enforces the 400-line module
+limit that forced the telemetry split.
+
+`make test` ran the four cargo feature lanes and then pytest. All 76 test
+binaries reported `ok`, including every trybuild `compile_time_ui` case; the
+Python lane reported 728 passed, 0 failed, and 2 ignored. Pytest finished in
+342 s with 66 snapshots passed.
+
+Compile admission was healthy throughout, with all four slots held and long
+queues for most of both long gates. No gate failed on admission, and none was
+killed, retried, or duplicated to shorten a wait. The two long gates were
+launched detached in their own session and observed with bounded foreground
+tails, so the harness's two-hour background limit could not truncate them.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -1287,23 +1359,26 @@ no longer contains `libstring_continuation_style.so`. The four failed
 
 ## Follow-up work (audited, deliberately out of scope)
 
-Issue #441 is scoped to the **file** handlers. The same boundary gap exists on
-the other handler families, and the audit confirms it is real rather than
-theoretical:
+Issue #441 is scoped to the **file** handlers. The other handler families were
+audited when this plan was written and again after main's #549 landed; the
+current state of each Python binding is:
 
-- `rust_extension/src/http_handler/handler.rs` — `py_flush` detaches (the
-  precedent this change followed), but `py_handle` and `py_close` do not. A
-  flush timeout defaults to the handler's `write_timeout` (30 seconds), so a
-  `close()` there can hold the interpreter lock for half a minute.
-- `rust_extension/src/socket_handler/handler.rs` — `handle`, `flush` and
-  `close` all still run with the lock held.
-- `rust_extension/src/stream_handler.rs` — `handle` still runs with the lock
-  held; `flush()` and the blocking part of `close()` detach.
+- `rust_extension/src/http_handler/handler.rs` — `py_flush` and `py_close`
+  detach. `py_handle` stays attached, but it enqueues with `try_send`, so it
+  drops under pressure instead of waiting and has no lock-holding wait to
+  release.
+- `rust_extension/src/socket_handler/handler.rs` — the same: `py_flush` and
+  `py_close` detach, and `py_handle` uses `try_send` rather than a blocking
+  send.
+- `rust_extension/src/stream_handler.rs` — the same shape: `py_flush` and the
+  blocking part of `py_close` detach, and `py_handle` uses `try_send` rather
+  than a blocking send.
 
-They were left unchanged because the issue's acceptance criteria name the file
-handlers and the builder audit confirmed no builder work is needed; widening
-the change would make the diff harder to review and the regression evidence
-harder to scope. Tracking these as a separate issue is the right size.
+None of them were changed here because the issue's acceptance criteria name the
+file handlers and the builder audit confirmed no builder work is needed;
+widening the change would make the diff harder to review and the regression
+evidence harder to scope. After main's #549, no Python binding in those three
+families holds the lock across a wait, so no follow-up issue is needed for them.
 
 ## Superseded gate interruptions and outcomes
 

@@ -928,9 +928,18 @@ dictionary with a fixed key set: one counter per outcome (`handle_accepted`,
 `handle_failed`, `flush_acknowledged`, `flush_enqueue_timed_out`,
 `flush_ack_timed_out`, `flush_closed`, `flush_disconnected`, `flush_failed`,
 `close_completed`, `close_timed_out`, `close_panicked`, `close_unknown`) plus
-`total_wait_micros` and `max_wait_micros`. Counters use relaxed atomics: the
-handler path must not pay for cross-thread ordering, and a slightly stale
-snapshot is acceptable for periodic reporting.
+`total_wait_micros`, `max_wait_micros`, and `waits_in_flight`. Counters use
+relaxed atomics: the handler path must not pay for cross-thread ordering, and a
+slightly stale snapshot is acceptable for periodic reporting.
+
+`waits_in_flight` is a gauge rather than a counter. It rises before a wait
+detaches and falls again when that wait returns, so a reader can tell an idle
+handler from one whose producer is parked on a full queue or whose closer is
+still waiting for the worker. Every detached wait in all three bindings is
+bracketed by an RAII guard that decrements it, including an early return or a
+panic unwinding through the binding; a wait that never returns is exactly the
+state the gauge exists to expose. Because it is a gauge it does not accumulate:
+successive snapshots are comparable directly, unlike the outcome counters.
 
 With the `tracing-compat` feature enabled, each wait also emits a trace event
 targeting `femtologging::internal` with `operation` (`handler_handle`,
@@ -967,8 +976,11 @@ The counters are diagnostic signals, not error rates:
   which points at a worker that died rather than at a deliberate close.
 - `flush_failed` points at the file or filesystem. `flush_enqueue_timed_out`
   means the request never reached the worker because the queue was saturated;
-  `flush_ack_timed_out` means the worker accepted the request but did not
-  answer in time. Neither implies the records were lost.
+  `flush_ack_timed_out` means the queue accepted the request but the worker did
+  not answer in time. Acceptance by the queue is not acceptance by the worker:
+  the worker may still be formatting or writing an earlier record and may not
+  have read the flush command at all. Neither outcome implies the records were
+  lost.
 - `flush_closed` is an expected post-shutdown call; `flush_disconnected` again
   points at a worker that died.
 - `close_timed_out` means the worker did not signal completion within the
@@ -978,6 +990,11 @@ The counters are diagnostic signals, not error rates:
   but no verdict was recorded. A worker that installs its exit guard records a
   verdict before signalling completion, so this is the initial value and a
   defensive fallback rather than an expected outcome.
+- `waits_in_flight` above zero means a caller is still inside a wait: a
+  producer has not yet been accepted, a flush is still unacknowledged, or a
+  closer is still waiting. A gauge that stays at zero while latency rises means
+  the delay is upstream of the wait; one that stays above zero with no
+  `close_completed` after a `close()` identifies a worker that will not stop.
 - A `max_wait_micros` close to `total_wait_micros` with few operations
   suggests one slow wait rather than sustained pressure; the reverse suggests
   steady queueing.

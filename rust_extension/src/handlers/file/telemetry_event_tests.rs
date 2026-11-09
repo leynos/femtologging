@@ -4,12 +4,15 @@
 //! with it on, each recorded wait also emits one internal event. These tests
 //! pin that event's target and field set so instrumentation cannot start
 //! carrying unbounded or sensitive data.
+//!
+//! The capture machinery lives here because the shape assertions and the
+//! binding-level tests in [`super::telemetry_binding_tests`] both need it;
+//! keeping one collector avoids two subtly different renderings of the same
+//! event.
 
-use super::scripted_writer::{ScriptedWriter, handler_with};
 use super::*;
-use pyo3::{Py, Python};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
@@ -17,23 +20,23 @@ use tracing_subscriber::prelude::*;
 
 /// One captured internal event.
 #[derive(Clone, Debug)]
-struct CapturedEvent {
+pub(super) struct CapturedEvent {
     /// Event target, which decides whether the bridge ignores it.
-    target: String,
+    pub(super) target: String,
     /// Rendered field values keyed by field name.
-    fields: BTreeMap<String, String>,
+    pub(super) fields: BTreeMap<String, String>,
 }
 
 /// Collects every event emitted on the current thread.
 #[derive(Clone, Default)]
-struct EventCollector {
+pub(super) struct EventCollector {
     /// Captured events retained for assertions.
     events: Arc<Mutex<Vec<CapturedEvent>>>,
 }
 
 impl EventCollector {
     /// Return the captured events, failing loudly on a poisoned mutex.
-    fn captured(&self) -> Vec<CapturedEvent> {
+    pub(super) fn captured(&self) -> Vec<CapturedEvent> {
         self.events
             .lock()
             .expect("event collector must not be poisoned")
@@ -143,56 +146,6 @@ fn the_event_fields_are_bounded() {
         ]),
         "the event must not carry logger names, paths, messages, or raw timeouts",
     );
-}
-
-/// The Python `flush()` binding records a real acknowledgement timeout.
-///
-/// `capture_one_wait` pins the event shape from a synthetic outcome. This test
-/// calls the binding Python actually invokes, so the handler's real
-/// `flush_outcome()` and the binding's counter and event recording are
-/// exercised together. A regression between the worker and the binding fails
-/// here rather than only in the synthetic case.
-#[test]
-fn the_python_flush_binding_records_a_real_ack_timeout() {
-    let (entered_tx, _entered_rx) = mpsc::channel();
-    let writer = ScriptedWriter::blocking(entered_tx);
-    let handler = handler_with(writer.clone(), OverflowPolicy::Block);
-    let diagnostics = Arc::clone(handler.diagnostics());
-
-    let collector = EventCollector::default();
-    let subscriber = tracing_subscriber::registry().with(collector.clone());
-    let (acknowledged, handler) = tracing::subscriber::with_default(subscriber, || {
-        Python::attach(|py| {
-            let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
-            let acknowledged: bool = handler
-                .call_method0(py, "flush")
-                .expect("flush must not raise")
-                .extract(py)
-                .expect("flush must return a bool");
-            (acknowledged, handler)
-        })
-    });
-
-    assert!(
-        !acknowledged,
-        "a worker that never acknowledges must make flush() return False",
-    );
-    assert_eq!(
-        diagnostics.snapshot().count(WaitOutcome::FlushAckTimedOut),
-        1,
-        "the binding must record the real ack timeout exactly once",
-    );
-    let events = collector.captured();
-    assert_eq!(events.len(), 1, "one wait must emit one event: {events:?}");
-    assert_eq!(events[0].fields["operation"], "handler_flush");
-    assert_eq!(events[0].fields["wait_outcome"], "flush_ack_timed_out");
-
-    writer.release();
-    Python::attach(|py| {
-        handler
-            .call_method0(py, "close")
-            .expect("close must not raise");
-    });
 }
 
 /// The counters still record when no subscriber is installed.
