@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] contract tests run the real target
 import sys
@@ -29,11 +30,20 @@ type Tokens = tuple[str, ...]
 #: the real Make run; see issue #537 and the debugging plan of 2026-09-08.
 MAKE_TIMEOUT_SECONDS: typ.Final = 120
 
-#: The fake Cargo. It records every argument vector as one JSON array per line,
-#: derives the lane from the driver's own flags, and rejects at most the lane
-#: named by `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's failed compile
-#: so the driver has a real failure to propagate.
-_FAKE_CARGO_SCRIPT: typ.Final = f"""#!{sys.executable}
+#: The `cargo` executable. A shell launcher names the interpreter instead of a
+#: `#!` line doing so, because a deep virtualenv path can outgrow the kernel's
+#: shebang limit and the fake would then fail before recording anything. The
+#: quoted interpreter path keeps this working when it contains spaces.
+_FAKE_CARGO_LAUNCHER: typ.Final = f"""#!/bin/sh
+exec {shlex.quote(sys.executable)} "$(dirname "$0")/cargo_runner.py" "$@"
+"""
+
+#: The fake Cargo program. It records every argument vector as one JSON array
+#: per line, derives the lane from the driver's own flags, and rejects at most
+#: the lane named by `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's failed
+#: compile so the driver has a real failure to propagate.
+_FAKE_CARGO_RUNNER: typ.Final = """# Recording Cargo stand-in; see
+# tests/env_policy_lane_support.py for the contract it serves.
 import json
 import os
 import sys
@@ -70,8 +80,11 @@ def write_fake_cargo(directory: Path) -> FakeCargo:
     """
     binary_directory = directory / "bin"
     binary_directory.mkdir()
+    (binary_directory / "cargo_runner.py").write_text(
+        _FAKE_CARGO_RUNNER, encoding="utf-8"
+    )
     executable = binary_directory / "cargo"
-    executable.write_text(_FAKE_CARGO_SCRIPT, encoding="utf-8")
+    executable.write_text(_FAKE_CARGO_LAUNCHER, encoding="utf-8")
     executable.chmod(0o755)
     return FakeCargo(directory=binary_directory, log=directory / "cargo-calls.jsonl")
 
