@@ -50,3 +50,5 @@ mod tls_tests;
 
 pub use config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
 pub use handler::FemtoHTTPHandler;
+
+pub(crate) use transport::validate_request_headers;

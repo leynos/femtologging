@@ -12,6 +12,7 @@ use pyo3::{Bound, prelude::*, types::PyDict};
 
 use crate::http_handler::{
     AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
+    validate_request_headers,
 };
 
 #[cfg(feature = "python")]
@@ -265,6 +266,11 @@ impl HTTPHandlerBuilder {
             warn_interval: defaults.warn_interval,
         };
 
+        // ureq 3 rejects header names and values that ureq 2 wrote to the wire
+        // verbatim. Without this check an unencodable header would fail every
+        // attempt at send time and retry each record until the backoff
+        // deadline, so reject the configuration once, before a worker starts.
+        validate_request_headers(&config).map_err(HandlerBuildError::InvalidConfig)?;
         self.backoff.apply(&mut config.backoff)?;
         Ok(config)
     }

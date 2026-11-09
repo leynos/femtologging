@@ -148,9 +148,9 @@ fn apply_headers<Any>(
 /// permanent verdict. ureq 3 validates header names and values that ureq 2
 /// wrote to the wire verbatim, so this failure is new; reporting it as a
 /// transport error keeps the worker's retry policy, which this migration must
-/// not change. A caller that configures an unencodable header therefore pays
-/// the ordinary retry deadline before the record is dropped, exactly as it
-/// would for any other request that never succeeds.
+/// not change. [`validate_request_headers`] catches the same rejection for a
+/// handler built through `HTTPHandlerBuilder`, so only a handler constructed
+/// directly from [`HTTPHandlerConfig`] can reach this path at send time.
 fn resolve_headers(config: &HTTPHandlerConfig) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     if let Some(value) = auth_header_value(&config.auth)? {
@@ -170,6 +170,18 @@ fn resolve_headers(config: &HTTPHandlerConfig) -> Result<HeaderMap, String> {
         );
     }
     Ok(headers)
+}
+
+/// Reject a configuration whose headers or credentials cannot be encoded.
+///
+/// ureq 3 validates header names and values that ureq 2 wrote to the wire
+/// verbatim, so a handler built with an unencodable header would otherwise
+/// fail every attempt at send time and retry each record until the backoff
+/// deadline. `HTTPHandlerBuilder` calls this before it spawns a worker, so the
+/// defect is reported once, as a configuration error, instead. The error never
+/// includes a header value, because one of them is a credential.
+pub(crate) fn validate_request_headers(config: &HTTPHandlerConfig) -> Result<(), String> {
+    resolve_headers(config).map(|_| ())
 }
 
 /// Render the configured authentication as an `Authorization` value.

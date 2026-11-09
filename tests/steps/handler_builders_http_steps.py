@@ -75,6 +75,17 @@ def when_set_http_write_timeout(
     return http_builder.with_write_timeout_ms(timeout)
 
 
+@when(
+    parsers.parse('I set HTTP header "{name}" with value "{value}"'),
+    target_fixture="http_builder",
+)
+def when_set_http_header(
+    http_builder: HTTPHandlerBuilder, name: str, value: str
+) -> HTTPHandlerBuilder:
+    """Add one custom header to the current HTTP builder."""
+    return http_builder.with_headers({name: value})
+
+
 @when("I enable JSON format", target_fixture="http_builder")
 def when_enable_json_format(http_builder: HTTPHandlerBuilder) -> HTTPHandlerBuilder:
     """Configure the current HTTP builder to emit JSON records."""
@@ -254,6 +265,15 @@ def then_http_builder_fields_snapshot(
 def then_http_builder_fails(http_builder: HTTPHandlerBuilder, message: str) -> None:
     """Verify that building the HTTP handler raises the expected error."""
     with pytest.raises(HandlerConfigError, match=re.escape(message)):
+        http_builder.build()
+
+
+@then(parsers.parse('building the HTTP handler fails mentioning "{fragment}"'))
+def then_http_builder_fails_mentioning(
+    http_builder: HTTPHandlerBuilder, fragment: str
+) -> None:
+    """Verify that building the handler raises an error containing ``fragment``."""
+    with pytest.raises(HandlerConfigError, match=re.escape(fragment)):
         http_builder.build()
 
 
