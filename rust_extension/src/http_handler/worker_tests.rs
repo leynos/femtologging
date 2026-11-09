@@ -1,8 +1,7 @@
-//! Unit tests for the HTTP worker's own helpers.
+//! Unit tests for the HTTP worker's shutdown and drop accounting.
 //!
 //! Response classification has its own file, `response_classification_tests.rs`,
-//! and request decoration has `request_auth_tests.rs`; neither is repeated
-//! here. What is left is the worker's shutdown and queue behaviour.
+//! and request construction has `transport_tests.rs`; neither is repeated here.
 
 use super::*;
 use std::{

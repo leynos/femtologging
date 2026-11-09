@@ -29,9 +29,9 @@ mod filtered;
 mod handler;
 mod queue;
 mod record;
-mod request_auth;
 mod response;
 mod serialize;
+mod transport;
 // The bridges suspend this marker as well as the worker setting it, so the
 // module is crate-visible even though it belongs to the HTTP adapter.
 pub(crate) mod transport_origin;
@@ -40,6 +40,8 @@ mod worker;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tls_tests;
 
 pub use config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
 pub use handler::FemtoHTTPHandler;

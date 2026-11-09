@@ -29,7 +29,7 @@ use std::{io, sync::Arc, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
-use ureq::{Agent, AgentBuilder};
+use ureq::{Agent, tls::RootCerts};
 
 use crate::{
     log_record::FemtoLogRecord,
@@ -40,11 +40,11 @@ use crate::{
 };
 
 use super::{
-    config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
-    request_auth::{apply_auth, apply_headers},
-    response::{ResponseClass, classify_status},
+    response::ResponseClass,
     serialize::{serialize_json, serialize_url_encoded},
+    transport::{build_agent, execute},
     transport_origin::enter_http_transport,
 };
 
@@ -103,10 +103,11 @@ struct Worker {
 impl Worker {
     /// Create a worker; it starts with the configured HTTP timeouts.
     fn new(config: HTTPHandlerConfig, signal: Arc<ShutdownSignal>) -> Self {
-        let agent = AgentBuilder::new()
-            .timeout_connect(config.connect_timeout)
-            .timeout(config.write_timeout)
-            .build();
+        let agent = build_agent(
+            config.connect_timeout,
+            config.write_timeout,
+            RootCerts::PlatformVerifier,
+        );
         let backoff = BackoffState::new(config.backoff.clone());
         let warner = RateLimitedWarner::new(config.warn_interval);
         Self {
@@ -192,64 +193,16 @@ impl Worker {
             return Some(self.agent.clone());
         }
         let budget = self.signal.remaining()?;
-        Some(
-            AgentBuilder::new()
-                .timeout_connect(budget.min(self.config.connect_timeout))
-                .timeout(budget)
-                .build(),
-        )
+        Some(build_agent(
+            budget.min(self.config.connect_timeout),
+            budget,
+            RootCerts::PlatformVerifier,
+        ))
     }
 
     /// Execute one request; HTTP 503 is classified as retryable.
     fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
-        // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
-        let request = match self.config.method {
-            HTTPMethod::GET => self.build_get_request(payload, agent),
-            HTTPMethod::POST => self.build_post_request(payload, agent),
-        };
-
-        match request {
-            Ok(response) => Ok(classify_status(response.status())),
-            Err(err) => match *err {
-                ureq::Error::Status(code, _) => Ok(classify_status(code)),
-                ureq::Error::Transport(transport_err) => Err(transport_err.to_string()),
-            },
-        }
-    }
-
-    /// Build a GET request; the payload follows any existing query data.
-    fn build_get_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let url = if self.config.url.contains('?') {
-            format!("{}&{}", self.config.url, payload)
-        } else {
-            format!("{}?{}", self.config.url, payload)
-        };
-        let mut req = agent.get(&url);
-        req = apply_auth(&self.config, req);
-        req = apply_headers(&self.config, req);
-        req.call().map_err(Box::new)
-    }
-
-    /// Build a POST request; JSON format sends an `application/json` body.
-    fn build_post_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let mut req = agent.post(&self.config.url);
-        req = apply_auth(&self.config, req);
-        req = apply_headers(&self.config, req);
-
-        let content_type = match self.config.format {
-            SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
-            SerializationFormat::Json => "application/json",
-        };
-        req = req.set("Content-Type", content_type);
-        req.send_string(payload).map_err(Box::new)
+        execute(&self.config, agent, payload)
     }
 
     /// Logs a retryable failure, then says whether this record gets another
