@@ -35,6 +35,10 @@ pub(crate) const MAX_VALUE_BYTES: usize = 1024;
 /// Maximum combined key/value byte length of a merged context.
 pub(crate) const MAX_TOTAL_BYTES: usize = 16 * 1024;
 
+mod reserved;
+
+pub(crate) use reserved::is_reserved_structured_key;
+
 thread_local! {
     static CONTEXT_STACK: RefCell<Vec<ContextFrame>> = const {
         RefCell::new(Vec::new())
@@ -75,6 +79,12 @@ pub(crate) enum ContextValidationError {
         /// Maximum permitted UTF-8 byte length.
         max: usize,
     },
+    /// A key collides with a reserved record or metadata field name.
+    #[error("context key '{key}' is reserved and cannot be used for structured fields")]
+    ReservedKey {
+        /// The reserved key that was supplied.
+        key: String,
+    },
     /// A value exceeds the per-value UTF-8 byte limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
     ValueTooLong {
@@ -105,6 +115,7 @@ impl ContextValidationError {
                 len,
                 max,
             },
+            Self::ReservedKey { key } => LogContextError::ReservedKey { key },
             Self::ValueTooLong { key, len, max } => LogContextError::ValueTooLong { key, len, max },
             Self::TotalBytesExceeded { total, max } => {
                 LogContextError::TotalBytesExceeded { total, max }
@@ -135,6 +146,11 @@ impl ContextBudget {
             return Err(ContextValidationError::KeyTooLong {
                 len: key_len,
                 max: MAX_KEY_BYTES,
+            });
+        }
+        if is_reserved_structured_key(key) {
+            return Err(ContextValidationError::ReservedKey {
+                key: key.to_owned(),
             });
         }
 

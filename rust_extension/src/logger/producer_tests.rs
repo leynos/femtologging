@@ -162,6 +162,34 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
 }
 
 #[rstest]
+fn log_with_metadata_drops_reserved_key_values_and_counts_them() {
+    let (collecting_handler, signalling_handler, _record_rx) =
+        SignallingCollectingHandler::with_signal();
+    let logger =
+        FemtoLogger::new("producer".to_string()).expect("test logger should be constructible");
+    logger
+        .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
+    let metadata = RecordMetadata {
+        key_values: BTreeMap::from([(String::from("levelname"), String::from("CRITICAL"))]),
+        ..RecordMetadata::default()
+    };
+
+    let result = logger.log_with_metadata(FemtoLevel::Info, "hello", metadata);
+
+    assert_eq!(result, None, "invalid metadata must not produce a record");
+    assert_eq!(
+        logger.get_context_dropped(),
+        1,
+        "the dropped record must be counted"
+    );
+    assert!(
+        collecting_handler.collected().is_empty(),
+        "no record should reach a handler"
+    );
+}
+
+#[rstest]
 fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();

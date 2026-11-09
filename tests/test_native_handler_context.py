@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import http.server
+import json
 import queue
 import threading
 import time
@@ -25,10 +25,10 @@ from femtologging import (
     log_context,
     reset_manager,
 )
+from tests.http_context_support import RecordingHTTPServer
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    import socket
     from pathlib import Path
 
 _CONTEXT_OUTPUT = "correlation_id=abc123"
@@ -47,6 +47,15 @@ def _emit_contextual_record(logger: FemtoLogger, handler: FemtoHandler) -> None:
     logger.add_handler(handler)
     with log_context(correlation_id="abc123"):
         logger.info("native handler context")
+
+
+def _emit_with_reserved_context(logger: FemtoLogger, route: str) -> None:
+    """Emit one record whose reserved field must fail admission."""
+    if route == "extra":
+        logger.info("rejected", extra={"levelname": "CRITICAL"})
+    else:
+        with log_context(name="spoofed"):
+            logger.info("rejected")
 
 
 def _flush_after_delivery(logger: FemtoLogger, handler: FemtoHandler) -> None:
@@ -143,54 +152,9 @@ def test_python_registered_file_handlers_preserve_context(
     _assert_file_handler_context(path, handler, logger_name)
 
 
-class _HTTPContextCaptureHandler(http.server.BaseHTTPRequestHandler):
-    """Capture the body posted by the HTTP handler under test."""
-
-    def do_POST(self) -> None:
-        """Store the request body and acknowledge the handler delivery."""
-        size = int(self.headers["Content-Length"])
-        payload = self.rfile.read(size)
-        server = typ.cast("_RecordingHTTPServer", self.server)
-        self.send_response(200)
-        self.send_header("Content-Length", "0")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.close_connection = True
-        server.payloads.put(payload)
-
-    def log_message(
-        self,
-        format: str,  # ruff: ignore[builtin-argument-shadowing] stdlib override requires the parameter name
-        *arguments: object,
-    ) -> None:
-        """Suppress expected local-server request logging during this test."""
-        _ = (format, arguments)
-
-
-class _RecordingHTTPServer(http.server.ThreadingHTTPServer):
-    """Threading HTTP server that queues native-handler request bodies."""
-
-    allow_reuse_address = True
-
-    def __init__(self) -> None:
-        """Bind a loopback server with a payload queue and completion event."""
-        super().__init__(("127.0.0.1", 0), _HTTPContextCaptureHandler)
-        self.payloads: queue.Queue[bytes] = queue.Queue()
-        self.request_completed = threading.Event()
-
-    def process_request_thread(
-        self,
-        request: socket.socket | tuple[bytes, socket.socket],
-        client_address: object,
-    ) -> None:
-        """Signal after request handling and socket shutdown complete."""
-        super().process_request_thread(request, client_address)
-        self.request_completed.set()
-
-
 def test_python_registered_http_handler_preserves_context() -> None:
     """A Python-registered HTTP handler must serialize scoped context."""
-    with _RecordingHTTPServer() as server:
+    with RecordingHTTPServer() as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         host, port = server.server_address[:2]
@@ -217,6 +181,136 @@ def test_python_registered_http_handler_preserves_context() -> None:
             assert not thread.is_alive(), "the HTTP server thread did not stop"
 
 
+def test_http_json_keeps_custom_fields_at_top_level() -> None:
+    """JSON output keeps legitimate custom fields flat and string-valued."""
+    with RecordingHTTPServer() as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address[:2]
+        handler = (
+            HTTPHandlerBuilder()
+            .with_endpoint(f"http://{host}:{port}/records", "POST")
+            .with_json_format()
+            .build()
+        )
+        logger = FemtoLogger("native.context.http.json")
+        try:
+            logger.set_level("INFO")
+            logger.add_handler(handler)
+            logger.info(
+                "json context",
+                extra={"correlation_id": "abc123", "attempt": 2},
+            )
+            payload = json.loads(server.payloads.get(timeout=2))
+            assert payload["correlation_id"] == "abc123", (
+                "custom fields should round-trip at the top level"
+            )
+            assert isinstance(payload["correlation_id"], str), (
+                "custom JSON fields must remain string-valued"
+            )
+            assert payload["attempt"] == "2", (
+                "non-string scalars should be stringified before serialization"
+            )
+            assert payload["name"] == "native.context.http.json", (
+                "authoritative name must not be replaced by metadata"
+            )
+            assert payload["levelname"] == "INFO", (
+                "authoritative levelname must be reported"
+            )
+            assert payload["msg"] == "json context", (
+                "authoritative msg must be reported"
+            )
+            assert server.request_completed.wait(timeout=2), (
+                "HTTP request handler did not complete its response lifecycle"
+            )
+            _flush_after_delivery(logger, handler)
+        finally:
+            handler.close()
+            logger.clear_handlers()
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive(), "the HTTP server thread did not stop"
+
+
+def test_http_record_fields_project_custom_fields_at_top_level() -> None:
+    """``with_record_fields`` selects custom fields by their top-level wire name."""
+    with RecordingHTTPServer() as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address[:2]
+        handler = (
+            HTTPHandlerBuilder()
+            .with_endpoint(f"http://{host}:{port}/records", "POST")
+            .with_json_format()
+            .with_record_fields(["name", "correlation_id"])
+            .build()
+        )
+        logger = FemtoLogger("native.context.http.projected")
+        try:
+            logger.set_level("INFO")
+            logger.add_handler(handler)
+            logger.info(
+                "projected context",
+                extra={"correlation_id": "abc123", "attempt": 2},
+            )
+            payload = json.loads(server.payloads.get(timeout=2))
+            assert set(payload) == {"name", "correlation_id"}, (
+                "record_fields should emit exactly the requested fields"
+            )
+            assert payload["name"] == "native.context.http.projected", (
+                "the requested built-in name should be projected"
+            )
+            assert payload["correlation_id"] == "abc123", (
+                "the requested custom field should be projected by wire name"
+            )
+            assert server.request_completed.wait(timeout=2), (
+                "HTTP request handler did not complete its response lifecycle"
+            )
+            _flush_after_delivery(logger, handler)
+        finally:
+            handler.close()
+            logger.clear_handlers()
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive(), "the HTTP server thread did not stop"
+
+
+@pytest.mark.parametrize("route", ["extra", "log_context"])
+def test_reserved_context_is_rejected_before_http_delivery(*, route: str) -> None:
+    """Reserved fields fail admission and never reach the HTTP endpoint."""
+    with RecordingHTTPServer() as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address[:2]
+        handler = (
+            HTTPHandlerBuilder()
+            .with_endpoint(f"http://{host}:{port}/records", "POST")
+            .build()
+        )
+        logger = FemtoLogger(f"native.context.http.reject.{route}")
+        try:
+            logger.set_level("INFO")
+            logger.add_handler(handler)
+            with pytest.raises(ValueError, match="reserved"):
+                _emit_with_reserved_context(logger, route)
+            logger.info("sentinel")
+            payload = server.payloads.get(timeout=2)
+            assert b"sentinel" in payload, "the queued sentinel record should arrive"
+            assert server.payloads.empty(), (
+                "a rejected record must not reach the HTTP endpoint"
+            )
+            assert server.request_completed.wait(timeout=2), (
+                "HTTP request handler did not complete its response lifecycle"
+            )
+            _flush_after_delivery(logger, handler)
+        finally:
+            handler.close()
+            logger.clear_handlers()
+            server.shutdown()
+            thread.join(timeout=1)
+            assert not thread.is_alive(), "the HTTP server thread did not stop"
+
+
 def test_configured_http_handler_filters_propagated_records() -> None:
     """A configured HTTP filter suppresses rejected child-logger records."""
     reset_manager()
@@ -229,7 +323,7 @@ def test_configured_http_handler_filters_propagated_records() -> None:
         attributes["correlation_id"] = "REQ-99"
         return True
 
-    with _RecordingHTTPServer() as server:
+    with RecordingHTTPServer() as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         host, port = server.server_address[:2]

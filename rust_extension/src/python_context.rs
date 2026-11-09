@@ -166,6 +166,27 @@ mod tests {
         });
     }
 
+    /// Reject keys that collide with built-in record or metadata fields.
+    #[test]
+    fn extraction_rejects_reserved_keys() {
+        Python::attach(|py| {
+            let context = PyDict::new(py);
+            for key in ["name", "levelname", "message", "metadata", "key_values"] {
+                context.clear();
+                context
+                    .set_item(key, "value")
+                    .expect("context item should be set");
+                let error = extract_python_context_map(context.as_any())
+                    .expect_err("reserved key should be rejected");
+                assert!(error.is_instance_of::<PyValueError>(py));
+                assert!(
+                    error.to_string().contains("reserved"),
+                    "error should mention the reserved-name rule: {error}"
+                );
+            }
+        });
+    }
+
     /// Reject subclasses of the supported numeric scalar types.
     #[test]
     fn extraction_rejects_numeric_subclasses() {
