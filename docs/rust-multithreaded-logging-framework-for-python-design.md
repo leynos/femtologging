@@ -1315,12 +1315,15 @@ express an absolute deadline.
 
 **flush() Behaviour:**
 
-`FemtoLogger.flush_handlers()` is a per-logger delivery barrier. It queues a
+`FemtoLogger.flush_handlers()` is a per-logger processing barrier. It queues a
 marker behind that logger's in-flight records, waits for the worker to
-acknowledge it, then invokes each attached handler's flush mechanism. A logger
-with no work in flight skips the marker and does not wait for unrelated shard
-work. Its Python wrapper releases the GIL across the blocking wait so Python
-handlers can run.
+acknowledge it, then invokes each attached handler's flush mechanism. The
+barrier reports that the queued records were offered to their handlers, not
+that every handler accepted them: a handler that rejects a record is logged and
+the worker carries on, so the barrier can still be acknowledged and the method
+still return `True`. A logger with no work in flight skips the marker and does
+not wait for unrelated shard work. Its Python wrapper releases the GIL across
+the blocking wait so Python handlers can run.
 
 Enqueueing the flush marker and waiting for its acknowledgement share a
 two-second timeout. Flushing attached handlers can take additional time. The
@@ -1331,8 +1334,9 @@ fails or a handler flush fails.
 `flush_configured_handlers()` copies the handler list under the read guard,
 releases the guard, and then calls `flush()` on every entry. A failing handler
 does not short-circuit the loop: later handlers are still flushed, and the
-method returns the conjunction of the individual results. Both the collected
-list and the per-handler result are therefore independent of attachment order.
+method returns the conjunction of the individual results. The snapshot
+preserves attachment order, and because one handler's `flush()` can change
+state a later handler observes, the aggregate result can depend on that order.
 
 For `log::Log::flush`, `FemtoLogAdapter` snapshots the registered logger
 references under the `MANAGER` read guard, releases the guard, then detaches
@@ -1342,10 +1346,13 @@ honour the trait's `()` return contract.
 
 Handler flushes use each handler's own mechanism:
 
-- **Best-effort guarantee:** `flush()` invokes every attached handler, even
-  after one reports failure, and does not apply a second global timeout after
-  the logger barrier. Each handler has its own configurable flush timeout
-  (defaulting to the handler's write timeout).
+- **Best-effort guarantee:** Once the barrier succeeds, `flush()` invokes every
+  attached handler, even after one reports failure, and does not apply a second
+  global timeout after the logger barrier. If the barrier times out or its
+  queue has closed, no handler flush is attempted. A native handler's flush is
+  bounded by its own configurable timeout (defaulting to the handler's write
+  timeout); a custom Python handler's `flush()` runs directly and may block
+  indefinitely, because the two-second barrier timeout does not bound it.
 - **Buffered handlers:** Handlers using `BufWriter` (e.g., `FemtoFileHandler`,
   `FemtoRotatingFileHandler`) flush their internal buffers to the underlying
   file descriptor.
@@ -1360,7 +1367,8 @@ Handler flushes use each handler's own mechanism:
 - **Interaction with producer-consumer:** The logger barrier drains records
   queued ahead of its marker on the shard. Because the marker uses the same
   queue as those records, the worker processes them before acknowledging the
-  barrier and flushing the attached handlers.
+  barrier; the detached caller then flushes the attached handlers once it
+  observes that acknowledgement.
 
 ```mermaid
 classDiagram
