@@ -21,7 +21,7 @@ import pytest
 import yaml
 
 ROOT: typ.Final[Path] = Path(__file__).resolve().parents[1]
-MAKE_FETCH: typ.Final[str] = "cargo fetch --locked --manifest-path $(RUST_MANIFEST)"
+MAKE_FETCH: typ.Final[str] = "$(CARGO) fetch --locked --manifest-path $(RUST_MANIFEST)"
 WORKFLOW_FETCH: typ.Final[str] = (
     "cargo fetch --locked --manifest-path rust_extension/Cargo.toml"
 )
@@ -29,7 +29,7 @@ FETCH_STEP: typ.Final[str] = "Fetch locked dependencies"
 # `make lint` runs the Rust doctests through `lint-rust-test-docs`, so it starts
 # tests too.
 TEST_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
-    r"\b(cargo\s+test|make\s+(test|lint))\b"
+    r"\b(cargo\s+test|\$\(CARGO\)\s+test|make\s+(test|lint))\b"
 )
 type Step = dict[str, typ.Any]
 
@@ -80,7 +80,7 @@ def _makefile_problems(makefile: str) -> list[str]:
     """
     recipe = _recipe(makefile, "test")
     fetch_at = next(
-        (at for at, line in enumerate(recipe) if "cargo fetch" in line), None
+        (at for at, line in enumerate(recipe) if "fetch --locked" in line), None
     )
     if fetch_at is None:
         return ["the test recipe runs no cargo fetch"]
@@ -280,7 +280,8 @@ def _run_test_recipe(tmp_path: Path, *, fail_fetch: bool) -> tuple[int, list[str
     body = "\n".join(f"\t{line}" for line in recipe)
     makefile = tmp_path / "Makefile"
     makefile.write_text(
-        f"RUST_MANIFEST = rust_extension/Cargo.toml\nTEST_THREADS = 1\ntest:\n{body}\n",
+        f"CARGO ?= cargo\nRUST_MANIFEST = rust_extension/Cargo.toml\n"
+        f"TEST_THREADS = 1\ntest:\n{body}\n",
         encoding="utf-8",
     )
     bin_dir = tmp_path / "bin"
@@ -315,7 +316,9 @@ def test_a_failing_fetch_stops_the_test_recipe(tmp_path: Path) -> None:
     """A fetch that fails stops the recipe before any later test command runs."""
     status, calls = _run_test_recipe(tmp_path, fail_fetch=True)
     assert status != 0, "make must fail when the fetch fails"
-    fetch = MAKE_FETCH.replace("$(RUST_MANIFEST)", "rust_extension/Cargo.toml")
+    fetch = MAKE_FETCH.replace("$(CARGO)", "cargo").replace(
+        "$(RUST_MANIFEST)", "rust_extension/Cargo.toml"
+    )
     assert calls == [fetch.removeprefix("cargo ")], f"only the fetch may run: {calls}"
 
 
