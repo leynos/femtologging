@@ -424,8 +424,11 @@ below are pinned by `rust_extension/src/http_handler/request_shape_tests.rs` and
 - **Proxy discovery.** `proxy(None)` keeps ureq 3's `Proxy::try_from_env`
   default switched off, matching ureq 2 without its `proxy-from-env` feature.
 - **Redirects.** Redirects stop after five hops, and exceeding the limit is a
-  transport error, so the record follows the normal retry policy. Credentials
-  are stripped on every redirect (`RedirectAuthHeaders::Never`).
+  transport error, so the record follows the normal retry policy. The
+  `Authorization` header is stripped on every redirect
+  (`RedirectAuthHeaders::Never`), matching ureq 2. That setting covers
+  `Authorization` only: a custom credential header such as `X-Api-Key` is
+  forwarded to the redirect target, as it was under ureq 2.
 - **Headers.** Authentication, configured headers, and the POST content type
   are resolved into one case-insensitive map before the request is built,
   because ureq 3 appends a header per call instead of replacing it. Configured

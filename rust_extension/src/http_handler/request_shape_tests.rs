@@ -290,13 +290,19 @@ fn a_server_error_status_is_a_retryable_verdict(tcp_listener: io::Result<TcpList
     assert_eq!(class, ResponseClass::Retryable);
 }
 
-/// Scenario: the collector redirects to a second listener.
+/// Scenario: the collector redirects to a second listener, and the request
+/// carries both the configured auth and a custom credential header.
 ///
-/// Invariant: the redirect is followed, but the credentials sent to the
-/// original host are not replayed at the target. ureq 3's default for
-/// `redirect_auth_headers` differs from ureq 2's, so this is pinned explicitly.
+/// Invariant: the redirect is followed, but the `Authorization` header sent to
+/// the original host is not replayed at the target. ureq 3's
+/// `RedirectAuthHeaders` setting covers only `Authorization`, so a custom
+/// credential header is forwarded; that is also what ureq 2 did, and the
+/// documentation states the distinction rather than claiming every credential
+/// is stripped.
 #[rstest]
-fn a_redirect_does_not_forward_the_authorization_header(tcp_listener: io::Result<TcpListener>) {
+fn a_redirect_strips_authorization_and_forwards_custom_headers(
+    tcp_listener: io::Result<TcpListener>,
+) {
     let redirect_listener = tcp_listener.expect("bind ephemeral listener");
     let target_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind redirect target");
     let (target_addr, target_requests) =
@@ -309,7 +315,7 @@ fn a_redirect_does_not_forward_the_authorization_header(tcp_listener: io::Result
         AuthConfig::Bearer {
             token: "redirect-secret".to_owned(),
         },
-        &[],
+        &[("x-api-key", "custom-credential")],
     );
 
     let class = execute(&config, &test_agent(), "msg=redirect").expect("redirect is followed");
@@ -322,13 +328,19 @@ fn a_redirect_does_not_forward_the_authorization_header(tcp_listener: io::Result
         header_values(&first, "authorization"),
         ["Bearer redirect-secret"]
     );
+    assert_eq!(header_values(&first, "x-api-key"), ["custom-credential"]);
     let second = target_requests
         .recv_timeout(Duration::from_secs(5))
         .expect("the redirect target should be reached");
     assert_eq!(second.path, "/collected");
     assert!(
         header_values(&second, "authorization").is_empty(),
-        "a redirect must not replay credentials: {:?}",
+        "a redirect must not replay the Authorization header: {:?}",
         header_values(&second, "authorization")
+    );
+    assert_eq!(
+        header_values(&second, "x-api-key"),
+        ["custom-credential"],
+        "a custom header is outside RedirectAuthHeaders and is forwarded"
     );
 }
