@@ -197,9 +197,11 @@ impl GatedHandler {
 
     /// Wait until the worker blocks in its next gated flush.
     fn wait_for_worker_block(&self, context: &str) {
-        self.entered
-            .recv_timeout(RELEASE_WAIT)
-            .unwrap_or_else(|err| panic!("{context}: {err}"));
+        // The repository's lint rejects a panicking `unwrap_or_else`; naming
+        // the context in a panic is the point, so report it explicitly.
+        if let Err(err) = self.entered.recv_timeout(RELEASE_WAIT) {
+            panic!("{context}: {err}");
+        }
     }
 
     /// Release the worker's current gated flush.
