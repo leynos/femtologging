@@ -435,7 +435,11 @@ below are pinned by `rust_extension/src/http_handler/request_shape_tests.rs` and
   authentication is applied first, a custom header of the same name replaces
   it, and the serialization format's content type replaces a custom
   `Content-Type` on a POST. A GET request appends its payload to the existing
-  query with `&`, or starts one with `?`.
+  query with `&`, or starts one with `?`. Because ureq 3 validates what ureq 2
+  wrote to the wire verbatim, a handler built through `HTTPHandlerBuilder`
+  rejects a header name, header value, or credential it cannot encode. The
+  build fails with an invalid-configuration error, and the message never
+  includes a header value.
 - **Response bodies.** The worker classifies the status and never reads the
   body. A declared body that never arrives therefore cannot delay the attempt
   or turn a delivered record into a retry.
