@@ -57,8 +57,11 @@ struct ScriptedState {
 }
 
 impl ScriptedClock {
-    /// Create a clock that reports `readings` in order.
-    fn new(readings: impl IntoIterator<Item = u64>) -> Arc<dyn Clock> {
+    /// Wrap a clock that reports `readings` in order behind the shared trait.
+    ///
+    /// The name avoids `new`, which Clippy reserves for constructors returning
+    /// `Self`; this constructor erases the type to the handler's seam.
+    fn scripted(readings: impl IntoIterator<Item = u64>) -> Arc<dyn Clock> {
         Arc::new(Self {
             state: Mutex::new(ScriptedState {
                 remaining: readings.into_iter().collect(),
@@ -106,7 +109,8 @@ impl Write for GatedWriter {
 
 /// Build a one-slot handler whose flush deadline reads `readings` from its clock.
 fn scripted_handler(gated: GatedWriter, readings: [u64; 3]) -> FemtoStreamHandler {
-    let warner = RateLimitedWarner::with_clock(DEFAULT_WARN_INTERVAL, ScriptedClock::new(readings));
+    let warner =
+        RateLimitedWarner::with_clock(DEFAULT_WARN_INTERVAL, ScriptedClock::scripted(readings));
     let config = StreamHandlerConfig::default()
         .with_capacity(1)
         .with_timeout(FLUSH_TIMEOUT)
