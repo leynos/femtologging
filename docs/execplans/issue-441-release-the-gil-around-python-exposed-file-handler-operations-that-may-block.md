@@ -1379,6 +1379,29 @@ admission supervisor stayed healthy and `sccache` reported it was not serving
 compilations, so the rebuilds were uncached. No gate was killed, retried or
 duplicated to shorten a wait, and no lane was run concurrently with another.
 
+### CodeScene duplication on the binding tests
+
+CodeScene reported a new `Code Duplication` issue on
+`rust_extension/src/handlers/file/telemetry_binding_tests.rs` for the first
+push of this candidate, naming five functions with the same structure. The five
+tests each repeated the same sequence: build the writer, build the handler,
+install a collector, attach, build the Python object, call the binding, read
+the counter, assert, release and close.
+
+The four flush cases are now one `#[rstest]` table over writer, policy,
+expected outcome and expected event count, and every case runs through one
+`observe` helper that owns the collector and public-counter read. The
+handle-timeout case shares that helper and only differs in the action it
+performs inside it. Behaviour is unchanged: the same four flush outcomes and
+the same handle timeout are asserted against the same counters and events.
+
+The refactor was gated on the same candidate with `make fmt`, `make check-fmt`,
+`make markdownlint`, `make nixie`, `make lint` and `make typecheck` all
+passing, and with the `tracing-compat` cargo lane passing (759 passed, 3
+ignored) — the only lane that compiles these tests. The other three cargo lanes
+and the Python suite do not enable `tracing-compat`, so their compiled test
+code and assertions are unchanged by this commit.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
