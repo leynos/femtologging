@@ -552,7 +552,7 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
   rebuilt, and an I/O error needs the underlying stream repaired.
 - Do not use `close()` as a barrier for thread-local teardown. If teardown must
   finish before process exit, perform it in the formatter's own code before the
-  worker body returns, or synchronize on a signal your code owns.
+  worker body returns, or synchronize on a signal the application owns.
 
 ______________________________________________________________________
 

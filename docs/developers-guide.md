@@ -234,14 +234,14 @@ deadline and shares it between queueing the flush command and waiting for the
 worker's acknowledgement, so a full queue cannot let a call take nearly twice
 the configured limit. `close()` waits for the worker's completion signal, which
 the worker raises after dropping its writer and formatter, so a successful
-close means the worker finished its queue, not that every record was delivered:
-a panic still raises the signal with records queued, and write errors are
-logged rather than returned. It does not mean the thread has exited:
-thread-local destructors run after the worker body returns, and joining would
-wait for them, so the closer drops the join handle and detaches the thread
-instead. The worker reports its own panic through `catch_unwind`, because no
-caller reads the join result. The regression tests release blocking destructors
-through channels rather than sleeping, and the Python tests poll the
+close means the worker body has ended, not that it drained the queue or
+delivered every record: a panic still raises the signal with records queued,
+and write errors are logged rather than returned. It does not mean the thread
+has exited: thread-local destructors run after the worker body returns, and
+joining would wait for them, so the closer drops the join handle and detaches
+the thread instead. The worker reports its own panic through `catch_unwind`,
+because no caller reads the join result. The regression tests release blocking
+destructors through channels rather than sleeping, and the Python tests poll the
 `test-util`-gated waiter counter so they release a gated formatter only after
 `flush()` or `close()` has entered its wait.
 
