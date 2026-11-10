@@ -208,6 +208,7 @@ mod log_compat {
     use super::super::registry::{MANAGER, flush_all_handlers, get_logger, reset_manager};
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use crate::log_record::FemtoLogRecord;
+    use crate::logger::{FlushOutcome, flush_metrics_snapshot};
 
     /// Handler that counts how often the manager flushes a logger.
     #[derive(Clone)]
@@ -293,6 +294,52 @@ mod log_compat {
                 flushes.load(Ordering::SeqCst),
                 loggers.len(),
                 "flush should be invoked once per registered logger",
+            );
+            Ok(())
+        })
+    }
+
+    /// Handler whose flush fails, so a sweep has something to count.
+    struct FailingFlushHandler;
+
+    impl FemtoHandlerTrait for FailingFlushHandler {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            Ok(())
+        }
+
+        fn flush(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    /// A failed logger flush during a sweep is counted, not silently discarded.
+    #[test]
+    #[serial]
+    fn flush_all_handlers_counts_a_failed_logger_flush() -> pyo3::PyResult<()> {
+        Python::attach(|py| -> pyo3::PyResult<()> {
+            reset_manager();
+
+            let logger = get_logger(py, "bridge.flush.failure")?;
+            logger
+                .borrow(py)
+                .add_handler(Arc::new(FailingFlushHandler) as Arc<dyn FemtoHandlerTrait>)?;
+
+            let before = flush_metrics_snapshot();
+            flush_all_handlers(py);
+            let after = flush_metrics_snapshot();
+
+            assert!(
+                after.bridge_failures > before.bridge_failures,
+                "a failed flush during a bridge sweep must increment the bridge-failure counter",
+            );
+            assert!(
+                after.outcomes[FlushOutcome::HandlerFailure.index()]
+                    > before.outcomes[FlushOutcome::HandlerFailure.index()],
+                "the failed logger flush must also be classified as a handler failure",
             );
             Ok(())
         })

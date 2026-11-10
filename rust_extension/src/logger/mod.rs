@@ -54,6 +54,10 @@ pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
 // or `-D unused-imports` fails a lane with the bridge compiled out.
 #[cfg(feature = "log-compat")]
 pub(crate) use flush_metrics::record_bridge_flush_failure;
+// Tests assert that a real flush moved the process-wide counters, so they need
+// the outcome labels and a snapshot. Neither is a production reader's API.
+#[cfg(test)]
+pub(crate) use flush_metrics::{FlushOutcome, snapshot as flush_metrics_snapshot};
 
 pub use py_handler::{PyHandler, validate_handler};
 // The consuming unit tests are excluded under `--cfg loom`, so the re-export

@@ -99,10 +99,22 @@ fn flush_reports_drained_and_clears_the_backlog() {
         .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("native collecting handler should register");
 
+    let before = flush_metrics_snapshot();
     logger.log(FemtoLevel::Info, "queued");
     assert!(
         logger.flush_handlers(),
         "the shard should acknowledge a flush"
+    );
+    let after = flush_metrics_snapshot();
+
+    assert!(
+        after.outcomes[FlushOutcome::Success.index()]
+            > before.outcomes[FlushOutcome::Success.index()],
+        "a successful flush must increment the process-wide success counter",
+    );
+    assert!(
+        after.duration_count > before.duration_count,
+        "a successful flush must record a duration",
     );
     assert_eq!(
         collected_messages(&handler),
@@ -238,15 +250,114 @@ fn a_failing_handler_flush_does_not_skip_later_handlers() {
         .add_handler(succeeding.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("native succeeding flush handler should register");
 
+    let before = flush_metrics_snapshot();
     assert!(
         !logger.flush_handlers(),
         "a handler that fails to flush must make the logger's flush report failure"
+    );
+    let after = flush_metrics_snapshot();
+
+    assert!(
+        after.outcomes[FlushOutcome::HandlerFailure.index()]
+            > before.outcomes[FlushOutcome::HandlerFailure.index()],
+        "a failed handler flush must increment the handler-failure counter",
     );
     assert_eq!(failing.calls(), 1, "the failing handler must be flushed");
     assert_eq!(
         succeeding.calls(),
         1,
         "a flush must continue past a handler that reported failure"
+    );
+}
+
+/// Handler that attaches a second handler to its own logger during a flush.
+///
+/// A flush snapshots the handler list and releases the guard before calling
+/// any handler. Calling `add_handler` from inside `flush` is the cheapest way
+/// to prove that: a flush that kept the read guard would deadlock here on the
+/// write guard the attachment takes.
+struct AttachingFlushHandler {
+    /// Logger to attach to, set once the logger exists.
+    logger: std::sync::Mutex<Option<Arc<FemtoLogger>>>,
+    /// Handler the first flush attaches.
+    attached: Arc<CollectingHandler>,
+    /// Whether the attachment has already happened.
+    attached_once: std::sync::atomic::AtomicBool,
+}
+
+impl AttachingFlushHandler {
+    /// Create a handler that will attach *attached* on its first flush.
+    fn new(attached: Arc<CollectingHandler>) -> Self {
+        Self {
+            logger: std::sync::Mutex::new(None),
+            attached,
+            attached_once: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl FemtoHandlerTrait for AttachingFlushHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn flush(&self) -> bool {
+        if !self
+            .attached_once
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            let logger = self
+                .logger
+                .lock()
+                .expect("the attach-once logger lock is never poisoned")
+                .clone();
+            if let Some(logger) = logger {
+                logger
+                    .add_handler(Arc::clone(&self.attached) as Arc<dyn FemtoHandlerTrait>)
+                    .expect("a native handler may be attached during a flush");
+            }
+        }
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[test]
+fn a_handler_flush_may_attach_another_handler() {
+    let logger = Arc::new(
+        FemtoLogger::new("flush-attach".into()).expect("test logger should be constructible"),
+    );
+    let attached = Arc::new(CollectingHandler::new());
+    let attaching = Arc::new(AttachingFlushHandler::new(Arc::clone(&attached)));
+    logger
+        .add_handler(Arc::clone(&attaching) as Arc<dyn FemtoHandlerTrait>)
+        .expect("native attaching handler should register");
+    *attaching
+        .logger
+        .lock()
+        .expect("the attach-once logger lock is never poisoned") = Some(Arc::clone(&logger));
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let flush_logger = Arc::clone(&logger);
+    std::thread::spawn(move || {
+        let _ = done_tx.send(flush_logger.flush_handlers());
+    });
+    assert!(
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a handler that attaches during a flush must not deadlock"),
+        "attaching a handler during a flush must not fail the flush",
+    );
+
+    logger.log(FemtoLevel::Info, "after attachment");
+    assert!(logger.flush_handlers(), "the logger should still flush");
+    assert_eq!(
+        collected_messages(&attached),
+        vec!["after attachment"],
+        "a handler attached during a flush must receive later records",
     );
 }
 

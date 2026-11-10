@@ -28,6 +28,8 @@ use std::time::Duration;
 
 use crate::rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner};
 
+use super::DrainOutcome;
+
 /// Upper bounds of the finite flush-duration histogram buckets, in microseconds.
 ///
 /// Every bound is inclusive. The histogram has one bucket more than this list:
@@ -71,7 +73,7 @@ impl FlushOutcome {
     }
 
     /// Return this outcome's index among the outcome counters.
-    const fn index(self) -> usize {
+    pub(crate) const fn index(self) -> usize {
         match self {
             Self::Success => 0,
             Self::AckTimeout => 1,
@@ -83,6 +85,19 @@ impl FlushOutcome {
     /// Return whether the flush completed successfully.
     pub(crate) const fn is_success(self) -> bool {
         matches!(self, Self::Success)
+    }
+
+    /// Classify a drain wait that did not succeed, or `None` when it drained.
+    ///
+    /// The two failure causes need different diagnoses, so the flush path
+    /// keeps them apart instead of collapsing every failed barrier into one
+    /// undifferentiated failure.
+    pub(crate) const fn from_drain(outcome: DrainOutcome) -> Option<Self> {
+        match outcome {
+            DrainOutcome::Drained => None,
+            DrainOutcome::QueueClosed => Some(Self::ChannelClosed),
+            DrainOutcome::TimedOut => Some(Self::AckTimeout),
+        }
     }
 }
 
@@ -231,6 +246,15 @@ pub(crate) fn record_flush(outcome: FlushOutcome, elapsed: Duration) {
     metrics().record(outcome, elapsed);
 }
 
+/// Read the process-wide metrics so a test can assert a real flush recorded one.
+///
+/// Kept test-only: production code has no exporter yet, and a snapshot API
+/// would be a second contract to maintain before there is a reader for it.
+#[cfg(test)]
+pub(crate) fn snapshot() -> FlushMetricsSnapshot {
+    metrics().snapshot()
+}
+
 /// Record a logger flush that failed during a `log`-bridge flush sweep.
 #[cfg(feature = "log-compat")]
 pub(crate) fn record_bridge_flush_failure() {
@@ -283,6 +307,20 @@ mod tests {
         }
 
         assert_eq!(metrics.snapshot().outcomes, [1, 1, 1, 1]);
+    }
+
+    /// A failed drain wait maps to the cause it reports, and a drained one to none.
+    #[test]
+    fn each_drain_failure_has_its_own_outcome() {
+        assert_eq!(FlushOutcome::from_drain(DrainOutcome::Drained), None);
+        assert_eq!(
+            FlushOutcome::from_drain(DrainOutcome::QueueClosed),
+            Some(FlushOutcome::ChannelClosed),
+        );
+        assert_eq!(
+            FlushOutcome::from_drain(DrainOutcome::TimedOut),
+            Some(FlushOutcome::AckTimeout),
+        );
     }
 
     /// The bridge failure counter rises without touching the per-logger outcomes.

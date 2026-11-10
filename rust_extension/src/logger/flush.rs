@@ -86,10 +86,8 @@ impl FemtoLogger {
 
     /// Classify one flush attempt by its terminal outcome.
     fn flush_handlers_inner(&self) -> FlushOutcome {
-        match self.wait_for_dispatch_to_drain() {
-            DrainOutcome::Drained => {}
-            DrainOutcome::QueueClosed => return FlushOutcome::ChannelClosed,
-            DrainOutcome::TimedOut => return FlushOutcome::AckTimeout,
+        if let Some(failure) = FlushOutcome::from_drain(self.wait_for_dispatch_to_drain()) {
+            return failure;
         }
         if self.flush_configured_handlers() {
             FlushOutcome::Success

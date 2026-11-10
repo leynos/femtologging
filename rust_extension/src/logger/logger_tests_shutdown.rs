@@ -221,3 +221,49 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
         "the record admitted after the idle flushes must still be delivered"
     );
 }
+
+/// A logger whose handler never returns reports an acknowledgement timeout.
+///
+/// The barrier waits for the record the stuck handler is holding, so the
+/// flush must give up after one budget, report failure, and record which
+/// failure it was. Releasing the handler afterwards proves the logger is still
+/// usable rather than wedged by the timed-out attempt.
+#[test]
+fn a_blocked_handler_makes_the_logger_flush_time_out() {
+    let logger =
+        FemtoLogger::new("flush.timeout".into()).expect("test logger should be constructible");
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let handler = Arc::new(HeldHandler {
+        started: started_tx,
+        release: parking_lot::Mutex::new(release_rx),
+    }) as Arc<dyn FemtoHandlerTrait>;
+    logger
+        .add_handler(handler)
+        .expect("native blocking handler should register");
+
+    logger.log(FemtoLevel::Info, "blocked");
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the worker should enter the blocking handler");
+
+    let before = flush_metrics_snapshot();
+    assert!(
+        !logger.flush_handlers(),
+        "a flush whose barrier is not answered must report failure"
+    );
+    let after = flush_metrics_snapshot();
+    assert!(
+        after.outcomes[FlushOutcome::AckTimeout.index()]
+            > before.outcomes[FlushOutcome::AckTimeout.index()],
+        "an unanswered barrier must be classified as an acknowledgement timeout",
+    );
+
+    release_tx
+        .send(())
+        .expect("the worker should still be waiting for its release");
+    assert!(
+        logger.flush_handlers(),
+        "the logger must recover once the blocked handler returns"
+    );
+}

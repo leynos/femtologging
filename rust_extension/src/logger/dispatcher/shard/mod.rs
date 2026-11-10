@@ -28,6 +28,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::logger::QueuedRecord;
+#[cfg(all(test, not(loom)))]
+use crate::sync::Receiver;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
 use crate::sync::{RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout};
@@ -176,6 +178,23 @@ impl Shard {
         Arc::new(LoggerBudget::new(limit))
     }
 
+    /// Build a shard with a queue but no worker, handing back the receiver.
+    ///
+    /// A production shard's worker lives as long as the process, so a barrier
+    /// that no one answers can otherwise be observed only after a `fork`
+    /// rebind failure. Dropping the returned receiver closes the queue; holding
+    /// it open and filling the queue instead exercises the enqueue timeout.
+    #[cfg(all(test, not(loom)))]
+    fn without_worker_for_test(depth: usize) -> (Self, Receiver<Job>) {
+        let (queue, jobs) = bounded::<Job>(depth);
+        let shard = Self {
+            queue,
+            permits: Arc::new(Permits::new(depth)),
+            depth,
+        };
+        (shard, jobs)
+    }
+
     /// Accept a record for dispatch, without waiting.
     ///
     /// The record is taken and returned boxed, which is the shape the queue
@@ -297,3 +316,9 @@ impl Shard {
         }
     }
 }
+
+// Drain-outcome tests construct a shard without a worker, which only an
+// ordinary build can do: a Loom shard always owns the worker it must join.
+#[cfg(all(test, not(loom)))]
+#[path = "shard_tests.rs"]
+mod tests;
