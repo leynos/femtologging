@@ -46,19 +46,23 @@ fn assert_version_error(schema_version: u16, expected: _femtologging_rs::SchemaV
 }
 
 /// An unsupported schema version is reported after a successful parse.
+///
+/// The bounds come from the crate rather than from literals, so a schema bump
+/// moves them with the contract. `u16::MAX` is newer than any supported
+/// version, and version 0 is older than the range, which starts at 1.
 #[rstest]
 #[case(
-    999,
+    u16::MAX,
     _femtologging_rs::SchemaVersionError::VersionTooNew {
-        found: 999,
-        max_supported: 1,
+        found: u16::MAX,
+        max_supported: _femtologging_rs::EXCEPTION_SCHEMA_VERSION,
     }
 )]
 #[case(
     0,
     _femtologging_rs::SchemaVersionError::VersionTooOld {
         found: 0,
-        min_supported: 1,
+        min_supported: _femtologging_rs::MIN_EXCEPTION_SCHEMA_VERSION,
     }
 )]
 fn unsupported_version_is_reported(
