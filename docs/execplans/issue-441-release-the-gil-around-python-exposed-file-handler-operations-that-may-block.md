@@ -37,13 +37,14 @@ Observable outcomes:
 
 ## Constraints
 
-- Existing Python-visible signatures must not change. `wait_diagnostics()` is
-  the one new method, and the `.pyi` stubs add only its declaration for the
-  rotating and timed-rotating wrappers.
+- Existing Python-visible signatures must not change except for one additive
+  method: `wait_diagnostics()` is new, and the `.pyi` stubs add only its
+  declaration for the rotating and timed-rotating wrappers.
 - Argument parsing and Python exception construction stay on the GIL-owning
   side of the boundary.
-- The one-second `flush()` and `close()` deadlines and `Drop` are unchanged;
-  only the GIL release around the waits is new.
+- The one-second file-handler `flush()` and `close()` deadlines and `Drop` are
+  unchanged; the GIL release, the outcome classification and the bounded wait
+  diagnostics are the new behaviour.
 - `--no-default-features` and `--cfg loom` builds must keep compiling. Loom
   compiles the bindings but does not invoke Python methods or model the GIL; no
   cfg guard is needed around `Python::detach` in these bindings.
@@ -82,9 +83,10 @@ timeout policies must be covered by observable concurrency tests. The issue's
 acceptance items map to Tasks 1–4 below and the verification obligations in
 this plan. The design contract for the detached waits is recorded in the
 "Python-facing lifecycle waits" section of
-[the design document](../rust-multithreaded-logging-framework-for-python-design.md);
-no new public signature or dependency is introduced, so no separate Terms of
-Reference or ADR is required.
+[the design document](../rust-multithreaded-logging-framework-for-python-design.md).
+The only new public surface is the additive `wait_diagnostics()` method, which
+the design, user and migration guides document; no new dependency is
+introduced, so no separate Terms of Reference or ADR is required.
 
 ## Verification plan
 
@@ -1000,8 +1002,8 @@ rather than suppressed:
   the `datetime.time` extraction helpers moved to
   `handlers/timed_rotating/python_time.rs` and `python.rs` re-exports the
   `pub(crate)` helper the rotating builder still imports;
-- the inline `mod tests` in `handlers/telemetry.rs` lacked the module's
-  required inner doc comment.
+- the inline `mod tests` in the telemetry module (`handlers/telemetry/mod.rs`
+  after the later split) lacked the module's required inner doc comment.
 
 `cargo check --all-targets` also passed (3 m 06 s), giving the Rust lanes an
 independent confirmation before the long gates.
@@ -1089,15 +1091,18 @@ scope" disposition: the crate does have a metrics and tracing surface
 review asked for the waits this PR introduces to be observable. The follow-up
 commit implements that rather than deferring it.
 
-- `rust_extension/src/handlers/telemetry.rs` (new) defines `WaitOutcome`, a
-  fixed set of sixteen outcomes: six for `handle`, six for `flush`, and four for
-  `close`. Only the close group has `panicked` and `unknown` outcomes.
-  `WaitDiagnostics` holds sixteen relaxed `AtomicU64` counters, a total and a
-  maximum wait duration, and an in-flight gauge. `WaitTimer` starts before
-  `py.detach` and finishes after it on the interpreter thread, so the recorded
-  interval is the whole wait, not just the enqueue or the acknowledgement. The
-  gauge is raised by `begin_wait()` before the detached section and lowered by a
-  `WaitGuard`'s `Drop`, so it also falls while a binding unwinds.
+- `rust_extension/src/handlers/telemetry/` (new, split so no one file carries
+  the whole surface) defines `WaitOutcome` in `outcome.rs`, a fixed set of
+  sixteen outcomes: six for `handle`, six for `flush`, and four for `close`.
+  Only the close group has `panicked` and `unknown` outcomes. `WaitDiagnostics`
+  in `diagnostics.rs` holds sixteen relaxed `AtomicU64` counters, a total and a
+  maximum wait duration, and an in-flight gauge. `timer.rs` owns `WaitTimer`,
+  which starts before `py.detach` and finishes after it on the interpreter
+  thread, so the recorded interval is the whole wait, not just the enqueue or
+  the acknowledgement. The gauge is raised by `begin_wait()` before the
+  detached section and lowered by a `WaitGuard`'s `Drop`, so it also falls
+  while a binding unwinds. `tests.rs` holds the unit tests that keep the split
+  module under the 400-line limit.
 - `rust_extension/src/handlers/file/wait_outcomes.rs` (new) owns the
   user-visible results the core used to hide behind `bool` and `()`:
   `FlushOutcome`, `ShutdownOutcome`, and `classify_enqueue`. `WorkerShutdown`
@@ -1325,6 +1330,54 @@ queues for most of both long gates. No gate failed on admission, and none was
 killed, retried, or duplicated to shorten a wait. The two long gates were
 launched detached in their own session and observed with bounded foreground
 tails, so the harness's two-hour background limit could not truncate them.
+
+## Commit gates on the final review candidate
+
+This candidate adds the evidence the last CodeRabbit pre-merge table still
+asked for: binding-level tests for the rotating and timed-rotating wrappers, a
+close-then-completion and a close-panic test, a bounded concurrent lifecycle
+model in pytest, the corrected stream/socket/HTTP documentation, and a
+`public_count` helper that no longer panics inside a closure.
+
+The gates ran sequentially over the working tree on top of `e1b19cec`:
+
+| Gate                | Result                                         |
+| ------------------- | ---------------------------------------------- |
+| `make fmt`          | pass, no files rewritten                       |
+| `make check-fmt`    | pass                                           |
+| `make markdownlint` | pass                                           |
+| `make nixie`        | pass                                           |
+| `make lint`         | pass, all Python tiers and all Rust lint lanes |
+| `make typecheck`    | pass, `All checks passed!`                     |
+| `make test`         | pass, per-lane evidence recorded below         |
+
+`make test` was started once as a single command, and the harness killed that
+shell at its two-hour background limit while the second cargo lane was inside
+its trybuild cases. Every prerequisite of the target (`build`, `makeutil`,
+`lint-rust-clippy` with its eight feature lanes, and `loom-runner-test`) and
+the first cargo lane had already finished by then: the first lane reported 728
+passed, 0 failed, 2 ignored. The remaining three recipe lines and the pytest
+line were then run one at a time, in Makefile order, from the same candidate
+and environment:
+
+| Recipe line                                                  | Result                                     |
+| ------------------------------------------------------------ | ------------------------------------------ |
+| `cargo test --no-default-features --features python`         | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features log-compat`     | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features tracing-compat` | pass, 759 passed, 3 ignored                |
+| `uv run pytest -v --doctest-modules`                         | pass, 1152 passed, 6 skipped, 66 snapshots |
+
+The `tracing-compat` lane is the one that compiles the new telemetry tests. It
+ran all five file-binding tests, both close-binding tests, both wrapper cases,
+and the observation test, and every one passed. The pytest run executed all 18
+combinations of builder, capacity and overflow policy in
+`tests/test_wait_diagnostics_concurrency.py`, plus the subprocess GIL scenarios.
+
+The trybuild cases dominated every lane (2981 s, 3137 s, 3569 s and 4593 s)
+because the shared compile pool held long queues from other agents' work; the
+admission supervisor stayed healthy and `sccache` reported it was not serving
+compilations, so the rebuilds were uncached. No gate was killed, retried or
+duplicated to shorten a wait, and no lane was run concurrently with another.
 
 ## Decision log
 

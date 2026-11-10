@@ -96,6 +96,7 @@ SETTLE = {settle}
 PROGRESSED_AT = []
 ENTERED_AT = []
 RETURNED_AT = []
+CALL_FAILURES = []
 
 
 def blocking_formatter(record):
@@ -150,12 +151,21 @@ def start_watchdog_when_blocked(blocked):
 
 
 def start_blocked(call):
-    \"\"\"Run ``call`` on its own thread, recording the call's own window.\"\"\"
+    \"\"\"Run ``call`` on its own thread, recording the call's own window.
+
+    An exception that reaches the wrapper is unexpected: every scenario that
+    expects a failure catches it inside its own closure. Recording it here and
+    re-raising it from :func:`join_blocked` keeps such a failure on the scenario
+    thread, where it fails the child instead of printing to stderr and leaving
+    the scenario to pass on the absence of its result.
+    \"\"\"
 
     def wrapper():
         ENTERED_AT.append(time.monotonic())
         try:
             call()
+        except Exception as err:  # ruff: ignore[blind-except] deferred to join_blocked
+            CALL_FAILURES.append(err)
         finally:
             RETURNED_AT.append(time.monotonic())
 
@@ -165,9 +175,13 @@ def start_blocked(call):
 
 
 def join_blocked(thread):
-    \"\"\"Wait for a blocked call to return, failing if it never does.\"\"\"
+    \"\"\"Wait for a blocked call to return, re-raising any unexpected failure.\"\"\"
     thread.join(timeout=CHILD_WAIT)
     assert not thread.is_alive(), "the blocked handler call never returned"
+    if CALL_FAILURES:
+        raise AssertionError(
+            f"the blocked handler call failed unexpectedly: {{CALL_FAILURES!r}}"
+        ) from CALL_FAILURES[0]
 
 
 def stop_watchdog(watchdog):

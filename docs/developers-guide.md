@@ -217,15 +217,17 @@ cargo bench --manifest-path rust_extension/Cargo.toml --no-default-features \
   --features log-compat --bench log_bridge
 ```
 
-The Python-facing file and stream handler `flush()` and `close()` methods use
-PyO3's detached wait path. The `close()` wrappers need only a shared
-Python-object borrow: they copy the shutdown state into Rust-owned values,
-release that borrow, and then release the GIL while they wait for the worker.
-Concurrent `close()` calls, or a `close()` beside a detached `flush()`, do not
-contend for the handler. Every caller waits on the same completion broadcast,
-so one closer does not return early merely because another has already taken
-the shutdown state; each wait is bounded to one second. Preserve the handlers'
-existing timeouts and idempotent-close behaviour when changing this boundary.
+The Python-facing file, rotating-file, timed-rotating-file and stream handler
+`flush()` and `close()` methods use PyO3's detached wait path. The `close()`
+wrappers need only a shared Python-object borrow: they copy the shutdown state
+into Rust-owned values, release that borrow, and then release the GIL while
+they wait for the worker. Concurrent `close()` calls, or a `close()` beside a
+detached `flush()`, do not contend for the handler. Every caller waits on the
+same completion broadcast, so one closer does not return early merely because
+another has already taken the shutdown state. The file family bounds each wait
+to one second; the stream handler reuses its configurable `flush_timeout`
+(default one second) for both. Preserve the handlers' existing timeouts and
+idempotent-close behaviour when changing this boundary.
 
 ### Handler shutdown signal, clock and condition-variable seams
 
@@ -738,9 +740,12 @@ block, and the rotating and timed-rotating wrappers that delegate to it, take a
 `handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
 (`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
 (`send_timeout`). Other Python-exposed handler families also have operations
-that may block. The stream and HTTP bindings detach their `flush()` waits, but
-the socket bindings' `flush()` and `close()`, and the HTTP `close()`, remain
-follow-up work.
+that may block. The stream, socket and HTTP bindings detach both their
+`flush()` and their `close()` waits. The socket and HTTP `close()` methods take
+an exclusive PyO3 borrow (`&mut self`) for the whole wait, so a second
+`close()`, or a `close()` overlapping a detached `flush()`, is refused by the
+borrow check rather than queued; the file and stream families use a shared
+borrow and allow those overlaps.
 
 `py.detach` requires its closure and return type to implement `Ungil`. On
 stable Rust, PyO3 approximates that requirement through `Send`, so the bound
@@ -912,11 +917,12 @@ repeated `close()` is therefore safe and observes the same bounded wait.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush
-timeout and `False` otherwise, and `close()` still returns `None`. The wait in
-`close()` is bounded to one second, not by the overflow policy's timeout: a
-worker that does not signal completion within that second is reported and
-skipped rather than waited on indefinitely, and the call returns while the
-worker may still be running.
+timeout and `False` otherwise, and `close()` still returns `None`. The file
+family's `close()` wait is fixed at one second, not the overflow policy's
+timeout, while the stream handler's uses its configurable `flush_timeout`
+(default one second). A worker that does not signal completion within that
+bound is reported and skipped rather than waited on indefinitely, and the call
+returns while the worker may still be running.
 
 ### Handler wait diagnostics
 
