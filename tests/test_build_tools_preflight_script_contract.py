@@ -7,11 +7,14 @@ is exercised without depending on the host's installed toolchain or linker.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs the repository script
 import typing as typ
+
+import pytest
 
 from tests.build_tools_support import ROOT, fake_executable
 
@@ -56,7 +59,7 @@ def _probe_bin_dir(tmp_path: Path) -> Path:
     return bin_dir
 
 
-def _preflight_environment(bin_dir: Path, *, host_os: str = "Linux") -> dict[str, str]:
+def _preflight_environment(bin_dir: Path, *, host_os: str) -> dict[str, str]:
     """Return an environment whose PATH resolves the stub tools only.
 
     Parameters
@@ -124,56 +127,92 @@ def _stub_rustup(bin_dir: Path, listed: str) -> None:
     )
 
 
-def test_the_preflight_accepts_the_pinned_toolchain_and_mold(
-    tmp_path: Path,
-) -> None:
-    """A host with both prerequisites passes the capability check."""
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
+class _Case:
+    """One host capability scenario and the report it must produce."""
+
+    toolchain_present: bool
+    mold_body: str | None
+    host_os: str
+    returncode: int
+    messages: tuple[str, ...]
+
+
+CASES: typ.Final[tuple[_Case, ...]] = (
+    _Case(
+        toolchain_present=True,
+        mold_body="printf 'mold 2.41.0\\n'",
+        host_os="Linux",
+        returncode=0,
+        messages=("mold at",),
+    ),
+    _Case(
+        toolchain_present=True,
+        mold_body=None,
+        host_os="Linux",
+        returncode=1,
+        messages=("mold not found", "make install-build-tools"),
+    ),
+    _Case(
+        toolchain_present=False,
+        mold_body="printf 'mold 2.41.0\\n'",
+        host_os="Linux",
+        returncode=1,
+        messages=("is not installed",),
+    ),
+    _Case(
+        toolchain_present=True,
+        mold_body=None,
+        host_os="Darwin",
+        returncode=0,
+        messages=("Linux-only",),
+    ),
+    _Case(
+        toolchain_present=True,
+        mold_body="exit 2",
+        host_os="Linux",
+        returncode=1,
+        messages=("cannot run",),
+    ),
+)
+
+CASE_IDS: typ.Final[tuple[str, ...]] = (
+    "both-present",
+    "mold-missing",
+    "toolchain-missing",
+    "non-linux",
+    "broken-mold",
+)
+
+
+def _run_case(tmp_path: Path, case: _Case) -> subprocess.CompletedProcess[str]:
+    """Run the preflight against the stubs `case` describes.
+
+    Parameters
+    ----------
+    tmp_path
+        Per-test scratch directory.
+    case
+        The capability scenario.
+
+    Returns
+    -------
+    subprocess.CompletedProcess[str]
+        The probe's completed run.
+    """
     bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, f"{_channel()}-x86_64-unknown-linux-gnu (active)")
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-    result = _run_preflight(_preflight_environment(bin_dir))
-    assert result.returncode == 0, result.stderr
-    assert "mold at" in result.stderr, result.stderr
+    suffix = "x86_64-unknown-linux-gnu (active)"
+    listed = f"{_channel()}-{suffix}" if case.toolchain_present else f"stable-{suffix}"
+    _stub_rustup(bin_dir, listed)
+    if case.mold_body is not None:
+        fake_executable(bin_dir / "mold", case.mold_body)
+    return _run_preflight(_preflight_environment(bin_dir, host_os=case.host_os))
 
 
-def test_the_preflight_names_the_install_command_when_mold_is_missing(
-    tmp_path: Path,
-) -> None:
-    """A missing Linux linker fails with the actionable installation command."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, f"{_channel()}-x86_64-unknown-linux-gnu (active)")
-    result = _run_preflight(_preflight_environment(bin_dir))
-    assert result.returncode == 1, result.stderr
-    assert "mold not found" in result.stderr, result.stderr
-    assert "make install-build-tools" in result.stderr, result.stderr
-
-
-def test_the_preflight_fails_when_the_pinned_toolchain_is_absent(
-    tmp_path: Path,
-) -> None:
-    """An uninstalled pin fails instead of letting Cargo pick another channel."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, "stable-x86_64-unknown-linux-gnu (active)")
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-    result = _run_preflight(_preflight_environment(bin_dir))
-    assert result.returncode == 1, result.stderr
-    assert "is not installed" in result.stderr, result.stderr
-
-
-def test_the_preflight_tolerates_a_platform_without_mold(tmp_path: Path) -> None:
-    """A non-Linux host uses its platform linker and passes the check."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, f"{_channel()}-x86_64-unknown-linux-gnu (active)")
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Darwin"))
-    assert result.returncode == 0, result.stderr
-    assert "Linux-only" in result.stderr, result.stderr
-
-
-def test_the_preflight_propagates_a_broken_linker(tmp_path: Path) -> None:
-    """A mold that cannot report its version is treated as unavailable."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, f"{_channel()}-x86_64-unknown-linux-gnu (active)")
-    fake_executable(bin_dir / "mold", "exit 2")
-    result = _run_preflight(_preflight_environment(bin_dir))
-    assert result.returncode == 1, result.stderr
-    assert "cannot run" in result.stderr, result.stderr
+@pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
+def test_the_preflight_judges_each_host_capability(case: _Case, tmp_path: Path) -> None:
+    """A present, missing or unusable prerequisite produces its own report."""
+    result = _run_case(tmp_path, case)
+    assert result.returncode == case.returncode, result.stderr
+    for message in case.messages:
+        assert message in result.stderr, result.stderr
