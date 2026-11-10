@@ -20,6 +20,7 @@ use parking_lot::Mutex;
 use super::{FemtoSocketHandler, SocketCommand};
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::shutdown_signal::ShutdownSignal;
+use crate::test_utils::test_worker::TestWorker;
 
 #[cfg(test)]
 #[path = "flush_deadline_tests.rs"]
@@ -40,22 +41,23 @@ impl FemtoSocketHandler {
     /// let signal = Arc::new(ShutdownSignal::new());
     /// let handle = thread::spawn(|| {});
     /// let handler = FemtoSocketHandler::with_worker_for_test(
-    ///     tx, signal, handle, Duration::from_millis(200),
+    ///     tx,
+    ///     TestWorker::new(signal, handle),
+    ///     Duration::from_millis(200),
     ///     RateLimitedWarner::new(Duration::from_secs(1)),
     /// );
     /// ```
     pub(crate) fn with_worker_for_test(
         tx: Sender<SocketCommand>,
-        signal: Arc<ShutdownSignal>,
-        handle: thread::JoinHandle<()>,
+        worker: TestWorker,
         flush_timeout: Duration,
         warner: RateLimitedWarner,
     ) -> Self {
         Self {
             tx: Some(tx),
-            handle: Mutex::new(Some(handle)),
+            handle: Mutex::new(Some(worker.handle)),
             warner,
-            signal: Some(signal),
+            signal: Some(worker.signal),
             flush_timeout,
             abandoned: Mutex::new(None),
         }

@@ -22,6 +22,9 @@ use crate::{
     shutdown_signal::ShutdownSignal,
 };
 
+#[cfg(test)]
+use crate::test_utils::test_worker::TestWorker;
+
 use super::{
     config::HTTPHandlerConfig,
     queue::{HTTPCommand, enqueue_record},
@@ -168,23 +171,24 @@ impl FemtoHTTPHandler {
     /// let (tx, rx) = crossbeam_channel::bounded(1);
     /// let (signal, handle) = spawn_test_worker(rx);
     /// let mut handler = FemtoHTTPHandler::with_worker_for_test(
-    ///     tx, signal, handle, Duration::from_millis(200),
+    ///     tx,
+    ///     TestWorker::new(signal, handle),
+    ///     Duration::from_millis(200),
     ///     RateLimitedWarner::new(Duration::from_secs(1)),
     /// );
     /// ```
     #[cfg(test)]
     pub(crate) fn with_worker_for_test(
         tx: crossbeam_channel::Sender<HTTPCommand>,
-        signal: Arc<ShutdownSignal>,
-        handle: thread::JoinHandle<()>,
+        worker: TestWorker,
         flush_timeout: Duration,
         warner: RateLimitedWarner,
     ) -> Self {
         Self {
             tx: Some(tx),
-            handle: Mutex::new(Some(handle)),
+            handle: Mutex::new(Some(worker.handle)),
             warner,
-            signal: Some(signal),
+            signal: Some(worker.signal),
             flush_timeout,
         }
     }

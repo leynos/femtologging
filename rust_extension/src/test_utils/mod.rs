@@ -10,6 +10,7 @@ pub(crate) mod flush_budget;
 #[cfg(feature = "python")]
 pub mod frame_assertion_helpers;
 pub mod frame_test_helpers;
+pub(crate) mod test_worker;
 // Its only callers are the bridge saturation tests, which are excluded under
 // `--cfg loom`; keeping the module out of that build avoids a dead-code error
 // from the Loom Clippy lane.

@@ -59,6 +59,13 @@ fn handle_job(job: Job) {
             ack,
             enqueued_at,
         } => {
+            let job = FlushJob {
+                handlers,
+                deadline,
+                start,
+                ack,
+                enqueued_at,
+            };
             // Install the caller's dispatcher for this job: a thread-local
             // subscriber exists only on the thread that created the barrier,
             // so without this the worker's events would go to the global
@@ -66,27 +73,45 @@ fn handle_job(job: Job) {
             // dispatcher when the job finishes, so one caller's subscriber
             // cannot leak into the next flush on this shard.
             #[cfg(feature = "tracing-compat")]
-            let dispatcher = deadline.dispatcher().clone();
+            let dispatcher = job.deadline.dispatcher().clone();
             #[cfg(feature = "tracing-compat")]
-            let run = move || handle_flush_job(handlers, deadline, start, ack, enqueued_at);
-            #[cfg(feature = "tracing-compat")]
-            tracing::dispatcher::with_default(&dispatcher, run);
+            tracing::dispatcher::with_default(&dispatcher, move || handle_flush_job(job));
             #[cfg(not(feature = "tracing-compat"))]
-            handle_flush_job(handlers, deadline, start, ack, enqueued_at);
+            handle_flush_job(job);
         }
         #[cfg(loom)]
         Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
 }
 
-/// Receive the start signal and snapshot using the same remaining budget.
-fn handle_flush_job(
+/// One queued flush marker, as the worker receives it.
+///
+/// The channels and the admission time travel together out of the queue, so
+/// the handler takes the arriving job rather than repeating the marker's five
+/// fields in its own parameter list.
+struct FlushJob {
+    /// Receives the handler snapshot after the marker is admitted.
     handlers: Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
+    /// Deadline shared by queue insertion, acknowledgement, and callbacks.
     deadline: FlushDeadline,
+    /// Gate opened after the logger registry lock has been released.
     start: Receiver<()>,
+    /// Reports handler success or its first unconfirmed deadline stage.
     ack: crate::sync::Sender<Result<(), FlushFailureStage>>,
+    /// Time admission began, so the reported queue wait covers both waiting
+    /// for room in the bounded queue and time spent behind it.
     enqueued_at: std::time::Instant,
-) {
+}
+
+/// Receive the start signal and snapshot using the same remaining budget.
+fn handle_flush_job(job: FlushJob) {
+    let FlushJob {
+        handlers,
+        deadline,
+        start,
+        ack,
+        enqueued_at,
+    } = job;
     // Without the tracing feature the admission time has no reader.
     #[cfg(not(feature = "tracing-compat"))]
     let _ = enqueued_at;

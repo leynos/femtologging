@@ -19,6 +19,7 @@ use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::shutdown_signal::ShutdownSignal;
 use crate::test_utils::flush_budget::{ScriptedClock, WarningClock};
+use crate::test_utils::test_worker::TestWorker;
 
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 
@@ -50,8 +51,12 @@ fn handler_with_unread_queue(
     let (tx, rx) = bounded(capacity);
     let signal = Arc::new(ShutdownSignal::new());
     let handle = thread::spawn(|| {});
-    let handler =
-        FemtoSocketHandler::with_worker_for_test(tx.clone(), signal, handle, flush_timeout, warner);
+    let handler = FemtoSocketHandler::with_worker_for_test(
+        tx.clone(),
+        TestWorker::new(signal, handle),
+        flush_timeout,
+        warner,
+    );
     (handler, tx, rx)
 }
 
