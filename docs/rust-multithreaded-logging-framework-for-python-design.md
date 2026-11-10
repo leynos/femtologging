@@ -1348,15 +1348,20 @@ Two properties of that bound are easy to get wrong. `flush()` derives one
 deadline and spends it on both waits: queueing the flush command on a channel
 that may be full, then waiting for the worker's acknowledgement. Giving each
 wait its own timeout would let one call take nearly twice the configured limit.
-`close()` waits for the completion signal, which the worker raises as its body
-ends, and does not join the thread. Joining would also wait for thread-local
-destructors, which user code can make block, so the closer drops the join
-handle and detaches the worker, which the operating system reclaims when it
-exits. A successful close therefore orders the records the worker did write
-before the closer returns, but it does not promise delivery: a worker panic
-raises the signal with records still queued, and write errors are logged rather
-than returned. As with the other handlers, it is the completion signal, not
-thread exit, that every closer observes.
+The deadline is measured on the clock the handler shares with its rate limiter,
+so a test can script that clock and drive both waits without sleeping.
+`close()` waits for the completion signal, which the worker raises after its
+body ends and its writer and formatter have been dropped, and does not join the
+thread. Joining would also wait for thread-local destructors, which user code
+can make block, so the closer drops the join handle and detaches the worker,
+which the operating system reclaims when it exits. A closer that observes the
+signal returns after the records the worker did write were flushed, but
+completion does not promise delivery: a worker panic raises the signal with
+records still queued, and write errors are logged rather than returned. A
+closer whose wait times out observes neither the signal nor the worker's state,
+and `close()` returns no status by which to tell the cases apart. As with the
+other handlers, it is the completion signal, not thread exit, that every closer
+waits on.
 
 The socket and HTTP handlers reach the same guarantee by a different route,
 because their workers make blocking network calls rather than waiting only on a

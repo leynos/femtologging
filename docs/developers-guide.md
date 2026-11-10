@@ -245,6 +245,18 @@ destructors through channels rather than sleeping, and the Python tests poll the
 `test-util`-gated waiter counter so they release a gated formatter only after
 `flush()` or `close()` has entered its wait.
 
+`flush()` returns one boolean for five different outcomes, so it names the
+failing stage in a trace event instead: a closed handler, a command that could
+not be queued within the deadline, an acknowledgement that timed out, a
+disconnected acknowledgement channel, and an acknowledgement reporting an I/O
+error each get their own fixed message. The queue likewise traces a full or
+disconnected queue when it drops a record. Every message is a fixed string with
+no record payload, so the trace adds no per-record or per-target dimensions,
+and all of them are `trace` level, so they are not formatted until an operator
+turns them on. The wait durations and outcome counters that would support
+alerting remain the bounded telemetry specified by issue #551, which this
+handler does not yet export.
+
 ### Handler shutdown signal, clock and condition-variable seams
 
 `ShutdownSignal` (`rust_extension/src/shutdown_signal.rs`) is the second
@@ -272,14 +284,17 @@ supplies "now" to the deadline queries. Production uses `SystemClock`, which is
 `Instant::now`; tests construct a `ShutdownSignal::with_clock` around a
 `ManualClock`, which moves only when told to. This is deliberately not
 `rate_limited_warner::Clock`: that trait reports milliseconds since its own
-construction and so cannot express an absolute `Instant` deadline. Each query
-samples the clock once, so the answer belongs to one instant; a test that
-compared two separately-read queries would be comparing two moments, which is
-the race the manual clock exists to remove. `wait` reads both clocks on
-purpose: the deadline comparison uses the signal's clock so it can never
-disagree with `is_aborted`, while the sleep bound is a real duration handed to
-`Condvar::wait_timeout`, which has no seam. A manual clock that never advanced
-would leave that bound constant and the loop unable to finish.
+construction and so cannot express an absolute `Instant` deadline. The stream
+handler's flush deadline is a relative budget expressed in milliseconds, so it
+does reuse that trait instead: the handler takes the clock from its rate
+limiter, and a test that scripts it controls the deadline and the drop warnings
+together. Each query samples the clock once, so the answer belongs to one
+instant; a test that compared two separately-read queries would be comparing
+two moments, which is the race the manual clock exists to remove. `wait` reads
+both clocks on purpose: the deadline comparison uses the signal's clock so it
+can never disagree with `is_aborted`, while the sleep bound is a real duration
+handed to `Condvar::wait_timeout`, which has no seam. A manual clock that never
+advanced would leave that bound constant and the loop unable to finish.
 
 `sync::Condvar` is the platform seam behind the notification the workers park
 on. The phase is mutated under its guard and `notify_all` runs while the guard
@@ -627,19 +642,22 @@ invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
 ### Loom models
 
-Eight Loom models in `rust_extension/tests/heavy/` check the handler and logger
+Ten Loom models in `rust_extension/tests/heavy/` check the handler and logger
 workers: delivery through the stream handler's queue, routing through the
 logger to every attached handler exactly once, concurrent handler attachment,
 concurrent writes and flushes through the file handler, and the shared
-worker-completion signal that concurrent closers wait on. Handler models run
-the handler worker code with Loom's synchronization primitives. Logger models
-use a Loom-specific logger-owned shard rather than the process-wide production
-`Dispatcher`; dropping the logger sends `Job::Stop` and joins that worker
-during model cleanup. Every worker spawns, queues and locks through the private
-seam in `rust_extension/src/sync.rs`, which is `std::thread`,
-`crossbeam_channel` and `parking_lot` in an ordinary build and Loom's thread,
-locks and a small bounded channel under `--cfg loom`. Loom arrives only as a
-`cfg(loom)` target dependency.
+worker-completion signal that concurrent closers wait on. Two of those models
+drive the shutdown guard the stream worker really uses, so they require a
+closer that observes completion to see the worker's writer and formatter
+already dropped, both when the body ends normally and when it unwinds. Handler
+models run the handler worker code with Loom's synchronization primitives.
+Logger models use a Loom-specific logger-owned shard rather than the
+process-wide production `Dispatcher`; dropping the logger sends `Job::Stop` and
+joins that worker during model cleanup. Every worker spawns, queues and locks
+through the private seam in `rust_extension/src/sync.rs`, which is
+`std::thread`, `crossbeam_channel` and `parking_lot` in an ordinary build and
+Loom's thread, locks and a small bounded channel under `--cfg loom`. Loom
+arrives only as a `cfg(loom)` target dependency.
 
 The completion models schedule registration against completion, a repeated
 completion, and a waiter that arrives after the worker has stopped. They use the
@@ -927,12 +945,15 @@ path.
 Because the shutdown state is shared rather than moved out by an exclusive
 borrow, several threads may close the same handler, and a close may start while
 a detached flush is still running. Each closer waits on one completion
-broadcast: every caller observes the completion signal the worker raises as its
+broadcast: every caller waits on the completion signal the worker raises as its
 body ends, and a closer that arrives after that signal returns without waiting
-out its timeout. A repeated `close()` is therefore safe and still returns only
-once the worker has raised it. The signal is not the thread's exit:
-thread-local destructors run after the worker body returns, so the thread can
-outlive a closer that is no longer waiting for it.
+out its timeout. A repeated `close()` is therefore safe: it returns once the
+signal is observed, or when its own wait for that signal times out. A closer
+that times out observes neither the signal nor the worker's state, and
+`close()` returns no status by which the caller could tell the cases apart. The
+signal is not the thread's exit: thread-local destructors run after the worker
+body returns, so the thread can outlive a closer that is no longer waiting for
+it.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush

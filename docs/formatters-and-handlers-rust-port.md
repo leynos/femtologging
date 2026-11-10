@@ -165,10 +165,14 @@ continues, preventing deadlocks during shutdown. The closer does not join the
 worker: joining would also wait for thread-local destructors, which user code
 can make block, so the thread is detached and reclaimed by the operating system
 when it exits. The completion signal is raised after the worker drops its
-writer and formatter, so the records it did write are flushed before the closer
-returns; a worker that panicked still raises the signal with records left
-queued. The signal does not mark the thread's exit: thread-local destructors
-run after the worker body returns, so the thread may outlive the closer.
+writer and formatter, so a closer that observes the signal returns only after
+the records the worker did write were flushed. A closer whose wait times out
+observes neither the signal nor the worker's state, and may return while the
+worker is still writing; `close()` returns no status by which to tell the cases
+apart. A worker that panicked still raises the signal with records left queued,
+so completion is not proof of delivery either. The signal does not mark the
+thread's exit: thread-local destructors run after the worker body returns, so
+the thread may outlive the closer.
 
 #### Sequence Diagram
 
