@@ -62,10 +62,13 @@ impl StreamShutdown {
     /// Every caller waits on the shared completion, including one that finds
     /// no join handle left: another closer may still be waiting, so the
     /// completion signal—not the join handle—is what orders queued writes
-    /// before a closer returns.
+    /// before a closer returns. A caller whose wait times out observes neither:
+    /// it returns without evidence that the worker stopped, and `wait` reports
+    /// no status, so it cannot tell the two cases apart.
     ///
     /// The handle is dropped rather than joined. A successful wait means the
-    /// worker finished its body and dropped the writer and formatter, but not
+    /// worker's body ended — normally or by panic — and its writer and
+    /// formatter were dropped, but not
     /// that the thread has exited: thread-local destructors run after the
     /// body returns, and `join` waits for them. A formatter that initializes a
     /// blocking thread-local destructor would then hold a closer past its

@@ -60,6 +60,14 @@ impl RateLimitedWarner {
         Self::with_clock(interval, Arc::new(RealClock::default()))
     }
 
+    /// Return the clock this limiter reads.
+    ///
+    /// The stream handler shares the limiter's clock for its flush deadline, so
+    /// a test that scripts the clock controls both behaviours at once.
+    pub(crate) fn clock(&self) -> Arc<dyn Clock> {
+        Arc::clone(&self.clock)
+    }
+
     /// Create a new [`RateLimitedWarner`] with a custom clock.
     pub fn with_clock(interval: Duration, clock: Arc<dyn Clock>) -> Self {
         let interval_ms = interval.as_millis() as u64;

@@ -42,6 +42,6 @@ impl Drop for WaitGuard {
 
 /// Returns how many stream-handler calls are waiting right now.
 #[cfg(feature = "test-util")]
-pub(crate) fn waiting_count() -> usize {
+pub fn waiting_count() -> usize {
     WAITING.load(Ordering::SeqCst)
 }

@@ -69,6 +69,10 @@ impl Drop for SlowDropFormatter {
     }
 }
 
+/// A blocked formatter destructor must not extend `close()` past its timeout.
+///
+/// The destructor reports entry before blocking, so the test knows teardown
+/// has started before it claims the closer is still waiting.
 #[test]
 fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
@@ -116,6 +120,11 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks()
         .expect("worker should finish formatter teardown");
 }
 
+/// A closer must observe completion only after formatter teardown finishes.
+///
+/// The timeout is long enough for teardown, so the closer cannot return while
+/// the destructor is still blocked; the test waits for that state rather than
+/// sampling a duration.
 #[test]
 fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -226,6 +235,11 @@ impl FemtoFormatter for TlsDtorFormatter {
     }
 }
 
+/// A blocked thread-local destructor must not extend `close()` past its timeout.
+///
+/// Completion is signalled when the worker body ends, before thread-local
+/// destruction, so the closer returns on that signal while the destructor is
+/// still blocked and is released only by the test.
 #[test]
 fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_blocks() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
@@ -308,6 +322,11 @@ fn wait_for_warning(logger: &mut logtest::Logger, needle: &str, wait: Duration) 
     }
 }
 
+/// A worker panic must still signal completion, so `close()` returns promptly.
+///
+/// The warning is awaited before the closer is measured, proving the failure
+/// path ran instead of the closer racing an empty queue; the configured
+/// timeout is then far longer than the allowed wait.
 #[test]
 fn stream_handler_close_returns_promptly_after_a_worker_panic() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(10);

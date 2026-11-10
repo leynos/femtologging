@@ -17,6 +17,7 @@ from femtologging import (
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
 )
+from tests.helpers import poll_captured_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -266,10 +267,9 @@ def test_stream_builder_applies_callable_formatter(
     finally:
         handler.close()
 
-    captured = capfd.readouterr().err
-    assert "callable:hello\n" in captured, (
-        f"stream handler should apply the callable formatter; stderr={captured!r}"
-    )
+    # A timed-out close can return while the worker is still writing, so poll
+    # the capture instead of reading it once and racing that write.
+    poll_captured_text(capfd, "callable:hello\n")
 
 
 @pytest.mark.parametrize(

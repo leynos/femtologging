@@ -8,23 +8,28 @@
 
 mod config;
 
+mod deadline;
+
 mod shutdown;
 
 mod waiter;
+
+mod worker;
 
 use std::{
     any::Any,
     io::{self, Write},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use log::warn;
+use log::{trace, warn};
 use pyo3::prelude::*;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
-use crate::sync::{JoinHandle, Mutex, Receiver, Sender, TrySendError, bounded, spawn};
+use crate::rate_limited_warner::Clock;
+use crate::shutdown::ShutdownCompletion;
+use crate::sync::{JoinHandle, Mutex, RecvTimeoutError, Sender, TrySendError, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -32,10 +37,12 @@ use crate::{
 };
 
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig};
+use deadline::FlushDeadline;
 use shutdown::StreamShutdown;
 use waiter::WaitGuard;
 #[cfg(feature = "test-util")]
-pub(crate) use waiter::waiting_count;
+pub use waiter::waiting_count;
+use worker::run_stream_worker;
 
 /// Commands the worker thread takes from the queue, in order.
 #[expect(
@@ -47,73 +54,6 @@ enum StreamCommand {
     Record(FemtoLogRecord),
     /// Flush request carrying the worker's I/O result acknowledgement channel.
     Flush(Sender<io::Result<()>>),
-}
-
-/// Flushes the writer during worker shutdown and logs, but does not propagate, errors.
-fn flush_with_warning<W: Write>(writer: &mut W) {
-    if writer.flush().is_err() {
-        warn!("FemtoStreamHandler flush error");
-    }
-}
-
-/// Formats one queued record, writes a newline, and flushes the worker-owned writer.
-fn handle_record_command<W, F>(writer: &mut W, formatter: &F, record: FemtoLogRecord)
-where
-    W: Write,
-    F: FemtoFormatter,
-{
-    let msg = formatter.format(&record);
-    if writeln!(writer, "{msg}")
-        .and_then(|_| writer.flush())
-        .is_err()
-    {
-        warn!("FemtoStreamHandler write error");
-    }
-}
-
-/// Flushes the writer and sends the exact I/O result to the waiting producer.
-fn handle_flush_command<W: Write>(writer: &mut W, ack: Sender<io::Result<()>>) {
-    let flush_result = writer.flush();
-    if flush_result.is_err() {
-        warn!("FemtoStreamHandler flush error");
-    }
-    let _ = ack.send(flush_result);
-}
-
-/// Owns the writer and formatter on the background thread until the queue closes.
-fn run_stream_worker<W, F>(
-    rx: Receiver<StreamCommand>,
-    writer: W,
-    formatter: F,
-    completion: Arc<ShutdownCompletion>,
-) where
-    W: Write,
-    F: FemtoFormatter,
-{
-    // Declared first so it drops last: the writer and formatter are dropped
-    // before closers are told the worker stopped, and a panic still signals
-    // them. The work runs inside a closure so its captures are dropped when
-    // the call ends, including while unwinding; a formatter whose destructor
-    // blocks must not let a closer's wait outlive the flush timeout.
-    let _signal = CompleteOnDrop::new(completion);
-    let work = move || {
-        let mut writer = writer;
-        for cmd in rx {
-            match cmd {
-                StreamCommand::Record(record) => {
-                    handle_record_command(&mut writer, &formatter, record);
-                }
-                StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
-            }
-        }
-        flush_with_warning(&mut writer);
-    };
-    // No closer joins this thread (a join would wait for thread-local
-    // destructors that user code can make block), so the worker reports its
-    // own panic instead of leaving the join result unread.
-    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).is_err() {
-        warn!("FemtoStreamHandler: worker thread panicked");
-    }
 }
 
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
@@ -132,6 +72,9 @@ pub struct FemtoStreamHandler {
     warner: RateLimitedWarner,
     /// Timeout for flush operations.
     flush_timeout: Duration,
+    /// Clock the flush deadline is measured against, shared with `warner` so a
+    /// test that scripts the clock controls both behaviours at once.
+    clock: Arc<dyn Clock>,
 }
 
 #[pymethods]
@@ -177,9 +120,11 @@ impl FemtoStreamHandler {
     ///     ``True`` only when the worker acknowledges the flush with
     ///     ``Ok(())`` within the configured timeout.
     ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, the worker
+    ///     internal channel to the worker has been dropped, the flush
+    ///     command cannot be queued before the timeout elapses, the worker
     ///     acknowledges ``Err(io::Error)``, or the acknowledgement does not
-    ///     arrive before the timeout elapses.
+    ///     arrive before the timeout elapses. The value does not identify
+    ///     which of these happened.
     ///
     /// Examples
     /// --------
@@ -199,21 +144,22 @@ impl FemtoStreamHandler {
         py.detach(|| self.flush())
     }
 
-    /// Close the handler and wait for the worker to finish its queued work.
+    /// Close the handler and wait for the worker to stop.
     ///
-    /// The handler stops accepting records, drains the records already queued,
-    /// and waits for the worker to write them. The GIL is released while
-    /// waiting, so a Python callable formatter can run to completion on the
-    /// worker thread. Only a shared PyO3 borrow is needed, so a close can run
-    /// beside a detached flush call.
+    /// The handler stops accepting records, and the caller waits for the worker
+    /// to raise its completion signal, which happens after the worker's body
+    /// ends and its writer and formatter have been dropped. The GIL is released
+    /// while waiting, so a Python callable formatter can run to completion on
+    /// the worker thread. Only a shared PyO3 borrow is needed, so a close can
+    /// run beside a detached flush call.
     ///
-    /// The wait is bounded by the handler's flush timeout. If it expires,
-    /// close returns while the worker may still write to the stream. A
-    /// successful close means the worker finished its queue, not that every
-    /// record was delivered: a worker panic still raises the completion signal
-    /// with records queued, and write errors are logged rather than returned.
-    /// The thread is detached rather than joined, because a join would also
-    /// wait for thread-local destructors that user code can make block.
+    /// The wait is bounded by the handler's flush timeout. If it expires, close
+    /// returns while the worker may still be writing, and no return value
+    /// distinguishes that case from a completed one. Completion is not proof of
+    /// delivery either: a worker panic still raises it with records queued, and
+    /// write errors are logged rather than returned. The thread is detached
+    /// rather than joined, because a join would also wait for thread-local
+    /// destructors that user code can make block.
     #[pyo3(name = "close")]
     fn py_close(slf: Py<Self>, py: Python<'_>) {
         let shutdown = {
@@ -294,6 +240,7 @@ impl FemtoStreamHandler {
         let completion = ShutdownCompletion::new();
         let worker_completion = Arc::clone(&completion);
         let handle = spawn(move || run_stream_worker(rx, writer, formatter, worker_completion));
+        let clock = config.warner.clock();
 
         Self {
             tx: Mutex::new(Some(tx)),
@@ -301,6 +248,7 @@ impl FemtoStreamHandler {
             completion,
             warner: config.warner,
             flush_timeout: config.flush_timeout,
+            clock,
         }
     }
 
@@ -341,6 +289,9 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         match tx.try_send(StreamCommand::Record(record)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
+                // Name the queue state, never the record, so the trace carries
+                // no caller payload.
+                trace!("FemtoStreamHandler: queue full; record dropped");
                 self.warner.record_drop();
                 self.warner.warn_if_due(|count| {
                     warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
@@ -348,6 +299,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                 Err(HandlerError::QueueFull)
             }
             Err(TrySendError::Disconnected(_)) => {
+                trace!("FemtoStreamHandler: queue disconnected; record dropped");
                 self.warner.record_drop();
                 self.warner.warn_if_due(|count| {
                     warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
@@ -358,30 +310,47 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
     }
 
     fn flush(&self) -> bool {
-        // Bind first: a guard in the `match` scrutinee lives through the send.
-        let tx = self.tx.lock().clone();
-        match tx {
-            Some(tx) => {
-                self.warner.flush(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                let (ack_tx, ack_rx) = bounded(1);
-                // One deadline covers both waits. The channel send can block
-                // when the queue is full and the acknowledgement can take a
-                // further interval, so applying the timeout to each in turn
-                // would let a flush wait nearly twice the configured limit.
-                let deadline = Instant::now() + self.flush_timeout;
-                let _waiting = WaitGuard::enter();
-                if tx
-                    .send_timeout(StreamCommand::Flush(ack_tx), self.flush_timeout)
-                    .is_err()
-                {
-                    return false;
-                }
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
+        // Bind first: a guard held in the match scrutinee lives through the send.
+        let Some(tx) = self.tx.lock().clone() else {
+            trace!("FemtoStreamHandler: flush on a closed handler");
+            return false;
+        };
+        self.warner.flush(|count| {
+            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+        });
+        let (ack_tx, ack_rx) = bounded(1);
+        // One deadline covers both waits. The channel send can block when the
+        // queue is full and the acknowledgement can take a further interval,
+        // so applying the timeout to each in turn would let a flush wait
+        // nearly twice the configured limit.
+        let deadline = FlushDeadline::after(self.clock.now_millis(), self.flush_timeout);
+        let _waiting = WaitGuard::enter();
+        let enqueue_budget = deadline.remaining(self.clock.now_millis());
+        if tx
+            .send_timeout(StreamCommand::Flush(ack_tx), enqueue_budget)
+            .is_err()
+        {
+            // The return value cannot say which stage expired. Name the stage
+            // in the trace, with no record payload, so an operator can tell a
+            // full queue from a slow worker.
+            trace!("FemtoStreamHandler: flush command not queued within the deadline");
+            return false;
+        }
+        let ack_budget = deadline.remaining(self.clock.now_millis());
+        match ack_rx.recv_timeout(ack_budget) {
+            Ok(Ok(())) => true,
+            Ok(Err(_)) => {
+                trace!("FemtoStreamHandler: flush acknowledgement reported an I/O error");
+                false
             }
-            None => false,
+            Err(RecvTimeoutError::Disconnected) => {
+                trace!("FemtoStreamHandler: flush acknowledgement channel disconnected");
+                false
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                trace!("FemtoStreamHandler: flush acknowledgement timed out");
+                false
+            }
         }
     }
 

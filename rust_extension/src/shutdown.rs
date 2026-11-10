@@ -250,6 +250,46 @@ impl Drop for CompleteOnDrop {
     }
 }
 
+/// Run a worker body under the completion guard, warning if it panicked.
+///
+/// Whatever `work` owns is dropped before the guard fires, so closers never
+/// observe completion while the worker's writer or formatter is still alive.
+/// Callers reach this by passing a closure rather than by holding the guard
+/// themselves: a closure's captures are dropped when the call ends, including
+/// while unwinding.
+pub(crate) fn run_worker_guarded<F>(completion: Arc<ShutdownCompletion>, work: F)
+where
+    F: FnOnce(),
+{
+    let _signal = CompleteOnDrop::new(completion);
+    // No closer joins this thread (a join would wait for thread-local
+    // destructors that user code can make block), so the worker reports its
+    // own panic instead of leaving the join result unread.
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).is_err() {
+        log::warn!("FemtoStreamHandler: worker thread panicked");
+    }
+}
+
+/// Expose [`run_worker_guarded`] to the Loom shutdown models.
+///
+/// The models drive the same helper the stream worker uses, so they check the
+/// real teardown ordering rather than a copy of it that could drift.
+///
+/// # Examples
+///
+/// ```ignore
+/// let completion = ShutdownCompletion::new();
+/// run_guarded_worker(Arc::clone(&completion), || {});
+/// assert!(completion.is_completed());
+/// ```
+#[cfg(feature = "test-util")]
+pub fn run_guarded_worker<F>(completion: Arc<ShutdownCompletion>, work: F)
+where
+    F: FnOnce(),
+{
+    run_worker_guarded(completion, work);
+}
+
 #[cfg(test)]
 mod tests {
     //! Completion-broadcast tests.

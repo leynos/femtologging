@@ -6,22 +6,66 @@
 //! rather than inferred from scheduling.
 
 use std::io::{self, Write};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use _femtologging_rs::{DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler, stream_waiter_count,
+};
 
 #[path = "test_utils/handle_expect.rs"]
 mod handle_expect;
 use handle_expect::HandleExpect;
 
-/// Upper bound on how long a test writer waits for its release signal.
+/// Upper bound on how long a test writer or waiter waits for its signal.
 ///
 /// The bound only stops a broken test from hanging the worker forever; a
-/// passing test releases the writer long before it expires.
+/// passing test delivers the signal long before it expires.
 const RELEASE_WAIT: Duration = Duration::from_secs(10);
+
+/// Deadline both stages of one flush share in the shared-deadline test.
+const SHARED_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// How long the queue stays full while the flush is blocked queueing.
+///
+/// Long enough that a fresh timeout for the acknowledgement would be
+/// unmistakable, short enough to leave most of a deadline unspent.
+const ENQUEUE_HOLD: Duration = Duration::from_secs(2);
+
+/// How often a test re-reads the waiter counter while a call is blocking.
+const WAIT_POLL: Duration = Duration::from_millis(2);
+
+/// Serialises the tests in this binary.
+///
+/// The waiter counter is process-wide and shared by every handler, so two
+/// tests waiting at once would each see the other's call and could proceed
+/// before their own flusher had reached its wait.
+static WAIT_COUNTER_LOCK: Mutex<()> = Mutex::new(());
+
+/// Take the waiter-counter lock, treating a poisoned lock as free.
+fn lock_wait_counter() -> MutexGuard<'static, ()> {
+    WAIT_COUNTER_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Wait until some stream-handler call in this process is blocked in a wait.
+///
+/// The counter rises inside `flush` just before its first blocking send, so a
+/// successful wait proves the call has reached the boundary the test holds it
+/// at, rather than merely having been scheduled.
+fn wait_until_a_call_is_blocked(context: &str) {
+    let deadline = Instant::now() + RELEASE_WAIT;
+    while stream_waiter_count() == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "{context}: no call reached its wait within {RELEASE_WAIT:?}"
+        );
+        thread::sleep(WAIT_POLL);
+    }
+}
 
 /// Writer whose first flush blocks until the test releases it.
 struct BlockingFlushBuf {
@@ -48,10 +92,12 @@ impl Write for BlockingFlushBuf {
     }
 }
 
+/// `flush` reports failure when the worker never drains the queue.
 #[test]
 fn stream_handler_flush_returns_false_when_the_queue_stays_full() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(100);
 
+    let _serial = lock_wait_counter();
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let handler = FemtoStreamHandler::with_capacity_timeout(
@@ -113,6 +159,158 @@ impl Write for GatedFlushBuf {
     }
 }
 
+/// A handler whose worker blocks in its leading flushes, plus its signals.
+struct GatedHandler {
+    /// Handler under test.
+    handler: Arc<FemtoStreamHandler>,
+    /// Fires each time the worker enters a gated flush.
+    entered: Receiver<()>,
+    /// Released once per `release_worker` call.
+    release: Sender<()>,
+}
+
+impl GatedHandler {
+    /// Build a handler whose worker blocks in its first `gates` flushes.
+    ///
+    /// Three gates cover the first record's flush, the second record's flush,
+    /// and the flush command's flush; the last can only be reached if the
+    /// command really was queued.
+    fn with_gates(gates: u8, flush_timeout: Duration) -> Self {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let handler = FemtoStreamHandler::with_capacity_timeout(
+            GatedFlushBuf {
+                entered: entered_tx,
+                releases: release_rx,
+                gates,
+            },
+            DefaultFormatter,
+            1,
+            flush_timeout,
+        );
+        Self {
+            handler: Arc::new(handler),
+            entered: entered_rx,
+            release: release_tx,
+        }
+    }
+
+    /// Wait until the worker blocks in its next gated flush.
+    fn wait_for_worker_block(&self, context: &str) {
+        self.entered
+            .recv_timeout(RELEASE_WAIT)
+            .unwrap_or_else(|err| panic!("{context}: {err}"));
+    }
+
+    /// Release the worker's current gated flush.
+    fn release_worker(&self) {
+        self.release
+            .send(())
+            .expect("release the worker's blocked flush");
+    }
+
+    /// Block the worker in its first flush and fill the only queue slot behind it.
+    fn block_worker_with_full_queue(&self) {
+        self.handler
+            .expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
+        self.wait_for_worker_block("worker should block in its first flush");
+        // Fill the only queue slot while the worker is blocked, so the flush
+        // command has to wait for space.
+        self.handler
+            .expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+    }
+}
+
+/// Outcome of one flush call, measured inside the thread that performed it.
+struct FlushOutcome {
+    /// What `flush()` returned.
+    flushed: bool,
+    /// How long the call took, measured in the flusher.
+    waited: Duration,
+}
+
+/// A running flush call whose timing the test measures.
+struct Flusher {
+    /// Thread running the call.
+    handle: JoinHandle<()>,
+    /// Delivers the measured outcome.
+    outcome: Receiver<FlushOutcome>,
+    /// Signals that the thread is about to call `flush()`.
+    entering: Receiver<()>,
+}
+
+impl Flusher {
+    /// Spawn a thread that calls `flush()` on `handler` immediately.
+    ///
+    /// Entry is reported from inside the flusher, immediately before the call
+    /// whose deadline is under test. Timing the hold from the spawn instead
+    /// would let a delayed thread start late and spend more of its deadline
+    /// after the release.
+    fn spawn(handler: Arc<FemtoStreamHandler>) -> Self {
+        let (entering_tx, entering_rx) = mpsc::channel();
+        let (outcome_tx, outcome_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            entering_tx
+                .send(())
+                .expect("signal that the flusher is entering its wait");
+            let started = Instant::now();
+            let flushed = handler.flush();
+            // Measure the wait in the thread that performs it, so a delayed
+            // test thread cannot inflate the result into a second timeout.
+            let _ = outcome_tx.send(FlushOutcome {
+                flushed,
+                waited: started.elapsed(),
+            });
+        });
+        Self {
+            handle,
+            outcome: outcome_rx,
+            entering: entering_rx,
+        }
+    }
+
+    /// Wait until the flusher reports that it is about to call `flush()`.
+    fn wait_until_entering(&self) {
+        self.entering
+            .recv_timeout(RELEASE_WAIT)
+            .expect("flusher should enter its wait before the queue is held");
+    }
+
+    /// Wait for the measured outcome and join the flusher.
+    fn finish(self) -> FlushOutcome {
+        let outcome = self
+            .outcome
+            .recv_timeout(RELEASE_WAIT)
+            .expect("flush should report within the shared deadline");
+        self.handle.join().expect("flusher thread panicked");
+        outcome
+    }
+}
+
+/// Assert that one flush waited out the hold but not a second timeout.
+fn assert_shared_deadline(outcome: &FlushOutcome) {
+    assert!(
+        !outcome.flushed,
+        "flush() must fail when the worker never acknowledges"
+    );
+    // The queue stayed full for the whole hold, so a flush that returned
+    // sooner never waited to enqueue, and one that took a fresh timeout after
+    // enqueueing would exceed the upper bound below.
+    assert!(
+        outcome.waited >= ENQUEUE_HOLD,
+        "flush() returned after {:?}, without waiting out the {ENQUEUE_HOLD:?} hold",
+        outcome.waited
+    );
+    assert!(
+        outcome.waited < SHARED_TIMEOUT + ENQUEUE_HOLD / 2,
+        concat!(
+            "flush() waited {:?}; ",
+            "queueing and acknowledgement did not share one deadline"
+        ),
+        outcome.waited
+    );
+}
+
 /// A flush that queues late must still expire at its original deadline.
 ///
 /// The queue frees up only after most of the timeout has passed, and the
@@ -120,111 +318,50 @@ impl Write for GatedFlushBuf {
 /// shared deadline may be spent waiting, so a second full timeout is
 /// distinguishable from the expected short wait.
 ///
-/// The flusher reports entry immediately before the call whose deadline is
-/// under test and measures its own return, so neither a delayed thread start
-/// nor a delayed test thread can distort the measured wait. After the deadline
+/// The test waits for the flusher's own entry signal and then for the waiter
+/// counter to rise, so the hold below is provably spent inside the queueing
+/// send rather than in a thread that has not started yet. After the deadline
 /// expires, the worker is released and must then consume the flush command:
 /// entering its third flush proves the command really was queued, which the
 /// timing alone cannot show.
 #[test]
 fn stream_handler_flush_shares_one_deadline_between_queueing_and_acknowledgement() {
-    const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
-    // Long enough that a fresh timeout for the acknowledgement would be
-    // unmistakable, short enough to leave most of a deadline unspent.
-    const ENQUEUE_HOLD: Duration = Duration::from_secs(2);
+    let _serial = lock_wait_counter();
+    let gated = GatedHandler::with_gates(3, SHARED_TIMEOUT);
+    gated.block_worker_with_full_queue();
 
-    let (entered_tx, entered_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    let handler = Arc::new(FemtoStreamHandler::with_capacity_timeout(
-        GatedFlushBuf {
-            entered: entered_tx,
-            releases: release_rx,
-            // Three gates: the first record's flush, the second record's
-            // flush, and the flush command's flush. The last can only be
-            // reached if the command was queued.
-            gates: 3,
-        },
-        DefaultFormatter,
-        1,
-        FLUSH_TIMEOUT,
-    ));
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"));
-    entered_rx
-        .recv_timeout(RELEASE_WAIT)
-        .expect("worker should block in its first flush");
-    // Fill the only queue slot while the worker is blocked, so the flush
-    // command has to wait for space.
-    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
+    let outcome = flush_while_the_queue_stays_full(&gated);
+    assert_shared_deadline(&outcome);
 
-    let (started_tx, started_rx) = mpsc::channel();
-    let (finished_tx, finished_rx) = mpsc::channel();
-    let flusher = {
-        let handler = Arc::clone(&handler);
-        thread::spawn(move || {
-            // Report entry from inside the flusher, immediately before the
-            // call whose deadline is under test. Timing the hold from the
-            // spawn instead would let a delayed thread start late and spend
-            // more of its deadline after the release below.
-            started_tx
-                .send(())
-                .expect("signal that the flusher is entering its wait");
-            let started = Instant::now();
-            let flushed = handler.flush();
-            // Measure the wait in the thread that performs it, so a delayed
-            // test thread cannot inflate the result into a second timeout.
-            let _ = finished_tx.send((flushed, started.elapsed()));
-        })
-    };
-    started_rx
-        .recv_timeout(RELEASE_WAIT)
-        .expect("flusher should enter its wait before the queue is held");
+    prove_the_flush_command_was_queued(&gated);
+    gated.handler.close();
+}
+
+/// Start a flush against a full queue, hold it, then release the worker once.
+///
+/// The hold is only begun after the flusher's own entry signal and the waiter
+/// counter both confirm it is blocked on the full queue, so the measured wait
+/// belongs to the queueing send whatever the scheduler did. The worker is
+/// released after the hold and must then block in its second flush, which lets
+/// the flush command enqueue while no acknowledgement can follow.
+fn flush_while_the_queue_stays_full(gated: &GatedHandler) -> FlushOutcome {
+    let flusher = Flusher::spawn(Arc::clone(&gated.handler));
+    flusher.wait_until_entering();
+    wait_until_a_call_is_blocked("flush should block while queueing its command");
 
     thread::sleep(ENQUEUE_HOLD);
-    release_tx
-        .send(())
-        .expect("release the worker's first flush");
-    // The worker now takes the queued record, writes it, and blocks in its
-    // second flush, so the flush command can enqueue but no ack can follow.
-    entered_rx
-        .recv_timeout(RELEASE_WAIT)
-        .expect("worker should block in its second flush");
+    gated.release_worker();
+    gated.wait_for_worker_block("worker should block in its second flush");
+    flusher.finish()
+}
 
-    let (flushed, waited) = finished_rx
-        .recv_timeout(RELEASE_WAIT)
-        .expect("flush should report within the shared deadline");
-    assert!(
-        !flushed,
-        "flush() must fail when the worker never acknowledges"
-    );
-    // The queue stayed full for the whole hold, so a flush that returned
-    // sooner never waited to enqueue, and one that took a fresh timeout after
-    // enqueueing would exceed the upper bound below.
-    assert!(
-        waited >= ENQUEUE_HOLD,
-        "flush() returned after {waited:?}, without waiting out the {ENQUEUE_HOLD:?} hold"
-    );
-    assert!(
-        waited < FLUSH_TIMEOUT + ENQUEUE_HOLD / 2,
-        concat!(
-            "flush() waited {:?}; ",
-            "queueing and acknowledgement did not share one deadline"
-        ),
-        waited
-    );
-
-    // The worker was blocked when the deadline expired, so the call can only
-    // have reached its acknowledgement wait if the command was queued behind
-    // the blocked record. Releasing the second flush lets the worker take that
-    // command next; entering the third flush is proof of the enqueue.
-    release_tx
-        .send(())
-        .expect("release the worker's second flush");
-    entered_rx
-        .recv_timeout(RELEASE_WAIT)
-        .expect("the flush command was never queued for the worker");
-    release_tx
-        .send(())
-        .expect("release the flush command's flush");
-    flusher.join().expect("flusher thread panicked");
-    handler.close();
+/// Release the worker past its second flush and require it to reach a third.
+///
+/// The worker was blocked when the deadline expired, so the flush can only
+/// have reached its acknowledgement wait if the command was queued behind the
+/// blocked record. Entering the third gated flush is proof of that enqueue.
+fn prove_the_flush_command_was_queued(gated: &GatedHandler) {
+    gated.release_worker();
+    gated.wait_for_worker_block("the flush command was never queued for the worker");
+    gated.release_worker();
 }

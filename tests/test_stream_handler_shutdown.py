@@ -18,6 +18,7 @@ import typing as typ
 import pytest
 
 from femtologging import StreamHandlerBuilder, rust
+from tests.helpers import poll_captured_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -29,6 +30,12 @@ _WAITER_TIMEOUT_SECONDS = 5.0
 _WAITER_POLL_SECONDS = 0.005
 _DRAIN_TIMEOUT_MS = 5_000
 _MAX_DRAIN_SECONDS = 3.0
+
+# Short configured close timeout for the timeout-path test, with a floor below
+# it and a ceiling well above it so scheduling jitter cannot decide the result.
+_CLOSE_TIMEOUT_MS = 150
+_CLOSE_WAIT_FLOOR_SECONDS = _CLOSE_TIMEOUT_MS / 1000 / 2
+_CLOSE_WAIT_CEILING_SECONDS = 5.0
 
 # Reports how many native stream-handler calls are blocked in a wait. It is
 # present only when the extension was built with the Rust `test-util` feature,
@@ -131,12 +138,14 @@ class _FormatterGate:
         return thread
 
 
-def _build_gated_handler(gate: _FormatterGate) -> _StreamHandler:
+def _build_gated_handler(
+    gate: _FormatterGate, flush_after_ms: int = _DRAIN_TIMEOUT_MS
+) -> _StreamHandler:
     """Build a stderr handler whose formatter blocks until the gate releases."""
     handler = (
         StreamHandlerBuilder
         .stderr()
-        .with_flush_after_ms(_DRAIN_TIMEOUT_MS)
+        .with_flush_after_ms(flush_after_ms)
         .with_formatter(gate.format_record)
         .build()
     )
@@ -227,3 +236,44 @@ def test_stream_drain_waits_for_callable_formatter(
     )
     if drain_method == "flush":
         assert outcome.acknowledged is True, "flush() did not acknowledge the worker"
+
+
+def test_stream_close_timeout_returns_before_the_worker_writes(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A close that times out returns while the worker is still writing.
+
+    The formatter stays blocked, so the worker cannot finish. ``close()`` must
+    still return close to its configured timeout rather than waiting for the
+    worker, and it leaves the record unwritten. Cleanup releases the formatter
+    and polls the captured stderr, so the test waits for the worker's actual
+    write instead of reading the capture once and racing it.
+    """
+    gate = _FormatterGate()
+    handler = _build_gated_handler(gate, flush_after_ms=_CLOSE_TIMEOUT_MS)
+    try:
+        handler.handle("logger", "INFO", "hello")
+        assert gate.entered.wait(timeout=_GATE_TIMEOUT_SECONDS), (
+            "worker never entered the callable formatter"
+        )
+
+        started = time.monotonic()
+        handler.close()
+        elapsed = time.monotonic() - started
+
+        assert elapsed >= _CLOSE_WAIT_FLOOR_SECONDS, (
+            f"close() returned after {elapsed:.3f}s; it did not wait out the "
+            f"configured {_CLOSE_TIMEOUT_MS}ms timeout"
+        )
+        assert elapsed < _CLOSE_WAIT_CEILING_SECONDS, (
+            f"close() waited {elapsed:.3f}s; the timeout did not bound it"
+        )
+        assert not gate.completed.is_set(), (
+            "close() returned only after the formatter completed; "
+            "the timeout path was not exercised"
+        )
+    finally:
+        gate.release.set()
+        handler.close()
+
+    poll_captured_text(capfd, "gated:hello\n")
