@@ -216,8 +216,10 @@ fn base64_encode(input: &[u8]) -> String {
 ///
 /// Only the TLS tests use this. It drives the production request path against a
 /// throwaway certificate authority without changing the host's trust store or
-/// reading the environment.
-#[cfg(test)]
+/// reading the environment. It carries the same non-Windows condition as the
+/// module that calls it, so a Windows test build does not compile an unused
+/// function.
+#[cfg(all(test, not(target_os = "windows")))]
 pub(super) fn execute_with_roots(
     config: &HTTPHandlerConfig,
     root_certs: RootCerts,
