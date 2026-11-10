@@ -109,37 +109,58 @@ fn fill_queue(py: Python<'_>, handler: &Py<FemtoFileHandler>, entered: &mpsc::Re
         .expect("the second record must fill the queue");
 }
 
-/// Assert the counter and the single event one wait must have produced.
-fn assert_recorded(
-    observation: &Observation,
-    operation: &str,
-    outcome: &str,
-    bucket: &str,
+/// What a case expects one binding call to have recorded.
+struct Expected {
+    /// The Python class method the wait belongs to.
+    operation: &'static str,
+    /// The outcome key the counter and the event must carry.
+    outcome: &'static str,
+    /// The overflow-policy bucket the event must carry.
+    bucket: &'static str,
+    /// How many events the whole case must have emitted.
     total_events: usize,
-) {
+}
+
+/// One flush case: how to build the worker, the policy in force, whether the
+/// queue is filled first, and what the call must record.
+struct FlushCase {
+    /// Builds the worker the handler talks to.
+    make_writer: fn(mpsc::Sender<Stage>) -> ScriptedWriter,
+    /// Overflow policy applied to the handler's queue.
+    policy: OverflowPolicy,
+    /// Whether the case must fill the queue before calling `flush()`.
+    should_fill_queue: bool,
+    /// What the case expects the call to record.
+    expected: Expected,
+}
+
+/// Assert the counter and the events one wait must have produced.
+fn assert_recorded(observation: &Observation, expected: &Expected) {
     assert_eq!(
         observation.recorded, 1,
-        "the public map must record the real {outcome} exactly once",
+        "the public map must record the real {} exactly once",
+        expected.outcome,
     );
     assert_eq!(
         observation.events.len(),
-        total_events,
+        expected.total_events,
         "the wait must emit only its own events: {:?}",
         observation.events,
     );
     let matching: Vec<_> = observation
         .events
         .iter()
-        .filter(|event| event.fields["wait_outcome"] == outcome)
+        .filter(|event| event.fields["wait_outcome"] == expected.outcome)
         .collect();
     assert_eq!(
         matching.len(),
         1,
-        "one wait must emit one {outcome} event: {:?}",
+        "one wait must emit one {} event: {:?}",
+        expected.outcome,
         observation.events,
     );
-    assert_eq!(matching[0].fields["operation"], operation);
-    assert_eq!(matching[0].fields["policy_bucket"], bucket);
+    assert_eq!(matching[0].fields["operation"], expected.operation);
+    assert_eq!(matching[0].fields["policy_bucket"], expected.bucket);
 }
 
 /// Release the parked worker and close the handler, leaving no thread behind.
@@ -178,10 +199,12 @@ fn the_python_handle_binding_records_a_real_timeout() {
 
     assert_recorded(
         &observation,
-        "handler_handle",
-        "handle_timed_out",
-        "timeout",
-        3,
+        &Expected {
+            operation: "handler_handle",
+            outcome: "handle_timed_out",
+            bucket: "timeout",
+            total_events: 3,
+        },
     );
     shut_down(&observation);
 }
@@ -195,64 +218,63 @@ fn the_python_handle_binding_records_a_real_timeout() {
 /// case is the only one that queues records first, so it is also the only one
 /// whose case emits more than the flush event.
 #[rstest]
-#[case::ack_timeout(
-    ScriptedWriter::blocking,
-    OverflowPolicy::Block,
-    "flush_ack_timed_out",
-    "block",
-    false,
-    1
-)]
-#[case::enqueue_timeout(
-    ScriptedWriter::blocking,
-    OverflowPolicy::Drop,
-    "flush_enqueue_timed_out",
-    "drop",
-    true,
-    3
-)]
-#[case::io_failure(
-    ScriptedWriter::failing_flush,
-    OverflowPolicy::Block,
-    "flush_failed",
-    "block",
-    false,
-    1
-)]
-#[case::disconnection(
-    ScriptedWriter::panicking_flush,
-    OverflowPolicy::Block,
-    "flush_disconnected",
-    "block",
-    false,
-    1
-)]
-fn the_python_flush_binding_records_the_real_outcome(
-    #[case] make_writer: fn(mpsc::Sender<Stage>) -> ScriptedWriter,
-    #[case] policy: OverflowPolicy,
-    #[case] expected_outcome: &'static str,
-    #[case] expected_bucket: &'static str,
-    #[case] should_fill_queue: bool,
-    #[case] expected_events: usize,
-) {
+#[case::ack_timeout(FlushCase {
+    make_writer: ScriptedWriter::blocking,
+    policy: OverflowPolicy::Block,
+    should_fill_queue: false,
+    expected: Expected {
+        operation: "handler_flush",
+        outcome: "flush_ack_timed_out",
+        bucket: "block",
+        total_events: 1,
+    },
+})]
+#[case::enqueue_timeout(FlushCase {
+    make_writer: ScriptedWriter::blocking,
+    policy: OverflowPolicy::Drop,
+    should_fill_queue: true,
+    expected: Expected {
+        operation: "handler_flush",
+        outcome: "flush_enqueue_timed_out",
+        bucket: "drop",
+        total_events: 3,
+    },
+})]
+#[case::io_failure(FlushCase {
+    make_writer: ScriptedWriter::failing_flush,
+    policy: OverflowPolicy::Block,
+    should_fill_queue: false,
+    expected: Expected {
+        operation: "handler_flush",
+        outcome: "flush_failed",
+        bucket: "block",
+        total_events: 1,
+    },
+})]
+#[case::disconnection(FlushCase {
+    make_writer: ScriptedWriter::panicking_flush,
+    policy: OverflowPolicy::Block,
+    should_fill_queue: false,
+    expected: Expected {
+        operation: "handler_flush",
+        outcome: "flush_disconnected",
+        bucket: "block",
+        total_events: 1,
+    },
+})]
+fn the_python_flush_binding_records_the_real_outcome(#[case] case: FlushCase) {
     let observation = observe(
-        make_writer,
-        policy,
-        expected_outcome,
+        case.make_writer,
+        case.policy,
+        case.expected.outcome,
         |py, handler, entered| {
-            if should_fill_queue {
+            if case.should_fill_queue {
                 fill_queue(py, handler, entered);
             }
             flush_fails(py, handler);
         },
     );
 
-    assert_recorded(
-        &observation,
-        "handler_flush",
-        expected_outcome,
-        expected_bucket,
-        expected_events,
-    );
+    assert_recorded(&observation, &case.expected);
     shut_down(&observation);
 }

@@ -1402,6 +1402,32 @@ ignored) — the only lane that compiles these tests. The other three cargo lane
 and the Python suite do not enable `tracing-compat`, so their compiled test
 code and assertions are unchanged by this commit.
 
+### CodeScene function-argument count on the binding tests
+
+CodeScene's advisory review on `ee99bbba` then reported
+`Excess Number of Function Arguments` for `assert_recorded`, which the
+deduplication had left taking five positional parameters. Passing the same
+operation, outcome, policy bucket and event count through the call sites was
+the same data clump the duplication finding had already identified.
+
+Two small structs now carry that shape: `Expected` holds the operation,
+outcome, bucket and total event count, and `FlushCase` holds the writer
+builder, the policy, whether the queue is filled first, and an `Expected`. The
+flush table passes one `FlushCase` per case, and `assert_recorded` takes the
+observation and one `Expected`. The handle-timeout case still calls the
+assertion directly with a literal `Expected`. Behaviour and assertions are
+unchanged: the same four flush outcomes, the same handle timeout, the same
+counters and events.
+
+The follow-up was gated on the resulting working tree with `make fmt` (no files
+rewritten), `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`
+(all Python tiers, all Rust lint lanes and the Whitaker nightly lane),
+`make typecheck` (`All checks passed!`) and the `tracing-compat` cargo lane
+(759 passed, 0 failed, 3 ignored). That lane ran all four flush cases, the
+handle-timeout case, both close cases and both wrapper cases. It is the only
+lane that enables `tracing-compat`, so the other three cargo lanes and the
+Python suite compile and run the same code they did on `e2451fd2`.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
