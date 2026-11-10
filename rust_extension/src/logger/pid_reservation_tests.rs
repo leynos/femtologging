@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::PidReservation;
-use crate::logger::flush_clock::{FlushDeadline, MonotonicClock};
+use crate::logger::flush_clock::FlushDeadline;
+use crate::monotonic_clock::MonotonicClock;
 
 /// Clock that advances through predetermined reservation-wait samples.
 struct SequenceClock {

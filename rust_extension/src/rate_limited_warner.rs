@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::handler::{QueueFlushFailure, flush_command_until};
+
 /// Source of time for [`RateLimitedWarner`].
 pub trait Clock: Send + Sync {
     /// Return the current time in milliseconds since an arbitrary epoch.
@@ -122,6 +124,31 @@ impl RateLimitedWarner {
     /// Retry a due warning when a handler could not enqueue its flush.
     pub(crate) fn restore_drops(&self, count: u64) {
         self.retry_drops.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Enqueue a flush command that carries the due drop count.
+    ///
+    /// The count leaves the warner before the send and goes back if the
+    /// command never entered the queue. Restoring it keeps the figure attached
+    /// to the next warning: a saturated or closed queue would otherwise strand
+    /// the drops this flush was meant to report.
+    pub(crate) fn flush_with_pending_drops<A, Ack>(
+        &self,
+        deadline: Instant,
+        now: &mut dyn FnMut() -> Instant,
+        enqueue: impl FnOnce(Option<u64>, Duration) -> Option<Ack>,
+    ) -> Result<A, QueueFlushFailure>
+    where
+        Ack: FnOnce(Duration) -> Option<A>,
+    {
+        let pending_drops = self.take_due();
+        let outcome = flush_command_until(deadline, now, |budget| enqueue(pending_drops, budget));
+        if matches!(outcome, Err(QueueFlushFailure::Enqueue))
+            && let Some(count) = pending_drops
+        {
+            self.restore_drops(count);
+        }
+        outcome
     }
 
     /// Immediately warn about pending drops and restart the rate limit interval.

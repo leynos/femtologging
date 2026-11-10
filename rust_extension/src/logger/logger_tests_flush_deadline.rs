@@ -124,7 +124,10 @@ impl FemtoHandlerTrait for WaitingFlushHandler {
         Ok(())
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
+    fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
         let wait = remaining(
             capped_deadline(deadline, Instant::now(), self.budget),
             Instant::now(),

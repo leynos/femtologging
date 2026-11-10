@@ -7,10 +7,14 @@ use std::time::{Duration, Instant};
 
 use proptest::prelude::*;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError, capped_deadline, deadline_after, remaining};
+use crate::handler::{
+    FemtoHandlerTrait, FlushContext, HandlerError, capped_deadline, deadline_after, remaining,
+};
 use crate::log_record::FemtoLogRecord;
 
-use super::super::flush_clock::{FlushDeadline, MonotonicClock};
+use crate::monotonic_clock::MonotonicClock;
+
+use super::super::flush_clock::FlushDeadline;
 use super::super::flush_diagnostics::{FlushDiagnostics, FlushFailureStage, elapsed_bucket};
 use super::{FemtoLogger, FlushOutcome, confirm_by_deadline, flush_handler_snapshot_at};
 
@@ -57,7 +61,7 @@ impl FemtoHandlerTrait for ResultHandler {
         Ok(())
     }
 
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         self.confirmed
     }
 
@@ -77,30 +81,6 @@ fn assert_single_flush_failure(diagnostics: &FlushDiagnostics, stage: FlushFailu
         (1, 0, 1),
         "one unconfirmed flush should be counted at its terminal stage",
     );
-}
-
-fn assert_flush_fails_at_clock_offsets(
-    logger: &FemtoLogger,
-    clock_offsets: &[Duration],
-    expected_stage: FlushFailureStage,
-) {
-    let started_at = Instant::now();
-    let deadline = started_at + TEST_FLUSH_BUDGET;
-    let samples = clock_offsets
-        .iter()
-        .map(|offset| started_at + *offset)
-        .collect();
-    let clock = Arc::new(SequenceClock {
-        samples: Mutex::new(samples),
-        fallback: deadline,
-    });
-    let outcome = logger.flush_handlers_with_clock(TEST_FLUSH_BUDGET, clock);
-
-    assert!(!outcome.finish(
-        &logger.flush_diagnostics,
-        FlushFailureStage::CallerReturnDeadlineExceeded,
-    ));
-    assert_single_flush_failure(&logger.flush_diagnostics, expected_stage);
 }
 
 proptest! {
@@ -146,10 +126,12 @@ proptest! {
             samples.push(simulated_now);
             samples.push(simulated_now);
         }
-        let mut clock_samples = samples.into_iter();
-        let outcome = flush_handler_snapshot_at(&snapshot, deadline, || {
-            clock_samples.next().expect("one clock sample per boundary")
+        let clock = Arc::new(SequenceClock {
+            samples: Mutex::new(samples.into_iter().collect()),
+            fallback: deadline,
         });
+        let context = FlushContext::with_clock(start, Some(deadline), clock);
+        let outcome = flush_handler_snapshot_at(&snapshot, &context);
 
         let mut expected = true;
         let mut spent_ms = 0_u64;
@@ -338,49 +320,5 @@ fn logger_flush_records_the_handler_failure_stage() {
     );
 }
 
-#[test]
-fn injected_clock_reaches_the_worker_with_one_deadline() {
-    let logger = FemtoLogger::new("flush-injected-clock".to_owned())
-        .expect("diagnostic test logger should be constructible");
-    logger
-        .add_handler(Arc::new(ResultHandler { confirmed: true }))
-        .expect("test handler should be accepted");
-    let started_at = Instant::now();
-    let outcome = logger.flush_handlers_with_clock(
-        Duration::from_secs(1),
-        Arc::new(FixedClock { now: started_at }),
-    );
-
-    assert!(outcome.finish(
-        &logger.flush_diagnostics,
-        FlushFailureStage::CallerReturnDeadlineExceeded,
-    ));
-}
-
-#[test]
-fn injected_clock_bounds_handler_snapshot_acquisition() {
-    let logger = FemtoLogger::new("flush-snapshot-clock".to_owned())
-        .expect("diagnostic test logger should be constructible");
-    let _handler_guard = logger.handlers.write();
-    assert_flush_fails_at_clock_offsets(
-        &logger,
-        &[Duration::ZERO, Duration::ZERO, TEST_FLUSH_BUDGET],
-        FlushFailureStage::HandlerSnapshotTimedOut,
-    );
-}
-
-#[test]
-fn injected_clock_stops_before_marker_when_the_shared_deadline_expires() {
-    let logger = FemtoLogger::new("flush-marker-clock".to_owned())
-        .expect("diagnostic test logger should be constructible");
-    assert_flush_fails_at_clock_offsets(
-        &logger,
-        &[
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            TEST_FLUSH_BUDGET,
-        ],
-        FlushFailureStage::DeadlineExpiredBeforeMarker,
-    );
-}
+#[path = "flush_tests_clock.rs"]
+mod clock;

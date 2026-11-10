@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::time::{Duration, Instant};
 
-use _femtologging_rs::{FemtoHandlerTrait, FemtoLogRecord, HandlerError};
+use _femtologging_rs::{FemtoHandlerTrait, FemtoLogRecord, FlushContext, HandlerError};
 
 /// Legacy handler that relies on the trait's default `flush_until`.
 struct LegacyHandler;
@@ -26,8 +26,10 @@ impl FemtoHandlerTrait for DeadlineAwareHandler {
         Ok(())
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
-        deadline.checked_duration_since(Instant::now()).is_some()
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        context
+            .deadline()
+            .is_some_and(|deadline| deadline.checked_duration_since(context.now()).is_some())
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -37,7 +39,8 @@ impl FemtoHandlerTrait for DeadlineAwareHandler {
 
 /// Flush through the trait object, as the logger's worker does.
 fn flush_before_deadline(handler: &dyn FemtoHandlerTrait) -> bool {
-    handler.flush_until(Instant::now() + Duration::from_secs(1))
+    let now = Instant::now();
+    handler.flush_until(&FlushContext::new(now, now + Duration::from_secs(1)))
 }
 
 fn main() {

@@ -1,12 +1,11 @@
 //! Native dispatch for built-in handlers registered through Python.
 
-use std::time::Instant;
-
+use pyo3::PyClass;
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
 use pyo3::{Bound, PyAny};
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use crate::handlers::{
     rotating::PyRotatingFileHandler, timed_rotating::PyTimedRotatingFileHandler,
 };
@@ -105,34 +104,46 @@ impl NativeHandlerKind {
         self,
         py: Python<'_>,
         obj: &Bound<'_, PyAny>,
-        deadline: Instant,
+        context: &FlushContext,
     ) -> bool {
         let confirmed = match self {
-            Self::Stream => obj
-                .extract::<PyRef<'_, FemtoStreamHandler>>()
-                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
-            Self::File => obj
-                .extract::<PyRef<'_, FemtoFileHandler>>()
-                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
-            Self::RotatingFile => obj
-                .extract::<PyRef<'_, PyRotatingFileHandler>>()
-                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
-            Self::TimedRotatingFile => obj
-                .extract::<PyRef<'_, PyTimedRotatingFileHandler>>()
-                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
-            Self::Socket => obj
-                .extract::<PyRef<'_, FemtoSocketHandler>>()
-                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
-            Self::Http => obj
-                .extract::<PyRef<'_, FemtoHTTPHandler>>()
-                .map(|handler| FemtoHandlerTrait::flush_until(&*handler, deadline)),
+            Self::Stream => flush_detached::<FemtoStreamHandler>(py, obj, context),
+            Self::File => flush_detached::<FemtoFileHandler>(py, obj, context),
+            Self::RotatingFile => flush_detached::<PyRotatingFileHandler>(py, obj, context),
+            Self::TimedRotatingFile => {
+                flush_detached::<PyTimedRotatingFileHandler>(py, obj, context)
+            }
+            Self::Socket => flush_detached::<FemtoSocketHandler>(py, obj, context),
+            Self::Http => flush_detached::<FemtoHTTPHandler>(py, obj, context),
         };
         match confirmed {
             Ok(confirmed) => confirmed,
             Err(err) => {
-                let _ = map_py_err(py, err.into(), "extract native handler for flush");
+                let _ = map_py_err(py, err, "extract native handler for flush");
                 false
             }
         }
     }
+}
+
+/// Flush one wrapped built-in handler with the interpreter released.
+///
+/// The shard worker attaches the interpreter only to reach the Rust handler
+/// behind the Python object. Holding it through the handler's queue wait would
+/// block every other Python thread for the whole flush budget, so the wait
+/// runs detached. The borrow is safe to carry across the release: the caller
+/// owns the Python object for the duration of the call, so the handler cannot
+/// be deallocated, and a concurrent `PyRefMut` would fail its borrow check
+/// rather than alias this shared reference.
+fn flush_detached<T>(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    context: &FlushContext,
+) -> PyResult<bool>
+where
+    T: FemtoHandlerTrait + PyClass + Sync,
+{
+    let handler = obj.extract::<PyRef<'_, T>>()?;
+    let handler_ref: &T = &handler;
+    Ok(py.detach(|| FemtoHandlerTrait::flush_until(handler_ref, context)))
 }

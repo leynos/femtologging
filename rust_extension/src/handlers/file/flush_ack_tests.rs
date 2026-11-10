@@ -244,7 +244,9 @@ fn flush_deadline_bounds_a_stalled_acknowledgement() {
     let mut samples = 0_u8;
     let mut now = || {
         samples += 1;
-        if samples == 1 {
+        // The cap and admission checks see the start, so the enqueue gets the
+        // whole budget. Only the acknowledgement sample sees it spent.
+        if samples <= 2 {
             start
         } else {
             start + Duration::from_secs(31)

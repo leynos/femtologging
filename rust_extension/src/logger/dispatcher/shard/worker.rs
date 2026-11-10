@@ -59,29 +59,53 @@ fn handle_job(job: Job) {
             ack,
             enqueued_at,
         } => {
-            // Without the tracing feature the admission time has no reader.
+            // Install the caller's dispatcher for this job: a thread-local
+            // subscriber exists only on the thread that created the barrier,
+            // so without this the worker's events would go to the global
+            // subscriber or be dropped. The guard restores the worker's own
+            // dispatcher when the job finishes, so one caller's subscriber
+            // cannot leak into the next flush on this shard.
+            #[cfg(feature = "tracing-compat")]
+            let dispatcher = deadline.dispatcher().clone();
+            #[cfg(feature = "tracing-compat")]
+            let run = move || handle_flush_job(handlers, deadline, start, ack, enqueued_at);
+            #[cfg(feature = "tracing-compat")]
+            tracing::dispatcher::with_default(&dispatcher, run);
             #[cfg(not(feature = "tracing-compat"))]
-            let _ = enqueued_at;
-            // Enter the caller's span for the whole drain: the trace below,
-            // and any handler instrumentation, then belong to the flush call
-            // that queued this marker.
-            #[cfg(feature = "tracing-compat")]
-            let _entered = deadline.span().enter();
-            #[cfg(feature = "tracing-compat")]
-            let started_at = deadline.now();
-            let result = receive_flush_snapshot(&start, &handlers, &deadline)
-                .and_then(|snapshot| flush_handler_snapshot_until(&snapshot, &deadline));
-            #[cfg(feature = "tracing-compat")]
-            trace_flush_worker_result(
-                result,
-                deadline.now().saturating_duration_since(started_at),
-                started_at.saturating_duration_since(enqueued_at),
-            );
-            let _ = ack.try_send(result);
+            handle_flush_job(handlers, deadline, start, ack, enqueued_at);
         }
         #[cfg(loom)]
         Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
+}
+
+/// Receive the start signal and snapshot using the same remaining budget.
+fn handle_flush_job(
+    handlers: Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
+    deadline: FlushDeadline,
+    start: Receiver<()>,
+    ack: crate::sync::Sender<Result<(), FlushFailureStage>>,
+    enqueued_at: std::time::Instant,
+) {
+    // Without the tracing feature the admission time has no reader.
+    #[cfg(not(feature = "tracing-compat"))]
+    let _ = enqueued_at;
+    // Enter the caller's span for the whole drain: the trace below, and any
+    // handler instrumentation, then belong to the flush call that queued this
+    // marker. The dispatcher is already installed by the caller.
+    #[cfg(feature = "tracing-compat")]
+    let _entered = deadline.span().enter();
+    #[cfg(feature = "tracing-compat")]
+    let started_at = deadline.now();
+    let result = receive_flush_snapshot(&start, &handlers, &deadline)
+        .and_then(|snapshot| flush_handler_snapshot_until(&snapshot, &deadline));
+    #[cfg(feature = "tracing-compat")]
+    trace_flush_worker_result(
+        result,
+        deadline.now().saturating_duration_since(started_at),
+        started_at.saturating_duration_since(enqueued_at),
+    );
+    let _ = ack.try_send(result);
 }
 
 /// Receive the start signal and snapshot using the same remaining budget.

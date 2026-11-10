@@ -12,11 +12,54 @@
 
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
-use super::FemtoSocketHandler;
+use crossbeam_channel::Sender;
+use parking_lot::Mutex;
+
+use super::{FemtoSocketHandler, SocketCommand};
+use crate::rate_limited_warner::RateLimitedWarner;
 use crate::shutdown_signal::ShutdownSignal;
 
+#[cfg(test)]
+#[path = "flush_deadline_tests.rs"]
+mod flush_deadline_tests;
+
 impl FemtoSocketHandler {
+    /// Build a handler around a worker the caller supplies.
+    ///
+    /// The flush and close contracts are about what happens when the worker
+    /// cannot answer: the command queue stays full, or nothing reads it at
+    /// all. Constructing that worker is the only deterministic way to test
+    /// them, because a live worker races the test for the same window.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (tx, _rx) = crossbeam_channel::bounded(1);
+    /// let signal = Arc::new(ShutdownSignal::new());
+    /// let handle = thread::spawn(|| {});
+    /// let handler = FemtoSocketHandler::with_worker_for_test(
+    ///     tx, signal, handle, Duration::from_millis(200),
+    ///     RateLimitedWarner::new(Duration::from_secs(1)),
+    /// );
+    /// ```
+    pub(crate) fn with_worker_for_test(
+        tx: Sender<SocketCommand>,
+        signal: Arc<ShutdownSignal>,
+        handle: thread::JoinHandle<()>,
+        flush_timeout: Duration,
+        warner: RateLimitedWarner,
+    ) -> Self {
+        Self {
+            tx: Some(tx),
+            handle: Mutex::new(Some(handle)),
+            warner,
+            signal: Some(signal),
+            flush_timeout,
+            abandoned: Mutex::new(None),
+        }
+    }
     /// Ask to be told when the worker next begins a backoff delay.
     ///
     /// A test that asserts a close is observed *during* a retry delay has to

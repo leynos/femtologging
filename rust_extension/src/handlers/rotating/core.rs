@@ -8,7 +8,6 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, BufWriter},
     path::Path,
-    time::Instant,
 };
 
 use delegate::delegate;
@@ -16,7 +15,7 @@ use delegate::delegate;
 use super::strategy::FileRotationStrategy;
 use crate::{
     formatter::FemtoFormatter,
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, NoRotation, TestConfig},
     log_record::FemtoLogRecord,
 };
@@ -195,8 +194,8 @@ impl FemtoHandlerTrait for FemtoRotatingFileHandler {
         self.inner.flush()
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
-        self.inner.flush_by(deadline)
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.inner.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -342,7 +342,7 @@ Built-in handlers keep their shorter configured timeouts.
 
 Custom Rust handlers that implement only synchronous `flush()` now fail closed:
 the barrier does not call that method and returns `false`. Override
-`flush_until(deadline)` to opt in. The implementation must use bounded waits
+`flush_until(context)` to opt in. The implementation must use bounded waits
 against the supplied absolute deadline and report `false` when completion is
 not confirmed. The logger cannot interrupt arbitrary synchronous handler code
 once it starts; calling an unbounded `flush()` from `flush_until()` can still
@@ -350,6 +350,11 @@ occupy the shared worker after the caller returns. In normal builds, logger
 drop waits only for that logger's in-flight records, up to the bounded drain
 timeout; it does not join the process-wide worker. Loom models join their
 logger-owned worker during cleanup.
+
+A user-defined Python handler has no flush protocol the barrier can invoke, so
+for it `flush_handlers()` confirms dispatch completion only. A Python handler
+that buffers records must flush its own buffer; `true` does not mean that
+buffer is empty.
 
 Python-facing calls release the GIL while waiting for the worker. CPython must
 reacquire the interpreter before returning to Python, so interpreter contention

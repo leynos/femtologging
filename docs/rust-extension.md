@@ -567,19 +567,21 @@ messages are written before dropping it.
 The logger's `flush_handlers()` barrier also supplies its absolute deadline to
 each Rust handler through `flush_until()`. Its default returns `false` without
 calling `flush()`, so a legacy custom handler cannot make the logger caller
-wait indefinitely. A custom handler must override `flush_until(deadline)` to
-opt into barrier flushing and must return by that instant. The logger cannot
-preempt synchronous handler code that violates this contract. The marker is
-admitted before the handler-list read lock is taken, and that lock is released
-before callbacks run. Handler changes completed before the snapshot are
-reflected in this barrier. A handler removed afterwards remains alive for that
-flush; concurrent additions after the snapshot are included by a later barrier.
-Concurrent flushes use the existing bounded queue and create no helper workers.
-Shutdown that closes the queue before acknowledgement produces `false`. In
-normal builds, logger drop waits only for that logger's in-flight records for
-the bounded drain timeout; it does not join the shared worker. A violating
-callback can keep that worker occupied after the caller returns. Loom models
-join their logger-owned worker.
+wait indefinitely. A custom handler must override `flush_until(context)` to opt
+into barrier flushing and must return by the context's deadline. The logger
+cannot preempt synchronous handler code that violates this contract. A
+user-defined Python handler has no such protocol: the barrier confirms only
+that its record was dispatched, so a buffering Python handler must flush its
+own buffer. The marker is admitted before the handler-list read lock is taken,
+and that lock is released before callbacks run. Handler changes completed
+before the snapshot are reflected in this barrier. A handler removed afterwards
+remains alive for that flush; concurrent additions after the snapshot are
+included by a later barrier. Concurrent flushes use the existing bounded queue
+and create no helper workers. Shutdown that closes the queue before
+acknowledgement produces `false`. In normal builds, logger drop waits only for
+that logger's in-flight records for the bounded drain timeout; it does not join
+the shared worker. A violating callback can keep that worker occupied after the
+caller returns. Loom models join their logger-owned worker.
 
 The Python binding exposes `get_flush_diagnostics()` for polling each logger's
 fixed-cardinality attempt, confirmation, failure-stage and elapsed-time

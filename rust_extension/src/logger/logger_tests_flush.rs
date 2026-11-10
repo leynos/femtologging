@@ -39,7 +39,7 @@ impl FemtoHandlerTrait for StallingHandler {
         Ok(())
     }
 
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         true
     }
 
@@ -56,7 +56,7 @@ impl FemtoHandlerTrait for FailingFlushHandler {
         Ok(())
     }
 
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         false
     }
 

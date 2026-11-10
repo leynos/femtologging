@@ -103,8 +103,8 @@ pub use exception_schema::{
 };
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
-/// Re-export the base handler trait and wrapper.
-pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
+/// Re-export the base handler trait, wrapper, and flush deadline context.
+pub use handler::{FemtoHandler, FemtoHandlerTrait, FlushContext, HandlerError};
 /// Re-export handler builders and errors.
 pub use handlers::{
     FemtoRotatingFileHandler, FemtoTimedRotatingFileHandler, FileHandlerBuilder,

@@ -13,6 +13,10 @@ use crate::sync::TrySendError;
 
 use super::{FemtoStreamHandler, StreamCommand};
 
+#[cfg(test)]
+#[path = "flush_deadline_tests.rs"]
+mod flush_deadline_tests;
+
 impl FemtoHandlerTrait for FemtoStreamHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         // Clone under the lock and release it before sending: a blocking send
@@ -47,8 +51,8 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         FemtoStreamHandler::flush(self)
     }
 
-    fn flush_until(&self, deadline: std::time::Instant) -> bool {
-        self.flush_by(deadline)
+    fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
+        self.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn Any {

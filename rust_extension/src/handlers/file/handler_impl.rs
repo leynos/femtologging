@@ -5,11 +5,10 @@
 //! API.
 
 use std::any::Any;
-use std::time::Instant;
 
 use super::{FemtoFileHandler, FileCommand, OverflowPolicy};
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     log_record::FemtoLogRecord,
     sync::{SendTimeoutError, Sender, TrySendError},
 };
@@ -89,8 +88,8 @@ impl FemtoHandlerTrait for FemtoFileHandler {
         FemtoFileHandler::flush(self)
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
-        FemtoFileHandler::flush_by(self, deadline)
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        FemtoFileHandler::flush_by(self, context)
     }
 
     fn as_any(&self) -> &dyn Any {

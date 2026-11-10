@@ -15,6 +15,7 @@ its marker returns ``False`` instead of blocking forever.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 import typing as typ
@@ -58,6 +59,28 @@ class GilNeedingHandler:
         if not self.proceed.wait(HANDSHAKE_SECONDS):
             msg = "the test never released the handler"
             raise AssertionError(msg)
+
+
+class BufferingHandler:
+    """A user-defined handler that keeps records in its own buffer."""
+
+    def __init__(self) -> None:
+        """Initialize the handler with empty received and emitted buffers."""
+        self.received: list[str] = []
+        self.emitted: list[str] = []
+
+    @staticmethod
+    def handle(_logger: str, _level: str, _message: str) -> None:
+        """Fallback ``handle`` shape required by ``FemtoLogger`` validation."""
+
+    def handle_record(self, record: dict[str, object]) -> None:
+        """Hold the record in the buffer instead of writing it."""
+        self.received.append(str(record["message"]))
+
+    def emit(self) -> None:
+        """Write the buffered records, as the application would on its own."""
+        self.emitted.extend(self.received)
+        self.received.clear()
 
 
 class StallingHandler:
@@ -122,30 +145,45 @@ class TestFlushHandlersBarrier:
         logger.log("INFO", "blocking record")
 
         flushed: list[bool] = []
-        flusher_started = threading.Event()
+        flush_entered = threading.Event()
+
+        def note_flush_entry(_frame: object, event: str, arg: object) -> None:
+            """Signal the moment the interpreter enters ``flush_handlers``.
+
+            ``flush_handlers`` is a C function, so ``c_call`` is the only
+            profile event that reports its entry. A thread that set an event
+            just before the call would prove nothing: it could be set while the
+            call is still waiting for the interpreter, which is exactly the
+            state this test has to rule out.
+            """
+            if event == "c_call" and getattr(arg, "__name__", "") == "flush_handlers":
+                flush_entered.set()
 
         def flush_and_record() -> None:
-            """Signal entry to the barrier and record the flush outcome."""
-            flusher_started.set()
-            flushed.append(logger.flush_handlers())
+            """Enter the barrier, then record the flush outcome."""
+            sys.setprofile(note_flush_entry)
+            try:
+                flushed.append(logger.flush_handlers())
+            finally:
+                sys.setprofile(None)
 
         flusher = threading.Thread(target=flush_and_record)
         flusher.start()
 
-        # The barrier is reached, not merely queued: the handler is running, so
-        # the worker has the record. If the flush held the interpreter, this wait
-        # would never be satisfied.
         try:
+            # The handler is running on the worker, so the worker holds the
+            # record. If the flush held the interpreter, this wait could never
+            # be satisfied.
             assert handler.handled.wait(HANDSHAKE_SECONDS), (
                 "the worker never reached the handler; the flush is holding the "
                 "interpreter the worker needs"
             )
-            # Release the handler only once the flusher has entered its call.
-            # Releasing it as soon as the worker arrives would let the worker
-            # finish first, and the flush would then never contend for the
-            # interpreter the handler needs to resume.
-            assert flusher_started.wait(HANDSHAKE_SECONDS), (
-                "the flush thread never started"
+            # Release the handler only after the barrier call itself has been
+            # entered. Releasing it as soon as the worker arrives would let the
+            # worker finish first and the flush would then never contend for
+            # the interpreter the handler needs to resume.
+            assert flush_entered.wait(HANDSHAKE_SECONDS), (
+                "the flush call never entered flush_handlers"
             )
         finally:
             handler.proceed.set()
@@ -189,6 +227,34 @@ class TestFlushHandlersBarrier:
             )
         finally:
             handler.close()
+
+    def test_flush_handlers_confirms_dispatch_only_for_a_python_handler(self) -> None:
+        """A user-defined Python handler's buffer is outside the barrier.
+
+        The barrier has no flush protocol to invoke on a user-defined Python
+        handler, so reaching it counts as confirmation. ``flush_handlers``
+        may therefore return ``True`` with the record still in the handler's
+        own buffer, which the application flushes itself.
+        """
+        logger = FemtoLogger("buffering_python")
+        handler = BufferingHandler()
+        logger.add_handler(handler)
+        logger.log("INFO", "buffered by the handler")
+
+        assert logger.flush_handlers() is True, (
+            "a dispatched record must count as a confirmed Python flush"
+        )
+        assert handler.received == ["buffered by the handler"], (
+            f"the barrier must wait for dispatch, got {handler.received!r}"
+        )
+        assert not handler.emitted, (
+            "the barrier must not run the application's own buffer flush"
+        )
+
+        handler.emit()
+        assert handler.emitted == ["buffered by the handler"], (
+            "the application's own flush must emit the buffered record"
+        )
 
     def test_flush_handlers_is_bounded_when_a_handler_stalls(self) -> None:
         """A stalled handler must produce ``False`` within the advertised timeout.

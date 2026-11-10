@@ -304,17 +304,19 @@ configured timeouts. The Python method releases the GIL while waiting so Python
 handlers can run.
 
 The method returns `False` when a stage is not confirmed by the deadline, the
-worker has exited, or a handler reports failure or lacks deadline support. The
-timeout bounds the caller's Rust barrier wait; it cannot stop a synchronous
-handler callback that is still running. In normal builds, logger drop waits for
-its own in-flight records only, up to the bounded drain timeout, and does not
-join the shared process-wide worker. A callback that violates its deadline may
-keep that worker occupied after the flush returns `False`. PyO3 must reacquire
-the interpreter before returning to Python, so interpreter contention can delay
-the Python return beyond the barrier deadline.
+worker has exited, or a handler reports failure or lacks deadline support. For
+a user-defined Python handler it confirms dispatch completion only: a handler
+that buffers records must flush its own buffer, because `True` does not mean
+that buffer is empty. The timeout bounds the caller's Rust barrier wait; it
+cannot stop a synchronous handler callback that is still running. In normal
+builds, logger drop waits for its own in-flight records only, up to the bounded
+drain timeout, and does not join the shared process-wide worker. A callback
+that violates its deadline may keep that worker occupied after the flush returns
+`False`. PyO3 must reacquire the interpreter before returning to Python, so
+interpreter contention can delay the Python return beyond the barrier deadline.
 
 Custom Rust handlers that should participate must implement the deadline-aware
-`FemtoHandlerTrait::flush_until(deadline)` contract. Its default fails closed
+`FemtoHandlerTrait::flush_until(context)` contract. Its default fails closed
 without invoking legacy synchronous `flush()` code. See the
 [Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
 for the compatibility rules.

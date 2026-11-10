@@ -150,7 +150,11 @@ class FemtoLogger:
         A custom Rust handler must override ``flush_until()`` and honour its
         deadline. The default returns ``False`` without calling legacy
         synchronous ``flush()``, because arbitrary synchronous code cannot be
-        preempted. Flush callbacks run on the worker without the handler-list
+        preempted. A user-defined Python handler has no flush protocol the
+        barrier can invoke, so for it the barrier confirms dispatch completion
+        only: a buffering handler's ``flush_handlers()`` can return ``True``
+        with records still in its own buffer, which the application must flush
+        itself. Flush callbacks run on the worker without the handler-list
         lock. A removed handler stays alive in the queued snapshot until the
         worker releases it; its destructor does not run on the flush caller.
         Later additions participate in the next call. In normal builds, logger
@@ -169,9 +173,11 @@ class FemtoLogger:
         next call.
 
         Returns ``False`` when the snapshot, marker enqueue, acknowledgement,
-        or any handler flush is not confirmed by the shared deadline; when
-        the worker has exited; or when a handler reports failure or does not
-        implement the deadline-aware contract.
+        or any built-in or custom Rust handler flush is not confirmed by the
+        shared deadline; when the worker has exited; or when a handler reports
+        failure or does not implement the deadline-aware contract. A
+        user-defined Python handler cannot report failure: reaching it counts
+        as confirmation.
 
         """
         ...

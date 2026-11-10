@@ -44,19 +44,37 @@ dependency or its version policy:
 
 ### Docstring examples
 
-`make test` runs two pytest commands: `uv run pytest -v` for the full Python
-suite, then
-`uv run pytest -v --doctest-modules tests/steps/logging_context_steps.py` for
-the logging-context step examples. The first command does not enable
-project-wide doctest discovery, so examples in other modules are documentation
-unless another target executes them.
+`make test` runs pytest with `--doctest-modules`, so every `>>>` example in a
+module pytest walks is executed as part of the suite. Before it was wired the
+suite collected 621 items and no examples; with it, 655. The 34 new items are
+the examples, and five of them were failing: `poll_file_for_text`,
+`capture_records`, `latest_key_values`, `AdapterProbe.capture` and
+`_sole_emitted_record` each opened with a name nothing bound, so each raised on
+its first execution. An example nobody executes is a comment that looks like
+evidence.
 
-Examples in the doctest target must run on their own. Bind every name they use,
-and show a value rather than an assertion, so a wrong answer fails visibly.
+Two rules follow from that.
 
-Keep an example out of the doctest target only when its execution requires
-state the example cannot create or safely bound. A skipped example is inert
-text, so it is not evidence that the documented behaviour works.
+Write an example so it runs on its own. Bind every name it uses, and show a
+value rather than an assertion, so a wrong answer is a failure and not a silent
+pass.
+
+Skip an example only with a written reason beside it. `capture_records` is the
+one deliberate case: it waits on a live socket, and an example that waits on a
+race is the shape
+[issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
+skipped example is inert text, never compiled, so it cannot be trusted the way
+an executed one can.
+
+`--doctest-modules` imports every module it walks, not only `test_*.py`. Two
+settings keep that import working. `pythonpath = ["scripts"]` in
+`[tool.pytest.ini_options]` lets the helper scripts import each other as
+top-level modules, which is what `[tool.ty.environment] extra-paths` already
+records for type checking. `scripts/conftest.py` excludes
+`scripts/lint_rust_lanes.py`, whose dependencies live in its own `uv` script
+block and cannot be resolved from the project environment;
+`make lint-lanes-test` runs that script, and its examples, in the environment
+that can.
 
 ## Typos spelling checker
 
@@ -840,6 +858,39 @@ not acquire or release it, so callers that already hold the interpreter must
 release it when queued Python work needs to run. PyO3 reacquires the
 interpreter before returning to Python; that hand-off may delay the Python
 return beyond the Rust barrier deadline, in which case the result is `false`.
+
+### Worker hand-off
+
+A flush marker carries [`FlushDeadline`], which captures the caller's tracing
+span and dispatcher when the barrier starts. The shard worker installs that
+dispatcher with `tracing::dispatcher::with_default` around the marker's job, so
+a subscriber installed only on the caller's thread still receives the worker's
+`worker_complete` event, and the caller's `caller_complete` event shares its
+span. Installing the dispatcher per job rather than once per worker also stops
+one caller's subscriber leaking into the next flush on that shard. An enqueue
+that never reaches the worker fails before a marker exists, so that flush emits
+the caller event alone; the failure stage names the refused wait.
+
+### Deferred drop warnings
+
+Handler flush commands carry the warner's due drop count so the worker, not the
+flush caller, invokes the logging callback. `RateLimitedWarner::take_due`
+removes that count without calling anything, `flush_with_pending_drops` sends
+it with the marker, and `restore_drops` puts it back when the marker never
+entered the queue. Restoration keeps the figure attached to the next warning: a
+full or closed queue would otherwise strand the drops the failed flush was
+meant to report. `warn_if_due` keeps suppressed drops pending until the
+interval expires, and `flush` reports any restored count, so neither path loses
+a drop.
+
+### Python-defined handlers
+
+`PyHandler` can confirm a flush only for the built-in handlers it recognizes. A
+user-defined Python handler has no flush protocol the barrier can invoke, so its
+`flush_until` reports `true` once the record has been dispatched to it.
+`flush_handlers()` therefore confirms dispatch completion for those handlers,
+not the state of their own buffers; an application that buffers must flush
+itself.
 
 The `log` bridge's flush sweep calls each registered logger's detached barrier
 in turn and returns `true` only when every logger confirmed. Each logger gets

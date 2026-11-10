@@ -8,7 +8,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter},
     path::Path,
-    time::{Instant, SystemTime},
+    time::SystemTime,
 };
 
 use chrono::DateTime;
@@ -17,7 +17,7 @@ use delegate::delegate;
 use super::{rotation_strategy::TimedFileRotationStrategy, schedule::TimedRotationSchedule};
 use crate::{
     formatter::FemtoFormatter,
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig},
     log_record::FemtoLogRecord,
 };
@@ -141,8 +141,8 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
         self.inner.flush()
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
-        self.inner.flush_by(deadline)
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.inner.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn Any {

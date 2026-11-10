@@ -16,10 +16,7 @@ use pyo3::Python;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{
-        FemtoHandlerTrait, HandlerError, QueueFlushFailure, capped_deadline, deadline_after,
-        flush_command_until,
-    },
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError, capped_deadline, deadline_after},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
@@ -32,6 +29,10 @@ use super::{
 };
 
 mod lifecycle;
+
+#[cfg(test)]
+#[path = "handler/flush_deadline_tests.rs"]
+mod flush_deadline_tests;
 
 use lifecycle::ShutdownOutcome;
 
@@ -79,19 +80,26 @@ impl FemtoHTTPHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
+        let now = Instant::now();
+        let Some(deadline) = deadline_after(now, self.flush_timeout) else {
             return false;
         };
-        self.flush_by(deadline)
+        self.flush_by(&FlushContext::system(now, Some(deadline)))
     }
 
-    /// Flush any pending log records, waiting no longer than `deadline`.
+    /// Flush any pending log records, waiting no longer than the context's
+    /// deadline.
     ///
     /// The wait also stops at this handler's configured `flush_timeout`, so a
-    /// bare [`FemtoHTTPHandler::flush`] keeps the bound it documents and a
-    /// barrier flush cannot outlive the deadline it was given.
-    fn flush_by(&self, deadline: Instant) -> bool {
-        self.flush_by_at(deadline, &mut Instant::now)
+    /// bare `flush()` keeps the bound it documents and a barrier flush cannot
+    /// outlive the deadline it was given. Time is sampled from the context, so
+    /// a barrier test controls this handler's deadline transition as well as
+    /// the logger's.
+    fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
     }
 
     /// Flush against `deadline`, sampling each queue wait from `now`.
@@ -103,24 +111,16 @@ impl FemtoHTTPHandler {
         let Some(tx) = self.sender() else {
             return false;
         };
-        let pending_drops = self.warner.take_due();
         let handler_deadline = capped_deadline(deadline, now(), self.flush_timeout);
-        let outcome = flush_command_until(handler_deadline, now, |budget| {
-            let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-            tx.send_timeout(HTTPCommand::Flush(ack_tx, pending_drops), budget)
-                .ok()?;
-            Some(move |budget| ack_rx.recv_timeout(budget).ok())
-        });
-        match outcome {
-            Ok(()) => true,
-            Err(QueueFlushFailure::Enqueue) => {
-                if let Some(count) = pending_drops {
-                    self.warner.restore_drops(count);
-                }
-                false
-            }
-            Err(QueueFlushFailure::Acknowledgement) => false,
-        }
+        let outcome =
+            self.warner
+                .flush_with_pending_drops(handler_deadline, now, |pending_drops, budget| {
+                    let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+                    tx.send_timeout(HTTPCommand::Flush(ack_tx, pending_drops), budget)
+                        .ok()?;
+                    Some(move |budget| ack_rx.recv_timeout(budget).ok())
+                });
+        matches!(outcome, Ok(()))
     }
 
     /// Close the handler, waiting for the worker only while it is answering.
@@ -169,6 +169,7 @@ impl FemtoHTTPHandler {
     /// let (signal, handle) = spawn_test_worker(rx);
     /// let mut handler = FemtoHTTPHandler::with_worker_for_test(
     ///     tx, signal, handle, Duration::from_millis(200),
+    ///     RateLimitedWarner::new(Duration::from_secs(1)),
     /// );
     /// ```
     #[cfg(test)]
@@ -177,11 +178,12 @@ impl FemtoHTTPHandler {
         signal: Arc<ShutdownSignal>,
         handle: thread::JoinHandle<()>,
         flush_timeout: Duration,
+        warner: RateLimitedWarner,
     ) -> Self {
         Self {
             tx: Some(tx),
             handle: Mutex::new(Some(handle)),
-            warner: RateLimitedWarner::new(Duration::from_secs(1)),
+            warner,
             signal: Some(signal),
             flush_timeout,
         }
@@ -268,8 +270,8 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
         FemtoHTTPHandler::flush(self)
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
-        self.flush_by(deadline)
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

@@ -121,7 +121,7 @@ fn a_panicking_handler_does_not_silence_later_records() {
             panic!("handler boom");
         }
 
-        fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
             true
         }
 
@@ -161,7 +161,7 @@ fn a_handler_error_does_not_skip_later_handlers() {
             Err(HandlerError::Message("handler failed".to_owned()))
         }
 
-        fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
             true
         }
 

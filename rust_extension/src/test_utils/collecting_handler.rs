@@ -8,7 +8,6 @@ use crate::log_record::FemtoLogRecord;
 use parking_lot::Mutex;
 use std::any::Any;
 use std::sync::Arc;
-use std::time::Instant;
 
 /// Handler that stores every record it receives for later inspection.
 #[derive(Clone, Default)]
@@ -42,7 +41,7 @@ impl FemtoHandlerTrait for CollectingHandler {
         Ok(())
     }
 
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         true
     }
 

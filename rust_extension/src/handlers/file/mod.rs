@@ -34,7 +34,8 @@ use std::{
 use pyo3::prelude::*;
 
 use crate::handler::{
-    DEFAULT_FLUSH_TIMEOUT, FemtoHandlerTrait, capped_deadline, flush_command_until,
+    DEFAULT_FLUSH_TIMEOUT, FemtoHandlerTrait, FlushContext, capped_deadline, deadline_after,
+    flush_command_until,
 };
 #[cfg(test)]
 use crate::level::FemtoLevel;
@@ -244,16 +245,25 @@ impl FemtoFileHandler {
     /// Flush the worker's buffer, waiting up to one second. Returns `true` only when the flush
     /// is confirmed in time; `false` if the handler is closed, unreachable or the flush fails.
     pub fn flush(&self) -> bool {
-        self.flush_by(Instant::now() + DEFAULT_FLUSH_TIMEOUT)
+        let now = Instant::now();
+        let Some(deadline) = deadline_after(now, DEFAULT_FLUSH_TIMEOUT) else {
+            return false;
+        };
+        self.flush_by(&FlushContext::system(now, Some(deadline)))
     }
 
-    /// Flush the worker, waiting no longer than `deadline`.
+    /// Flush the worker, waiting no longer than the context's deadline.
     ///
     /// The wait also stops at [`DEFAULT_FLUSH_TIMEOUT`], so a bare `flush()`
     /// keeps the second it documents and a barrier flush cannot outlive the
-    /// deadline it was given.
-    pub(super) fn flush_by(&self, deadline: Instant) -> bool {
-        self.flush_by_at(deadline, &mut Instant::now)
+    /// deadline it was given. Time is sampled from the context, so a barrier
+    /// test controls this handler's deadline transition as well as the
+    /// logger's.
+    pub(super) fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
     }
 
     /// Flush against `deadline`, sampling each queue wait from `now`.

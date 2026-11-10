@@ -11,11 +11,11 @@ use std::time::{Duration, Instant};
 use crate::sync::Sender;
 use pyo3::Python;
 
-use crate::handler::{FemtoHandlerTrait, remaining};
+use crate::handler::{FemtoHandlerTrait, FlushContext, remaining};
+#[cfg(all(test, not(loom)))]
+use crate::monotonic_clock::SharedClock;
 
 use super::flush_clock::FlushDeadline;
-#[cfg(all(test, not(loom)))]
-use super::flush_clock::MonotonicClock;
 use super::flush_diagnostics::FlushDiagnostics;
 pub(super) use super::flush_diagnostics::FlushFailureStage;
 #[cfg(feature = "tracing-compat")]
@@ -126,11 +126,7 @@ impl FemtoLogger {
 
     /// Run the real barrier with a supplied clock for deterministic stage tests.
     #[cfg(all(test, not(loom)))]
-    fn flush_handlers_with_clock(
-        &self,
-        timeout: Duration,
-        clock: Arc<dyn MonotonicClock>,
-    ) -> FlushOutcome {
+    fn flush_handlers_with_clock(&self, timeout: Duration, clock: SharedClock) -> FlushOutcome {
         self.flush_handlers_with_timing(FlushDeadline::with_clock(timeout, clock))
     }
 
@@ -252,10 +248,9 @@ fn clone_handler_snapshot(handlers: &[HandlerAttachment]) -> Vec<Arc<dyn FemtoHa
 #[cfg(all(test, not(loom)))]
 pub(super) fn flush_handler_snapshot_at(
     handlers: &[Arc<dyn FemtoHandlerTrait>],
-    deadline: Instant,
-    now: impl FnMut() -> Instant,
+    context: &FlushContext,
 ) -> Result<(), FlushFailureStage> {
-    flush_handler_sequence(handlers, deadline, now)
+    flush_handler_sequence(handlers, context)
 }
 
 /// Flush a handler snapshot with the clock carried by its barrier context.
@@ -263,24 +258,29 @@ pub(super) fn flush_handler_snapshot_until(
     handlers: &[Arc<dyn FemtoHandlerTrait>],
     timing: &FlushDeadline,
 ) -> Result<(), FlushFailureStage> {
-    let Some(deadline) = timing.instant() else {
+    if timing.instant().is_none() {
         return Err(FlushFailureStage::DeadlineUnrepresentable);
-    };
-    flush_handler_sequence(handlers, deadline, || timing.now())
+    }
+    flush_handler_sequence(handlers, &timing.context())
 }
 
 /// Visit handlers in snapshot order and stop at the first unconfirmed flush.
+///
+/// Every handler receives the same context, so each wait in turn is charged
+/// against one absolute deadline sampled from one clock.
 fn flush_handler_sequence(
     handlers: &[Arc<dyn FemtoHandlerTrait>],
-    deadline: Instant,
-    mut now: impl FnMut() -> Instant,
+    context: &FlushContext,
 ) -> Result<(), FlushFailureStage> {
+    let Some(deadline) = context.deadline() else {
+        return Err(FlushFailureStage::DeadlineUnrepresentable);
+    };
     for handler in handlers {
-        if remaining(deadline, now()).is_zero() {
+        if remaining(deadline, context.now()).is_zero() {
             return Err(FlushFailureStage::HandlerFlushDeadlineExceeded);
         }
-        let confirmed = handler.flush_until(deadline);
-        let completed_at = now();
+        let confirmed = handler.flush_until(context);
+        let completed_at = context.now();
         if !confirmed {
             return Err(FlushFailureStage::HandlerFlushUnconfirmed);
         }
@@ -291,7 +291,7 @@ fn flush_handler_sequence(
     confirm_by_deadline(
         Ok(()),
         deadline,
-        now(),
+        context.now(),
         FlushFailureStage::HandlerFlushDeadlineExceeded,
     )
 }

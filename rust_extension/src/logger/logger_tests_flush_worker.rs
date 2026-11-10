@@ -28,7 +28,7 @@ impl FemtoHandlerTrait for BlockingFlushUntilHandler {
         Ok(())
     }
 
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let _ = self.started.try_send(());
         let _ = self.release.recv();
@@ -66,7 +66,10 @@ impl FemtoHandlerTrait for BlockingDropFlushHandler {
         Ok(())
     }
 
-    fn flush_until(&self, deadline: Instant) -> bool {
+    fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
         let _ = self.flush_started.try_send(());
         let _ = self
             .flush_release
@@ -340,7 +343,7 @@ fn native_flush_does_not_attach_to_the_gil() {
             Ok(())
         }
 
-        fn flush_until(&self, _deadline: Instant) -> bool {
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
             let _ = self.0.try_send(());
             true
         }

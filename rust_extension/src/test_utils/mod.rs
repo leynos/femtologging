@@ -5,6 +5,7 @@
 //! below the repository line-length limit.
 
 pub mod collecting_handler;
+pub(crate) mod flush_budget;
 /// Assertions for extracted traceback frame fields and local variables.
 #[cfg(feature = "python")]
 pub mod frame_assertion_helpers;

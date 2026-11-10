@@ -292,3 +292,44 @@ proptest! {
         }
     }
 }
+
+/// A flush whose command never enters a saturated queue must hand its due
+/// drop count back, so the next warning still reports those records.
+#[test]
+fn failed_flush_enqueue_restores_the_due_drop_count() {
+    let clock = Arc::new(FakeClock::default());
+    let warner = RateLimitedWarner::with_clock(Duration::from_secs(5), clock);
+    for _ in 0..3 {
+        warner.record_drop();
+    }
+    // A fresh warner reports its first count immediately, so the flush below
+    // takes all three drops and must put them back.
+    let (tx, _rx) = crate::sync::bounded::<()>(1);
+    tx.try_send(())
+        .expect("the queue should accept its one item");
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(50);
+    let mut now = || start;
+    let outcome: Result<(), crate::handler::QueueFlushFailure> =
+        warner.flush_with_pending_drops(deadline, &mut now, |pending_drops, budget| {
+            assert_eq!(
+                pending_drops,
+                Some(3),
+                "the flush must carry the count it took"
+            );
+            tx.send_timeout((), budget).ok()?;
+            Some(|_: Duration| Some(()))
+        });
+
+    assert_eq!(
+        outcome,
+        Err(crate::handler::QueueFlushFailure::Enqueue),
+        "a full queue refuses the flush command"
+    );
+    assert_eq!(
+        warner.take_due(),
+        Some(3),
+        "the restored count must be the next warning's figure"
+    );
+}

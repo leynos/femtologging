@@ -329,7 +329,10 @@ bounded drain timeout; it does not join the process-wide worker. Loom models
 join their logger-owned workers. The logger creates no helper threads or
 detached flush tasks, and concurrent markers remain bounded by the existing
 queue capacity. Python-backed handlers use a no-op Rust flush and are not
-called back into Python by this barrier.
+called back into Python by this barrier, so for a user-defined Python handler
+the barrier confirms only that the record was dispatched. Such a handler that
+buffers must flush its own buffer; `flush_handlers()` returning `true` does not
+mean that buffer is empty.
 
 ### 3.3 `FemtoLogRecord` Structure
 

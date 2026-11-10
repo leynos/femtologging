@@ -18,9 +18,7 @@ use std::{
 use log::warn;
 use pyo3::prelude::*;
 
-use crate::handler::{
-    FemtoHandlerTrait, QueueFlushFailure, capped_deadline, deadline_after, flush_command_until,
-};
+use crate::handler::{FemtoHandlerTrait, FlushContext, capped_deadline, deadline_after};
 use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
 use crate::{
@@ -39,7 +37,8 @@ pub struct HandlerConfig {
     /// Bounded queue size, in commands, between callers and the worker. Records arriving
     /// while the queue is full are dropped.
     pub capacity: usize,
-    /// How long `flush` waits to enqueue its command and, separately, for the worker's acknowledgement.
+    /// Total time `flush` may spend enqueueing its command and waiting for
+    /// the worker's acknowledgement.
     pub flush_timeout: Duration,
     /// Rate limiter that throttles warnings about dropped records.
     pub warner: RateLimitedWarner,
@@ -62,7 +61,8 @@ impl HandlerConfig {
         self
     }
 
-    /// Set how long each of `flush`'s two waits (enqueue, acknowledgement) may take.
+    /// Set the single budget shared by `flush`'s enqueue and acknowledgement
+    /// waits.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.flush_timeout = timeout;
         self
@@ -153,7 +153,8 @@ fn run_stream_worker<W, F>(
 }
 
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
-/// the caller never waits for the write. `flush` bounds each of its two waits by `flush_timeout`.
+/// the caller never waits for the write. `flush` spends at most `flush_timeout` in total
+/// across enqueueing its command and waiting for the worker's acknowledgement.
 #[pyclass]
 pub struct FemtoStreamHandler {
     /// Queue sender taken during close; shared so no closer needs an exclusive borrow.
@@ -330,19 +331,26 @@ impl FemtoStreamHandler {
     /// Python callers release the interpreter while waiting for the handler's
     /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
-        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
+        let now = Instant::now();
+        let Some(deadline) = deadline_after(now, self.flush_timeout) else {
             return false;
         };
-        self.flush_by(deadline)
+        self.flush_by(&FlushContext::system(now, Some(deadline)))
     }
 
-    /// Flush any pending log records, waiting no longer than `deadline`.
+    /// Flush any pending log records, waiting no longer than the context's
+    /// deadline.
     ///
     /// The wait also stops at this handler's configured `flush_timeout`, so a
-    /// bare [`FemtoStreamHandler::flush`] keeps the bound it documents and a
-    /// barrier flush cannot outlive the deadline it was given.
-    fn flush_by(&self, deadline: Instant) -> bool {
-        self.flush_by_at(deadline, &mut Instant::now)
+    /// bare `flush()` keeps the bound it documents and a barrier flush cannot
+    /// outlive the deadline it was given. Time is sampled from the context, so
+    /// a barrier test controls this handler's deadline transition as well as
+    /// the logger's.
+    fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
     }
 
     /// Flush against `deadline`, sampling each queue wait from `now`.
@@ -360,16 +368,14 @@ impl FemtoStreamHandler {
         let Some(tx) = tx else {
             return false;
         };
-        let pending_drops = self.warner.take_due();
-        let outcome = flush_command_until(effective, now, |budget| {
-            let (ack_tx, ack_rx) = bounded(1);
-            tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)
-                .ok()?;
-            Some(move |budget| ack_rx.recv_timeout(budget).ok())
-        });
-        if let (Err(QueueFlushFailure::Enqueue), Some(count)) = (&outcome, pending_drops) {
-            self.warner.restore_drops(count);
-        }
+        let outcome =
+            self.warner
+                .flush_with_pending_drops(effective, now, |pending_drops, budget| {
+                    let (ack_tx, ack_rx) = bounded(1);
+                    tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)
+                        .ok()?;
+                    Some(move |budget| ack_rx.recv_timeout(budget).ok())
+                });
         matches!(outcome, Ok(Ok(())))
     }
 

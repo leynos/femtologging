@@ -54,7 +54,7 @@ impl FemtoHandlerTrait for SignallingCollectingHandler {
         Ok(())
     }
 
-    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         true
     }
 

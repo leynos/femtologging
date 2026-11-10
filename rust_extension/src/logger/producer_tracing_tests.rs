@@ -222,7 +222,7 @@ impl FemtoHandlerTrait for PythonTestHandler {
         }
     }
 
-    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         true
     }
 
@@ -278,7 +278,7 @@ impl FemtoHandlerTrait for NativeTestHandler {
         }
     }
 
-    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         true
     }
 

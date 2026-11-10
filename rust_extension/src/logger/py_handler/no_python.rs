@@ -47,7 +47,7 @@ impl FemtoHandlerTrait for PyHandler {
 
     /// Without the Python feature the wrapper cannot flush its object, so it
     /// reports an unconfirmed barrier rather than claiming work it did not do.
-    fn flush_until(&self, _deadline: std::time::Instant) -> bool {
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         false
     }
 

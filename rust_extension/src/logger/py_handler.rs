@@ -326,11 +326,16 @@ impl FemtoHandlerTrait for PyHandler {
     /// keeps its own queue and buffer, so the barrier must ask it to flush;
     /// reporting success without doing so would confirm records that are
     /// still buffered.
-    fn flush_until(&self, deadline: std::time::Instant) -> bool {
+    ///
+    /// The promise for a user-defined handler is therefore narrower than for a
+    /// built-in one: it confirms that every record reached the handler, not
+    /// that the handler has written it anywhere. A Python handler that buffers
+    /// internally must flush itself before returning from `handle`.
+    fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
         let Some(native_handler) = self.native_handler else {
             return true;
         };
-        Python::attach(|py| native_handler.flush_until(py, self.obj.bind(py), deadline))
+        Python::attach(|py| native_handler.flush_until(py, self.obj.bind(py), context))
     }
 
     fn as_any(&self) -> &dyn Any {

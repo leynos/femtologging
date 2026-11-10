@@ -2,12 +2,17 @@
 //! implementation.
 
 use crate::log_record::FemtoLogRecord;
+use crate::monotonic_clock::{SharedClock, system_clock};
 use pyo3::prelude::*;
 use std::{
     any::Any,
     time::{Duration, Instant},
 };
 use thiserror::Error;
+
+mod flush_command;
+
+pub(crate) use flush_command::{QueueFlushFailure, flush_command_until};
 
 /// The flush budget of a handler that does not configure one of its own.
 ///
@@ -70,47 +75,119 @@ pub(crate) fn capped_deadline(deadline: Instant, now: Instant, budget: Duration)
     deadline_after(now, budget).map_or(deadline, |local_deadline| deadline.min(local_deadline))
 }
 
-/// Which of a flush's two queue waits ran out of budget.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum QueueFlushFailure {
-    /// The bounded command queue did not accept the flush before the deadline.
-    Enqueue,
-    /// The worker accepted the flush but did not acknowledge it before the deadline.
-    Acknowledgement,
+/// The deadline and monotonic clock one flush barrier shares with its handlers.
+///
+/// A barrier resolves one absolute deadline and hands every handler this
+/// context rather than a bare [`Instant`]. A handler that samples time through
+/// [`Self::now`] therefore observes the same clock the logger used to form the
+/// deadline, so a test can drive the whole barrier — admission, worker start,
+/// acknowledgement and each handler wait — from one scripted source. Passing
+/// `Instant::now` implicitly inside a handler would hide that transition from
+/// the logger and make a deadline test depend on the real clock.
+///
+/// The deadline is optional because an absolute deadline cannot always be
+/// represented: `start + timeout` overflows at the far end of [`Instant`]'s
+/// range. A context without a deadline reports zero remaining time and is
+/// expired, so an implementation fails closed instead of waiting unbounded.
+///
+/// # Examples
+///
+/// ```
+/// use _femtologging_rs::FlushContext;
+/// use std::time::{Duration, Instant};
+///
+/// let started_at = Instant::now();
+/// let context = FlushContext::new(started_at, started_at + Duration::from_secs(2));
+///
+/// assert_eq!(context.started_at(), started_at);
+/// assert!(context.deadline().is_some());
+/// // The system clock has advanced since `started_at`, so the budget left is
+/// // at most the two seconds the context was given.
+/// assert!(context.remaining() <= Duration::from_secs(2));
+/// assert!(!context.is_expired());
+/// ```
+#[derive(Clone)]
+pub struct FlushContext {
+    /// Time at which this barrier's deadline was formed.
+    started_at: Instant,
+    /// Absolute end of the barrier budget, or `None` if it overflowed.
+    deadline: Option<Instant>,
+    /// Monotonic source used to form and sample the deadline.
+    clock: SharedClock,
 }
 
-/// Hand a flush command to a worker queue and wait for its acknowledgement.
-///
-/// `enqueue` receives the budget left when admission begins and returns, once
-/// the command is accepted, a closure that awaits the acknowledgement. It
-/// returns `None` when the bounded queue refused the command. Both budgets are
-/// sampled through `now`, so waiting for queue room is charged once: a marker
-/// that spent most of the deadline being admitted leaves the rest, not a fresh
-/// copy, for the acknowledgement. Production passes [`Instant::now`] at this
-/// boundary; tests pass a scripted source so the budget handed to each wait
-/// can be shown to shrink deterministically, even with a stalled worker.
-///
-/// The caller owns the channel because not every handler queue is the same
-/// type: the file, stream and HTTP handlers use the crate's `sync` seam, while
-/// the socket handler's worker owns its own crossbeam channel.
-///
-/// # Errors
-///
-/// Returns [`QueueFlushFailure::Enqueue`] when the bounded queue stays full for
-/// the whole budget, and [`QueueFlushFailure::Acknowledgement`] when the
-/// worker accepts the command but does not answer in time.
-pub(crate) fn flush_command_until<A, Ack>(
-    deadline: Instant,
-    now: &mut dyn FnMut() -> Instant,
-    enqueue: impl FnOnce(Duration) -> Option<Ack>,
-) -> Result<A, QueueFlushFailure>
-where
-    Ack: FnOnce(Duration) -> Option<A>,
-{
-    let Some(await_acknowledgement) = enqueue(remaining(deadline, now())) else {
-        return Err(QueueFlushFailure::Enqueue);
-    };
-    await_acknowledgement(remaining(deadline, now())).ok_or(QueueFlushFailure::Acknowledgement)
+impl FlushContext {
+    /// Create a context whose deadline is sampled from the system clock.
+    ///
+    /// Custom handler implementations use this in their own tests. The logger
+    /// builds its contexts with the clock the barrier was created with, so a
+    /// production flush and a test handler agree on both values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use _femtologging_rs::FlushContext;
+    /// use std::time::{Duration, Instant};
+    ///
+    /// let now = Instant::now();
+    /// let context = FlushContext::new(now, now + Duration::from_millis(50));
+    /// // The system clock has advanced since `now`, so at most the full
+    /// // fifty milliseconds remain.
+    /// assert!(context.remaining() <= Duration::from_millis(50));
+    /// ```
+    pub fn new(started_at: Instant, deadline: Instant) -> Self {
+        Self::system(started_at, Some(deadline))
+    }
+
+    /// Build a context from an explicit clock, including an absent deadline.
+    pub(crate) fn with_clock(
+        started_at: Instant,
+        deadline: Option<Instant>,
+        clock: SharedClock,
+    ) -> Self {
+        Self {
+            started_at,
+            deadline,
+            clock,
+        }
+    }
+
+    /// Build a context against the production clock.
+    pub(crate) fn system(started_at: Instant, deadline: Option<Instant>) -> Self {
+        Self::with_clock(started_at, deadline, system_clock())
+    }
+
+    /// Return the start time used to form the deadline.
+    pub fn started_at(&self) -> Instant {
+        self.started_at
+    }
+
+    /// Return the absolute deadline, or `None` when it was unrepresentable.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// Sample the same monotonic clock used to form this deadline.
+    pub fn now(&self) -> Instant {
+        self.clock.now()
+    }
+
+    /// Return the time remaining before the deadline, or zero once it passes.
+    pub fn remaining(&self) -> Duration {
+        self.deadline
+            .map(|deadline| remaining(deadline, self.now()))
+            .unwrap_or(Duration::ZERO)
+    }
+
+    /// Whether no positive wait budget remains.
+    pub fn is_expired(&self) -> bool {
+        self.remaining().is_zero()
+    }
+
+    /// Whether the sampled time is strictly after the deadline.
+    pub fn is_late(&self) -> bool {
+        self.deadline.is_none_or(|deadline| self.now() > deadline)
+    }
 }
 
 /// Errors reported by handler implementations when dispatching a log record.
@@ -197,20 +274,22 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
         true
     }
 
-    /// Flush pending records only when the implementation can honour `deadline`.
+    /// Flush pending records only when the implementation can honour `context`.
     ///
     /// Returning `true` signals the flush completed successfully.
     /// Implementations may return `false` when the handler has been closed or
     /// if the flush command could not be processed.
     ///
     /// An implementation that opts into this method must not block past
-    /// `deadline`, and must not report success after it. Synchronous arbitrary
-    /// handler code cannot be preempted, so this is an implementation contract.
-    /// [`FemtoLogger::flush_handlers`] advertises one timeout for the whole
-    /// barrier — snapshotting the handler list, enqueueing the marker, waiting
-    /// for its acknowledgement, and flushing every handler. Each built-in
-    /// implementation still caps its wait at its own configured timeout, so
-    /// the deadline can shorten that wait without lengthening it.
+    /// [`FlushContext::deadline`], and must not report success after it. It must
+    /// sample time through [`FlushContext::now`] rather than [`Instant::now`],
+    /// so a barrier test can control the deadline transition. Synchronous
+    /// arbitrary handler code cannot be preempted, so this is an implementation
+    /// contract. [`FemtoLogger::flush_handlers`] advertises one timeout for the
+    /// whole barrier — snapshotting the handler list, enqueueing the marker,
+    /// waiting for its acknowledgement, and flushing every handler. Each
+    /// built-in implementation still caps its wait at its own configured
+    /// timeout, so the deadline can shorten that wait without lengthening it.
     ///
     /// The default fails closed: it returns `false` without calling
     /// [`Self::flush`]. This keeps a legacy synchronous flush from blocking
@@ -229,19 +308,26 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// callback returns. Loom models instead join their logger-owned worker.
     /// Synchronous arbitrary code cannot be preempted.
     ///
+    /// A handler whose flush has no observable completion — a user-defined
+    /// Python handler, for example — may confirm that the barrier delivered
+    /// every record to it without claiming its own buffers were written. Such
+    /// a handler must document that narrower promise; the logger only reports
+    /// what the handler returned.
+    ///
     /// # Examples
     ///
     /// ```
-    /// use _femtologging_rs::FemtoHandlerTrait;
+    /// use _femtologging_rs::{FemtoHandlerTrait, FlushContext};
     /// use std::time::{Duration, Instant};
     ///
     /// fn flush_before_deadline(handler: &dyn FemtoHandlerTrait) -> bool {
-    ///     handler.flush_until(Instant::now() + Duration::from_secs(2))
+    ///     let now = Instant::now();
+    ///     handler.flush_until(&FlushContext::new(now, now + Duration::from_secs(2)))
     /// }
     /// ```
     ///
     /// [`FemtoLogger::flush_handlers`]: crate::FemtoLogger::flush_handlers
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         false
     }
 
@@ -272,7 +358,7 @@ impl FemtoHandlerTrait for FemtoHandler {
         true
     }
 
-    fn flush_until(&self, _deadline: Instant) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         true
     }
 

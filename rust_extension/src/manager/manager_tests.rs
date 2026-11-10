@@ -201,7 +201,6 @@ mod log_compat {
     use std::any::Any;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
 
     use pyo3::Python;
     use serial_test::serial;
@@ -227,7 +226,7 @@ mod log_compat {
             true
         }
 
-        fn flush_until(&self, _deadline: Instant) -> bool {
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
             self.flush()
         }
 
