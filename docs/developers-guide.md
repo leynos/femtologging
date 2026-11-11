@@ -370,6 +370,15 @@ nothing, so it is safe to run before every gate. Installed tooling need not be
 active in every job; release, coverage and Whitaker routes deliberately exclude
 parts of the development standard, as described below.
 
+Every direct Cargo command line in the Makefile uses the `CARGO` variable,
+which defaults to `cargo`. Overriding it runs the same recipe with a different
+executable, so `make test CARGO=/opt/rust/bin/cargo` exercises another Cargo
+installation without editing the Makefile. The `fmt`, `check-fmt`, `clean`,
+`release`, `test` and `lint-rust-test-docs` targets carry such command lines.
+`build` drives `maturin` instead, and the Clippy and environment-policy lane
+drivers (`lint-rust-clippy`, `lint-env-policy`) select Cargo themselves, so
+`CARGO` does not redirect them.
+
 An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
 `[build] rustflags` and each build that assigns `RUSTFLAGS` decides about the
 linker itself:

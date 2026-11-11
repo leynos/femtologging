@@ -19,10 +19,14 @@ import pytest
 
 from tests.build_tools_support import ROOT, fake_executable, make_environment
 from tests.make_contract_helpers import (
+    makefile_report,
+    objects,
+    prerequisite_map,
     recipe_tokens,
     sole_recipe_rule,
     text_sequence,
 )
+from tests.workflow_contract_helpers import depends_on_preflight
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -92,38 +96,27 @@ def test_the_preflight_targets_run_the_repository_scripts() -> None:
     ), "check-build-tools must run the capability script"
 
 
-def _declares_preflight(makefile_text: str, target: str) -> bool:
-    """Report whether `target`'s line names ``check-build-tools``.
-
-    This is a deliberately text-level reader: it lets a mutation test edit a
-    copy of the Makefile and prove the assertion is not vacuous, without
-    requiring the mutated copy to be a valid build configuration.
+def test_the_preflight_detector_notices_a_removed_dependency(
+    tmp_path: Path,
+) -> None:
+    """The production detector reports a Makefile without the prerequisite.
 
     Parameters
     ----------
-    makefile_text
-        The Makefile source to inspect.
-    target
-        The target whose prerequisite list is read.
-
-    Returns
-    -------
-    bool
-        Whether the target line lists the preflight.
+    tmp_path
+        Scratch directory that holds the mutated Makefile.
     """
-    pattern = rf"^{re.escape(target)}:[^\n]*\bcheck-build-tools\b"
-    return re.search(pattern, makefile_text, re.MULTILINE) is not None
-
-
-def test_the_preflight_detector_notices_a_removed_dependency() -> None:
-    """Mutating the target line makes the detector report the gap."""
     original = (ROOT / "Makefile").read_text("utf-8")
-    assert _declares_preflight(original, "build"), (
-        "the unmutated Makefile must declare the preflight"
+    assert depends_on_preflight()("build") is True, (
+        "the repository Makefile must reach the preflight from build"
     )
     mutated = original.replace("build: check-build-tools", "build:", 1)
     assert mutated != original, "the mutation must change the Makefile"
-    assert not _declares_preflight(mutated, "build"), (
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(mutated, "utf-8")
+    rules = objects(makefile_report(makefile).get("rules"), subject="mutated rules")
+    mutated_map = prerequisite_map(rules)
+    assert depends_on_preflight(mutated_map)("build") is False, (
         "the detector must notice the removed prerequisite"
     )
 

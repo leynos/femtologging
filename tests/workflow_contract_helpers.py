@@ -10,9 +10,10 @@ Makefile and the workflow documents, without hard-coding today's job names.
 from __future__ import annotations
 
 import re
+import shlex
 import typing as typ
 
-from tests.make_contract_helpers import makefile_report, objects, text_sequence
+from tests.make_contract_helpers import prerequisite_map
 from tests.workflow_document_helpers import is_linux_job
 
 if typ.TYPE_CHECKING:
@@ -21,32 +22,118 @@ if typ.TYPE_CHECKING:
     from tests.workflow_document_helpers import Job
 
 PREFLIGHT: typ.Final[str] = "check-build-tools"
-MAKE_TARGET: typ.Final[re.Pattern[str]] = re.compile(
-    r"\bmake\s+(?:-\S+\s+)*([A-Za-z0-9][\w-]*)"
-)
 SUITE_CARGO: typ.Final[re.Pattern[str]] = re.compile(r"\bcargo\s+(?:test|nextest)\b")
+CONTROL_OPERATORS: typ.Final[frozenset[str]] = frozenset({
+    "&&",
+    "||",
+    ";",
+    "|",
+    "&",
+    "(",
+    ")",
+})
+# Options whose following token is a value rather than a goal. Long forms are
+# usually written with `=`, which the goal filter drops on its own.
+VALUE_OPTIONS: typ.Final[frozenset[str]] = frozenset({
+    "-C",
+    "-f",
+    "-I",
+    "-o",
+    "-W",
+    "--directory",
+    "--file",
+    "--makefile",
+    "--include-dir",
+    "--old-file",
+    "--assume-old",
+    "--new-file",
+    "--assume-new",
+    "--eval",
+})
 
 
-def _prerequisite_map() -> dict[str, tuple[str, ...]]:
-    """Return every Makefile target's direct prerequisites.
+def _line_tokens(line: str) -> list[str]:
+    """Return shell-like tokens for `line`, with comments removed."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    try:
+        return list(lexer)
+    except ValueError:
+        return []
+
+
+def _command_segments(tokens: list[str]) -> list[list[str]]:
+    """Split `tokens` into commands at shell control operators."""
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in CONTROL_OPERATORS:
+            segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    segments.append(current)
+    return segments
+
+
+def _is_goal(token: str) -> bool:
+    """Report whether `token` names a Make goal rather than an option."""
+    return not token.startswith("-") and "=" not in token and not token.isdigit()
+
+
+def _arguments_after_make(tokens: list[str]) -> cabc.Iterator[str]:
+    """Yield Make's argument tokens, dropping an option's separate value."""
+    index = tokens.index("make") + 1
+    while index < len(tokens):
+        if tokens[index] in VALUE_OPTIONS:
+            index += 2
+            continue
+        yield tokens[index]
+        index += 1
+
+
+def _segment_goals(tokens: list[str]) -> list[str]:
+    """Return the goals of one command's tokens, or none without a `make`."""
+    if "make" not in tokens:
+        return []
+    return [token for token in _arguments_after_make(tokens) if _is_goal(token)]
+
+
+def make_goals(line: str) -> list[str]:
+    """Return every Make goal named by the shell `line`, in order.
+
+    A step may run several commands on one line, so the token stream is split
+    at shell control operators and each command is read separately. Options,
+    option values, variable assignments and bare job counts are not goals.
+
+    Parameters
+    ----------
+    line
+        One line of a workflow step's ``run`` body.
 
     Returns
     -------
-    dict[str, tuple[str, ...]]
-        The parsed prerequisite lists, keyed by target name.
+    list[str]
+        The goals of every `make` invocation, concatenated in order.
+
+    Examples
+    --------
+    >>> make_goals("make -C . check-fmt && make test")
+    ['check-fmt', 'test']
     """
-    rules = objects(makefile_report().get("rules"), subject="rules")
-    return {
-        target: text_sequence(
-            rule.get("prerequisites"), subject=f"{target} prerequisites"
-        )
-        for rule in rules
-        for target in text_sequence(rule.get("targets"), subject="rule targets")
-    }
+    tokens = _line_tokens(line)
+    return [
+        goal
+        for segment in _command_segments(tokens)
+        for goal in _segment_goals(segment)
+    ]
 
 
 def _reaches_preflight(
-    target: str, prerequisites: dict[str, tuple[str, ...]], seen: frozenset[str]
+    target: str,
+    prerequisites: cabc.Mapping[str, cabc.Sequence[str]],
+    seen: frozenset[str],
 ) -> bool:
     """Report whether `target` depends, directly or indirectly, on the preflight.
 
@@ -74,21 +161,30 @@ def _reaches_preflight(
     )
 
 
-def depends_on_preflight() -> cabc.Callable[[str], bool]:
+def depends_on_preflight(
+    prerequisites: cabc.Mapping[str, cabc.Sequence[str]] | None = None,
+) -> cabc.Callable[[str], bool]:
     """Return a predicate for Make targets that compile through the preflight.
+
+    Parameters
+    ----------
+    prerequisites
+        A parsed prerequisite map to query instead of the repository's
+        Makefile. Tests inject a synthetic map; production callers omit it and
+        the Makefile is parsed on this call.
 
     Returns
     -------
     collections.abc.Callable[[str], bool]
         A predicate over Make target names.
     """
-    prerequisites = _prerequisite_map()
+    parsed = prerequisite_map() if prerequisites is None else prerequisites
 
     def depends(target: str) -> bool:
         """Report whether `target` compiles through the preflight."""
         return any(
-            _reaches_preflight(nested, prerequisites, frozenset({target}))
-            for nested in prerequisites.get(target, ())
+            _reaches_preflight(nested, parsed, frozenset({target}))
+            for nested in parsed.get(target, ())
         )
 
     return depends
@@ -112,8 +208,7 @@ def _run_suite_reason(run: str, depends: cabc.Callable[[str], bool]) -> str | No
     for line in run.splitlines():
         if SUITE_CARGO.search(line):
             return line.strip()
-        match = MAKE_TARGET.search(line)
-        if match is not None and depends(match.group(1)):
+        if any(depends(goal) for goal in make_goals(line)):
             return line.strip()
     return None
 

@@ -12,18 +12,25 @@ from __future__ import annotations
 import typing as typ
 
 import pytest
+import yaml.constructor
 
+from tests.make_contract_helpers import prerequisite_map
 from tests.workflow_contract_helpers import (
     depends_on_preflight,
+    make_goals,
     provisioning_problems,
     suite_steps,
 )
 from tests.workflow_document_helpers import (
     Job,
     is_linux_job,
+    load_workflow,
     runner_values,
     workflow_jobs,
 )
+
+if typ.TYPE_CHECKING:
+    from pathlib import Path
 
 SETUP_RUST: typ.Final[str] = (
     "leynos/shared-actions/.github/actions/setup-rust@"
@@ -108,6 +115,93 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
     """Every mutation that loses or delays the install is detected."""
     problems = provisioning_problems(job, depends_on_preflight())
     assert bool(problems) is expected, problems
+
+
+@pytest.mark.parametrize(
+    ("run", "expected"),
+    [
+        ("make -j 4 test", True),
+        ("make -C . test", True),
+        ("make CARGO=cargo test", True),
+        ("make check-fmt test", True),
+        ("make check-fmt && make test", True),
+        ("make lint; make test", True),
+        ("# make test", False),
+    ],
+    ids=[
+        "job-count-option",
+        "directory-option",
+        "variable-assignment",
+        "two-goals",
+        "two-invocations-and",
+        "two-invocations-semicolon",
+        "shell-comment",
+    ],
+)
+def test_the_reader_recognises_each_make_goal_form(run: str, *, expected: bool) -> None:
+    """Every goal spelling is read, while a commented-out `make` is ignored."""
+    job = _job({"name": "Test", "run": run})
+    problems = provisioning_problems(job, depends_on_preflight())
+    assert bool(problems) is expected, (run, problems)
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("make -j 4 test", ["test"]),
+        ("make -C . test", ["test"]),
+        ("make --directory . test", ["test"]),
+        ("make -f Makefile test", ["test"]),
+        ("make CARGO=cargo test", ["test"]),
+        ("make check-fmt test", ["check-fmt", "test"]),
+        ("make check-fmt && make test", ["check-fmt", "test"]),
+        ("make lint; make test", ["lint", "test"]),
+        ("cargo test", []),
+        ("# make test", []),
+    ],
+    ids=[
+        "job-count-option",
+        "directory-option",
+        "separated-directory",
+        "separated-makefile",
+        "variable-assignment",
+        "two-goals",
+        "two-invocations-and",
+        "two-invocations-semicolon",
+        "not-make",
+        "shell-comment",
+    ],
+)
+def test_make_goals_reads_each_invocation_form(line: str, expected: list[str]) -> None:
+    """The tokenizer returns exactly the goals of every `make` on the line."""
+    assert make_goals(line) == expected, line
+
+
+def test_prerequisite_map_accumulates_repeated_rules() -> None:
+    """Two rules for one target contribute both prerequisite lists in order."""
+    rules = [
+        {"targets": ["lint"], "prerequisites": ["check-fmt"]},
+        {"targets": ["lint"], "prerequisites": ["check-build-tools"]},
+    ]
+    parsed = prerequisite_map(rules)
+    assert parsed["lint"] == ("check-fmt", "check-build-tools"), parsed
+    assert depends_on_preflight(parsed)("lint") is True, (
+        "the accumulated prerequisite must reach the preflight"
+    )
+
+
+def test_the_workflow_reader_rejects_duplicate_mapping_keys(tmp_path: Path) -> None:
+    """A repeated key fails loudly, naming the key and its one-based line."""
+    document = tmp_path / "duplicate.yml"
+    document.write_text(
+        "jobs:\n  example:\n    runs-on: ubuntu-latest\n  example: {}\n",
+        "utf-8",
+    )
+    with pytest.raises(
+        yaml.constructor.ConstructorError,
+        match="duplicate key 'example' on line 4",
+    ):
+        load_workflow(document)
 
 
 @pytest.mark.parametrize(

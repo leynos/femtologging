@@ -17,7 +17,10 @@ from pathlib import Path
 
 import yaml
 
-MAKEUTIL_COMMAND: typ.Final = ("makeutil", "parse", "Makefile")
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+MAKEUTIL_COMMAND: typ.Final = ("makeutil", "parse")
 
 
 def repo_root() -> Path:
@@ -36,8 +39,13 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def makefile_report() -> dict[str, object]:
-    """Return Makeutil's complete, successfully parsed Makefile report.
+def makefile_report(path: str | Path = "Makefile") -> dict[str, object]:
+    """Return Makeutil's complete, successfully parsed report for `path`.
+
+    Parameters
+    ----------
+    path
+        Makefile to parse, relative to the repository root unless absolute.
 
     Returns
     -------
@@ -57,7 +65,7 @@ def makefile_report() -> dict[str, object]:
     True
     """
     completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed parser command
-        MAKEUTIL_COMMAND,
+        (*MAKEUTIL_COMMAND, str(path)),
         capture_output=True,
         check=True,
         cwd=repo_root(),
@@ -96,6 +104,40 @@ def text_sequence(value: object, *, subject: str) -> tuple[str, ...]:
         msg = f"expected {subject} to contain only JSON strings"
         raise TypeError(msg)
     return tuple(typ.cast("list[str]", value))
+
+
+def prerequisite_map(
+    rules: cabc.Sequence[cabc.Mapping[str, object]] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Return every Makefile target's prerequisites, accumulated in order.
+
+    Make accepts a target being declared by several rules, and their
+    prerequisite lists combine. Reading each rule independently and letting a
+    later one replace an earlier one would hide a dependency such as the
+    build-tool preflight, so the lists are concatenated in declaration order.
+
+    Parameters
+    ----------
+    rules
+        Parsed Makeutil rule objects. When omitted, the repository's Makefile
+        is parsed on this call, so no stale module-level cache is observed.
+
+    Returns
+    -------
+    dict[str, tuple[str, ...]]
+        The combined prerequisite lists, keyed by target name.
+    """
+    if rules is None:
+        rules = objects(makefile_report().get("rules"), subject="rules")
+    prerequisites: dict[str, list[str]] = {}
+    for rule in rules:
+        targets = text_sequence(rule.get("targets"), subject="rule targets")
+        required = text_sequence(
+            rule.get("prerequisites"), subject="rule prerequisites"
+        )
+        for target in targets:
+            prerequisites.setdefault(target, []).extend(required)
+    return {target: tuple(names) for target, names in prerequisites.items()}
 
 
 def sole_variable(name: str) -> dict[str, object]:

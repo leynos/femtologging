@@ -13,10 +13,46 @@ import typing as typ
 from pathlib import Path
 
 import yaml
+import yaml.constructor
+import yaml.resolver
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 ROOT: typ.Final[Path] = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR: typ.Final[Path] = ROOT / ".github" / "workflows"
 type Job = dict[str, typ.Any]
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """A safe YAML loader that rejects duplicate mapping keys.
+
+    PyYAML silently keeps the last value of a repeated key, which could hide a
+    mutated workflow step. A contract test needs the duplicate to fail loudly
+    instead, so the loader is strict while remaining as safe as SafeLoader.
+    """
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader, node: yaml.nodes.MappingNode
+) -> dict[object, object]:
+    """Construct a mapping, raising on a repeated key at its first conflict."""
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if key in mapping:
+            context = "while constructing a mapping"
+            msg = f"found duplicate key {key!r} on line {key_node.start_mark.line + 1}"
+            raise yaml.constructor.ConstructorError(
+                context, node.start_mark, msg, key_node.start_mark
+            )
+        mapping[key] = loader.construct_object(value_node, deep=True)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
+)
 
 
 def require(condition: object, message: str) -> None:
@@ -41,6 +77,28 @@ def require(condition: object, message: str) -> None:
     if not condition:
         msg = message
         raise AssertionError(msg)
+
+
+def load_workflow(path: Path) -> dict[str, typ.Any]:
+    """Return the workflow document at `path`, rejecting duplicate keys.
+
+    Parameters
+    ----------
+    path
+        A workflow document.
+
+    Returns
+    -------
+    dict[str, typing.Any]
+        The parsed document. The loader rejects a duplicate mapping key.
+    """
+    # The loader is a SafeLoader subclass that rejects duplicate keys.
+    document = yaml.load(
+        path.read_text("utf-8"),
+        Loader=_UniqueKeyLoader,  # ruff: ignore[unsafe-yaml-load] - SafeLoader subclass
+    )
+    require(isinstance(document, dict), f"{path.name} must declare a mapping")
+    return typ.cast("dict[str, typ.Any]", document)
 
 
 def _flatten(value: object) -> list[str]:
@@ -135,8 +193,8 @@ def _job_documents(path: Path) -> list[tuple[str, Job]]:
     list[tuple[str, Job]]
         The job id and document, in file order.
     """
-    document = yaml.safe_load(path.read_text("utf-8"))
-    job_map = document.get("jobs") if isinstance(document, dict) else None
+    document = load_workflow(path)
+    job_map = document.get("jobs")
     require(isinstance(job_map, dict), f"{path.name} must declare a jobs mapping")
     jobs: list[tuple[str, Job]] = []
     for job_id, job in typ.cast("dict[str, object]", job_map).items():
@@ -197,16 +255,43 @@ def _concrete_step_jobs(
     return concrete
 
 
-def workflow_jobs() -> list[tuple[str, str, Job]]:
+def workflow_documents() -> list[Path]:
+    """Return every repository workflow document, in file-name order.
+
+    Returns
+    -------
+    list[Path]
+        The ``*.yml`` and ``*.yaml`` workflow files, without duplicates.
+    """
+    documents = sorted(
+        {
+            path
+            for pattern in ("*.yml", "*.yaml")
+            for path in WORKFLOW_DIR.glob(pattern)
+        },
+        key=lambda path: path.name,
+    )
+    require(documents, "the repository must publish workflow files")
+    return documents
+
+
+def workflow_jobs(
+    paths: cabc.Iterable[Path] | None = None,
+) -> list[tuple[str, str, Job]]:
     """Return every concrete job of every repository workflow.
+
+    Parameters
+    ----------
+    paths
+        Workflow documents to inspect. When omitted, every document found by
+        `workflow_documents` is read.
 
     Returns
     -------
     list[tuple[str, str, Job]]
         The workflow file name, job id and job document, in file order.
     """
-    documents = sorted(WORKFLOW_DIR.glob("*.yml"))
-    require(documents, "the repository must publish workflow files")
+    documents = workflow_documents() if paths is None else list(paths)
     jobs: list[tuple[str, str, Job]] = []
     for path in documents:
         entries = _job_documents(path)
@@ -216,3 +301,56 @@ def workflow_jobs() -> list[tuple[str, str, Job]]:
             for job_id, job in _concrete_step_jobs(path, entries)
         )
     return jobs
+
+
+def job_steps(document: dict[str, typ.Any], job_id: str) -> list[Job]:
+    """Return the steps of `job_id` in a workflow `document`.
+
+    Parameters
+    ----------
+    document
+        A parsed workflow document.
+    job_id
+        The job whose steps are read.
+
+    Returns
+    -------
+    list[Job]
+        The job's step mappings, in order.
+    """
+    jobs = document.get("jobs")
+    require(isinstance(jobs, dict), "the workflow must declare a jobs mapping")
+    job = typ.cast("dict[str, object]", jobs).get(job_id)
+    require(isinstance(job, dict), f"the workflow must declare job {job_id!r}")
+    steps = typ.cast("dict[str, object]", job).get("steps")
+    require(isinstance(steps, list), f"job {job_id!r} must declare a step list")
+    listed = typ.cast("list[object]", steps)
+    typed_steps = [typ.cast("Job", step) for step in listed if isinstance(step, dict)]
+    require(
+        len(typed_steps) == len(listed),
+        f"job {job_id!r} steps must all be mappings",
+    )
+    return typed_steps
+
+
+def step_using(steps: cabc.Sequence[Job], marker: str) -> Job:
+    """Return the sole step whose ``uses`` contains `marker`.
+
+    Parameters
+    ----------
+    steps
+        A job's step mappings.
+    marker
+        Text that identifies the action, such as ``setup-rust``.
+
+    Returns
+    -------
+    Job
+        The matching step.
+    """
+    matches = [step for step in steps if marker in str(step.get("uses", ""))]
+    require(
+        len(matches) == 1,
+        f"expected exactly one step using {marker!r}, found {len(matches)}",
+    )
+    return matches[0]
