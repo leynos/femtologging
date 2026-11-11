@@ -33,6 +33,34 @@ pinned_toolchain() {
   printf '%s\n' "$channel"
 }
 
+# Enumerate rustup's installed toolchains from a neutral directory.
+#
+# `rustup toolchain list` honours a `rust-toolchain.toml` override discovered
+# from the working directory. Running it at the repository root would let
+# rustup resolve -- and potentially provision -- the pinned channel, which both
+# defeats the capability check and can mutate the host. `/` lies outside the
+# repository, so the listing reflects only what is genuinely installed.
+installed_toolchains() {
+  ( cd -- / && rustup toolchain list )
+}
+
+# Report whether `channel` is installed, matching its name literally.
+#
+# rustup prints one line per toolchain as `<name>[ (<status>)]`, so the first
+# whitespace-delimited field is the name. Literal `case` patterns accept only
+# the exact channel or that channel with a host-triple suffix; a prefix regex
+# would wrongly accept `1.99.1` when the host only has `1.99.10`.
+toolchain_is_installed() {
+  local channel=$1 line name
+  while IFS= read -r line; do
+    name=${line%%[[:space:]]*}
+    case "$name" in
+      "$channel" | "$channel"-*) return 0 ;;
+    esac
+  done < <(installed_toolchains)
+  return 1
+}
+
 # Report on the toolchain half: rustup must be present, and the pinned channel
 # must already be installed. A stable/MSRV promise does not remove the need for
 # the pinned toolchain to be materialized on the host.
@@ -43,7 +71,7 @@ check_toolchain() {
     note 'install it from https://rustup.rs'
     return 1
   fi
-  if ! rustup toolchain list | grep -q "^${channel}"; then
+  if ! toolchain_is_installed "$channel"; then
     note "toolchain ${channel} is not installed"
     note 'install it with: make install-build-tools'
     return 1
