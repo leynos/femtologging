@@ -20,7 +20,8 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-import yaml
+
+from tests.workflow_document_helpers import job_steps, load_workflow, step_using
 
 ROOT: typ.Final[Path] = Path(__file__).resolve().parents[1]
 MOLD_FLAG: typ.Final[str] = "-Clink-arg=-fuse-ld=mold"
@@ -115,10 +116,8 @@ def test_development_profile_keeps_the_build_footprint_settings() -> None:
 
 def _heavy_steps() -> list[dict[str, typ.Any]]:
     """Return the steps of the scheduled heavy-tests job."""
-    document = yaml.safe_load(
-        (ROOT / ".github" / "workflows" / "heavy-tests.yml").read_text("utf-8")
-    )
-    return list(document["jobs"]["heavy"]["steps"])
+    document = load_workflow(ROOT / ".github" / "workflows" / "heavy-tests.yml")
+    return job_steps(document, "heavy")
 
 
 def test_the_loom_steps_restate_the_linker_flag() -> None:
@@ -138,16 +137,9 @@ def test_the_loom_steps_restate_the_linker_flag() -> None:
 def test_the_heavy_job_installs_mold_before_it_compiles() -> None:
     """The heavy job installs mold through setup-rust, ahead of every compile."""
     steps = _heavy_steps()
-    install = next(
-        (
-            index
-            for index, step in enumerate(steps)
-            if "setup-rust" in str(step.get("uses", ""))
-        ),
-        None,
-    )
-    assert install is not None, "the heavy job must install Rust through setup-rust"
-    settings = steps[install].get("with", {})
+    setup = step_using(steps, "setup-rust")
+    install = steps.index(setup)
+    settings = setup.get("with", {})
     assert str(settings.get("install-mold")) == "true", "install-mold must be true"
     exports_nothing = "rustflags" in settings and not settings["rustflags"]
     assert exports_nothing, "setup-rust must export no RUSTFLAGS"
@@ -306,11 +298,9 @@ def test_the_documented_incremental_override_turns_incremental_back_on(
 
 def test_the_ci_build_installs_mold_for_the_nested_trybuild_crates() -> None:
     """The pull-request build installs mold, which trybuild's nested crate needs."""
-    document = yaml.safe_load(
-        (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
-    )
-    steps = document["jobs"]["build-test"]["steps"]
-    setup = next(step for step in steps if "setup-rust" in str(step.get("uses", "")))
+    document = load_workflow(ROOT / ".github" / "workflows" / "ci.yml")
+    steps = job_steps(document, "build-test")
+    setup = step_using(steps, "setup-rust")
     assert str(setup.get("with", {}).get("install-mold")) == "true", (
         "ci.yml must install mold: trybuild's nested crate finds .cargo/config.toml"
     )
@@ -324,10 +314,8 @@ def test_the_release_wheel_builds_displace_the_linux_linker_flag() -> None:
     source, and maturin-action forwards ``RUST*`` variables into the container,
     so the release wheels link with the container's own toolchain instead.
     """
-    document = yaml.safe_load(
-        (ROOT / ".github" / "workflows" / "build-wheels.yml").read_text("utf-8")
-    )
-    steps = document["jobs"]["build-linux"]["steps"]
+    document = load_workflow(ROOT / ".github" / "workflows" / "build-wheels.yml")
+    steps = job_steps(document, "build-linux")
     builds = [
         step
         for step in steps
@@ -347,18 +335,16 @@ def test_the_release_wheel_builds_displace_the_linux_linker_flag() -> None:
 
 def test_ci_restates_the_development_linker_and_excludes_it_from_coverage() -> None:
     """CI keeps mold for the suite and drops it for the instrumented build."""
-    document = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text("utf-8"))
-    steps = document["jobs"]["build-test"]["steps"]
-    setup = next(step for step in steps if "setup-rust" in str(step.get("uses", "")))
+    document = load_workflow(ROOT / ".github" / "workflows" / "ci.yml")
+    steps = job_steps(document, "build-test")
+    setup = step_using(steps, "setup-rust")
     flags = str(setup.get("with", {}).get("rustflags", ""))
     assert "-D warnings" in flags, "the suite keeps the warnings policy"
     assert MOLD_FLAG in flags, (
         "an exported RUSTFLAGS replaces the repository rustflags, so CI must "
         "restate the mold flag it would otherwise lose"
     )
-    coverage = next(
-        step for step in steps if "generate-coverage" in str(step.get("uses", ""))
-    )
+    coverage = step_using(steps, "generate-coverage")
     coverage_flags = str((coverage.get("env") or {}).get("RUSTFLAGS", ""))
     assert coverage_flags == "-D warnings", (
         "the coverage route must explicitly exclude the development linker"
