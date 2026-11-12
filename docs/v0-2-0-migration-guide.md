@@ -25,6 +25,11 @@ deliberate choice:
 python -m pip install "femtologging==0.2.0b1"
 ```
 
+The beta has one known issue: close each socket or HTTP handler from a single
+thread, because a second thread's `flush()` or `close()` on the same handler
+raises `RuntimeError` while the first `close()` is waiting. The
+[users' guide](users-guide.md#operational-caveats) has the details.
+
 ## Impact at a glance
 
 | Priority           | Area                                                                       | What to do                                                                       |
@@ -38,7 +43,7 @@ python -m pip install "femtologging==0.2.0b1"
 | Review if enabled  | [Thread-local state](#7-move-handler-state-off-threadinglocal)             | Move handler state from `threading.local` to `contextvars`                       |
 | Review if enabled  | [Standard library handler levels](#8-check-wrapped-handler-levels)         | Check the `level` of handlers wrapped in `StdlibHandlerAdapter`                  |
 | Review if enabled  | [Failed configuration](#9-apply-a-corrected-configuration-after-a-failure) | Stop relying on a failed configuration applying part of its changes              |
-| Review if enabled  | [HTTP shutdown](#10-keep-the-process-alive-for-http-delivery)              | Stop relying on `FemtoHTTPHandler.close()` waiting for every retry               |
+| Review if enabled  | [Network shutdown](#10-flush-network-handlers-before-closing-them)         | Flush socket and HTTP handlers before `close()` discards what is left            |
 | Review if enabled  | [Exception payloads](#11-check-payloads-passed-to-filter_frames)           | Check very large or hand-built payloads passed to `filter_frames()`              |
 | Review if enabled  | [Rust `log` macros](#12-guard-expensive-rust-log-arguments)                | Guard expensive `log` macro arguments                                            |
 | Recommended        | [Handler filters](#13-move-application-wide-enrichment-to-the-handler)     | Attach application-wide enrichment to the shared handler                         |
@@ -325,15 +330,45 @@ Two side effects sit outside this guarantee: records already queued are not
 retracted, and building a handler can open its file or socket before a later
 error rejects the configuration.
 
-## 10. Keep the process alive for HTTP delivery
+## 10. Flush network handlers before closing them
 
-`FemtoHTTPHandler.close()`, and dropping the handler, now wait for the worker
-for at most the handler's write timeout. A worker still retrying against an
-unresponsive endpoint is abandoned with a warning rather than joined. It keeps
-sending the records already queued, and those arrive only if the process lives
-long enough. If your shutdown relied on `close()` blocking until every record
-was delivered, keep the process alive until the endpoint has accepted them, or
-call `flush()` first.
+`FemtoSocketHandler.close()` and `FemtoHTTPHandler.close()` now return within
+the handler's write timeout, and so does dropping either handler. In 0.1, a
+worker stuck on an unresponsive collector or endpoint could hold `close()` for
+much longer. The deadline changes what reaches the other end:
+
+- **Each queued record gets one attempt.** Shutdown does not retry or back off.
+- **Records still queued at the deadline are discarded.** A warning reports
+  how many, such as
+  `FemtoHTTPHandler discarded 12 queued records at its shutdown deadline`. The
+  worker no longer carries on sending them in the background.
+- **A socket frame cut off by the deadline stays cut off.** The collector may
+  receive a truncated frame, and the connection is not reused.
+- **A socket `flush()` waits for one write timeout, not two.** Waiting for
+  queue space and waiting for the worker's answer now share one budget, so a
+  stalled collector makes `flush()` return `False` sooner.
+
+If your shutdown relied on `close()` waiting until every record was delivered,
+call `flush()` first and check its result:
+
+<!-- tested-example: migration-network-shutdown -->
+
+```python
+from femtologging import HTTPHandlerBuilder
+
+handler = (
+    HTTPHandlerBuilder()
+    .with_endpoint("http://127.0.0.1:9/ingest")
+    .with_write_timeout_ms(200)
+    .build()
+)
+flushed = handler.flush()
+handler.close()
+
+# Nothing was queued, so the flush succeeded. Had records been waiting on a
+# slow endpoint, False would warn that close() may discard some of them.
+assert flushed is True
+```
 
 ## 11. Check payloads passed to `filter_frames()`
 
@@ -498,9 +533,8 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
 - [ ] Move handler state from `threading.local` to `contextvars`.
 - [ ] Check the `level` of each handler wrapped in `StdlibHandlerAdapter`.
 - [ ] Remove any reliance on partially applied configuration.
-- [ ] Check that shutdown does not rely on `FemtoHTTPHandler.close()` waiting
-      for
-  every retry.
+- [ ] Flush socket and HTTP handlers before closing them, and check what
+  `flush()` returns.
 - [ ] Add `log::log_enabled!` guards around expensive Rust `log` arguments.
 - [ ] Consider moving application-wide enrichment to handler filters.
 
@@ -540,3 +574,8 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
   `exception payload graph exceeds max_exception_depth=1000`
   - **Fix:** Correct the payload, or pass larger limits. See
     [task 11](#11-check-payloads-passed-to-filter_frames).
+- **Warning:**
+  `FemtoSocketHandler discarded 12 queued records at its shutdown deadline`, or
+  the same from `FemtoHTTPHandler`
+  - **Fix:** Call `flush()` before `close()`, or raise the write timeout. See
+    [task 10](#10-flush-network-handlers-before-closing-them).
