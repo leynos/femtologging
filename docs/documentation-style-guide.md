@@ -39,7 +39,19 @@ consistent, and easy to maintain across projects.
 
 ## Headings
 
-- Write headings in sentence case.
+- Write headings in sentence case: capitalize only the first word and any
+  proper nouns, acronyms, or other words that are always capitalized, for
+  example `Context and problem statement` and `RFC number`.
+- Treat a bold label in a list of required or conditional sections as a
+  heading for this rule because readers write it as the section heading. Spell
+  it in sentence case and match the corresponding template heading.
+- Where such a label offers alternatives separated by a slash, for example
+  `Proposed design / proposed change`, treat the whole label as one heading.
+  Capitalize only its first word and any proper nouns or acronyms, and use one
+  alternative consistently within the document.
+- Labels that describe a metadata field or give guidance rather than name a
+  heading, such as `Title` or `Opening section`, are prose and are exempt from
+  this rule.
 - Use Markdown headings (`#`, `##`, `###`, and so on) in order without skipping
   levels.
 
@@ -390,19 +402,19 @@ proposal:
 
 - **Problem:** Describe the deficiency, risk, or missing capability that
   motivates the RFC.
-- **Current State:** Explain the relevant current behaviour or architecture when
+- **Current state:** Explain the relevant current behaviour or architecture when
   the proposal depends on existing constraints.
-- **Goals and Non-goals:** Clarify what the RFC intends to change and what it
+- **Goals and non-goals:** Clarify what the RFC intends to change and what it
   deliberately leaves out of scope.
-- **Proposed Design / Proposed Change:** Describe the recommended design with
+- **Proposed design / proposed change:** Describe the recommended design with
   enough detail to support implementation review.
 - **Requirements:** Separate functional, technical, safety, or operational
   requirements when the proposal has multiple kinds of constraints.
-- **Compatibility and Migration:** Explain rollout expectations, compatibility
+- **Compatibility and migration:** Explain rollout expectations, compatibility
   impact, and migration sequencing when adoption is not trivial.
-- **Alternatives Considered:** Record rejected options and the reasons they
+- **Alternatives considered:** Record rejected options and the reasons they
   were not chosen.
-- **Open Questions / Outstanding Decisions:** Identify unresolved issues that
+- **Open questions / outstanding decisions:** Identify unresolved issues that
   still need reviewing before the proposal can be treated as settled.
 - **Recommendation:** End with a clear statement of the preferred direction
   when the preceding analysis presents multiple viable choices.
@@ -526,7 +538,7 @@ Every ADR must include the following sections in order:
 - **Status:** One of `Proposed`, `Accepted`, `Superseded`, or `Deprecated`. For
   `Accepted` status, include the date and a brief summary of what was decided.
 - **Date:** The date the ADR was created or last updated (format: YYYY-MM-DD).
-- **Context and Problem Statement:** Describe the situation, constraints, and
+- **Context and problem statement:** Describe the situation, constraints, and
   the problem or question that prompted the decision. Include enough background
   for readers unfamiliar with the history.
 
@@ -538,24 +550,24 @@ When an accepted ADR needs a targeted correction rather than replacement, add an
 
 Include these sections as appropriate to the decision's complexity:
 
-- **Decision Drivers:** Key factors, requirements, or constraints that
+- **Decision drivers:** Key factors, requirements, or constraints that
   influenced the decision. Use bullet points.
 - **Requirements:** For complex decisions, separate functional and technical
   requirements into subsections.
-- **Options Considered:** Describe the alternatives evaluated. Use a comparison
+- **Options considered:** Describe the alternatives evaluated. Use a comparison
   table when contrasting multiple options across several dimensions.
-- **Decision Outcome / Proposed Direction:** State the chosen approach and
+- **Decision outcome / proposed direction:** State the chosen approach and
   summarize the rationale. For `Proposed` ADRs, describe the recommended
   direction.
-- **Goals and Non-Goals:** Clarify what the decision aims to achieve and what
+- **Goals and non-goals:** Clarify what the decision aims to achieve and what
   is explicitly out of scope.
-- **Migration Plan:** For decisions requiring phased implementation, break the
+- **Migration plan:** For decisions requiring phased implementation, break the
   work into numbered phases with clear goals and deliverables.
-- **Known Risks and Limitations:** Document trade-offs, potential issues, and
+- **Known risks and limitations:** Document trade-offs, potential issues, and
   constraints of the chosen approach.
-- **Outstanding Decisions:** For `Proposed` ADRs, list open questions that must
+- **Outstanding decisions:** For `Proposed` ADRs, list open questions that must
   be resolved before acceptance.
-- **Architectural Rationale:** Explain how the decision aligns with broader
+- **Architectural rationale:** Explain how the decision aligns with broader
   architectural principles and project goals.
 
 ### Formatting guidance
@@ -565,8 +577,11 @@ Include these sections as appropriate to the decision's complexity:
 - Use tables to compare options when multiple dimensions are relevant. Include
   a caption below the table (e.g. “_Table 1: Trade-offs between X and Y._”).
 - Include code snippets with language identifiers when illustrating technical
-  approaches. Use `no_run` for illustrative Rust code that should not be
-  executed.
+  approaches. In Rustdoc, `no_run` still compiles the snippet, so reserve it
+  for complete Rust code that compiles but does not execute, for example
+  because it needs external resources, environment-specific setup, or a
+  long-running service. Use `ignore` for an incomplete snippet or one that
+  cannot compile: `ignore` skips both compilation and execution.
 - Add screen reader descriptions before complex diagrams or code blocks.
 - Reference external sources using inline links or footnotes.
 
@@ -587,7 +602,7 @@ YYYY-MM-DD.
 
 <Describe the situation, constraints, and the question being addressed.>
 
-## Decision Drivers
+## Decision drivers
 
 - <Driver 1>
 - <Driver 2>
@@ -647,6 +662,11 @@ implementation is required.>
 
 - <Open question 1>
 - <Open question 2>
+
+## Architectural rationale
+
+<Explain how the decision aligns with broader architectural principles
+and project goals.>
 ```
 
 ## Repository layout document
@@ -695,9 +715,13 @@ contents of the manual.
 - Document any panics or errors with `# Panics` or `# Errors` as appropriate.
 - Place examples under `# Examples`. Let examples run as documentation tests
   when they can execute correctly, so the compiler verifies that they compile
-  and behave as documented. Mark examples with `no_run` only when they
-  genuinely cannot execute, such as examples that require external resources,
-  incomplete snippets, or environment-specific setup.
+  and behave as documented.
+- Use `no_run` for complete examples that must compile but must not execute,
+  such as examples that require external resources, environment-specific setup,
+  or a long-running service.
+- Use `ignore` for examples that are incomplete or otherwise cannot compile.
+  `no_run` only suppresses execution, so it cannot carry uncompilable code;
+  `ignore` skips both compilation and execution.
 - Put function attributes after the doc comment.
 
 ```rust,no_run
@@ -809,19 +833,19 @@ This hierarchy should align with the GIST framework:
 ### 1.1. Logging subsystem
 
 - [ ] 1.1.1. Introduce central logging service
-  - [ ] Define log message schema. See design-doc.md §2.1.
-  - [ ] Implement log collector daemon.
-  - [ ] Add structured logging to API layer.
+  - Define log message schema. See design-doc.md §2.1.
+  - Implement log collector daemon.
+  - Add structured logging to API layer.
 - [ ] 1.1.2. Add error dashboards. Requires 1.1.1.
-  - [ ] Deploy Grafana instance.
-  - [ ] Create error rate dashboard (target: <1% error rate visible within 5 min).
+  - Deploy Grafana instance.
+  - Create error rate dashboard (target: <1% error rate visible within 5 min).
 
 ### 1.2. Authentication
 
 - [ ] 1.2.1. Implement role-based access control (RBAC). Requires 1.1.1.
-  - [ ] Define role hierarchy. See design-doc.md §4.3.
-  - [ ] Add RBAC middleware to API endpoints.
-  - [ ] Write integration tests for permission boundaries.
+  - Define role hierarchy. See design-doc.md §4.3.
+  - Add RBAC middleware to API endpoints.
+  - Write integration tests for permission boundaries.
 ```
 
 ### Writing GIST-aligned steps
