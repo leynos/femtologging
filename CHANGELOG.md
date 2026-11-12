@@ -1,9 +1,12 @@
 # Changelog
 
-## [0.2.0-beta1] - 2026-11-11
+## [0.2.0-beta1] - 2026-11-18
 
 _First pre-release of 0.2.0. Applications upgrading from 0.1 should follow the
-[0.2.0 migration guide](docs/v0-2-0-migration-guide.md)._
+[0.2.0 migration guide](docs/v0-2-0-migration-guide.md). Known issue: a second
+thread's `flush()` or `close()` on a socket or HTTP handler raises
+`RuntimeError` while another thread's `close()` is waiting
+([#592](https://github.com/leynos/femtologging/pull/592))._
 
 ### Changed
 
@@ -37,9 +40,13 @@ _First pre-release of 0.2.0. Applications upgrading from 0.1 should follow the
 - **Breaking:** run Python handlers, including `StdlibHandlerAdapter`, inside a
   copy of the caller's `contextvars` context
   ([#425](https://github.com/leynos/femtologging/pull/425)).
-- **Breaking:** bound `FemtoHTTPHandler.close()` by the handler's write timeout
-  instead of waiting for every retry
-  ([#484](https://github.com/leynos/femtologging/pull/484)).
+- **Breaking:** bound `FemtoSocketHandler.close()` and
+  `FemtoHTTPHandler.close()` by the handler's write timeout, giving each queued
+  record one attempt and discarding, with a warning, any still queued at the
+  deadline
+  ([#484](https://github.com/leynos/femtologging/pull/484), [#549](https://github.com/leynos/femtologging/pull/549)).
+- Bound `FemtoSocketHandler.flush()` by one write timeout instead of two
+  ([#549](https://github.com/leynos/femtologging/pull/549)).
 - **Breaking:** return `Result<(), HandlerError>` from the Rust
   `FemtoLogger::add_handler()` and reject Python-backed handlers that lack
   contextual dispatch with `HandlerError::MissingContextDispatch`
@@ -91,6 +98,6 @@ _First pre-release of 0.2.0. Applications upgrading from 0.1 should follow the
 - Release the GIL while `flush_handlers()` and each built-in handler's `flush()`
   and `close()` wait on worker threads, which previously stalled, could lose
   queued records, and froze other Python threads
-  ([#546](https://github.com/leynos/femtologging/pull/546), [#592](https://github.com/leynos/femtologging/pull/592)).
+  ([#546](https://github.com/leynos/femtologging/pull/546), [#549](https://github.com/leynos/femtologging/pull/549)).
 
 [0.2.0-beta1]: https://github.com/leynos/femtologging/releases/tag/v0.2.0-beta1

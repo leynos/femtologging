@@ -630,6 +630,20 @@ handler.close()
 - Frames larger than `with_max_frame_size()` (1 MiB by default) are dropped.
 - TLS works only over TCP; combining `with_tls()` with `with_unix_path()`
   raises `HandlerConfigError`.
+- `flush()` returns `True` once the worker confirms that the socket is flushed.
+  One write timeout covers the whole flush, waiting for queue space included,
+  so a stalled collector makes it return `False` after that one timeout.
+- `close()` returns within the write timeout. Until then, each queued record
+  gets one attempt, without retries. Records still queued at the deadline are
+  discarded, and a warning says how many, such as
+  `FemtoSocketHandler discarded 12 queued records at its shutdown deadline`. A
+  frame cut off by the deadline arrives truncated, and the connection is not
+  reused. Dropping the handler without calling `close()` behaves the same way.
+- A worker blocked where it cannot be interrupted, in a TCP hostname lookup or
+  a Unix-domain connect to a listener with a full backlog, is left to finish on
+  its own. `close()` still returns on time.
+- Both `flush()` and `close()` release the GIL while they wait, so your other
+  Python threads keep running.
 
 ### Send records over HTTP
 
@@ -662,10 +676,17 @@ handler.close()
   which record fields are sent.
 - Building without an endpoint raises `HandlerConfigError`; malformed
   arguments, such as a mixed `with_auth()` mapping, raise `ValueError`.
-- `close()` waits for the worker for at most the write timeout. A worker still
-  retrying against an endpoint that has stopped answering is abandoned with a
-  warning instead of blocking your shutdown. It keeps sending the records
-  already queued, so those arrive only if the process lives long enough.
+- `flush()` returns `True` once the worker confirms that everything queued has
+  been handled, and `False` if that takes longer than the write timeout.
+- `close()` returns within the write timeout. Until then, each queued record
+  gets one attempt, without retries. Records still queued at the deadline are
+  discarded, and a warning says how many, such as
+  `FemtoHTTPHandler discarded 12 queued records at its shutdown deadline`. A
+  request already in flight when the deadline passes may finish after `close()`
+  has returned. Dropping the handler without calling `close()` behaves the same
+  way.
+- Both `flush()` and `close()` release the GIL while they wait, so your other
+  Python threads keep running.
 
 ### Write your own handler in Python
 
@@ -1492,6 +1513,11 @@ with open("service.log", encoding="utf-8") as log_file:
     assert log_file.read() == "service [INFO] started\n"
 ```
 
+Socket and HTTP handlers put a deadline on shutdown: `close()` returns within
+the handler's write timeout and discards, with a warning, whatever it could not
+send by then. See [Send records over a socket](#send-records-over-a-socket) and
+[Send records over HTTP](#send-records-over-http).
+
 ### Handle back-pressure and dropped records
 
 Queues are bounded so that a slow destination cannot exhaust your memory. Three
@@ -1519,6 +1545,10 @@ Three more counters report records lost for other reasons:
   snapshot could not be taken.
 - `logger.get_disabled_drops()` counts records refused because a configuration
   [disabled the logger](#disable-loggers-a-configuration-omits).
+
+Socket and HTTP handlers also discard records still queued when `close()`
+reaches its deadline. No counter records these; a warning reports the count
+instead.
 
 If drops are unacceptable, raise handler capacities or use a blocking or
 timeout policy. Bear in mind where the waiting happens: a handler attached to a
@@ -1591,6 +1621,17 @@ records.
   call `handler.flush()` periodically.
 - Socket frames over the size limit are dropped. Truncate or split very large
   messages before logging them.
+- Socket and HTTP handlers keep only what they can send within the write
+  timeout at shutdown. If every record matters, call `flush()` and check that
+  it returns `True` before calling `close()`.
+- Known issue in 0.2.0-beta1: while one thread is inside a socket or HTTP
+  handler's `close()`, calling `flush()` or `close()` on the same handler from
+  another thread raises `RuntimeError: Already mutably borrowed` (or
+  `Already borrowed`). A record that reaches the handler during that window is
+  dropped, as it would be once the handler is closed, but the same error is
+  also printed to standard error. Stop logging, then close each network handler
+  from one thread. The fix is tracked in
+  [#592](https://github.com/leynos/femtologging/pull/592).
 - `reset_manager()` removes every registered logger. It exists for tests, is
   not thread-safe, and must not run while other threads hold loggers.
 - Femtologging's loggers are separate from the standard library's
