@@ -150,8 +150,10 @@ pub(crate) fn ensure_composition_root_is_item_scoped() -> TestResult {
     let attribute = composition_root_attribute()?;
     if attribute.is_empty() {
         return Err(format!(
-            "{}'s composition_root must carry an item-scoped #[expect(...)], not one \
-             written inside its body",
+            concat!(
+                "{}'s composition_root must carry an item-scoped #[expect(...)], ",
+                "not one written inside its body"
+            ),
             PROBE_FIXTURE.name
         )
         .into());
