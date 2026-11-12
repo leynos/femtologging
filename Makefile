@@ -1,7 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
-        test typecheck makeutil skylos-allow
+        test typecheck makeutil skylos-allow install-build-tools check-build-tools
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -106,13 +106,13 @@ SKYLOS_WHITELIST_LOCK ?= .skylos-whitelist.lock
 
 all: release spelling ## Build the release artifact and enforce spelling
 
-build: ## Build dev artifact and install into venv
+build: check-build-tools ## Build dev artifact and install into venv
 	UV_VENV_CLEAR=1 uv venv
 	UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml $(CARGO_BUILD_ENV) uv sync --group dev
 	# Install the mixed Rust/Python package into the venv for tests/tools
 	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST) --features python,test-util
 
-release: ## Build release artifact
+release: check-build-tools ## Build release artifact
 	$(CARGO_BUILD_ENV) $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
 
 clean: ## Remove build artifacts
@@ -129,6 +129,19 @@ tools:
 	$(call ensure_tool,$(CARGO))
 	$(call ensure_tool,rustfmt)
 	$(call ensure_tool,uv)
+
+# The development build standard needs two things a fresh host may lack: the
+# toolchain rust-toolchain.toml pins and, on Linux, the mold linker that
+# .cargo/config.toml selects. Every target that compiles Rust depends on the
+# check, so a missing prerequisite fails with an installation command rather
+# than an opaque linker error. The check is a capability probe only: it
+# installs nothing, so it is safe to run before every gate.
+install-build-tools: ## Install the pinned Rust toolchain and the mold linker
+	@scripts/install-build-tools.sh
+
+check-build-tools: ## Verify the pinned toolchain and mold are available
+	@scripts/check-build-tools.sh
+
 makeutil: ## Verify the Makefile parser used by contract tests
 	$(call ensure_tool,makeutil)
 
@@ -140,7 +153,7 @@ fmt: tools ## Format sources
 
 check-fmt: ## Verify formatting
 	$(RUFF) format --check
-	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
+	$(CARGO) fmt --manifest-path $(RUST_MANIFEST) -- --check
 	$(MDTABLEFIX) --check $(MDTABLEFIX_SELECT) $(MDTABLEFIX_RULES)
 
 lint: lint-python lint-rust ## Run linters
@@ -207,7 +220,7 @@ RUST_LINT_FEATURE_LANES ?= none extension-module python log-compat tracing-compa
 RUST_LINT_CARGO_ARGS ?= --all-targets
 RUST_LINT_ARGS ?= -D warnings
 
-lint-env-policy: ## Enforce the environment-access policy across all targets and features
+lint-env-policy: check-build-tools ## Enforce the environment-access policy across all targets and features
 	@$(CARGO_BUILD_ENV) $(UV_ENV) \
 		INPUT_MANIFEST=$(RUST_MANIFEST) \
 		INPUT_LANES="$(ENV_POLICY_FEATURE_LANES)" \
@@ -244,7 +257,7 @@ loom-runner-test: ## Unit-test the Loom model runner
 		$(LOOM_RUNNER_SCRIPT) --doctest-modules \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 
-lint-rust-clippy: ## Run standard Rust Clippy feature lanes across every target
+lint-rust-clippy: check-build-tools ## Run standard Rust Clippy feature lanes across every target
 	@$(CARGO_BUILD_ENV) $(UV_ENV) \
 		INPUT_MANIFEST=$(RUST_MANIFEST) \
 		INPUT_LANES="$(RUST_LINT_FEATURE_LANES)" \
@@ -252,8 +265,8 @@ lint-rust-clippy: ## Run standard Rust Clippy feature lanes across every target
 		INPUT_LINT_ARGS="$(RUST_LINT_ARGS)" \
 		uv run --script $(LINT_LANES_SCRIPT)
 
-lint-rust-test-docs: ## Check Rust test-support type and field documentation
-	@$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) \
+lint-rust-test-docs: check-build-tools ## Check Rust test-support type and field documentation
+	@$(CARGO_BUILD_ENV) $(CARGO) test --manifest-path $(RUST_MANIFEST) \
 		--test test_support_docs --all-features
 
 lint-rust-private-docs-policy-test: ## Exercise private-doc policy through Make's Clippy lanes
@@ -298,21 +311,21 @@ nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(NIXIE)
 
-test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
-	cargo fetch --locked --manifest-path $(RUST_MANIFEST)
-	cargo fmt --manifest-path $(RUST_MANIFEST) -- --check
+test: check-build-tools build makeutil lint-rust-clippy loom-runner-test ## Run tests
+	$(CARGO) fetch --locked --manifest-path $(RUST_MANIFEST)
+	$(CARGO) fmt --manifest-path $(RUST_MANIFEST) -- --check
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- --test-threads=$(TEST_THREADS)
-	$(CARGO_BUILD_ENV) cargo test --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- --test-threads=$(TEST_THREADS)
+	$(CARGO_BUILD_ENV) $(CARGO) test --manifest-path $(RUST_MANIFEST) --no-default-features -- --test-threads=$(TEST_THREADS)
+	$(CARGO_BUILD_ENV) $(CARGO) test --manifest-path $(RUST_MANIFEST) --no-default-features --features python -- --test-threads=$(TEST_THREADS)
+	$(CARGO_BUILD_ENV) $(CARGO) test --manifest-path $(RUST_MANIFEST) --no-default-features --features log-compat -- --test-threads=$(TEST_THREADS)
+	$(CARGO_BUILD_ENV) $(CARGO) test --manifest-path $(RUST_MANIFEST) --no-default-features --features tracing-compat -- --test-threads=$(TEST_THREADS)
 	# `--doctest-modules` is what makes the documented examples load-bearing.
 	# Nothing executed them before, and three test-helper examples named
 	# variables that were never bound. An example nobody runs is a comment
 	# that looks like evidence.
 	FEMTOLOGGING_EXPECT_TEST_UTIL=1 UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml uv run pytest -v --doctest-modules
 
-typecheck: build ## Static type analysis
+typecheck: check-build-tools build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter
 	# that has the compiled extension installed; it does not reliably apply the
 	# equivalent `[tool.ty.environment]` settings.

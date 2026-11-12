@@ -120,6 +120,9 @@ project:
 - Run `make fmt`, `make lint`, `make typecheck`, and `make test` before
   committing. These targets wrap `cargo fmt`, `cargo clippy`, type checking with
   `ty`, and `cargo test` with the appropriate flags.
+- The development build standard needs the pinned toolchain and, on Linux,
+  `mold`. Every Cargo-building target depends on `make check-build-tools`,
+  which names the missing prerequisite; `make install-build-tools` installs it.
 - Clippy warnings MUST be disallowed.
 - Fix any warnings emitted during tests in the code itself rather than
   silencing them.
