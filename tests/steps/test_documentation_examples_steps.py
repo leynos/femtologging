@@ -24,6 +24,7 @@ scenarios(str(FEATURES / "documentation_examples.feature"))
     target_fixture="example",
 )
 def published_example(identifier: str) -> DocumentedExample:
+    """Load the marked example the scenario names."""
     return documented_example(identifier)
 
 
@@ -31,11 +32,13 @@ def published_example(identifier: str) -> DocumentedExample:
 def run_published_example(
     example: DocumentedExample, tmp_path: Path
 ) -> subprocess.CompletedProcess[str]:
+    """Run the example as a reader would, in a fresh interpreter."""
     return run_example(example, tmp_path)
 
 
 @then("it exits successfully")
 def exits_successfully(result: subprocess.CompletedProcess[str]) -> None:
+    """Fail with the example's stderr when it exits non-zero."""
     assert result.returncode == 0, f"example failed:\n{result.stderr}"
 
 
@@ -43,6 +46,7 @@ def exits_successfully(result: subprocess.CompletedProcess[str]) -> None:
 def prints_published_output(
     result: subprocess.CompletedProcess[str], identifier: str
 ) -> None:
+    """Compare everything the example printed with its published output."""
     expected = documented_example(identifier).body
     assert result.stdout + result.stderr == expected, (
         f"output differs from {identifier}"
