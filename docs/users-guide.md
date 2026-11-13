@@ -342,8 +342,11 @@ fields with safe defaults does not require a version bump.
   interpreter to call it, and PyO3 only guards that attach during finalization
   on CPython 3.13 and later. A timed-out `close()`, including a repeated one,
   therefore leaves that window open. Restore worker progress first — do not
-  park the worker and exit — then confirm completion through
-  `wait_diagnostics()` before the process ends.
+  park the worker and exit — then confirm completion before the process ends by
+  reading `wait_diagnostics()`: `close_completed` counts the closers that
+  observed the worker stop, while a non-zero `close_timed_out` counts the
+  closers that returned without confirmation, so a clean shutdown needs every
+  closer counted as completed and none as timed out.
 - In Rust, `close()` takes `&self` and may be called concurrently on a shared
   handler, including while another thread flushes it. Every closer observes the
   same completion signal, and a closer that arrives after the worker has

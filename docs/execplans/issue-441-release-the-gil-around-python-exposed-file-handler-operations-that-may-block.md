@@ -1491,6 +1491,59 @@ clippy lanes. It was restarted once with a longer limit and completed with
 first eight Rust lint lanes. That interruption was a harness limit, not a gate
 failure, and it was not worked around by skipping a tier.
 
+## Second review follow-up after `a2ed4f8b`
+
+CodeRabbit's review of `a2ed4f8b` approved the candidate but repeated five
+residual findings in its prose. Each was still valid against that tree, so the
+candidate was extended rather than merged on approval alone.
+
+| Finding                                                 | Change                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------- |
+| The sum and maximum were still called "two totals"      | The design note names the summed and the maximum wait duration             |
+| The guide did not say which close outcome confirms it   | The guide contrasts `close_completed` with a non-zero `close_timed_out`    |
+| The command boundary was still observed only indirectly | A helper reads the handler's own queue length at the command boundary      |
+| `handle_disconnected` had no Python-boundary case       | A panicking worker is observed through `handle()` and the public map       |
+| Two closers were not shown to wait at the same time     | Both closers are held in flight and the gauge must read two before release |
+| Wrapper failure coverage stopped at two outcomes        | A twelve-case table covers six failures for each rotating wrapper          |
+
+The observation test now counts queued commands through `FemtoFileHandler::tx`
+rather than inferring them from writer stages. It reads `wait_diagnostics()`
+four times while the worker is parked, asserts the queue is empty, then sends
+one control record and asserts the queue holds exactly one command. Without the
+control the empty reading would prove nothing, because a probe that can never
+see a command reports zero either way.
+
+`concurrent_closers_wait_on_one_shutdown` polls the public `waits_in_flight`
+gauge until it reads two, then releases the writer. A sequential pair of closes
+would leave the gauge at one, so the assertion fails unless the two waits
+really overlap. Both closers must then record `close_completed` with no
+`close_timed_out`, and the gauge must return to zero.
+
+The wrapper failure matrix in `telemetry_wrapper_failure_tests.rs` drives six
+failures through each wrapper's own Python method: an enqueue timeout, a failed
+flush, a flush acknowledgement timeout, a flush enqueue timeout, a close
+timeout, and a panic in the terminal flush. Each case asserts the counter
+through the public map, the single matching event, the wrapper's own
+`handler_kind`, the operation, the outcome, and the policy bucket. A timed-out
+close is retried after release and must then record its completion.
+
+The follow-up was gated on the resulting working tree with `make fmt` (which
+reflowed the new table), `make check-fmt`, `make markdownlint`, `make nixie`,
+`make lint`, `make typecheck`, and then the four cargo lanes and `pytest`:
+
+| Recipe line                                                  | Result                       |
+| ------------------------------------------------------------ | ---------------------------- |
+| `cargo test --no-default-features`                           | pass, 728 passed, 2 ignored  |
+| `cargo test --no-default-features --features python`         | pass, 728 passed, 2 ignored  |
+| `cargo test --no-default-features --features log-compat`     | pass, 728 passed, 2 ignored  |
+| `cargo test --no-default-features --features tracing-compat` | pass, 773 passed, 3 ignored  |
+| `uv run pytest -v --doctest-modules`                         | pass, 1152 passed, 6 skipped |
+
+The `tracing-compat` lane is the only one that compiles the new evidence, and
+its lib count rose from 763 to 773: eight net new wrapper failure cases, the
+disconnection case, and the overlapping-closers case. Every lane ran to
+completion before the next one started.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core

@@ -400,12 +400,12 @@ outside a stack trace, so each of the three handlers now exposes bounded
 observability for it:
 
 - `handler.wait_diagnostics()` returns a dictionary with a fixed key set: one
-  counter per outcome for `handle()`, `flush()`, and `close()`, the duration
-  totals `total_wait_micros` and `max_wait_micros`, and the `waits_in_flight`
-  gauge, which is non-zero while a caller is still waiting. Reading it takes no
-  worker command and records no wait, so a monitoring loop cannot inflate the
-  numbers it reports. It never carries logger names, paths, messages, or raw
-  timeout values.
+  counter per outcome for `handle()`, `flush()`, and `close()`, the summed wait
+  `total_wait_micros`, the longest single wait `max_wait_micros`, and the
+  `waits_in_flight` gauge, which is non-zero while a caller is still waiting.
+  Reading it takes no worker command and records no wait, so a monitoring loop
+  cannot inflate the numbers it reports. It never carries logger names, paths,
+  messages, or raw timeout values.
 - With the `tracing-compat` feature, each wait also emits one
   `femtologging::internal` trace event carrying `operation`, `handler_kind`,
   `policy_bucket`, `wait_outcome`, and `elapsed_us`. The `femtologging` tracing

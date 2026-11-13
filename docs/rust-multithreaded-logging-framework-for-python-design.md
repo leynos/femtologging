@@ -1324,13 +1324,13 @@ the whole surface: `outcome.rs` owns the closed outcome vocabulary,
 `diagnostics.rs` owns the counters, the snapshot and the in-flight `WaitGuard`,
 and `timer.rs` owns timing, `WaitScope` (which brackets the guard and the
 timer) and the event contract. One counter per outcome keeps the cardinality
-bounded: the snapshot keys are the outcome names plus the two totals and the
-gauge, never a logger name, path, message, payload, or raw timeout value; the
-operation name and policy bucket appear only in the optional trace event. The
-gauge is incremented before the detached section and decremented by an RAII
-guard, so it returns to zero on the normal path and while unwinding; a wait
-that never returns is exactly the state the gauge exists to expose, since the
-outcome counters only move when a wait finishes.
+bounded: the snapshot keys are the outcome names plus the summed and maximum
+wait durations and the gauge, never a logger name, path, message, payload, or
+raw timeout value; the operation name and policy bucket appear only in the
+optional trace event. The gauge is incremented before the detached section and
+decremented by an RAII guard, so it returns to zero on the normal path and
+while unwinding; a wait that never returns is exactly the state the gauge
+exists to expose, since the outcome counters only move when a wait finishes.
 
 With the `tracing-compat` feature each wait also emits one event on the
 `femtologging::internal` target. That target is deliberately one the crate's own
