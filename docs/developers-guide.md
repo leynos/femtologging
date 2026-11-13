@@ -861,15 +861,19 @@ below, not from a metric endpoint.
 | `femtologging.flush.duration_us`     | histogram | Flush duration in microseconds, with cumulative buckets at 100, 500, 1,000, 5,000, 10,000, 50,000, 100,000, and 1,000,000 µs plus an overflow bucket. |
 | `femtologging.flush.bridge_failures` | counter   | Logger flushes that returned `false` while `log::Log::flush` swept the registered loggers.                                                            |
 
-An operator reads the outcome label first. `ack_timeout` means the shard worker
-did not finish the records queued ahead within the shared two-second barrier,
-which usually points at a handler that blocks. `channel_closed` means the
-dispatch pool was already gone, so nothing was drained. `handler_failure` means
-the drain succeeded but at least one attached handler's `flush()` reported
-failure. `success` is the only outcome after which every record queued before
-the call had been handed to its handlers. A rising `bridge_failures` count
-isolates failures observed through `log::Log::flush`, without naming the
-logger, because logger names are unbounded user data.
+The labels above are the contract the exporter must publish; until issue 551
+lands, no metric endpoint exposes them. An operator reads flush health today
+from two signals that do exist: the rate-limited warnings described below, and,
+with `tracing-compat`, the `logger_flush` span, whose `flush_outcome` field
+carries these labels. Each label means the following. `ack_timeout` means the
+shard worker did not finish the records queued ahead within the shared
+two-second barrier, which usually points at a handler that blocks.
+`channel_closed` means the dispatch pool was already gone, so nothing was
+drained. `handler_failure` means the drain succeeded but at least one attached
+handler's `flush()` reported failure. `success` is the only outcome after which
+every record queued before the call had been handed to its handlers. The
+bridge-failure count isolates failures observed through `log::Log::flush`,
+without naming the logger, because logger names are unbounded user data.
 
 A Python handler that fails to flush is reported with one bounded category:
 `flush_lookup_failed`, `flush_call_failed`, or `flush_result_false`. The

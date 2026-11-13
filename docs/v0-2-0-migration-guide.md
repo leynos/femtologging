@@ -186,10 +186,12 @@ Three observable behaviours change:
   missing or non-callable `flush`. `logging.Handler.flush()` returns `None`, so
   a well-behaved standard handler still counts as success.
 - **A failed flush is visible in the Rust bridge.** When `log::Log::flush`
-  sweeps the registered loggers, a failed logger flush now increments a
-  process-wide counter and emits a rate-limited warning instead of being
-  discarded. `log`'s trait still returns nothing, so the warning and counter
-  are the only evidence an operator gets.
+  sweeps the registered loggers, a failed logger flush now emits a rate-limited
+  warning instead of being discarded, and the attempt is also counted in
+  process-wide counters. `log`'s trait still returns nothing, so the warning is
+  the only evidence an operator can read today; the counters are not yet
+  exported. [Issue 551](https://github.com/leynos/femtologging/issues/551)
+  owns the telemetry interface, the exporter, and the alerting documentation.
 
 Shutdown order matters more than before. A flush is a barrier over the records
 queued when it runs; a producer that logs afterwards can leave a record queued
