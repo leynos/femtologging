@@ -33,7 +33,30 @@ use std::time::Duration;
 ///
 /// Deliberately narrow: it reports the current instant and nothing else, so
 /// the only thing a test has to control is what the clock says now.
-pub(crate) trait MonotonicClock: Send + Sync {
+///
+/// Public because it is the injection point for
+/// [`FlushContext::with_clock`](crate::FlushContext::with_clock): a test
+/// outside the crate can implement this trait and drive a custom handler
+/// across a deadline transition without waiting on the real clock.
+///
+/// # Examples
+///
+/// ```
+/// use _femtologging_rs::MonotonicClock;
+/// use std::time::Instant;
+///
+/// struct Stopped(Instant);
+///
+/// impl MonotonicClock for Stopped {
+///     fn now(&self) -> Instant {
+///         self.0
+///     }
+/// }
+///
+/// let clock = Stopped(Instant::now());
+/// assert_eq!(clock.now(), clock.0);
+/// ```
+pub trait MonotonicClock: Send + Sync {
     /// The current point on the monotonic clock.
     fn now(&self) -> Instant;
 }
@@ -121,7 +144,7 @@ impl MonotonicClock for ManualClock {
 /// trait-object incantation repeated at each site.
 ///
 /// [`ShutdownSignal`]: crate::shutdown_signal::ShutdownSignal
-pub(crate) type SharedClock = Arc<dyn MonotonicClock>;
+pub type SharedClock = Arc<dyn MonotonicClock>;
 
 /// The production clock, shared by every signal that was not given one.
 pub(crate) fn system_clock() -> SharedClock {

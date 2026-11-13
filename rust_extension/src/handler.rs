@@ -140,11 +140,34 @@ impl FlushContext {
     }
 
     /// Build a context from an explicit clock, including an absent deadline.
-    pub(crate) fn with_clock(
-        started_at: Instant,
-        deadline: Option<Instant>,
-        clock: SharedClock,
-    ) -> Self {
+    ///
+    /// This is the injection seam for tests: a caller-controlled clock makes the
+    /// live-to-expired transition deterministic. [`Self::new`] is the production
+    /// constructor; a `None` deadline is expired, so a handler fails closed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use _femtologging_rs::{FlushContext, MonotonicClock, SharedClock};
+    /// use std::sync::{Arc, Mutex};
+    /// use std::time::{Duration, Instant};
+    ///
+    /// struct StepClock(Arc<Mutex<Instant>>);
+    /// impl MonotonicClock for StepClock {
+    ///     fn now(&self) -> Instant {
+    ///         *self.0.lock().expect("test clock lock")
+    ///     }
+    /// }
+    ///
+    /// let start = Instant::now();
+    /// let now = Arc::new(Mutex::new(start));
+    /// let clock: SharedClock = Arc::new(StepClock(Arc::clone(&now)));
+    /// let context = FlushContext::with_clock(start, Some(start + Duration::from_secs(1)), clock);
+    /// assert!(!context.is_expired());
+    /// *now.lock().expect("test clock lock") += Duration::from_secs(2);
+    /// assert!(context.is_expired());
+    /// ```
+    pub fn with_clock(started_at: Instant, deadline: Option<Instant>, clock: SharedClock) -> Self {
         Self {
             started_at,
             deadline,

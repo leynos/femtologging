@@ -136,6 +136,8 @@ pub use logger::{DispatcherError, FemtoLogger, QueuedRecord};
 #[doc(hidden)]
 pub use manager::get_logger as get_logger_for_log_compat;
 use manager::{get_logger as manager_get_logger, reset_manager};
+/// Re-export the clock seam `FlushContext::with_clock` accepts.
+pub use monotonic_clock::{MonotonicClock, SharedClock};
 pub use socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
     TlsOptions, UnixTransport,
