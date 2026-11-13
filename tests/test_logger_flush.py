@@ -8,12 +8,25 @@ than by returning a value.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import time
 import typing as typ
 
 import pytest
 
-from femtologging import FemtoFileHandler, FemtoLogger, FileHandlerBuilder
+from femtologging import (
+    FemtoFileHandler,
+    FemtoLogger,
+    FemtoRotatingFileHandler,
+    FemtoSocketHandler,
+    FemtoStreamHandler,
+    FemtoTimedRotatingFileHandler,
+    FileHandlerBuilder,
+    RotatingFileHandlerBuilder,
+    SocketHandlerBuilder,
+    StreamHandlerBuilder,
+    TimedRotatingFileHandlerBuilder,
+)
 from tests.logger_support import (
     FLUSH_TEST_HOOKS_AVAILABLE,
     CollectingHandler,
@@ -23,8 +36,16 @@ from tests.logger_support import (
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
+
+type _NativeHandlerFactory = cabc.Callable[
+    [Path],
+    FemtoStreamHandler
+    | FemtoFileHandler
+    | FemtoRotatingFileHandler
+    | FemtoTimedRotatingFileHandler
+    | FemtoSocketHandler,
+]
 
 # Long enough to outlast the logger's detached drain of its own queue, and well
 # inside the native handler's one-second flush deadline.
@@ -128,6 +149,106 @@ def test_logger_flush_handlers_flushes_attached_file_handler(
     finally:
         logger.remove_handler(handler)
         handler.close()
+
+
+def test_logger_flush_handlers_flushes_attached_stream_handler(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A stream handler attached through Python is flushed by the logger.
+
+    The stream worker formats and writes on its own thread, so reporting a
+    successful flush before the worker has answered would leave the record
+    invisible to the caller.
+    """
+    handler = StreamHandlerBuilder.stderr().build()
+    logger = FemtoLogger("stream.flush")
+    try:
+        logger.add_handler(handler)
+        logger.info("streamed")
+        assert logger.flush_handlers(), "logger flush must report success"
+        assert "stream.flush [INFO] streamed" in capfd.readouterr().err, (
+            "the flush reported success before the record reached the stream"
+        )
+    finally:
+        logger.remove_handler(handler)
+        handler.close()
+
+
+@pytest.mark.parametrize(
+    "builder_type",
+    [RotatingFileHandlerBuilder, TimedRotatingFileHandlerBuilder],
+    ids=["rotating", "timed-rotating"],
+)
+def test_logger_flush_handlers_flushes_attached_rotation_handler(
+    builder_type: type[RotatingFileHandlerBuilder]
+    | type[TimedRotatingFileHandlerBuilder],
+    tmp_path: Path,
+) -> None:
+    """A rotation handler attached through Python is flushed by the logger.
+
+    Both rotation handlers buffer records until their flush interval, so the
+    logger must reach the native flush rather than assume the wrapper drained
+    itself.
+    """
+    path = tmp_path / "rotation_flush.log"
+    handler = builder_type(str(path)).with_flush_after_records(10_000).build()
+    logger = FemtoLogger("rotation.flush")
+    try:
+        logger.add_handler(handler)
+        logger.info("rotated")
+        assert logger.flush_handlers(), "logger flush must report success"
+        assert path.read_text(encoding="utf-8") == (
+            "rotation.flush [INFO] rotated\n"
+        ), "the flush reported success before the record reached the file"
+    finally:
+        logger.remove_handler(handler)
+        handler.close()
+
+
+@pytest.mark.parametrize(
+    "build_handler",
+    [
+        pytest.param(lambda _path: StreamHandlerBuilder.stderr().build(), id="stream"),
+        pytest.param(
+            lambda path: FemtoFileHandler(str(path), flush_interval=10_000),
+            id="file",
+        ),
+        pytest.param(
+            lambda path: RotatingFileHandlerBuilder(str(path)).build(),
+            id="rotating",
+        ),
+        pytest.param(
+            lambda path: TimedRotatingFileHandlerBuilder(str(path)).build(),
+            id="timed-rotating",
+        ),
+        pytest.param(
+            lambda path: SocketHandlerBuilder().with_unix_path(str(path)).build(),
+            id="socket",
+        ),
+    ],
+)
+def test_logger_flush_handlers_reports_a_closed_native_handler(
+    build_handler: _NativeHandlerFactory,
+    tmp_path: Path,
+) -> None:
+    """A native flush that cannot reach its worker reports failure.
+
+    Each kind's native ``flush`` returns ``False`` once the handler is closed.
+    The logger must pass that through instead of treating every native flush
+    as a success, which would silently discard the records it claimed to
+    drain. This is the case that tells a constant "success" apart from a flush
+    that actually consulted the handler.
+    """
+    handler = build_handler(tmp_path / "closed.sink")
+    handler.close()
+    logger = FemtoLogger("closed.flush")
+    try:
+        logger.add_handler(handler)
+        assert not logger.flush_handlers(), (
+            "a closed native handler must make the logger flush report failure"
+        )
+    finally:
+        logger.remove_handler(handler)
 
 
 class _RecordingFlushHandler(CollectingHandler):

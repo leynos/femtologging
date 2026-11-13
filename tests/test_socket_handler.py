@@ -96,7 +96,7 @@ def test_python_registered_socket_handler_preserves_context(
         assert b"correlation_id" in payload, "socket payload omitted the context key"
         assert b"abc123" in payload, "socket payload omitted the context value"
         assert handler.flush(), "socket handler did not flush"
-        logger.flush_handlers()
+        assert logger.flush_handlers(), "logger flush did not reach the socket"
     finally:
         handler.close()
         logger.clear_handlers()
