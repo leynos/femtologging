@@ -1,15 +1,18 @@
-//! Core logger implementation for the FemtoLogger system.
-//!
-//! This module provides the [`FemtoLogger`] struct, which handles log message
-//! filtering, formatting, and asynchronous output through the process-wide
-//! dispatch pool. A logger uses one shard of that pool rather than owning a
-//! thread, so the threads a process spends on logging follow the machine rather
-//! than the number of loggers it has created. If a logger crosses a `fork`, it
-//! rebinds to the child process's pool before its next dispatch.
+//! Core [`FemtoLogger`] implementation for filtering and asynchronous dispatch
+//! through the process-wide shard pool, including rebinding after `fork`.
+#![allow(
+    clippy::too_many_arguments,
+    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
+)]
+
 #[cfg(feature = "python")]
 mod context_snapshot;
 mod convenience_methods;
 mod dispatcher;
+mod flush;
+mod flush_clock;
+mod flush_diagnostics;
+mod flush_diagnostics_api;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
@@ -36,6 +39,7 @@ use crate::{formatter::SharedFormatter, level::FemtoLevel};
 // The seam resolves to parking_lot, which avoids poisoning and matches the
 // crate-wide locking strategy, outside `--cfg loom`.
 use crate::sync::RwLock;
+use flush_diagnostics::FlushDiagnostics;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use dispatcher::DispatcherError;
@@ -59,6 +63,9 @@ pub(crate) use runtime_mutation::DetachedOwners;
 
 /// Threshold applied to loggers when the manager creates them.
 pub(crate) const DEFAULT_LOGGER_LEVEL: FemtoLevel = FemtoLevel::Info;
+
+/// Maximum time one flush barrier receives for its Rust-side work, in milliseconds.
+const LOGGER_FLUSH_TIMEOUT_MS: u64 = 2_000;
 
 /// Basic logger used for early experimentation.
 #[pyclass]
@@ -95,6 +102,8 @@ pub struct FemtoLogger {
     /// value measures traffic aimed at a disabled logger rather than records
     /// that would have been rejected anyway.
     disabled_dropped_records: AtomicU64,
+    /// Fixed-cardinality accounting for flush barrier outcomes and durations.
+    flush_diagnostics: FlushDiagnostics,
     /// Rate limiter for warnings about refused dispatch records.
     drop_warner: RateLimitedWarner,
     /// Captures Python context for queued handlers when they need it.
@@ -121,21 +130,12 @@ pub struct FemtoLogger {
 }
 
 impl FemtoLogger {
-    /// Flush all handlers attached to this logger.
-    ///
-    /// First waits up to 2 seconds for the internal worker thread to drain
-    /// its queue, then calls ``flush()`` on every attached handler (each
-    /// handler applies its own timeout).
-    pub fn flush_handlers(&self) -> bool {
-        self.flush_handlers_blocking()
-    }
-
-    /// Attach a handler to this logger.
+    /// Attach a handler.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] if a Python-backed
-    /// handler does not provide contextual dispatch support.
+    /// Returns [`crate::handler::HandlerError::MissingContextDispatch`] when a
+    /// Python-backed handler lacks contextual dispatch support.
     pub fn add_handler(
         &self,
         handler: Arc<dyn FemtoHandlerTrait>,
@@ -277,5 +277,5 @@ impl Drop for FemtoLogger {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod test_modules;

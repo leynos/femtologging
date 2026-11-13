@@ -137,13 +137,6 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Return how many records were dropped because producer context capture failed.
-    #[cfg(feature = "python")]
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_context_capture_failures(&self) -> u64 {
-        self.context_capture_failures.load(Ordering::Relaxed)
-    }
-
     /// Return how many records were refused because the logger is disabled.
     ///
     /// The counter rises for records aimed at a logger that
@@ -157,17 +150,21 @@ impl FemtoLogger {
 
     /// Flush all handlers attached to this logger, releasing the GIL while waiting.
     ///
-    /// First waits up to 2 seconds for the logger's dispatch shard to drain
-    /// the records already queued for it, then calls ``flush()`` on every
-    /// attached handler (each handler applies its own timeout).
+    /// Resolves dispatch state, queues a marker for a non-empty handler list,
+    /// then snapshots handlers before allowing the worker to run callbacks.
+    /// With no handlers, it checks only this logger's in-flight work. One
+    /// absolute 2 second deadline covers all stages; built-ins retain shorter
+    /// timeouts. Python calls release the GIL.
+    /// Legacy synchronous handlers fail closed; deadline-aware overrides must
+    /// honour the deadline because code cannot be preempted. Violations may
+    /// keep the shared worker busy after ``False`` but cannot hold this caller.
+    /// Changes completed before the handler snapshot are reflected in this
+    /// barrier; removals after it do not cancel the queued flush.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the dispatcher drains the queue in time and every
-    ///     handler flush succeeds. ``False`` when the queued work cannot be
-    ///     drained (the shard is gone or the wait times out) or any handler
-    ///     flush returns ``False``.
+    ///     ``True`` on success; ``False`` when completion is unconfirmed or a handler fails.
     ///
     /// Examples
     /// --------
@@ -175,7 +172,7 @@ impl FemtoLogger {
     /// True
     #[pyo3(name = "flush_handlers", text_signature = "(self)")]
     fn py_flush_handlers(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush_handlers())
+        self.flush_handlers_detached(py)
     }
 
     /// Capture handler addresses for tests that verify attachment replacement.

@@ -20,7 +20,7 @@ use super::{
 use super::clock::{clear_injected_times_for_test, set_injected_times_for_test};
 use crate::{
     formatter::DefaultFormatter,
-    handler::FemtoHandlerTrait,
+    handler::{FemtoHandlerTrait, FlushContext},
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
@@ -54,6 +54,10 @@ impl FemtoHandlerTrait for PyTimedRotatingFileHandler {
 
     fn flush(&self) -> bool {
         self.inner.flush()
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        FemtoHandlerTrait::flush_until(&self.inner, context)
     }
 
     fn as_any(&self) -> &dyn Any {

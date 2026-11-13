@@ -7,12 +7,7 @@
 //! and then stalls, that record costs the configured connect and write
 //! timeouts before anyone learns anything.
 
-use std::{
-    io,
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{io, sync::Arc, thread, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
@@ -39,8 +34,9 @@ use super::{
 pub enum SocketCommand {
     /// Carry one record for serialization and socket delivery.
     Record(FemtoLogRecord),
-    /// Flush the active connection and acknowledge completion.
-    Flush(Sender<()>),
+    /// Flush the active connection, then acknowledge with any drop count the
+    /// caller took from the warner.
+    Flush(Sender<()>, Option<u64>),
     /// Begin shutdown and acknowledge after worker cleanup.
     Shutdown(Sender<()>),
 }
@@ -208,11 +204,17 @@ impl Worker {
     }
 
     /// Flush and acknowledge; even a disconnected worker replies to the request.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
+    ///
+    /// The acknowledgement goes first so the count the handler moved here is
+    /// reported from the worker rather than by the caller when it wakes.
+    fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
         let success = self.flush_connection();
         let _ = ack.send(());
         if !success {
             warn!("FemtoSocketHandler flush requested without active connection");
+        }
+        if let Some(count) = pending_drops {
+            warn!("FemtoSocketHandler dropped {count} records in the last interval");
         }
     }
 
@@ -256,7 +258,9 @@ impl Worker {
             }
             match rx.try_recv() {
                 Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(SocketCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
@@ -291,7 +295,9 @@ impl Worker {
             }
             match rx.recv() {
                 Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(SocketCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(SocketCommand::Shutdown(ack)) => {
                     self.drain_pending(&rx, Some(ack));
                     return;
@@ -315,8 +321,11 @@ fn discard_rest(rx: &Receiver<SocketCommand>, shutdown_acks: &mut Vec<Sender<()>
     loop {
         match rx.try_recv() {
             Ok(SocketCommand::Record(_)) => discarded += 1,
-            Ok(SocketCommand::Flush(ack)) => {
+            Ok(SocketCommand::Flush(ack, pending_drops)) => {
                 let _ = ack.send(());
+                if let Some(count) = pending_drops {
+                    warn!("FemtoSocketHandler dropped {count} records in the last interval");
+                }
             }
             Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,
@@ -373,24 +382,6 @@ pub fn enqueue_record(
             Err(HandlerError::Closed)
         }
     }
-}
-
-/// Send a flush command and wait one budget for its acknowledgement.
-///
-/// The whole wait, not each half of it: the send and the receive share a
-/// single deadline, so a send that spends the budget leaves the receive
-/// nothing rather than starting a fresh timeout of its own.
-pub fn flush_queue(tx: &Sender<SocketCommand>, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    let (ack_tx, ack_rx) = bounded(1);
-    if tx
-        .send_timeout(SocketCommand::Flush(ack_tx), timeout)
-        .is_err()
-    {
-        return false;
-    }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    ack_rx.recv_timeout(remaining).is_ok()
 }
 
 #[cfg(test)]

@@ -103,8 +103,8 @@ pub use exception_schema::{
 };
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
-/// Re-export the base handler trait and wrapper.
-pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
+/// Re-export the base handler trait, wrapper, and flush deadline context.
+pub use handler::{FemtoHandler, FemtoHandlerTrait, FlushContext, HandlerError};
 /// Re-export handler builders and errors.
 pub use handlers::{
     FemtoRotatingFileHandler, FemtoTimedRotatingFileHandler, FileHandlerBuilder,
@@ -136,6 +136,8 @@ pub use logger::{DispatcherError, FemtoLogger, QueuedRecord};
 #[doc(hidden)]
 pub use manager::get_logger as get_logger_for_log_compat;
 use manager::{get_logger as manager_get_logger, reset_manager};
+/// Re-export the clock seam `FlushContext::with_clock` accepts.
+pub use monotonic_clock::{MonotonicClock, SharedClock};
 pub use socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
     TlsOptions, UnixTransport,

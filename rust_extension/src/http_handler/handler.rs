@@ -16,17 +16,28 @@ use pyo3::Python;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
 };
 
+#[cfg(test)]
+use crate::test_utils::test_worker::TestWorker;
+
 use super::{
     config::HTTPHandlerConfig,
-    queue::{HTTPCommand, enqueue_record, flush_queue},
+    queue::{HTTPCommand, enqueue_record},
     worker::spawn_worker,
 };
+
+mod lifecycle;
+
+#[cfg(test)]
+#[path = "handler/flush_deadline_tests.rs"]
+mod flush_deadline_tests;
+
+use lifecycle::ShutdownOutcome;
 
 #[cfg_attr(feature = "python", pyclass)]
 /// Handler forwarding records to an HTTP endpoint.
@@ -72,7 +83,52 @@ impl FemtoHTTPHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        let now = Instant::now();
+        let Some(deadline) = deadline_after(now, self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(&FlushContext::system(now, Some(deadline)))
+    }
+
+    /// Flush any pending log records, waiting no longer than the context's
+    /// deadline.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare `flush()` keeps the bound it documents and a barrier flush cannot
+    /// outlive the deadline it was given. Time is sampled from the context, so
+    /// a barrier test controls this handler's deadline transition as well as
+    /// the logger's.
+    fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
+    }
+
+    /// Flush against `deadline`, sampling each queue wait from `now`.
+    ///
+    /// Production passes [`Instant::now`] here; tests pass a scripted source,
+    /// so a stalled worker queue can be shown to consume exactly the budget
+    /// the caller supplied rather than a fresh copy for each wait.
+    fn flush_by_at(&self, deadline: Instant, now: &mut dyn FnMut() -> Instant) -> bool {
+        // The sender is checked before the cap is formed: a closed handler
+        // must not consume any of the caller's budget deciding it has nowhere
+        // to send.
+        let Some(tx) = self.sender() else {
+            return false;
+        };
+        let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
+        let outcome = self.warner.flush_handler(
+            &mut cap,
+            || Some(tx),
+            |tx, pending_drops, budget| {
+                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+                tx.send_timeout(HTTPCommand::Flush(ack_tx, pending_drops), budget)
+                    .ok()?;
+                Some(move |budget| ack_rx.recv_timeout(budget).ok())
+            },
+        );
+        matches!(outcome, Some(Ok(())))
     }
 
     /// Close the handler, waiting for the worker only while it is answering.
@@ -120,21 +176,24 @@ impl FemtoHTTPHandler {
     /// let (tx, rx) = crossbeam_channel::bounded(1);
     /// let (signal, handle) = spawn_test_worker(rx);
     /// let mut handler = FemtoHTTPHandler::with_worker_for_test(
-    ///     tx, signal, handle, Duration::from_millis(200),
+    ///     tx,
+    ///     TestWorker::new(signal, handle),
+    ///     Duration::from_millis(200),
+    ///     RateLimitedWarner::new(Duration::from_secs(1)),
     /// );
     /// ```
     #[cfg(test)]
     pub(crate) fn with_worker_for_test(
         tx: crossbeam_channel::Sender<HTTPCommand>,
-        signal: Arc<ShutdownSignal>,
-        handle: thread::JoinHandle<()>,
+        worker: TestWorker,
         flush_timeout: Duration,
+        warner: RateLimitedWarner,
     ) -> Self {
         Self {
             tx: Some(tx),
-            handle: Mutex::new(Some(handle)),
-            warner: RateLimitedWarner::new(Duration::from_secs(1)),
-            signal: Some(signal),
+            handle: Mutex::new(Some(worker.handle)),
+            warner,
+            signal: Some(worker.signal),
             flush_timeout,
         }
     }
@@ -145,131 +204,6 @@ impl FemtoHTTPHandler {
     fn sender(&self) -> Option<crossbeam_channel::Sender<HTTPCommand>> {
         self.tx.as_ref().cloned()
     }
-
-    /// Ask the worker to stop, and report whether joining it is now bounded.
-    ///
-    /// The distinction the return value carries is the whole point: every
-    /// outcome except a timeout means the worker has left, or is leaving, its
-    /// command loop, so the join that follows is short. An earlier version
-    /// discarded this with `let _ =`, which is what let an unbounded join
-    /// follow a bounded wait.
-    ///
-    /// One deadline covers both halves. The command channel is bounded, so
-    /// when it is full the send itself blocks until the worker next reads it,
-    /// which a worker stuck mid-request does not do; a send outside the budget
-    /// would put that whole wait back in front of the bounded receive.
-    ///
-    /// The signal is raised before the send, so it is the signal that wakes
-    /// the worker that may be sleeping rather than the command that queues
-    /// behind a full channel. A send that times out is not, on its own,
-    /// evidence of anything the worker needs telling: the signal has already
-    /// told it to wind down.
-    fn request_shutdown(&mut self) -> ShutdownOutcome {
-        let Some(tx) = self.tx.take() else {
-            // Already closed. There is no worker left to wait for.
-            return ShutdownOutcome::Finished;
-        };
-        let deadline = Instant::now() + self.flush_timeout;
-        if let Some(signal) = self.signal.as_ref() {
-            signal.begin_shutdown(deadline);
-        }
-        let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
-        match tx.send_deadline(HTTPCommand::Shutdown(ack_tx), deadline) {
-            Ok(()) => {}
-            // The worker has dropped its receiver, so it has already left the
-            // loop; joining it returns at once and may report a panic.
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return ShutdownOutcome::Finished;
-            }
-            // The queue stayed full for the whole budget: the worker is not
-            // reading commands, so it could not have acknowledged either.
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return ShutdownOutcome::TimedOut;
-            }
-        }
-        // Give up the last sender now the command is queued. The signal was
-        // raised first, so the worker can leave between that and this send and
-        // never read the command - and the queued command owns the only real
-        // acknowledgement sender, so while this one lived the wait below could
-        // neither receive nor see a disconnect. It then ran out the whole
-        // budget and reported a worker that had already finished as abandoned.
-        //
-        // Dropping it cannot lose a live acknowledgement: a worker still in
-        // its loop reads queued commands after every sender is gone, and one
-        // that has left drops the queue, which drops the unread command and
-        // disconnects the channel the wait below already treats as "left".
-        drop(tx);
-        match ack_rx.recv_deadline(deadline) {
-            Ok(()) => ShutdownOutcome::Finished,
-            // The worker dropped the acknowledgement channel without using it,
-            // which it can only do on its way out.
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => ShutdownOutcome::Finished,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => ShutdownOutcome::TimedOut,
-        }
-    }
-
-    /// Clone the worker signal so tests can observe that shutdown was
-    /// published before the worker's wait is interrupted.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let signal = handler.signal_for_test();
-    /// assert!(!signal.is_shutting_down());
-    /// ```
-    #[cfg(test)]
-    pub(crate) fn signal_for_test(&self) -> Arc<ShutdownSignal> {
-        Arc::clone(self.signal.as_ref().expect("an open handler has a signal"))
-    }
-
-    /// Join the worker after its acknowledgement or channel disconnection.
-    ///
-    /// Example: an acknowledged shutdown takes and joins the worker handle.
-    fn join_worker(&mut self) {
-        self.signal.take();
-        let Some(handle) = self.handle.lock().take() else {
-            return;
-        };
-        if handle.join().is_err() {
-            log::warn!("FemtoHTTPHandler: worker thread panicked");
-        }
-    }
-
-    /// Detach the worker after it failed to acknowledge shutdown.
-    ///
-    /// The handle is taken so nothing joins it later, in particular the `Drop`
-    /// that may follow this call. The thread itself ends on its own once its
-    /// in-flight request finishes, because the signal now says nothing further
-    /// may be started and its command channel is already disconnected.
-    ///
-    /// The signal is aborted rather than simply dropped, and that is the one
-    /// thing this call cannot leave to the thread's own good sense: the worker
-    /// is the only holder of the other reference, so a signal that stayed in
-    /// the draining phase would keep telling it there was budget left until
-    /// the drain deadline it was already past.
-    fn abandon_worker(&mut self) {
-        if let Some(signal) = self.signal.take() {
-            signal.abort();
-        }
-        log::warn!(
-            "FemtoHTTPHandler: worker did not acknowledge shutdown within {:?}; \
-             abandoning it rather than blocking the caller",
-            self.flush_timeout
-        );
-        self.handle.lock().take();
-    }
-}
-
-/// What asking the worker to stop established about joining it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShutdownOutcome {
-    /// The worker acknowledged, or had already left its loop. The join is
-    /// bounded and worth doing, because it is also what surfaces a panic.
-    Finished,
-    /// The command could not be queued, or no acknowledgement arrived, within
-    /// `flush_timeout`. The worker is busy on something whose length
-    /// `flush_timeout` does not describe.
-    TimedOut,
 }
 
 #[cfg(feature = "python")]
@@ -342,13 +276,11 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
     }
 
     fn flush(&self) -> bool {
-        let Some(tx) = self.sender() else {
-            return false;
-        };
-        self.warner.flush(|count| {
-            log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-        });
-        flush_queue(&tx, self.flush_timeout)
+        FemtoHTTPHandler::flush(self)
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

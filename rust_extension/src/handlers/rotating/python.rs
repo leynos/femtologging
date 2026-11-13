@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use super::{FemtoRotatingFileHandler as CoreRotatingFileHandler, RotationConfig, fresh_failure};
 use crate::{
     formatter::DefaultFormatter,
-    handler::FemtoHandlerTrait,
+    handler::{FemtoHandlerTrait, FlushContext},
     handlers::file::{self, DEFAULT_CHANNEL_CAPACITY, HandlerConfig, WorkerShutdown},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
@@ -49,6 +49,10 @@ impl FemtoHandlerTrait for PyRotatingFileHandler {
 
     fn flush(&self) -> bool {
         self.inner.flush()
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        FemtoHandlerTrait::flush_until(&self.inner, context)
     }
 
     fn as_any(&self) -> &dyn Any {

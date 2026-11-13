@@ -8,12 +8,20 @@
 //! survives that too rather than ending the shard for every logger on it.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 use log::warn;
 
 use super::Job;
+use super::budget::Permit;
+use crate::handler::FemtoHandlerTrait;
 use crate::logger::QueuedRecord;
-use crate::sync::Receiver;
+use crate::logger::flush::flush_handler_snapshot_until;
+use crate::logger::flush_clock::FlushDeadline;
+use crate::logger::flush_diagnostics::FlushFailureStage;
+#[cfg(feature = "tracing-compat")]
+use crate::logger::flush_diagnostics::trace_flush_worker_result;
+use crate::sync::{Receiver, RecvTimeoutError};
 
 /// Drain a shard's queue, handling each job.
 ///
@@ -37,69 +45,160 @@ pub(super) fn run_worker(jobs: Receiver<Job>) {
         }
     }
 }
-
 /// Perform one job.
 fn handle_job(job: Job) {
     match job {
-        Job::Record { queued, permit } => {
-            let QueuedRecord {
-                record,
-                handlers,
-                #[cfg(feature = "python")]
-                context,
-            } = *queued;
-            // Caught per handler, not around the whole loop: a handler that
-            // panics is one handler's bug, and the record is still the other
-            // handlers' to receive. Catching only around the job would make the
-            // panicking handler's neighbours lose a record they had every
-            // reason to expect.
-            for handler in &handlers {
-                #[cfg(feature = "tracing-compat")]
-                let dispatch_started = std::time::Instant::now();
-                #[cfg(feature = "tracing-compat")]
-                let handler_kind = if handler.is_python_backed() {
-                    "python"
-                } else {
-                    "native"
-                };
-                #[cfg(feature = "python")]
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    handler.handle_with_context(record.clone(), context.as_ref())
-                }));
-                #[cfg(not(feature = "python"))]
-                let result = catch_unwind(AssertUnwindSafe(|| handler.handle(record.clone())));
-                #[cfg(feature = "tracing-compat")]
-                let dispatch_outcome = match &result {
-                    Ok(Ok(())) => "success",
-                    Ok(Err(_)) => "failed",
-                    Err(_) => "panicked",
-                };
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => warn!("FemtoLogger: handler reported an error: {error}"),
-                    Err(_) => {
-                        warn!("FemtoLogger: dispatch worker recovered from a panicking handler")
-                    }
-                }
-                #[cfg(feature = "tracing-compat")]
-                tracing::trace!(
-                    target: "femtologging::internal",
-                    operation = "worker_handler_dispatch",
-                    handler_kind,
-                    dispatch_outcome,
-                    elapsed_us = dispatch_started.elapsed().as_micros(),
-                );
-            }
-            // Released only now: the permit counts this record as in flight
-            // until its handlers are done with it. A panic that escapes the
-            // per-handler catch unwinds through here and drops the permit
-            // anyway, so the accounting survives that path too.
-            drop(permit);
-        }
+        Job::Record { queued, permit } => handle_record_job(queued, permit),
         Job::Barrier { ack } => {
             let _ = ack.try_send(());
+        }
+        Job::Flush {
+            handlers,
+            deadline,
+            start,
+            ack,
+            enqueued_at,
+        } => {
+            let job = FlushJob {
+                handlers,
+                deadline,
+                start,
+                ack,
+                enqueued_at,
+            };
+            // Install the caller's dispatcher for this job: a thread-local
+            // subscriber exists only on the thread that created the barrier,
+            // so without this the worker's events would go to the global
+            // subscriber or be dropped. The guard restores the worker's own
+            // dispatcher when the job finishes, so one caller's subscriber
+            // cannot leak into the next flush on this shard.
+            #[cfg(feature = "tracing-compat")]
+            let dispatcher = job.deadline.dispatcher().clone();
+            #[cfg(feature = "tracing-compat")]
+            tracing::dispatcher::with_default(&dispatcher, move || handle_flush_job(job));
+            #[cfg(not(feature = "tracing-compat"))]
+            handle_flush_job(job);
         }
         #[cfg(loom)]
         Job::Stop => unreachable!("the worker stops before it handles a stop job"),
     }
+}
+
+/// One queued flush marker, as the worker receives it.
+///
+/// The channels and the admission time travel together out of the queue, so
+/// the handler takes the arriving job rather than repeating the marker's five
+/// fields in its own parameter list.
+struct FlushJob {
+    /// Receives the handler snapshot after the marker is admitted.
+    handlers: Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
+    /// Deadline shared by queue insertion, acknowledgement, and callbacks.
+    deadline: FlushDeadline,
+    /// Gate opened after the logger registry lock has been released.
+    start: Receiver<()>,
+    /// Reports handler success or its first unconfirmed deadline stage.
+    ack: crate::sync::Sender<Result<(), FlushFailureStage>>,
+    /// Time admission began, so the reported queue wait covers both waiting
+    /// for room in the bounded queue and time spent behind it.
+    enqueued_at: std::time::Instant,
+}
+
+/// Receive the start signal and snapshot using the same remaining budget.
+fn handle_flush_job(job: FlushJob) {
+    let FlushJob {
+        handlers,
+        deadline,
+        start,
+        ack,
+        enqueued_at,
+    } = job;
+    // Without the tracing feature the admission time has no reader.
+    #[cfg(not(feature = "tracing-compat"))]
+    let _ = enqueued_at;
+    // Enter the caller's span for the whole drain: the trace below, and any
+    // handler instrumentation, then belong to the flush call that queued this
+    // marker. The dispatcher is already installed by the caller.
+    #[cfg(feature = "tracing-compat")]
+    let _entered = deadline.span().enter();
+    #[cfg(feature = "tracing-compat")]
+    let started_at = deadline.now();
+    let result = receive_flush_snapshot(&start, &handlers, &deadline)
+        .and_then(|snapshot| flush_handler_snapshot_until(&snapshot, &deadline));
+    #[cfg(feature = "tracing-compat")]
+    trace_flush_worker_result(
+        result,
+        deadline.now().saturating_duration_since(started_at),
+        started_at.saturating_duration_since(enqueued_at),
+    );
+    let _ = ack.try_send(result);
+}
+
+/// Receive the start signal and snapshot using the same remaining budget.
+fn receive_flush_snapshot(
+    start: &Receiver<()>,
+    handlers: &Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
+    deadline: &FlushDeadline,
+) -> Result<Vec<Arc<dyn FemtoHandlerTrait>>, FlushFailureStage> {
+    let failure_stage = |error| match error {
+        RecvTimeoutError::Timeout => FlushFailureStage::WorkerStartTimedOut,
+        RecvTimeoutError::Disconnected => FlushFailureStage::WorkerStartDisconnected,
+    };
+    start
+        .recv_timeout(deadline.remaining())
+        .map_err(failure_stage)?;
+    handlers
+        .recv_timeout(deadline.remaining())
+        .map_err(failure_stage)
+}
+
+/// Dispatch one record to its captured handlers, then release its permit.
+fn handle_record_job(queued: Box<QueuedRecord>, permit: Permit) {
+    let QueuedRecord {
+        record,
+        handlers,
+        #[cfg(feature = "python")]
+        context,
+    } = *queued;
+    // Caught per handler, not around the whole loop: a handler that panics is
+    // one handler's bug, and the record is still the other handlers' to
+    // receive. Catching only around the job would make the panicking handler's
+    // neighbours lose a record they had every reason to expect.
+    for handler in &handlers {
+        #[cfg(feature = "tracing-compat")]
+        let dispatch_started = std::time::Instant::now();
+        #[cfg(feature = "tracing-compat")]
+        let handler_kind = if handler.is_python_backed() {
+            "python"
+        } else {
+            "native"
+        };
+        #[cfg(feature = "python")]
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            handler.handle_with_context(record.clone(), context.as_ref())
+        }));
+        #[cfg(not(feature = "python"))]
+        let result = catch_unwind(AssertUnwindSafe(|| handler.handle(record.clone())));
+        #[cfg(feature = "tracing-compat")]
+        let dispatch_outcome = match &result {
+            Ok(Ok(())) => "success",
+            Ok(Err(_)) => "failed",
+            Err(_) => "panicked",
+        };
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!("FemtoLogger: handler reported an error: {error}"),
+            Err(_) => warn!("FemtoLogger: dispatch worker recovered from a panicking handler"),
+        }
+        #[cfg(feature = "tracing-compat")]
+        tracing::trace!(
+            target: "femtologging::internal",
+            operation = "worker_handler_dispatch",
+            handler_kind,
+            dispatch_outcome,
+            elapsed_us = dispatch_started.elapsed().as_micros(),
+        );
+    }
+    // The permit counts this record as in flight until its handlers finish. If
+    // a panic escapes a per-handler catch, unwinding drops the permit as well.
+    drop(permit);
 }

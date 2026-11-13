@@ -200,6 +200,14 @@ three observable behaviours:
   to answer". `FemtoHTTPHandler.flush()` already shared one deadline and is
   unchanged.
 
+The stream, file, and rotating-file handler flushes use the same accounting. A
+direct `flush()` on any worker-queue handler now spends one configured flush
+timeout across queue admission and the acknowledgement, so the acknowledgement
+may receive less than the full timeout, and a busy worker can make `flush()`
+return `False` sooner than before. The logger's `flush_handlers()` does not
+change this: it gives the handler the barrier's deadline, and the handler still
+caps its wait at its own configured timeout.
+
 The bound on `close()` itself is the budget: a worker that misses the deadline
 is detached, so the caller is never held past it. The bound on the worker's own
 exit is looser, because it is on what the worker *starts*: no standard-library
@@ -329,6 +337,53 @@ For the complete parameter and error contract, see
 [the users guide section on frame filtering][user-filtering].
 
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
+[user-flushing]: users-guide.md#flushing-logger-handlers
+
+______________________________________________________________________
+
+## Deadline-aware Rust handler flushing
+
+`FemtoLogger::flush_handlers()` now applies one two-second deadline to marker
+insertion, the non-empty handler snapshot, worker acknowledgement and every
+handler flush. It returns `false` when any part of that barrier is unconfirmed.
+Built-in handlers keep their shorter configured timeouts.
+
+Custom Rust handlers that implement only synchronous `flush()` now fail closed:
+the barrier does not call that method and returns `false`. Override
+`flush_until(context)` to opt in. The implementation must use bounded waits
+against the supplied absolute deadline and report `false` when completion is
+not confirmed. The logger cannot interrupt arbitrary synchronous handler code
+once it starts; calling an unbounded `flush()` from `flush_until()` can still
+occupy the shared worker after the caller returns. In normal builds, logger
+drop waits only for that logger's in-flight records, up to the bounded drain
+timeout; it does not join the process-wide worker. Loom models join their
+logger-owned worker during cleanup.
+
+A user-defined Python handler has no flush protocol the barrier can invoke, so
+for it `flush_handlers()` confirms dispatch completion only. A Python handler
+that buffers records must flush its own buffer; `true` does not mean that
+buffer is empty.
+
+Python-facing calls release the GIL while waiting for the worker. CPython must
+reacquire the interpreter before returning to Python, so interpreter contention
+can delay the Python return beyond the Rust barrier deadline; a late handoff
+changes the result to `false`.
+
+`FemtoLogger.get_flush_diagnostics()` exposes fixed-cardinality counters for
+barrier attempts, confirmations, failure stages and elapsed-time buckets. Those
+buckets are disjoint ranges (up to 10 ms, over 10 to 100 ms, over 100 to 500
+ms, over 500 ms to 2 s, and over 2 s), so each attempt increments exactly one
+rather than a cumulative series. The keys are stable and contain no logger
+names, paths, messages or payloads. Values are a best-effort snapshot read from
+relaxed atomics, so concurrent updates may appear at different instants.
+Exporting them through a shared metrics adapter remains the application's
+responsibility. See [flushing logger handlers][user-flushing] for the counter
+contract.
+
+See the [user guide](users-guide.md#flushing-logger-handlers), the
+[developer guide](developers-guide.md#logger-handler-flush-barrier), and the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the public contract and implementation details.
 
 ______________________________________________________________________
 

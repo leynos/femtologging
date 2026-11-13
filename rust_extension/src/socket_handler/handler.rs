@@ -16,7 +16,7 @@ use pyo3::Python;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after},
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
@@ -25,7 +25,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
-    worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
+    worker::{SocketCommand, enqueue_record, spawn_worker},
 };
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -80,7 +80,52 @@ impl FemtoSocketHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        let now = Instant::now();
+        let Some(deadline) = deadline_after(now, self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(&FlushContext::system(now, Some(deadline)))
+    }
+
+    /// Flush any pending log records, waiting no longer than the context's
+    /// deadline.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare `flush()` keeps the bound it documents and a barrier flush cannot
+    /// outlive the deadline it was given. Time is sampled from the context, so
+    /// a barrier test controls this handler's deadline transition as well as
+    /// the logger's.
+    fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
+    }
+
+    /// Flush against `deadline`, sampling each queue wait from `now`.
+    ///
+    /// Production passes [`Instant::now`] here; tests pass a scripted source,
+    /// so a stalled worker queue can be shown to consume exactly the budget
+    /// the caller supplied rather than a fresh copy for each wait.
+    fn flush_by_at(&self, deadline: Instant, now: &mut dyn FnMut() -> Instant) -> bool {
+        // The sender is checked before the cap is formed: a closed handler
+        // must not consume any of the caller's budget deciding it has nowhere
+        // to send.
+        let Some(tx) = self.sender() else {
+            return false;
+        };
+        let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
+        let outcome = self.warner.flush_handler(
+            &mut cap,
+            || Some(tx),
+            |tx, pending_drops, budget| {
+                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+                tx.send_timeout(SocketCommand::Flush(ack_tx, pending_drops), budget)
+                    .ok()?;
+                Some(move |budget| ack_rx.recv_timeout(budget).ok())
+            },
+        );
+        matches!(outcome, Some(Ok(())))
     }
 
     /// Close the handler, waiting for the worker only while it is answering.
@@ -133,7 +178,11 @@ impl FemtoSocketHandler {
             // Already closed. There is no worker left to wait for.
             return ShutdownOutcome::Finished;
         };
-        let deadline = Instant::now() + self.flush_timeout;
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
+            // An unrepresentable deadline cannot be waited out, so the shutdown
+            // fails closed rather than blocking on an unbounded join.
+            return ShutdownOutcome::TimedOut;
+        };
         if let Some(signal) = self.signal.as_ref() {
             signal.begin_shutdown(deadline);
         }
@@ -296,13 +345,11 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
     }
 
     fn flush(&self) -> bool {
-        let Some(tx) = self.sender() else {
-            return false;
-        };
-        self.warner.flush(|count| {
-            log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
-        });
-        flush_queue(&tx, self.flush_timeout)
+        FemtoSocketHandler::flush(self)
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

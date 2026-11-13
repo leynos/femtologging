@@ -16,7 +16,6 @@
 
 use std::{io, sync::Arc, time::Instant};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
 use ureq::{Agent, AgentBuilder};
@@ -29,8 +28,9 @@ use crate::{
 };
 
 use super::{
-    config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
+    request::{build_get_request, build_post_request},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
 };
@@ -184,8 +184,8 @@ impl Worker {
     fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
         // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
         let request = match self.config.method {
-            HTTPMethod::GET => self.build_get_request(payload, agent),
-            HTTPMethod::POST => self.build_post_request(payload, agent),
+            HTTPMethod::GET => build_get_request(&self.config, payload, agent),
+            HTTPMethod::POST => build_post_request(&self.config, payload, agent),
         };
 
         match request {
@@ -195,62 +195,6 @@ impl Worker {
                 ureq::Error::Transport(transport_err) => Err(transport_err.to_string()),
             },
         }
-    }
-
-    /// Build a GET request; the payload follows any existing query data.
-    fn build_get_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let url = if self.config.url.contains('?') {
-            format!("{}&{}", self.config.url, payload)
-        } else {
-            format!("{}?{}", self.config.url, payload)
-        };
-        let mut req = agent.get(&url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
-        req.call().map_err(Box::new)
-    }
-
-    /// Build a POST request; JSON format sends an `application/json` body.
-    fn build_post_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let mut req = agent.post(&self.config.url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
-
-        let content_type = match self.config.format {
-            SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
-            SerializationFormat::Json => "application/json",
-        };
-        req = req.set("Content-Type", content_type);
-        req.send_string(payload).map_err(Box::new)
-    }
-
-    /// Add authentication; bearer configuration sets an `Authorization` header.
-    fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
-        match &self.config.auth {
-            AuthConfig::None => req,
-            AuthConfig::Basic { username, password } => {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64_encode(credentials.as_bytes());
-                req.set("Authorization", &format!("Basic {}", encoded))
-            }
-            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {}", token)),
-        }
-    }
-
-    /// Apply every configured custom header to the request.
-    fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
-        for (key, value) in &self.config.headers {
-            req = req.set(key, value);
-        }
-        req
     }
 
     /// Logs a retryable failure, then says whether this record gets another
@@ -318,9 +262,15 @@ impl Worker {
     /// immediately without blocking until those retries complete. Callers
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
+    ///
+    /// The acknowledgement goes first so the drop count the handler moved here
+    /// is reported from the worker rather than by the caller when it wakes.
+    fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
         // Ignore send error: if the receiver has dropped, there's nothing to do.
         let _ = ack.send(());
+        if let Some(count) = pending_drops {
+            warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+        }
     }
 
     /// Attempt each queued command once, then acknowledge the shutdown.
@@ -341,7 +291,9 @@ impl Worker {
             }
             match rx.try_recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
@@ -375,7 +327,9 @@ impl Worker {
             }
             match rx.recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(HTTPCommand::Shutdown(ack)) => {
                     self.drain_pending(&rx, Some(ack));
                     return;
@@ -387,11 +341,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// Base64-encode a byte slice for Basic auth.
-fn base64_encode(input: &[u8]) -> String {
-    BASE64_STANDARD.encode(input)
 }
 
 #[cfg(test)]

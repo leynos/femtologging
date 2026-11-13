@@ -226,6 +226,10 @@ mod log_compat {
             true
         }
 
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+            self.flush()
+        }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
@@ -249,7 +253,10 @@ mod log_compat {
             logger_a.borrow(py).add_handler(handler.clone())?;
             logger_b.borrow(py).add_handler(handler.clone())?;
 
-            flush_all_handlers(py);
+            assert!(
+                flush_all_handlers(py),
+                "both handler barriers should confirm"
+            );
 
             assert_eq!(
                 flushes.load(Ordering::SeqCst),
@@ -287,7 +294,10 @@ mod log_compat {
                 logger.borrow(py).add_handler(handler.clone())?;
             }
 
-            flush_all_handlers(py);
+            assert!(
+                flush_all_handlers(py),
+                "every registered logger should flush"
+            );
 
             assert_eq!(
                 flushes.load(Ordering::SeqCst),
