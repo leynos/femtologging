@@ -13,16 +13,23 @@ mod generated_files;
 use camino::Utf8Path;
 use cap_std::ambient_authority;
 use cap_std::fs_utf8::Dir;
-use doc_examples::{Example, GENERATED_DIR};
+use doc_examples::{Example, GENERATED_DIR, extract_examples};
 use generated_files::{prune, publish};
 use tempfile::TempDir;
 
-/// An example that writes `fn demo() {}` under the given identifier.
-fn example(identifier: &str) -> Example {
-    Example {
-        identifier: identifier.to_owned(),
-        source: "fn demo() {}\n".to_owned(),
-    }
+/// Extract `fn demo() {}` examples under the given identifiers, as a build does.
+///
+/// Going through the loader rather than constructing [`Example`] values keeps
+/// the cases tied to what `build.rs` actually publishes, and it means the whole
+/// loader is reachable from this target rather than only its data types.
+fn examples(identifiers: &[&str]) -> Vec<Example> {
+    let guide: String = identifiers
+        .iter()
+        .map(|identifier| {
+            format!("<!-- tested-example: {identifier} -->\n```rust\nfn demo() {{}}\n```\n")
+        })
+        .collect();
+    extract_examples(&guide).expect("the generated guide should be valid")
 }
 
 /// Return the names of the entries in the generated directory.
@@ -66,8 +73,7 @@ fn prepared_crate() -> (TempDir, Dir) {
 fn publishing_writes_each_example_to_its_module() {
     let (_temp, crate_dir) = prepared_crate();
 
-    publish(&crate_dir, &[example("first"), example("second")])
-        .expect("publication should succeed");
+    publish(&crate_dir, &examples(&["first", "second"])).expect("publication should succeed");
 
     assert_eq!(generated_entries(&crate_dir), ["first.rs", "second.rs"]);
     assert_eq!(read_module(&crate_dir, "first"), "fn demo() {}\n");
@@ -82,7 +88,7 @@ fn publishing_replaces_a_module_without_leaving_a_temporary_file() {
         .write("tests/generated/example.rs", "old source\n")
         .expect("the stale module should be writable");
 
-    publish(&crate_dir, &[example("example")]).expect("publication should succeed");
+    publish(&crate_dir, &examples(&["example"])).expect("publication should succeed");
 
     assert_eq!(read_module(&crate_dir, "example"), "fn demo() {}\n");
     assert_eq!(generated_entries(&crate_dir), ["example.rs"]);
@@ -99,7 +105,7 @@ fn pruning_removes_a_module_that_is_no_longer_published() {
         .write("tests/generated/kept.rs", "fn demo() {}\n")
         .expect("the current module should be writable");
 
-    prune(&crate_dir, &[example("kept")]).expect("pruning should succeed");
+    prune(&crate_dir, &examples(&["kept"])).expect("pruning should succeed");
 
     assert_eq!(generated_entries(&crate_dir), ["kept.rs"]);
 }
