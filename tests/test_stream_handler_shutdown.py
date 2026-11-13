@@ -108,21 +108,27 @@ class _FormatterGate:
         that held the GIL could not let this thread run at all, which is the
         regression the test exists to catch.
 
+        The count is read here, before this thread starts and before the drain
+        call, so the baseline cannot include the wait it is meant to observe.
+        A call left waiting by an earlier test therefore cannot satisfy the
+        handshake on its own.
+
         Returns
         -------
         threading.Thread
             The started helper thread.
         """
+        waiter_count = _WAITER_COUNT
+        baseline = 0 if waiter_count is None else waiter_count()
 
         def release_gate() -> None:
-            """Poll for a waiting native call, then release the formatter."""
-            waiter_count = _WAITER_COUNT
+            """Poll for a new waiting native call, then release the formatter."""
             if waiter_count is None:
                 self.waiter_error = _WaiterNotObservedError()
                 return
             deadline = time.monotonic() + _WAITER_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
-                if waiter_count() > 0:
+                if waiter_count() > baseline:
                     self.waiter_observed.set()
                     self.release.set()
                     return
@@ -163,6 +169,33 @@ class _DrainOutcome:
     stderr: str
 
 
+def _drain_proved_the_worker_finished(
+    drain_method: _DrainMethod,
+    acknowledged: bool | None,
+    formatter_completed: bool,
+    elapsed_seconds: float,
+) -> bool:
+    """Report whether the drain itself proves the worker finished.
+
+    ``flush()`` returns ``True`` only after the worker flushed the record it
+    wrote, and ``close()`` returns before its configured timeout only when it
+    observed completion, which follows the worker's last write. Reading the
+    capture under either proof cannot race that write. A timed-out drain leaves
+    the capture unread, so the elapsed-time check reports the timeout instead
+    of the read reporting a missing line.
+
+    Returns
+    -------
+    bool
+        Whether the drain proves the worker finished, and so whether its
+        capture can be read without racing the write.
+    """
+    if drain_method == "flush":
+        return acknowledged is True
+    close_timeout_seconds = _DRAIN_TIMEOUT_MS / 1000
+    return formatter_completed and elapsed_seconds < close_timeout_seconds
+
+
 def _drain_gated_handler(
     capfd: pytest.CaptureFixture[str],
     drain_method: _DrainMethod,
@@ -172,7 +205,9 @@ def _drain_gated_handler(
     The formatter is released only once the native call reports that it is
     waiting, so a binding that releases the GIL returns as soon as the worker
     finishes, while one that holds the GIL blocks until the handler's flush
-    timeout.
+    timeout. The capture is read only when the drain proves the worker
+    finished, so the line cannot be attributed to a write that happened after
+    the call returned.
 
     Returns
     -------
@@ -199,9 +234,16 @@ def _drain_gated_handler(
             handler.close()
         elapsed = time.monotonic() - started
         completed = gate.completed.is_set()
-        # Read only once completion is proven: until then the worker may still
-        # be formatting or writing, and a single read would race it.
-        captured = capfd.readouterr().err if completed else ""
+        # The formatter sets its event before the worker writes, so completion
+        # alone does not prove the line reached the stream. Read the capture
+        # only when the drain itself proves the worker finished.
+        captured = (
+            capfd.readouterr().err
+            if _drain_proved_the_worker_finished(
+                drain_method, acknowledged, completed, elapsed
+            )
+            else ""
+        )
     finally:
         gate.release.set()
         handler.close()

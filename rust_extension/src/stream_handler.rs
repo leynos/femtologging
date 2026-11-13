@@ -326,23 +326,38 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         // so applying the timeout to each in turn would let a flush wait
         // nearly twice the configured limit.
         let deadline = FlushDeadline::after(self.clock.now_millis(), self.flush_timeout);
-        let _waiting = WaitGuard::enter();
         let enqueue_budget = deadline.remaining(self.clock.now_millis());
-        match tx.send_timeout(StreamCommand::Flush(ack_tx), enqueue_budget) {
+        // Try the queue first so the waiting marker is raised only when this
+        // call is actually blocked on a full queue. A marker taken before the
+        // attempt would also appear for a command that never had to wait.
+        match tx.try_send(StreamCommand::Flush(ack_tx)) {
             Ok(()) => {}
-            Err(SendTimeoutError::Timeout(_)) => {
-                // The return value cannot say which stage expired. Name the
-                // stage in the trace, with no record payload, so an operator
-                // can tell a full queue from a slow worker.
-                trace!("FemtoStreamHandler: flush command not queued within the deadline");
-                return false;
+            Err(TrySendError::Full(command)) => {
+                let _waiting = WaitGuard::enter();
+                match tx.send_timeout(command, enqueue_budget) {
+                    Ok(()) => {}
+                    Err(SendTimeoutError::Timeout(_)) => {
+                        // The return value cannot say which stage expired. Name
+                        // the stage in the trace, with no record payload, so an
+                        // operator can tell a full queue from a slow worker.
+                        trace!("FemtoStreamHandler: flush command not queued within the deadline");
+                        return false;
+                    }
+                    Err(SendTimeoutError::Disconnected(_)) => {
+                        trace!("FemtoStreamHandler: flush command queue disconnected");
+                        return false;
+                    }
+                }
             }
-            Err(SendTimeoutError::Disconnected(_)) => {
+            Err(TrySendError::Disconnected(_)) => {
                 trace!("FemtoStreamHandler: flush command queue disconnected");
                 return false;
             }
         }
         let ack_budget = deadline.remaining(self.clock.now_millis());
+        // The acknowledgement is the second wait, so it gets its own marker: a
+        // command queued at once still blocks here until the worker answers.
+        let _waiting = WaitGuard::enter();
         match ack_rx.recv_timeout(ack_budget) {
             Ok(Ok(())) => true,
             Ok(Err(_)) => {

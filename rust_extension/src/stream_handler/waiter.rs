@@ -18,7 +18,11 @@ pub(super) struct WaitGuard;
 
 #[cfg(feature = "test-util")]
 impl WaitGuard {
-    /// Records that the calling thread is about to wait.
+    /// Records that the calling thread is blocked in a wait.
+    ///
+    /// Callers must enter the guard only where the thread really blocks, so a
+    /// test that observes the counter knows the call reached the wait rather
+    /// than merely approaching it.
     pub(super) fn enter() -> Self {
         WAITING.fetch_add(1, Ordering::SeqCst);
         Self

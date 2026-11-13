@@ -53,9 +53,10 @@ fn lock_wait_counter() -> MutexGuard<'static, ()> {
 
 /// Wait until some stream-handler call in this process is blocked in a wait.
 ///
-/// The counter rises inside `flush` just before its first blocking send, so a
-/// successful wait proves the call has reached the boundary the test holds it
-/// at, rather than merely having been scheduled.
+/// The counter rises inside `flush` only while its command is blocked behind a
+/// full queue, or while its acknowledgement is outstanding, so a successful
+/// wait proves the call has reached the boundary the test holds it at rather
+/// than merely having been scheduled.
 fn wait_until_a_call_is_blocked(context: &str) {
     let deadline = Instant::now() + RELEASE_WAIT;
     while stream_waiter_count() == 0 {

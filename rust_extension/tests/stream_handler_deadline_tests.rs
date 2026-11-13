@@ -22,7 +22,7 @@ mod handle_expect;
 #[path = "test_utils/waiter.rs"]
 mod waiter;
 use handle_expect::HandleExpect;
-use waiter::wait_for_waiters;
+use waiter::WaiterObservation;
 
 /// Configured flush timeout; long enough that resting on it would be obvious.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
@@ -236,6 +236,9 @@ fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
     // the clock can advance past the queueing stage before it is.
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "queued"));
 
+    // Take the counter before the call exists, so its rise can only come from
+    // the flusher started below.
+    let waiters = WaiterObservation::acquire();
     let flusher = {
         let handler = Arc::clone(&handler);
         std::thread::spawn(move || {
@@ -244,11 +247,12 @@ fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
             (flushed, started.elapsed())
         })
     };
-    // Release only once the call is inside its wait, so the slot cannot be
-    // freed before it reaches the queueing stage. The clock's readings then
-    // spend most of the deadline there: it is read again when the command is
-    // queued, and the acknowledgement inherits only the remainder.
-    wait_for_waiters(1);
+    // Release only once the call is blocked queueing behind the full slot, so
+    // the slot cannot be freed before the command reaches the queue. The
+    // clock's readings then spend most of the deadline there: it is read again
+    // when the command is queued, and the acknowledgement inherits only the
+    // remainder.
+    waiters.wait_for_call();
     // Free the slot while the worker is still behind the second record: the
     // command is queued, but its acknowledgement cannot arrive yet.
     release.send(()).expect("release the first write");
@@ -273,5 +277,53 @@ fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
     );
 
     release.send(()).expect("release the second write");
+    handler.close();
+}
+
+/// A flush may acknowledge only after the record it follows has been written.
+///
+/// The writer stays blocked after the formatter has run, so the record is
+/// formatted but not written. A flush that acknowledged before the write would
+/// return while the writer is still held. The test waits for the call to reach
+/// its acknowledgement wait before making that claim, so the result cannot
+/// come from a flusher that has not started yet.
+#[test]
+fn stream_handler_flush_acknowledges_only_after_the_record_is_written() {
+    let (writer, entered, release) = gated_writer(1);
+    let handler = Arc::new(FemtoStreamHandler::with_capacity_timeout(
+        writer,
+        DefaultFormatter,
+        1,
+        FLUSH_TIMEOUT,
+    ));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "blocking"));
+    entered
+        .recv_timeout(RELEASE_WAIT)
+        .expect("worker should block in its first write");
+
+    let waiters = WaiterObservation::acquire();
+    let (flushed_tx, flushed_rx) = mpsc::channel();
+    let flusher = {
+        let handler = Arc::clone(&handler);
+        std::thread::spawn(move || {
+            let _ = flushed_tx.send(handler.flush());
+        })
+    };
+    // The worker already took the record out of the queue, so this command is
+    // queued at once and the counter rises in the acknowledgement wait.
+    waiters.wait_for_call();
+    assert!(
+        flushed_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "flush() acknowledged before the worker wrote the queued record"
+    );
+
+    release.send(()).expect("release the blocked writer");
+    assert!(
+        flushed_rx
+            .recv_timeout(RELEASE_WAIT)
+            .expect("flush should report once the write completes"),
+        "flush() must acknowledge after the worker writes the record"
+    );
+    flusher.join().expect("the flush thread must not panic");
     handler.close();
 }
