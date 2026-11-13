@@ -322,3 +322,6 @@ fn logger_flush_records_the_handler_failure_stage() {
 
 #[path = "flush_tests_clock.rs"]
 mod clock;
+
+#[path = "flush_handshake_property_tests.rs"]
+mod handshake_property_tests;
