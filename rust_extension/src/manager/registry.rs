@@ -321,6 +321,19 @@ pub(crate) fn replace_runtime_state(
 /// an operator gets that a handler is not draining.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
+    flush_all_handlers_with_metrics(py, crate::logger::process_flush_metrics());
+}
+
+/// Sweep every registered logger, counting bridge failures in `metrics`.
+///
+/// The target is a parameter so a test can drive a real sweep against counters
+/// it owns. Every logger's own flush still reports through its production
+/// observer; only the bridge-level failure counter is redirected here.
+#[cfg(feature = "log-compat")]
+pub(crate) fn flush_all_handlers_with_metrics(
+    py: Python<'_>,
+    metrics: &crate::logger::FlushMetrics,
+) {
     let loggers: Vec<Py<FemtoLogger>> = {
         let manager = MANAGER.read();
         manager
@@ -333,7 +346,7 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
         let borrowed_logger = logger.borrow(py);
         let logger_ref: &FemtoLogger = &borrowed_logger;
         if !py.detach(|| logger_ref.flush_handlers()) {
-            crate::logger::record_bridge_flush_failure();
+            crate::logger::record_bridge_flush_failure(metrics);
         }
     }
 }

@@ -21,8 +21,6 @@ use super::DrainOutcome;
 use super::FemtoLogger;
 #[cfg(feature = "tracing-compat")]
 use super::flush_metrics;
-#[cfg(test)]
-use super::flush_metrics::FlushMetricsSnapshot;
 use super::flush_metrics::{FlushMetrics, FlushOutcome};
 
 impl FemtoLogger {
@@ -141,6 +139,22 @@ impl FemtoLogger {
         self.shard.wait_for_drain_outcome()
     }
 
+    /// Run one real flush attempt with an injected clock and observer.
+    ///
+    /// Test-only: production selects the clock and the observer at the
+    /// boundary in [`Self::flush_handlers_blocking`]. This entry point runs the
+    /// same drain-then-flush orchestration, so a test can classify the shard
+    /// and the attached handlers through the production path while the
+    /// measurement lands in counters the test owns.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn flush_handlers_measured<C, O>(&self, clock: &C, observer: &O) -> FlushOutcome
+    where
+        C: MonotonicClock + ?Sized,
+        O: FlushObserver + ?Sized,
+    {
+        measure_flush_attempt(clock, observer, || self.flush_handlers_inner())
+    }
+
     /// Flush every configured handler and report whether all succeeded.
     ///
     /// The handler list is snapshotted under the read guard and the guard is
@@ -203,12 +217,28 @@ where
     outcome
 }
 
-/// Production observer that counts a flush in the process-wide metrics.
-struct MetricsFlushObserver;
+/// Observer that counts a flush in one set of flush metrics.
+///
+/// The target is a parameter rather than the process-wide instance so a test
+/// can hold its own counters and attribute a record to it without sharing
+/// state with every other logger in the test binary. Production passes
+/// [`process_flush_metrics`], which is the only instance with a lifetime long
+/// enough to be injected anywhere else.
+struct MetricsFlushObserver<'a> {
+    /// Counters that receive the recorded outcome and duration.
+    metrics: &'a FlushMetrics,
+}
 
-impl FlushObserver for MetricsFlushObserver {
+impl<'a> MetricsFlushObserver<'a> {
+    /// Build an observer that reports to `metrics`.
+    const fn new(metrics: &'a FlushMetrics) -> Self {
+        Self { metrics }
+    }
+}
+
+impl FlushObserver for MetricsFlushObserver<'_> {
     fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
-        process_flush_metrics().record(outcome, elapsed);
+        self.metrics.record(outcome, elapsed);
     }
 }
 
@@ -261,36 +291,32 @@ impl<O: FlushObserver> FlushObserver for TracingFlushObserver<O> {
 fn production_flush_observer() -> impl FlushObserver {
     #[cfg(feature = "tracing-compat")]
     {
-        TracingFlushObserver::start(MetricsFlushObserver)
+        TracingFlushObserver::start(MetricsFlushObserver::new(process_flush_metrics()))
     }
     #[cfg(not(feature = "tracing-compat"))]
     {
-        MetricsFlushObserver
+        MetricsFlushObserver::new(process_flush_metrics())
     }
 }
 
 /// Return the process-wide flush metrics.
 ///
 /// The instance lives here, behind the production observer, so orchestration
-/// and unit tests never reach for an ambient global.
-fn process_flush_metrics() -> &'static FlushMetrics {
+/// and unit tests never reach for an ambient global. The `log` bridge also
+/// names it, because a bridge failure is counted without a flush attempt to
+/// carry the observer.
+pub(crate) fn process_flush_metrics() -> &'static FlushMetrics {
     static METRICS: OnceLock<FlushMetrics> = OnceLock::new();
     METRICS.get_or_init(FlushMetrics::new)
 }
 
 /// Record a logger flush that failed during a `log`-bridge flush sweep.
-#[cfg(feature = "log-compat")]
-pub(crate) fn record_bridge_flush_failure() {
-    process_flush_metrics().record_bridge_failure();
-}
-
-/// Read the process-wide metrics so a test can assert one recorded flush.
 ///
-/// Kept test-only: production code has no exporter yet, and a snapshot API
-/// would be a second contract to maintain before there is a reader for it.
-#[cfg(test)]
-pub(crate) fn flush_metrics_snapshot() -> FlushMetricsSnapshot {
-    process_flush_metrics().snapshot()
+/// `metrics` is a parameter so the sweep can be driven against counters a test
+/// owns; production passes [`process_flush_metrics`].
+#[cfg(feature = "log-compat")]
+pub(crate) fn record_bridge_flush_failure(metrics: &FlushMetrics) {
+    metrics.record_bridge_failure();
 }
 
 #[cfg(all(test, not(loom)))]

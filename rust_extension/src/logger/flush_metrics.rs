@@ -215,7 +215,7 @@ impl FlushMetrics {
     }
 }
 
-/// A point-in-time copy of the process-wide flush metrics.
+/// A point-in-time copy of one set of flush metrics.
 #[cfg(test)]
 pub(crate) struct FlushMetricsSnapshot {
     /// One counter per terminal outcome, indexed by [`FlushOutcome::index`].

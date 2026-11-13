@@ -53,13 +53,11 @@ pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
 // The `log` bridge is the only caller, so the re-export follows that feature
 // or `-D unused-imports` fails a lane with the bridge compiled out.
 #[cfg(feature = "log-compat")]
-pub(crate) use flush::record_bridge_flush_failure;
-// The bridge-count test reads the process-wide counters and names an outcome,
-// so it needs a snapshot and the labels. Neither is a production reader's API.
-#[cfg(test)]
-pub(crate) use flush::flush_metrics_snapshot;
-#[cfg(test)]
-pub(crate) use flush_metrics::FlushOutcome;
+pub(crate) use flush::{process_flush_metrics, record_bridge_flush_failure};
+// The bridge sweep names the storage type so a test can direct its failure
+// count into counters it owns.
+#[cfg(feature = "log-compat")]
+pub(crate) use flush_metrics::FlushMetrics;
 
 pub use py_handler::{PyHandler, validate_handler};
 // The consuming unit tests are excluded under `--cfg loom`, so the re-export

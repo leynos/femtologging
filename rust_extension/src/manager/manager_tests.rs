@@ -205,10 +205,12 @@ mod log_compat {
     use pyo3::Python;
     use serial_test::serial;
 
-    use super::super::registry::{MANAGER, flush_all_handlers, get_logger, reset_manager};
+    use super::super::registry::{
+        MANAGER, flush_all_handlers, flush_all_handlers_with_metrics, get_logger, reset_manager,
+    };
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use crate::log_record::FemtoLogRecord;
-    use crate::logger::{FlushOutcome, flush_metrics_snapshot};
+    use crate::logger::FlushMetrics;
 
     /// Handler that counts how often the manager flushes a logger.
     #[derive(Clone)]
@@ -328,22 +330,20 @@ mod log_compat {
                 .borrow(py)
                 .add_handler(Arc::new(FailingFlushHandler) as Arc<dyn FemtoHandlerTrait>)?;
 
-            // The counters are process-wide, but this sweep is the only
-            // flush the test performs and the manager holds exactly one
-            // logger, so both deltas belong to the sweep under test.
-            let before = flush_metrics_snapshot();
-            flush_all_handlers(py);
-            let after = flush_metrics_snapshot();
+            // The sweep counts into metrics this test owns, so no other logger
+            // in the binary can move the assertion.
+            let metrics = FlushMetrics::new();
+            flush_all_handlers_with_metrics(py, &metrics);
+            let snapshot = metrics.snapshot();
 
             assert_eq!(
-                after.bridge_failures,
-                before.bridge_failures + 1,
+                snapshot.bridge_failures, 1,
                 "the one failed flush during the sweep must be counted once",
             );
             assert_eq!(
-                after.outcomes[FlushOutcome::HandlerFailure.index()],
-                before.outcomes[FlushOutcome::HandlerFailure.index()] + 1,
-                "the failed logger flush must also be classified as a handler failure",
+                snapshot.outcomes,
+                [0, 0, 0, 0],
+                "the bridge counter is the only counter this sweep may write",
             );
             Ok(())
         })
