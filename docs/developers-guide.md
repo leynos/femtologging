@@ -383,6 +383,19 @@ linker itself:
   is the isolation boundary: it takes none of the development standard (no
   `mold` flag and no inherited `RUSTFLAGS`).
 
+### Whitaker duplicate dylint registration
+
+The installer revision this repository previously pinned registered the
+`string_continuation_style` dylint library twice, so every consumer's
+`build-test` failed while loading the lint suite. A branch-local CI step
+deleted the duplicate shared library before linting. Main now pins the
+installer at `0.2.12` (`c77fca64`, PR #605), whose `build-test` job runs
+`make lint` and passes on Python 3.12, 3.13 and 3.14, so the duplicate
+registration is fixed upstream. `.github/workflows/ci.yml` on this branch is
+byte-identical to main: no workaround remains. Reinstate one only if the pinned
+revision regresses to an installer that registers the lint library twice; the
+upstream issue is leynos/whitaker#565.
+
 ### Locked dependency fetch before tests
 
 A test that starts its own Cargo build (the trybuild compile-time UI tests, for
