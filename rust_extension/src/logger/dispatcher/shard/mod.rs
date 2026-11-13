@@ -47,6 +47,13 @@ use worker::run_worker;
 /// under Loom, so no model depends on it firing.
 const BARRIER_TIMEOUT: Duration = Duration::from_millis(2_000);
 
+/// How long a test's stand-in worker waits for its next job.
+///
+/// Bounded so a test that stops driving the shard fails instead of parking a
+/// thread for the rest of the run.
+#[cfg(all(test, not(loom)))]
+const TEST_WORKER_BOUND: Duration = Duration::from_secs(10);
+
 /// A job for a shard.
 enum Job {
     /// Handle `queued` with the handlers it carries, holding `permit` while it
@@ -195,6 +202,42 @@ impl Shard {
         (shard, jobs)
     }
 
+    /// Build a shard whose stand-in worker takes the record but never the barrier.
+    ///
+    /// A logger-level test needs a shard that is alive, so the queued job keeps
+    /// its permit in flight, yet will never answer a barrier. The queue's
+    /// receiver travels to a stand-in thread here because the job type stays
+    /// private to this module; the returned handle waits for the record to be
+    /// held and releases the thread when it is dropped.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn with_unanswering_worker_for_test(depth: usize) -> (Self, TestWorker) {
+        let (shard, jobs) = Self::without_worker_for_test(depth);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let record = jobs
+                .recv_timeout(TEST_WORKER_BOUND)
+                .expect("the test should queue a record for the stand-in worker");
+            let _ = started_tx.send(());
+            let barrier = jobs
+                .recv_timeout(TEST_WORKER_BOUND)
+                .expect("the flush should queue a barrier for the stand-in worker");
+            // Dropping the barrier drops its acknowledgement sender without
+            // answering, which is what a dead worker looks like to the waiter.
+            drop(barrier);
+            let _ = release_rx.recv_timeout(TEST_WORKER_BOUND);
+            drop(record);
+        });
+        (
+            shard,
+            TestWorker {
+                started: started_rx,
+                release: Some(release_tx),
+                handle: Some(handle),
+            },
+        )
+    }
+
     /// Accept a record for dispatch, without waiting.
     ///
     /// The record is taken and returned boxed, which is the shape the queue
@@ -312,6 +355,46 @@ impl Shard {
     pub(crate) fn shut_down(&self) {
         let _ = self.queue.send(Job::Stop);
         if let Some(handle) = self.worker.lock().take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Handle to the stand-in worker of a shard built for an unanswering test.
+///
+/// Dropping the handle releases the worker and joins it, so a failed assertion
+/// cannot leave a thread holding the queue.
+#[cfg(all(test, not(loom)))]
+pub(crate) struct TestWorker {
+    /// Notified once the worker holds the queued record.
+    started: std::sync::mpsc::Receiver<()>,
+    /// Releases the worker so it can drop the record.
+    release: Option<std::sync::mpsc::Sender<()>>,
+    /// The stand-in thread, joined on drop.
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(all(test, not(loom)))]
+impl TestWorker {
+    /// Block until the stand-in worker holds the queued record.
+    ///
+    /// Waiting for this before the flush starts is what guarantees the record's
+    /// permit is in flight; otherwise the logger could find nothing to drain
+    /// and answer without ever asking the shard.
+    pub(crate) fn wait_until_record_held(&self, timeout: Duration) {
+        self.started
+            .recv_timeout(timeout)
+            .expect("the stand-in worker should take the queued record");
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+impl Drop for TestWorker {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
     }

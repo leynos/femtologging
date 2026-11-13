@@ -164,43 +164,92 @@ fn an_enqueue_that_spends_the_budget_leaves_only_the_remainder_to_acknowledge() 
         panic!("a fresh one-deep shard should accept its first record");
     }
 
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    // A stand-in worker holds the queue full for part of the budget, then takes
-    // the barrier but withholds its acknowledgement. Holding the barrier job
-    // keeps its acknowledgement sender alive, so the wait below sees a slow
-    // worker rather than a closed channel. The worker's own waits are bounded
-    // and never consult the code under test, so a deadline regression ends the
-    // call here instead of hanging the suite.
-    let worker = std::thread::spawn(move || {
-        std::thread::sleep(ENQUEUE_SPEND);
-        let record = jobs
-            .recv_timeout(BARRIER_TIMEOUT * 2)
-            .expect("the queued record should still be there");
-        drop(record);
-        let barrier = jobs
-            .recv_timeout(BARRIER_TIMEOUT * 2)
-            .expect("the barrier should arrive once the queue has room");
-        let _ = release_rx.recv_timeout(BARRIER_TIMEOUT * 2);
-        drop(barrier);
-    });
+    // The worker must not start its spend until the caller has started timing.
+    // Otherwise a slow thread start could free the queue before the call
+    // begins, the enqueue would consume no budget, and a separate
+    // acknowledgement budget would still finish inside one budget and pass.
+    let (go_tx, go_rx) = std::sync::mpsc::channel();
+    let worker = StandInWorker::spawn(jobs, go_rx);
 
     let started = Instant::now();
+    go_tx
+        .send(())
+        .expect("the stand-in worker is waiting to start its spend");
     let outcome = shard.wait_for_drain_outcome();
     let elapsed = started.elapsed();
-    let _ = release_tx.send(());
-    worker.join().expect("the stand-in worker should not panic");
+    // Release and join before asserting, so a failed assertion cannot leave a
+    // thread holding the queue.
+    drop(worker);
 
     assert_eq!(
         outcome,
         DrainOutcome::TimedOut,
         "a worker that never answers must time out, not report a drain",
     );
+    // The queue was held full for this long from the moment timing began, so
+    // the enqueue really did spend part of the budget rather than finding room
+    // immediately.
     assert!(
-        elapsed >= BARRIER_TIMEOUT - SCHEDULING_TOLERANCE,
-        "the acknowledgement wait must use the deadline the enqueue left behind",
+        elapsed >= ENQUEUE_SPEND,
+        "the enqueue must wait for the held queue slot: {elapsed:?}",
     );
+    // One budget covers both waits. Spending a fresh budget on the
+    // acknowledgement would take `ENQUEUE_SPEND + BARRIER_TIMEOUT`, which is
+    // outside this bound.
     assert!(
         elapsed < BARRIER_TIMEOUT + SCHEDULING_TOLERANCE,
-        "a fresh budget for the acknowledgement wait would exceed one budget: {elapsed:?}",
+        "the acknowledgement wait must share the enqueue's deadline: {elapsed:?}",
     );
+}
+
+/// Stand-in worker that holds the queue full, then withholds the barrier.
+///
+/// It takes the record first, which is what frees the queue slot the enqueue
+/// is waiting for, then takes the barrier and keeps its acknowledgement
+/// sender alive without answering. The waiter therefore sees a slow worker,
+/// not a closed channel. Every wait of its own is bounded and never consults
+/// the code under test.
+struct StandInWorker {
+    /// Lets the thread drop the barrier once the test has finished waiting.
+    release: Option<std::sync::mpsc::Sender<()>>,
+    /// Joined on drop so a failed assertion cannot leak the thread.
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StandInWorker {
+    /// Spawn a worker that waits for `go` before holding the queue.
+    fn spawn(jobs: Receiver<Job>, go: std::sync::mpsc::Receiver<()>) -> Self {
+        let (release, released) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            go.recv_timeout(BARRIER_TIMEOUT * 2)
+                .expect("the test should start the enqueue spend");
+            std::thread::sleep(ENQUEUE_SPEND);
+            let record = jobs
+                .recv_timeout(BARRIER_TIMEOUT * 2)
+                .expect("the queued record should still be there");
+            drop(record);
+            let barrier = jobs
+                .recv_timeout(BARRIER_TIMEOUT * 2)
+                .expect("the barrier should arrive once the queue has room");
+            // Keeping the barrier alive without answering is what the waiter
+            // must time out on rather than see as a closed channel.
+            let _ = released.recv_timeout(BARRIER_TIMEOUT * 2);
+            drop(barrier);
+        });
+        Self {
+            release: Some(release),
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for StandInWorker {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
