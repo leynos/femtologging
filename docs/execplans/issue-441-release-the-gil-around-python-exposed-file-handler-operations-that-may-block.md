@@ -1587,6 +1587,46 @@ change, so the matrix asserts the `Handler error:` message both wrappers
 produce rather than a class they do not share; the divergence is recorded under
 follow-up work.
 
+## Fourth review follow-up after `90f8de26`
+
+CodeRabbit accepted the documentation row and kept the testing row partly
+addressed. Its objection was specific and correct: `CallsAfterClose` waits for
+the worker to finish before it calls `handle()` and `flush()`, and the
+refused-handle schedules finish `handle()` before `close()` begins. Neither
+therefore proves anything about a call that meets a shutdown in progress, and
+the matrix reached only the two rotating wrappers, not the core handler.
+
+Three changes answer that without introducing a sampled race.
+
+- Capacity is now a case parameter rather than a property of the schedule, so
+  the same schedule runs over a narrow and a wide queue. The separate
+  `OverlappingClosersWideQueue` variant disappeared with it.
+- `file_over_writer` builds the core `FemtoFileHandler` over the scripted
+  writer, so every schedule runs across the core handler and both wrappers:
+  three builders, six schedules, two capacities where capacity matters, and
+  twenty-four cases.
+- `WaitingFlush` starts a `flush()` on its own thread and waits for the
+  worker's `Stage::Flush`, which parks the worker inside the writer's flush
+  with the acknowledgement still outstanding. The flush is therefore already
+  inside its wait when a second thread starts `close()`. A `waits_in_flight`
+  reading of two proves the closer is inside the shared completion, which it
+  only reaches after `take_shutdown` has taken the command sender; at that
+  point the main thread calls `handle()` and `flush()` while the worker is
+  still parked. Releasing the writer answers the waiting flush first, so that
+  flush must record `flush_acknowledged`, the two late calls must record
+  `handle_closed` and `flush_closed`, and the close must record one completion
+  and no timeout.
+
+That covers both halves of the objection: a call already waiting when the
+shutdown begins, and calls that arrive while the shutdown is still in progress.
+Every step is signalled by the scripted writer's gates or by the public gauge,
+so nothing depends on how fast the machine is. The module was re-run five times
+consecutively to confirm the new schedule does not sample a favourable
+interleaving.
+
+The exception-class divergence now has its own issue, #610, so the matrix's
+message-only assertion has a recorded destination rather than an unowned note.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -1644,7 +1684,7 @@ families holds the lock across a wait, so no follow-up issue is needed for them.
 The rotating wrapper maps a handler failure to `RuntimeError`, while the
 timed-rotating wrapper maps the same failure to `ValueError`. The interleaving
 matrix asserts the `Handler error:` message both produce. Aligning the classes
-is a public-API decision outside this issue and deserves its own change.
+is a public-API decision outside this issue, so it is tracked as #610.
 
 ## Superseded gate interruptions and outcomes
 
