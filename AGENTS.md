@@ -244,10 +244,10 @@ record a named exception with
 `NAME` (WSL may inject `NAME` with the host name), and both values must be
 non-whitespace.
 
-Contract tests pin the lint interface — including Skylos's scan command,
-exclusions, gate strictness, and every recorded exception — through the pinned
-`makeutil` Makefile parser. Any interface change requires updating
-`tests/test_skylos_lint_contract.py`.
+Skylos runs as the installed `df12-skylos` command from df12-python-lints,
+which is tested there; this repository keeps only its configuration
+(`[tool.df12_skylos]`, `[tool.skylos]`) and recorded exceptions. Contract tests
+pin the lint tier order through the pinned `makeutil` Makefile parser.
 
 ## Markdown Guidance
 

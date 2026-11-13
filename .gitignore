@@ -222,6 +222,6 @@ bin/act
 *.swo
 *~
 
-# Skylos whitelist lock and analysis cache
-.skylos-whitelist.lock
+# Skylos allow lock and analysis cache
+.pyproject.toml.df12.lock
 .skylos/

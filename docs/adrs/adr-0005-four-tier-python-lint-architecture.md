@@ -97,15 +97,15 @@ Adopt Option C. `make lint` runs `lint-python` followed by `lint-rust`, and
    `R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112`.
    `ambrleaks` sweeps Syrupy `.ambr` snapshots under `tests` and
    `femtologging/unittests` for unredacted secrets.
-4. **Skylos** (`4.33.2`) — a blocking production dead-code gate, also run
-   under Python 3.14 so Skylos's own runtime `ast` implementation parses the
-   project's syntax without producing phantom findings. Skylos scans
-   `femtologging` only, excludes `femtologging/unittests` and the native
-   `femtologging/_femtologging_rs.pyi` stub, and runs with
-   `--category dead_code --gate --format concise --no-upload --no-provenance
-   --no-grep-verify`.
-   `[tool.skylos.gate] strict = true` in `pyproject.toml` enforces the strict
-   gate mode.
+4. **Skylos** (through the installed `df12-skylos` command, whose `skylos` extra
+   carries the pin) — a blocking production dead-code gate, also run under
+   Python 3.14 so Skylos's own runtime `ast` implementation parses the
+   project's syntax without producing phantom findings. It scans the roots in
+   `[tool.df12_skylos]` (`femtologging`) only, excludes
+   `femtologging/unittests` and the native `femtologging/_femtologging_rs.pyi`
+   stub through `[tool.skylos] exclude`, and disables uploads and provenance
+   collection. `[tool.skylos.gate] strict = true` in `pyproject.toml` enforces
+   the strict gate mode.
 
 Skylos false positives are resolved by investigation, not by reflexive
 suppression. Every finding is investigated; genuine dead code is removed.
@@ -116,23 +116,19 @@ Only a boundary that an entry-point rule cannot describe is recorded through
 `make skylos-allow SYMBOL=<symbol> REASON="<reason>"`, which requires
 non-whitespace `SYMBOL` and `REASON` values (exit code 2 otherwise). The target
 uses `SYMBOL` rather than `NAME` because Windows Subsystem for Linux (WSL)
-injects `NAME` with the host name, and it serializes whitelist writes with
-`flock` against the ignored `.skylos-whitelist.lock` file so concurrent
-recordings do not overwrite one another.
+injects `NAME` with the host name, and `df12-skylos allow` serializes whitelist
+writes with a lock on the ignored `.pyproject.toml.df12.lock` file so
+concurrent recordings do not overwrite one another.
 
-The complete lint interface — the Skylos scan command, its exclusions, the
-gate's strict mode, the current (empty) documented-whitelist set, and the
-current entry-point rule set — is pinned by
-`tests/test_skylos_lint_contract.py` and
-`tests/test_skylos_whitelist_boundary.py`, which parse the Makefile with the
-pinned `makeutil` executable (`makeutil parse Makefile`, JSON) rather than
-matching Makefile text. Recording a new false-positive exception therefore
-requires a conscious update to `test_skylos_lint_contract.py`; the interface
-cannot drift silently. `makeutil` (pinned revision
-`29fc5a1634ffbaa18a773eed9dff1b2838a45d9c`, built with the `nightly-2026-05-28`
-toolchain and Polonius) is a prerequisite of `make test` and is installed
-independently by every full-suite CI job (`ci.yml` `build-test` and
-`heavy-tests.yml` `heavy`) using the same pinned toolchain and revision.
+The Skylos command and its behaviour are tested in df12-python-lints and CI
+runs the shared-actions `df12-skylos` action; this repository pins only the
+lint tier order, through the pinned `makeutil` executable
+(`makeutil parse Makefile`, JSON) rather than matching Makefile text.
+`makeutil` (pinned revision `29fc5a1634ffbaa18a773eed9dff1b2838a45d9c`, built
+with the `nightly-2026-05-28` toolchain and Polonius) is a prerequisite of
+`make test` and is installed independently by every full-suite CI job (`ci.yml`
+`build-test` and `heavy-tests.yml` `heavy`) using the same pinned toolchain and
+revision.
 
 ## Consequences
 

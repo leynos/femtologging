@@ -133,6 +133,8 @@ jobs:
         run: cargo fetch --locked --manifest-path rust_extension/Cargo.toml
       - name: Lint
         run: make lint
+      - name: Dead-code gate
+        uses: leynos/shared-actions/.github/actions/df12-skylos@a0519a1476ab769ca7b8badfa794f3751213f1ea
       - name: Spelling
         run: make spelling
       - name: Typecheck

@@ -1,7 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
-        test typecheck makeutil skylos-allow
+        test typecheck makeutil skylos skylos-allow
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -90,19 +90,13 @@ fnmatch_escape =$(subst ?,[?],$(subst *,[*],$(subst [,[[],$(1))))
 INTERROGATE_EXCLUDES ?= --exclude 'target/*' --exclude '*/target/*' \
   $(if $(CARGO_TARGET_DIR),--exclude '$(call fnmatch_escape,$(CARGO_TARGET_DIR))/*') \
   $(if $(CARGO_BUILD_TARGET_DIR),--exclude '$(call fnmatch_escape,$(CARGO_BUILD_TARGET_DIR))/*')
-SKYLOS_VERSION = 4.33.2
-# Skylos parses source using its own runtime AST; pinning Python 3.14 prevents
-# phantom dead-code findings on syntax newer than an older tool runtime.
-SKYLOS_CLI = $(UV_ENV) uv tool run --python 3.14 --from 'skylos==$(SKYLOS_VERSION)' skylos
-# Scan-only global options stay separate from the command-only CLI above so
-# the whitelist subcommand dispatches before any scan option.
-SKYLOS = $(SKYLOS_CLI) --config-file pyproject.toml
-SKYLOS_PRODUCTION_TARGETS ?= femtologging
-# The .pyi stub declares native signatures only, so every parameter in it is
-# trivially "unused"; exclude it alongside the in-package unit tests.
-SKYLOS_EXCLUDE_FOLDERS ?= femtologging/unittests femtologging/_femtologging_rs.pyi
-SKYLOS_EXCLUDE_FLAGS = $(foreach path,$(SKYLOS_EXCLUDE_FOLDERS),--exclude $(path))
-SKYLOS_WHITELIST_LOCK ?= .skylos-whitelist.lock
+# The dead-code gate is the installed df12-skylos command; its `skylos` extra
+# carries the one Skylos pin. Skylos parses source with its own runtime AST, so
+# the tool environment runs Python 3.14.
+DF12_SKYLOS_SHA = 56ad71721c3f1f2164ec84b69150582488f1a927
+SKYLOS = $(UV_ENV) uv tool run --python 3.14 --from \
+  'df12-python-lints[skylos] @ git+https://github.com/leynos/df12-python-lints.git@$(DF12_SKYLOS_SHA)' \
+  df12-skylos
 
 all: release spelling ## Build the release artifact and enforce spelling
 
@@ -168,14 +162,15 @@ lint-python: ## Run Ruff, interrogate, Pylint, df12, ambrleaks, and Skylos
 	$(PYLINT) $(PYLINT_TARGETS)
 	$(DF12_PYLINT) $(PYLINT_TARGETS)
 	$(AMBRLEAKS) tests femtologging/unittests
-	$(SKYLOS) $(SKYLOS_PRODUCTION_TARGETS) $(SKYLOS_EXCLUDE_FLAGS) --category dead_code --gate --format concise --no-upload --no-provenance --no-grep-verify
+	$(SKYLOS) check --repository .
+
+skylos: ## Detect dead production code
+	$(SKYLOS) check --repository .
 
 skylos-allow: export SKYLOS_SYMBOL = $(value SYMBOL)
 skylos-allow: export SKYLOS_REASON = $(value REASON)
-skylos-allow: ## Document one named Skylos exception, not an entry point
-	@case "$${SKYLOS_SYMBOL}" in *[![:space:]]*) ;; *) printf "Error: SYMBOL is required for a named whitelist exception\\n" >&2; exit 2;; esac
-	@case "$${SKYLOS_REASON}" in *[![:space:]]*) ;; *) printf "Error: REASON is required for a named whitelist exception\\n" >&2; exit 2;; esac
-	flock "$(SKYLOS_WHITELIST_LOCK)" env $(SKYLOS_CLI) whitelist "$${SKYLOS_SYMBOL}" --reason "$${SKYLOS_REASON}"
+skylos-allow: ## Document one named Skylos exception (SYMBOL=name REASON=text)
+	$(SKYLOS) allow --repository . --symbol="$${SKYLOS_SYMBOL}" --reason="$${SKYLOS_REASON}"
 
 # The environment-access policy (issue #423) has to hold in every target kind
 # and every feature, including tests and benches, because a test that mutates
