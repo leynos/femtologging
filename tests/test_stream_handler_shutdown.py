@@ -171,6 +171,7 @@ class _DrainOutcome:
 
 def _drain_proved_the_worker_finished(
     drain_method: _DrainMethod,
+    *,
     acknowledged: bool | None,
     formatter_completed: bool,
     elapsed_seconds: float,
@@ -240,7 +241,10 @@ def _drain_gated_handler(
         captured = (
             capfd.readouterr().err
             if _drain_proved_the_worker_finished(
-                drain_method, acknowledged, completed, elapsed
+                drain_method,
+                acknowledged=acknowledged,
+                formatter_completed=completed,
+                elapsed_seconds=elapsed,
             )
             else ""
         )
