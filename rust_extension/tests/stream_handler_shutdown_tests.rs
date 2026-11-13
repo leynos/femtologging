@@ -364,3 +364,106 @@ fn stream_handler_close_returns_promptly_after_a_worker_panic() {
         "close() waited {elapsed:?}; a panicked worker must still signal completion"
     );
 }
+
+/// Formatter that panics on the worker thread and has a blocking destructor.
+///
+/// The panic and the delayed teardown meet in the same worker, which is what
+/// distinguishes this case from [`PanicFormatter`] alone: completion must wait
+/// for the destructor even though the body never reaches its closing
+/// statements.
+struct PanicSlowDropFormatter {
+    /// Signals that the worker entered the formatter before it panicked.
+    panicked: Sender<()>,
+    /// Signals that the destructor has been entered during unwinding.
+    entered: Sender<()>,
+    /// The destructor waits on this channel before returning.
+    release: Mutex<Receiver<()>>,
+    /// The destructor reports completion on this channel.
+    dropped: Sender<()>,
+}
+
+impl FemtoFormatter for PanicSlowDropFormatter {
+    fn format(&self, _record: &FemtoLogRecord) -> String {
+        let _ = self.panicked.send(());
+        panic!("formatter panics before its destructor can finish");
+    }
+}
+
+impl Drop for PanicSlowDropFormatter {
+    fn drop(&mut self) {
+        // Report arrival before blocking, so the test knows unwinding reached
+        // teardown rather than merely being slow to begin.
+        let _ = self.entered.send(());
+        let release = self.release.lock().unwrap_or_else(PoisonError::into_inner);
+        let _ = release.recv_timeout(DESTRUCTOR_WAIT);
+        let _ = self.dropped.send(());
+    }
+}
+
+/// A panicking worker must not signal completion before its teardown finishes.
+///
+/// Unwinding drops the formatter inside the worker's guarded body, so a closer
+/// must remain blocked while that destructor is held. The test waits for the
+/// destructor to report entry before making the claim, and the timeout is long
+/// enough that only a premature completion signal could return early: a closer
+/// that saw one would pass the blocked check.
+#[test]
+fn stream_handler_close_cannot_observe_completion_before_a_panicking_formatter_drops() {
+    const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+
+    let (panicked_tx, panicked_rx) = mpsc::channel();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (dropped_tx, dropped_rx) = mpsc::channel();
+    let handler = Arc::new(FemtoStreamHandler::with_capacity_timeout(
+        io::sink(),
+        PanicSlowDropFormatter {
+            panicked: panicked_tx,
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+            dropped: dropped_tx,
+        },
+        8,
+        FLUSH_TIMEOUT,
+    ));
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "boom"));
+    panicked_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker should enter the formatter before it panics");
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("unwinding should reach the formatter destructor");
+
+    let (started_tx, started_rx) = mpsc::channel();
+    let (closed_tx, closed_rx) = mpsc::channel();
+    let closer = {
+        let handler = Arc::clone(&handler);
+        thread::spawn(move || {
+            started_tx
+                .send(())
+                .expect("signal that the closer is entering close()");
+            handler.close();
+            let _ = closed_tx.send(());
+        })
+    };
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("closer should start");
+
+    // The destructor is still blocked, so completion cannot have been raised:
+    // a closer that returned here observed a signal raised before teardown.
+    assert!(
+        closed_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "close() returned before the panicking formatter finished teardown"
+    );
+    release_tx
+        .send(())
+        .expect("release the blocked formatter destructor");
+    closed_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("close() should return once teardown completes");
+    dropped_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker should finish formatter teardown");
+    closer.join().expect("closer thread should not panic");
+}

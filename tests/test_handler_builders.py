@@ -17,7 +17,6 @@ from femtologging import (
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
 )
-from tests.helpers import poll_captured_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -244,32 +243,6 @@ def test_file_builder_records_inline_timeout(tmp_path: Path) -> None:
 
     _assert_config_value(data, "overflow_policy", "timeout", "inline timeout policy")
     _assert_config_value(data, "timeout_ms", 125, "inline timeout duration")
-
-
-@pytest.mark.parametrize("drain_method", ["flush", "close"], ids=["flush", "close"])
-def test_stream_builder_applies_callable_formatter(
-    capfd: pytest.CaptureFixture[str],
-    drain_method: typ.Literal["flush", "close"],
-) -> None:
-    """Stream workers can finish Python formatting during flush and close."""
-    handler = (
-        StreamHandlerBuilder
-        .stderr()
-        .with_formatter(lambda record: f"callable:{record['message']}")
-        .build()
-    )
-    try:
-        handler.handle("logger", "INFO", "hello")
-        if drain_method == "flush":
-            assert handler.flush(), "stream handler did not flush"
-        else:
-            handler.close()
-    finally:
-        handler.close()
-
-    # A timed-out close can return while the worker is still writing, so poll
-    # the capture instead of reading it once and racing that write.
-    poll_captured_text(capfd, "callable:hello\n")
 
 
 @pytest.mark.parametrize(

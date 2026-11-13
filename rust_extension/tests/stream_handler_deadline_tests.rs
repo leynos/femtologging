@@ -1,10 +1,10 @@
 //! Deterministic tests for the one deadline `flush()` spends on both waits.
 //!
-//! These drive a scripted clock through the handler's rate-limiter seam, so the
-//! shared budget is exhausted without sleeping. The channel underneath stays
-//! real: a gated writer blocks the worker, so the test decides which wait the
-//! call reaches, and the elapsed-time assertions only need to show that the
-//! call did not fall back on a real timeout.
+//! These inject a scripted clock through `HandlerConfig`, so the shared budget
+//! is spent without sleeping. The channel underneath stays real: a gated
+//! writer blocks the worker, so the test decides which wait the call reaches,
+//! and the elapsed-time assertions only need to show that the call did not
+//! fall back on a real timeout.
 
 use std::collections::VecDeque;
 use std::io::{self, Write};
@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use _femtologging_rs::rate_limited_warner::{Clock, DEFAULT_WARN_INTERVAL, RateLimitedWarner};
+use _femtologging_rs::rate_limited_warner::Clock;
 use _femtologging_rs::{
     DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler, StreamHandlerConfig,
 };
@@ -37,12 +37,24 @@ const PROMPT: Duration = Duration::from_secs(1);
 /// Upper bound on how long a test writer waits for its release signal.
 const RELEASE_WAIT: Duration = Duration::from_secs(10);
 
+/// Scripted time the queueing stage consumes, in the resolution of [`Clock`].
+const ACK_REMAINDER_MS: u64 = 200;
+
+/// Readings that leave the acknowledgement stage exactly [`ACK_REMAINDER_MS`].
+const ACK_READINGS: [u64; 3] = [0, 0, FLUSH_TIMEOUT_MS - ACK_REMAINDER_MS];
+
+/// Lower bound on the acknowledgement wait that must still be available.
+///
+/// Half the scripted remainder, so scheduler jitter cannot make a call that
+/// correctly waited look instantaneous without admitting much overhead.
+const MIN_ACK_WAIT: Duration = Duration::from_millis(ACK_REMAINDER_MS / 2);
+
 /// Clock whose readings are scripted in advance.
 ///
-/// The handler shares its rate limiter's clock, so scripting that clock drives
-/// the flush deadline. Readings are consumed in order and the last one repeats
-/// once the script runs dry: sampling more often than expected must not hand
-/// back a budget the test meant to spend.
+/// The handler reads this clock for its flush deadline, so scripting it drives
+/// both waits. Readings are consumed in order and the last one repeats once the
+/// script runs dry: sampling more often than expected must not hand back a
+/// budget the test meant to spend.
 struct ScriptedClock {
     /// Readings still to hand out, and the last one already handed out.
     state: Mutex<ScriptedState>,
@@ -81,24 +93,27 @@ impl Clock for ScriptedClock {
     }
 }
 
-/// Writer whose first write blocks until the test releases it.
+/// Writer whose first `blocks` records block until the test releases them.
 struct GatedWriter {
-    /// Signals that the worker has reached the first write.
+    /// Signals that the worker has reached a blocked write.
     entered: Sender<()>,
-    /// The first write waits for this channel; later writes return at once.
+    /// Each blocked write waits for one message here; later writes return.
     release: Receiver<()>,
-    /// Set once the first write has been released.
-    released: bool,
+    /// Number of records still to block.
+    blocks: usize,
 }
 
 impl Write for GatedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.released {
+        // `writeln!` writes the formatted message and its newline through
+        // separate `write` calls. Gating only message writes keeps one block
+        // equal to one record, so the test can release records one at a time.
+        if self.blocks == 0 || buf == b"\n" {
             return Ok(buf.len());
         }
+        self.blocks -= 1;
         let _ = self.entered.send(());
         let _ = self.release.recv_timeout(RELEASE_WAIT);
-        self.released = true;
         Ok(buf.len())
     }
 
@@ -109,24 +124,23 @@ impl Write for GatedWriter {
 
 /// Build a one-slot handler whose flush deadline reads `readings` from its clock.
 fn scripted_handler(gated: GatedWriter, readings: [u64; 3]) -> FemtoStreamHandler {
-    let warner =
-        RateLimitedWarner::with_clock(DEFAULT_WARN_INTERVAL, ScriptedClock::scripted(readings));
     let config = StreamHandlerConfig::default()
         .with_capacity(1)
         .with_timeout(FLUSH_TIMEOUT)
-        .with_warner(warner);
+        .with_clock(ScriptedClock::scripted(readings));
     FemtoStreamHandler::with_test_config(gated, DefaultFormatter, config)
 }
 
-/// Build a gated writer plus the signals its test drives.
-fn gated_writer() -> (GatedWriter, Receiver<()>, Sender<()>) {
+/// Build a writer that blocks on its first `blocks` writes plus the signals its
+/// test drives.
+fn gated_writer(blocks: usize) -> (GatedWriter, Receiver<()>, Sender<()>) {
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     (
         GatedWriter {
             entered: entered_tx,
             release: release_rx,
-            released: false,
+            blocks,
         },
         entered_rx,
         release_tx,
@@ -149,7 +163,7 @@ fn block_worker(handler: &FemtoStreamHandler, entered: &Receiver<()>) {
 /// timeout per wait would instead spend the whole configured timeout here.
 #[test]
 fn stream_handler_flush_spends_the_shared_deadline_on_the_acknowledgement() {
-    let (writer, entered, release) = gated_writer();
+    let (writer, entered, release) = gated_writer(1);
     let handler = scripted_handler(writer, [0, 0, FLUSH_TIMEOUT_MS + 1]);
     block_worker(&handler, &entered);
 
@@ -176,7 +190,7 @@ fn stream_handler_flush_spends_the_shared_deadline_on_the_acknowledgement() {
 /// wait out a fresh timeout for space that never comes.
 #[test]
 fn stream_handler_flush_stops_queueing_once_the_shared_deadline_expires() {
-    let (writer, entered, release) = gated_writer();
+    let (writer, entered, release) = gated_writer(1);
     let handler = scripted_handler(writer, [0, FLUSH_TIMEOUT_MS + 1, FLUSH_TIMEOUT_MS + 1]);
     block_worker(&handler, &entered);
     // Fill the only queue slot while the worker is blocked, so the flush
@@ -195,5 +209,60 @@ fn stream_handler_flush_stops_queueing_once_the_shared_deadline_expires() {
     );
 
     release.send(()).expect("release the blocked writer");
+    handler.close();
+}
+
+/// Time spent queueing must come out of the acknowledgement's own budget.
+///
+/// The clock reads no progress before the command is sent and the deadline's
+/// remainder after it is queued, so the acknowledgement stage inherits only
+/// [`ACK_REMAINDER_MS`]. A call that derived a second deadline would wait the
+/// whole configured timeout here; one that ignored the queueing time would not
+/// wait at all.
+#[test]
+fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
+    let (writer, entered, release) = gated_writer(2);
+    let handler = Arc::new(scripted_handler(writer, ACK_READINGS));
+
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "blocking"));
+    entered
+        .recv_timeout(RELEASE_WAIT)
+        .expect("worker should block in its first write");
+    // Fill the only queue slot, so the flush command cannot be queued yet and
+    // the clock can advance past the queueing stage before it is.
+    handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "queued"));
+
+    let flusher = {
+        let handler = Arc::clone(&handler);
+        std::thread::spawn(move || {
+            let started = Instant::now();
+            let flushed = handler.flush();
+            (flushed, started.elapsed())
+        })
+    };
+    // Free the slot while the worker is still behind the second record: the
+    // command is queued, but its acknowledgement cannot arrive yet.
+    release.send(()).expect("release the first write");
+    entered
+        .recv_timeout(RELEASE_WAIT)
+        .expect("worker should block in its second record");
+
+    let (flushed, elapsed) = flusher.join().expect("the flush thread must not panic");
+    assert!(
+        !flushed,
+        "an acknowledgement that cannot be delivered must fail the flush"
+    );
+    assert!(
+        elapsed < PROMPT,
+        "flush() waited {elapsed:?}; the acknowledgement was given a fresh timeout \
+         instead of the deadline's remainder"
+    );
+    assert!(
+        elapsed >= MIN_ACK_WAIT,
+        "flush() returned after {elapsed:?}; the queueing stage did not consume its \
+         share of the scripted deadline, so the remainder was never waited on"
+    );
+
+    release.send(()).expect("release the second write");
     handler.close();
 }
