@@ -146,6 +146,18 @@ impl FemtoFileHandler {
         self.diagnostics().snapshot().to_map()
     }
 
+    /// Report how many records are inside the channel send, for unit tests.
+    ///
+    /// The public gauge rises when a call enters its wait, which happens before
+    /// the sender is cloned, so it cannot prove a record has reached a full
+    /// queue. The interleaving tests read this count for that distinction. It
+    /// is compiled out of release builds, so it is not part of the shipped API.
+    #[cfg(test)]
+    #[pyo3(name = "debug_sends_in_flight")]
+    fn py_debug_sends_in_flight(&self) -> u64 {
+        self.sends_in_flight()
+    }
+
     /// Closes the handler, signals worker shutdown, and waits briefly for
     /// completion before joining the worker when it reports that it has exited.
     ///

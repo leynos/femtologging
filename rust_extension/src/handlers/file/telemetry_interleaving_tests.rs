@@ -23,7 +23,7 @@ use rstest::rstest;
 
 use super::OverflowPolicy;
 use super::scripted_writer::{ScriptedWriter, Stage, handler_with_capacity};
-use super::telemetry_interleaving_schedules::count;
+use super::telemetry_interleaving_schedules::{count, sends};
 use super::telemetry_wrapper_binding_tests::{
     rotating_over_writer_with_capacity as rotating,
     timed_rotating_over_writer_with_capacity as timed_rotating,
@@ -86,6 +86,21 @@ const ALL_POLICIES: [OverflowPolicy; 3] = [
     OverflowPolicy::Timeout(Duration::from_millis(20)),
 ];
 
+/// One built matrix entry: the handler, its worker and the queue width.
+///
+/// The schedule bodies receive this rather than four loose parameters, so a
+/// schedule cannot accidentally mix one case's writer with another's handler.
+pub(super) struct Case<'a> {
+    /// The handler under test.
+    pub(super) handler: &'a Py<PyAny>,
+    /// The worker the handler sends its records to.
+    pub(super) writer: &'a ScriptedWriter,
+    /// The stages the worker reports as it processes commands.
+    pub(super) entered: &'a mpsc::Receiver<Stage>,
+    /// Queue capacity this case was built with.
+    pub(super) capacity: usize,
+}
+
 /// One controlled interleaving the matrix runs.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Schedule {
@@ -138,24 +153,16 @@ impl Schedule {
     }
 
     /// Play the whole schedule out and assert the counters it must leave.
-    fn run(
-        self,
-        handler: &Py<PyAny>,
-        writer: &ScriptedWriter,
-        entered: &mpsc::Receiver<Stage>,
-        capacity: usize,
-    ) {
+    fn run(self, case: &Case<'_>) {
         match self {
-            Self::OverlappingClosers => self.overlap(handler, writer, entered),
-            Self::RetryAfterTimeout => self.retry_after_timeout(handler, writer),
-            Self::CallsAfterClose => self.calls_after_close(handler, writer, entered),
+            Self::OverlappingClosers => self.overlap(case),
+            Self::RetryAfterTimeout => self.retry_after_timeout(case),
+            Self::CallsAfterClose => self.calls_after_close(case),
             Self::RefusedHandleThenRetry | Self::TimedOutHandleThenRetry => {
-                self.refused_handle_then_retry(handler, writer, entered, capacity);
+                self.refused_handle_then_retry(case);
             }
-            Self::WaitingFlush => self.waiting_flush(handler, writer, entered),
-            Self::BlockedHandleThenShutdown => {
-                self.blocked_handle_then_shutdown(handler, writer, entered, capacity);
-            }
+            Self::WaitingFlush => self.waiting_flush(case),
+            Self::BlockedHandleThenShutdown => self.blocked_handle_then_shutdown(case),
         }
     }
 }
@@ -192,11 +199,22 @@ fn run_case(builder: BuilderCase, schedule: Schedule, policy: OverflowPolicy, ca
         let (entered_tx, entered_rx) = mpsc::channel();
         let writer = ScriptedWriter::blocking(entered_tx);
         let handler = Python::attach(|py| (builder.make)(py, writer.clone(), policy, capacity));
-        schedule.run(&handler, &writer, &entered_rx, capacity);
+        let case = Case {
+            handler: &handler,
+            writer: &writer,
+            entered: &entered_rx,
+            capacity,
+        };
+        schedule.run(&case);
         assert_eq!(
             count(&handler, "waits_in_flight"),
             0,
             "every finished wait must leave the gauge",
+        );
+        assert_eq!(
+            sends(&handler),
+            0,
+            "every finished send must leave the send gauge",
         );
     }));
     if let Err(payload) = outcome {

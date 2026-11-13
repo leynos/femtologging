@@ -322,6 +322,13 @@ impl PyTimedRotatingFileHandler {
         self.inner.inner.diagnostics().snapshot().to_map()
     }
 
+    /// Report records inside the channel send; see the core handler's method.
+    #[cfg(test)]
+    #[pyo3(name = "debug_sends_in_flight")]
+    fn py_debug_sends_in_flight(&self) -> u64 {
+        self.inner.inner.sends_in_flight()
+    }
+
     /// Closes the worker-backed handler and releases its Python-owned lifecycle
     /// state.
     ///

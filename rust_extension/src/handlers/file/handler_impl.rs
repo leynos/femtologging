@@ -68,7 +68,31 @@ fn send_bounded(
     })
 }
 
+/// Test-only guard that counts one record while it is inside the channel send.
+///
+/// A blocking send cannot report when it starts waiting, so the interleaving
+/// tests keep their own count to tell a call that has entered its wait from one
+/// whose record has reached a full queue. Dropping the guard covers every exit,
+/// including a panic on the sending thread.
+#[cfg(test)]
+struct SendInFlight<'a>(&'a std::sync::atomic::AtomicUsize);
+
+#[cfg(test)]
+impl Drop for SendInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 impl FemtoFileHandler {
+    /// Mark one send in flight for as long as the returned guard lives.
+    #[cfg(test)]
+    fn begin_send(&self) -> SendInFlight<'_> {
+        self.sends_in_flight
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        SendInFlight(&self.sends_in_flight)
+    }
+
     /// Enqueue one record and report why the attempt failed, if it did.
     ///
     /// The result is richer than [`HandlerError`] so the Python bindings can
@@ -82,6 +106,8 @@ impl FemtoFileHandler {
             return Err(EnqueueFailure::Closed);
         };
         let command = FileCommand::Record(Box::new(record));
+        #[cfg(test)]
+        let _sending = self.begin_send();
         match self.overflow_policy {
             OverflowPolicy::Drop => send_bounded(&tx, command, None),
             OverflowPolicy::Block => send_blocking(&tx, command),

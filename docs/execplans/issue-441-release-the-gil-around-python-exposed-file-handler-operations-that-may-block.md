@@ -1684,6 +1684,44 @@ gap rather than a defect, and it is now closed by widening the existing matrix.
 The focused run of the widened matrix passed seven cases in 30.46 s on the
 `--no-default-features --features tracing-compat` lane.
 
+## Seventh review follow-up after `ab15aebc`
+
+The sixth assessment at 18:41 accepted the widened matrix but showed that
+`BlockedHandleThenShutdown` was not yet fully controlled. `WaitScope::start`
+runs before `enqueue` clones the sender, so the public `waits_in_flight` gauge
+rises when the call merely begins. A reading of one therefore did not prove the
+record had reached the full queue, and a close that took the sender first would
+have made the case fail rather than pass. The reviewer asked for a test-only
+observation that establishes the send is waiting before `close()` starts.
+
+- `FemtoFileHandler` now carries a `#[cfg(test)]` `sends_in_flight` counter.
+  `enqueue` raises it through a `SendInFlight` drop guard around the channel
+  send, so the guard covers every exit, including a panic on the sending
+  thread. The field, the guard and the accessor are compiled out of release
+  builds.
+- The three Python classes expose that count through a `#[cfg(test)]`
+  `debug_sends_in_flight()` method, so the matrix can read it uniformly through
+  `Py<PyAny>` whichever builder produced the handler.
+- `BlockedHandleThenShutdown` now waits for that gauge to reach one before it
+  spawns the closer. Reaching one proves the record is inside the send, so the
+  sender clone the close needs is already held and the close cannot overtake
+  it. All the assertions after release are retained, and the matrix's closing
+  check now requires the send gauge to return to zero as well as the public
+  wait gauge.
+- The two CodeScene advisories raised on `ab15aebc` are cleared. The five
+  schedule bodies that took the handler, writer, stage channel and capacity as
+  four separate parameters now take one `Case` struct, which also prevents a
+  schedule from pairing one case's writer with another's handler. `spawn_close`,
+  `spawn_flush` and `spawn_handle` now share one `spawn_call` helper instead
+  of repeating the attach-and-spawn body.
+- The added method pushed `handlers/rotating/python.rs` to 402 lines, which
+  the Whitaker `module-max-lines` rule rejects above 400. The wrapper's comment
+  now points at the core method, which carries the full explanation, and the
+  module sits at 398 lines.
+
+The focused run of the matrix passed seven cases in 18.02 s on the
+`--no-default-features --features tracing-compat` lane.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core

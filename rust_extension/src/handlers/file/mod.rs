@@ -84,9 +84,27 @@ pub struct FemtoFileHandler {
     overflow_policy: OverflowPolicy,
     /// Bounded counters and duration totals for the Python-facing waits.
     diagnostics: Arc<WaitDiagnostics>,
+    /// Records currently inside the channel send, for unit tests only.
+    ///
+    /// The public gauge marks a Python call's whole wait, which starts before
+    /// the sender is cloned, so it cannot tell a call that has begun waiting
+    /// from one whose record has reached a full queue. The interleaving tests
+    /// need that distinction; this counter is compiled out of release builds.
+    #[cfg(test)]
+    sends_in_flight: std::sync::atomic::AtomicUsize,
 }
 
 impl FemtoFileHandler {
+    /// Read the test-only gauge of records inside the channel send.
+    #[cfg(test)]
+    pub(crate) fn sends_in_flight(&self) -> u64 {
+        u64::try_from(
+            self.sends_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst),
+        )
+        .unwrap_or(u64::MAX)
+    }
+
     /// Create a handler writing to `path` with default settings.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
@@ -299,6 +317,8 @@ impl FemtoFileHandler {
             terminal,
             overflow_policy,
             diagnostics: Arc::new(WaitDiagnostics::new()),
+            #[cfg(test)]
+            sends_in_flight: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
