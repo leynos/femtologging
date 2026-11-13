@@ -315,10 +315,11 @@ pub(crate) fn replace_runtime_state(
 /// writer could otherwise starve the queued handler a flush barrier awaits.
 /// `reset_manager` also drops loggers outside the lock.
 ///
-/// A failed logger flush is counted and warned about rather than discarded.
-/// The bridge cannot report a failure to its caller — `log::Log::flush` returns
-/// nothing — so the counter and the rate-limited warning are the only evidence
-/// an operator gets that a handler is not draining.
+/// A failed logger flush is counted internally and warned about rather than
+/// discarded. The bridge cannot report a failure to its caller —
+/// `log::Log::flush` returns nothing — so today the rate-limited warning is the
+/// only evidence an operator gets that a handler is not draining. The counter
+/// is not yet exported; issue #551 tracks the telemetry interface.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
     flush_all_handlers_with_metrics(py, crate::logger::process_flush_metrics());

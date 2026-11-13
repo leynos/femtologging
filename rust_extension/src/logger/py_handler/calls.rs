@@ -47,6 +47,11 @@ impl FlushFailure {
 
     /// Emit this category's warning.
     fn report(self) {
+        // Tests cannot drain the process-wide log buffer without racing every
+        // other test that writes to it, so they read the categories reported
+        // on their own thread instead. Only the bounded category is recorded.
+        #[cfg(all(test, not(loom)))]
+        reported::record(self);
         log::warn!("{}", self.message());
     }
 }
@@ -234,6 +239,33 @@ impl PyHandler {
             .call_method1("run", (call.method_caller, self.obj.bind(py)))
             .map(|_| ())
             .map_err(|err| map_py_err(py, err, call.operation))
+    }
+}
+
+/// Per-thread record of the categories the flush path reported.
+///
+/// The warning sink is the process-wide `log` facade, so a test that drains it
+/// races every other test writing there. Recording the bounded category on the
+/// calling thread gives a test its own evidence without touching that buffer,
+/// and the record never includes the handler's exception text.
+#[cfg(all(test, not(loom)))]
+mod reported {
+    use std::cell::RefCell;
+
+    use super::FlushFailure;
+
+    thread_local! {
+        static REPORTED: RefCell<Vec<FlushFailure>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Record one reported category on the calling thread.
+    pub(super) fn record(failure: FlushFailure) {
+        REPORTED.with_borrow_mut(|reported| reported.push(failure));
+    }
+
+    /// Take the categories reported on the calling thread.
+    pub(super) fn take() -> Vec<FlushFailure> {
+        REPORTED.with_borrow_mut(std::mem::take)
     }
 }
 

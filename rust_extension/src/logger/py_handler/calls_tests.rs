@@ -3,19 +3,24 @@
 //! A Python handler's exception message is user data and may quote a record,
 //! so the flush path reports only a bounded category. These tests drive the
 //! real path with an exception carrying a marker and assert the marker reaches
-//! neither the captured warning nor stderr. They cover both a raising `flush`
+//! neither the reported category nor stderr. They cover both a raising `flush`
 //! call and a raising lookup of the `flush` attribute, and keep the
 //! `AttributeError` opt-out distinct from a real lookup failure.
+//!
+//! The categories are read from the flush path's per-thread record rather than
+//! the process-wide log buffer: that buffer is shared with every other test in
+//! the binary, so draining it here would steal their records and let theirs
+//! hide the evidence this test needs.
 
 use std::ffi::CStr;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use rstest::rstest;
 
-use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::logger::PyHandler;
 
-use super::FlushFailure;
+use super::{FlushFailure, reported};
 
 /// Marker that only the raising handler's exception carries.
 const SENSITIVE_MARKER: &str = "SENSITIVE-flush-payload-7d1c";
@@ -96,96 +101,66 @@ fn attribute_error_handler(py: Python<'_>) -> PyHandler {
     )
 }
 
-/// Take the flush-failure warnings reported so far.
-fn flush_failure_warnings() -> Vec<String> {
-    take_logged_messages()
-        .into_iter()
-        .filter(|entry| entry.level == log::Level::Warn)
-        .map(|entry| entry.message)
-        .filter(|message| message.contains("PyHandler: flush failed"))
-        .collect()
+/// Drive one flush and report what it did.
+///
+/// The record is thread-local, so clearing it first only discards categories
+/// this thread left behind; a parallel test cannot clear or steal this one's
+/// evidence.
+fn run_flush(build: impl FnOnce(Python<'_>) -> PyHandler) -> (bool, String, Vec<FlushFailure>) {
+    let _ = reported::take();
+    Python::attach(|py| {
+        let handler = build(py);
+        let (flushed, stderr) = with_captured_stderr(py, || handler.call_python_flush(py));
+        (flushed, stderr, reported::take())
+    })
 }
 
-#[test]
-fn a_raising_flush_reports_its_category_without_the_exception_text() {
-    install_test_logger();
-
-    Python::attach(|py| {
-        let handler = raising_handler(py);
-        let (flushed, stderr) = with_captured_stderr(py, || handler.call_python_flush(py));
-
-        assert!(!flushed, "a raising flush must report failure");
-        assert!(
-            !stderr.contains(SENSITIVE_MARKER),
-            "the flush path must not print the exception: {stderr}",
-        );
-    });
-
-    let warnings: Vec<String> = take_logged_messages()
-        .into_iter()
-        .filter(|entry| entry.level == log::Level::Warn)
-        .map(|entry| entry.message)
-        .collect();
+/// Assert the handler's exception text reached neither channel.
+fn assert_marker_never_reported(stderr: &str, failures: &[FlushFailure]) {
     assert!(
-        warnings
-            .iter()
-            .any(|message| message == FlushFailure::CallFailed.message()),
-        "the flush must report its bounded category: {warnings:?}",
+        !stderr.contains(SENSITIVE_MARKER),
+        "the flush path must not print the exception: {stderr}",
     );
     assert!(
-        warnings
+        failures
             .iter()
-            .all(|message| !message.contains(SENSITIVE_MARKER)),
-        "no warning may repeat the handler's exception text: {warnings:?}",
+            .all(|failure| !failure.message().contains(SENSITIVE_MARKER)),
+        "no reported category may repeat the handler's exception text: {failures:?}",
     );
 }
 
-#[test]
-fn a_failing_flush_lookup_reports_its_category_without_the_exception_text() {
-    install_test_logger();
+#[rstest]
+#[case::raising_flush(raising_handler, FlushFailure::CallFailed)]
+#[case::lookup_failure(lookup_raising_handler, FlushFailure::LookupFailed)]
+fn a_failed_flush_reports_its_category_without_the_exception_text(
+    #[case] build: fn(Python<'_>) -> PyHandler,
+    #[case] expected: FlushFailure,
+) {
+    let (flushed, stderr, failures) = run_flush(build);
 
-    Python::attach(|py| {
-        let handler = lookup_raising_handler(py);
-        let (flushed, stderr) = with_captured_stderr(py, || handler.call_python_flush(py));
-
-        assert!(
-            !flushed,
-            "a lookup that raises for another reason must report failure",
-        );
-        assert!(
-            !stderr.contains(SENSITIVE_MARKER),
-            "the flush path must not print the exception: {stderr}",
-        );
-    });
-
-    let warnings = flush_failure_warnings();
+    assert!(!flushed, "a failed flush must report failure");
+    assert_marker_never_reported(&stderr, &failures);
     assert_eq!(
-        warnings,
-        [FlushFailure::LookupFailed.message()],
-        "the lookup failure must be reported as its own bounded category",
+        failures,
+        [expected],
+        "the flush must report its own bounded category exactly once",
     );
 }
 
 #[test]
 fn an_attribute_error_during_lookup_still_opts_out_of_flushing() {
-    install_test_logger();
-
-    Python::attach(|py| {
-        let handler = attribute_error_handler(py);
-        let (flushed, stderr) = with_captured_stderr(py, || handler.call_python_flush(py));
-
-        assert!(
-            flushed,
-            "an attribute error is how a handler reports it has no flush",
-        );
-        assert!(
-            stderr.is_empty(),
-            "an opt-out must not print anything: {stderr}",
-        );
-    });
+    let (flushed, stderr, failures) = run_flush(attribute_error_handler);
 
     assert!(
-        flush_failure_warnings().is_empty(),
-        "an opt-out is not a failure and must not emit a warning",
+        flushed,
+        "an attribute error is how a handler reports it has no flush",
+    );
+    assert!(
+        stderr.is_empty(),
+        "an opt-out must not print anything: {stderr}",
+    );
+    assert!(
+        failures.is_empty(),
+        "an opt-out is not a failure and must not report a category",
     );
 }
