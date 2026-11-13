@@ -111,10 +111,10 @@ def _producer(race: _Race, name: str) -> None:
         try:
             race.handler.handle("core", "INFO", f"{name}-{index}")
         except race.handle_error:
-            return
+            break
         except Exception as err:  # ruff: ignore[blind-except] surfaced by the assertion
             race.failures.append(err)
-            return
+            break
 
 
 def _flusher(race: _Race) -> None:
@@ -125,7 +125,7 @@ def _flusher(race: _Race) -> None:
             race.handler.flush()
         except Exception as err:  # ruff: ignore[blind-except] surfaced by the assertion
             race.failures.append(err)
-            return
+            break
         time.sleep(0.001)
 
 
@@ -140,7 +140,7 @@ def _closer(race: _Race) -> None:
 
 
 def _start_threads(race: _Race) -> list[threading.Thread]:
-    """Start two producers, two flushers and one closer behind the barrier."""
+    """Start two producers, two flushers and two closers behind the barrier."""
     threads = [
         threading.Thread(
             target=_producer,
@@ -152,6 +152,9 @@ def _start_threads(race: _Race) -> list[threading.Thread]:
     threads += [
         threading.Thread(target=_flusher, args=(race,), daemon=True),
         threading.Thread(target=_flusher, args=(race,), daemon=True),
+        # Two closers make the close waits overlap rather than running back to
+        # back on one thread, so the shared completion signal is exercised.
+        threading.Thread(target=_closer, args=(race,), daemon=True),
         threading.Thread(target=_closer, args=(race,), daemon=True),
     ]
     for thread in threads:
@@ -180,9 +183,18 @@ def _assert_live_diagnostics(handler: Handler) -> None:
     assert diagnostics["handle_accepted"] >= 1, (
         f"the seed record must stay accepted: {diagnostics!r}"
     )
-    assert diagnostics["close_completed"] >= 1, (
-        f"a closer must observe the shutdown: {diagnostics!r}"
+    # Both closers wait on the same completion signal, and whichever order
+    # they arrive in each one records exactly one close outcome.
+    close_outcomes = sum(
+        diagnostics[key]
+        for key in (
+            "close_completed",
+            "close_timed_out",
+            "close_panicked",
+            "close_unknown",
+        )
     )
+    assert close_outcomes >= 2, f"every closer must record an outcome: {diagnostics!r}"
 
 
 def _assert_post_handoff(handler: Handler, handle_error: type[Exception]) -> None:
@@ -215,7 +227,7 @@ def test_concurrent_lifecycle_interleavings(
     handler.handle("core", "INFO", "seed")
 
     race = _Race(
-        start=threading.Barrier(5),
+        start=threading.Barrier(6),
         handler=handler,
         handle_error=handle_error,
         failures=[],

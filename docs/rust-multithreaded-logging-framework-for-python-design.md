@@ -1317,19 +1317,20 @@ the write-timeout-based single shutdown deadline described below.
 **Wait observability:** Because a detached wait is invisible to another
 thread's stack, each Python-facing wait on a file handler also records evidence
 of what it did. The record is a fixed-key counter map plus the
-`total_wait_micros` and `max_wait_micros` totals and the `waits_in_flight`
-gauge, exposed through `wait_diagnostics()`. It is implemented in the
-`handlers/telemetry/` module, split so no one file carries the whole surface:
-`outcome.rs` owns the closed outcome vocabulary, `diagnostics.rs` owns the
-counters and the snapshot, and `timer.rs` owns timing, the in-flight guard, and
-the event contract. One counter per outcome keeps the cardinality bounded: the
-snapshot keys are the outcome names plus the two totals and the gauge, never a
-logger name, path, message, payload, or raw timeout value; the operation name
-and policy bucket appear only in the optional trace event. The gauge is
-incremented before the detached section and decremented by an RAII guard, so it
-returns to zero on the normal path and while unwinding; a wait that never
-returns is exactly the state the gauge exists to expose, since the outcome
-counters only move when a wait finishes.
+`total_wait_micros` sum, the `max_wait_micros` maximum single wait and the
+`waits_in_flight` gauge, exposed through `wait_diagnostics()`. It is
+implemented in the `handlers/telemetry/` module, split so no one file carries
+the whole surface: `outcome.rs` owns the closed outcome vocabulary,
+`diagnostics.rs` owns the counters, the snapshot and the in-flight `WaitGuard`,
+and `timer.rs` owns timing, `WaitScope` (which brackets the guard and the
+timer) and the event contract. One counter per outcome keeps the cardinality
+bounded: the snapshot keys are the outcome names plus the two totals and the
+gauge, never a logger name, path, message, payload, or raw timeout value; the
+operation name and policy bucket appear only in the optional trace event. The
+gauge is incremented before the detached section and decremented by an RAII
+guard, so it returns to zero on the normal path and while unwinding; a wait
+that never returns is exactly the state the gauge exists to expose, since the
+outcome counters only move when a wait finishes.
 
 With the `tracing-compat` feature each wait also emits one event on the
 `femtologging::internal` target. That target is deliberately one the crate's own

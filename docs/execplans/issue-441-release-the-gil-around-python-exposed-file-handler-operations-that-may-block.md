@@ -1341,15 +1341,15 @@ model in pytest, the corrected stream/socket/HTTP documentation, and a
 
 The gates ran sequentially over the working tree on top of `e1b19cec`:
 
-| Gate                | Result                                         |
-| ------------------- | ---------------------------------------------- |
-| `make fmt`          | pass, no files rewritten                       |
-| `make check-fmt`    | pass                                           |
-| `make markdownlint` | pass                                           |
-| `make nixie`        | pass                                           |
-| `make lint`         | pass, all Python tiers and all Rust lint lanes |
-| `make typecheck`    | pass, `All checks passed!`                     |
-| `make test`         | pass, per-lane evidence recorded below         |
+| Gate                | Result                                          |
+| ------------------- | ----------------------------------------------- |
+| `make fmt`          | pass, no files rewritten                        |
+| `make check-fmt`    | pass                                            |
+| `make markdownlint` | pass                                            |
+| `make nixie`        | pass                                            |
+| `make lint`         | pass, all Python tiers and all Rust lint lanes  |
+| `make typecheck`    | pass, `All checks passed!`                      |
+| `make test`         | interrupted; every lane passed separately below |
 
 `make test` was started once as a single command, and the harness killed that
 shell at its two-hour background limit while the second cargo lane was inside
@@ -1376,8 +1376,11 @@ combinations of builder, capacity and overflow policy in
 The trybuild cases dominated every lane (2981 s, 3137 s, 3569 s and 4593 s)
 because the shared compile pool held long queues from other agents' work; the
 admission supervisor stayed healthy and `sccache` reported it was not serving
-compilations, so the rebuilds were uncached. No gate was killed, retried or
-duplicated to shorten a wait, and no lane was run concurrently with another.
+compilations, so the rebuilds were uncached. The single `make test` invocation
+was killed by the harness's two-hour background limit, so its remaining recipe
+lines were run individually from the same candidate rather than that command
+being resumed. No lane was retried to shorten a wait, and no lane was run
+concurrently with another.
 
 ### CodeScene duplication on the binding tests
 
@@ -1427,6 +1430,66 @@ rewritten), `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`
 handle-timeout case, both close cases and both wrapper cases. It is the only
 lane that enables `tracing-compat`, so the other three cargo lanes and the
 Python suite compile and run the same code they did on `e2451fd2`.
+
+## Review follow-up on the formal review candidate
+
+CodeRabbit's formal review on `a5e1212b` raised five quick wins and its
+reconciliation table asked for two further proofs. All were addressed on top of
+that commit:
+
+| Finding                                       | Change                                                                     |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| In-flight guard attributed to `timer.rs`      | `WaitGuard` is attributed to `diagnostics.rs`; `timer.rs` owns `WaitScope` |
+| `max_wait_micros` described as a total        | The design note calls it the maximum single wait                           |
+| `try_recv()` could pass vacuously             | The observation test requires a bounded `recv_timeout` to time out         |
+| Bare `return` in the `-> None` helpers        | `_producer` and `_flusher` now `break` out of their loops                  |
+| Second-person pronouns in the migration guide | The introduction is impersonal and uses no second-person pronouns          |
+| `make test` recorded as passing               | The gate table marks it interrupted, with per-lane evidence below it       |
+| Wrapper failure paths not covered             | Four `#[rstest]` cases pin `flush_failed` and `close_panicked` per wrapper |
+| Command boundary observed only indirectly     | A real `handle()` call now follows the reads as a positive control         |
+| Only one closer, calling `close()` twice      | Two closers start behind the barrier, and each must record a close outcome |
+
+The wrapper failure table builds a rotating or timed-rotating wrapper over the
+scripted writer, drives one failing flush or a panicking terminal flush, reads
+the public counter map and the internal event, then releases the writer and
+closes outside the subscriber. Each case asserts the failure counter, the
+`waits_in_flight` gauge, the event count, the wrapper's own `handler_kind`, and
+the operation, outcome and policy bucket. That is the failure path the
+reconciliation table said was missing for the delegating wrappers.
+
+The observation test now uses `recv_timeout` for the same 200 ms bound as the
+drain above it, so a command still in flight after the final read fails the
+test instead of being read as silence. It then sends one real record and waits
+for the same channel to report `Stage::Write`, which proves the probe can
+detect a command at all. The concurrency model now starts two closers, so the
+close waits overlap rather than running one after another on a single thread,
+and it asserts that the close outcome counters total at least one per closer.
+
+The follow-up was gated on the resulting working tree with `make fmt` (no files
+rewritten), `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`,
+`make typecheck`, and then the four cargo lanes and `pytest`:
+
+| Recipe line                                                  | Result                                     |
+| ------------------------------------------------------------ | ------------------------------------------ |
+| `cargo test --no-default-features`                           | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features python`         | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features log-compat`     | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features tracing-compat` | pass, 763 passed, 3 ignored                |
+| `uv run pytest -v --doctest-modules`                         | pass, 1152 passed, 6 skipped, 66 snapshots |
+
+The `tracing-compat` lane is the only one that compiles the new evidence. Its
+lib binary ran 763 tests, including the four new wrapper failure cases, the
+observation test with its positive control, and every earlier telemetry test.
+The trybuild binary in that lane took 1337 s; the compile pool held long queues
+from other agents' work throughout, the admission supervisor stayed healthy,
+and no lane ran concurrently with another.
+
+The first `make lint` of this round was stopped by the harness's 30-minute
+default background limit while the private-docs contract test was running its
+clippy lanes. It was restarted once with a longer limit and completed with
+`rc=0`; the earlier partial run had already passed every Python tier and the
+first eight Rust lint lanes. That interruption was a harness limit, not a gate
+failure, and it was not worked around by skipping a tier.
 
 ## Decision log
 
