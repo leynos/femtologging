@@ -29,7 +29,9 @@ use pyo3::prelude::*;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::rate_limited_warner::Clock;
 use crate::shutdown::ShutdownCompletion;
-use crate::sync::{JoinHandle, Mutex, RecvTimeoutError, Sender, TrySendError, bounded, spawn};
+use crate::sync::{
+    JoinHandle, Mutex, RecvTimeoutError, SendTimeoutError, Sender, TrySendError, bounded, spawn,
+};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
@@ -72,8 +74,8 @@ pub struct FemtoStreamHandler {
     warner: RateLimitedWarner,
     /// Timeout for flush operations.
     flush_timeout: Duration,
-    /// Clock the flush deadline is measured against, shared with `warner` so a
-    /// test that scripts the clock controls both behaviours at once.
+    /// Clock the flush deadline is measured against, injected through
+    /// `HandlerConfig` so a test can script the deadline alone.
     clock: Arc<dyn Clock>,
 }
 
@@ -240,7 +242,7 @@ impl FemtoStreamHandler {
         let completion = ShutdownCompletion::new();
         let worker_completion = Arc::clone(&completion);
         let handle = spawn(move || run_stream_worker(rx, writer, formatter, worker_completion));
-        let clock = config.warner.clock();
+        let clock = Arc::clone(&config.clock);
 
         Self {
             tx: Mutex::new(Some(tx)),
@@ -326,15 +328,19 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         let deadline = FlushDeadline::after(self.clock.now_millis(), self.flush_timeout);
         let _waiting = WaitGuard::enter();
         let enqueue_budget = deadline.remaining(self.clock.now_millis());
-        if tx
-            .send_timeout(StreamCommand::Flush(ack_tx), enqueue_budget)
-            .is_err()
-        {
-            // The return value cannot say which stage expired. Name the stage
-            // in the trace, with no record payload, so an operator can tell a
-            // full queue from a slow worker.
-            trace!("FemtoStreamHandler: flush command not queued within the deadline");
-            return false;
+        match tx.send_timeout(StreamCommand::Flush(ack_tx), enqueue_budget) {
+            Ok(()) => {}
+            Err(SendTimeoutError::Timeout(_)) => {
+                // The return value cannot say which stage expired. Name the
+                // stage in the trace, with no record payload, so an operator
+                // can tell a full queue from a slow worker.
+                trace!("FemtoStreamHandler: flush command not queued within the deadline");
+                return false;
+            }
+            Err(SendTimeoutError::Disconnected(_)) => {
+                trace!("FemtoStreamHandler: flush command queue disconnected");
+                return false;
+            }
         }
         let ack_budget = deadline.remaining(self.clock.now_millis());
         match ack_rx.recv_timeout(ack_budget) {
