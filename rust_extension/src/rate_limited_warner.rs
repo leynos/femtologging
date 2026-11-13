@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::handler::{QueueFlushFailure, flush_command_until};
+use crate::handler::{FlushCap, QueueFlushFailure, flush_command_until};
 
 /// Source of time for [`RateLimitedWarner`].
 pub trait Clock: Send + Sync {
@@ -149,6 +149,35 @@ impl RateLimitedWarner {
             self.restore_drops(count);
         }
         outcome
+    }
+
+    /// Flush one handler queue against a caller's deadline.
+    ///
+    /// The handler's own budget caps the caller's deadline first, then
+    /// `prepare` supplies the queue to write to; a handler whose worker has
+    /// gone returns `None` without waiting. The warner carries its due drop
+    /// count onto the marker, so the logging callback runs on the worker
+    /// rather than on the flush caller.
+    ///
+    /// `prepare` runs after the cap deliberately. The stream handler's sender
+    /// sits behind a mutex, and sampling the deadline while holding it would
+    /// make one flush wait on another thread's flush.
+    pub(crate) fn flush_handler<S, A, Ack>(
+        &self,
+        cap: &mut FlushCap<'_>,
+        prepare: impl FnOnce() -> Option<S>,
+        enqueue: impl FnOnce(S, Option<u64>, Duration) -> Option<Ack>,
+    ) -> Option<Result<A, QueueFlushFailure>>
+    where
+        Ack: FnOnce(Duration) -> Option<A>,
+    {
+        let effective = cap.effective();
+        let sender = prepare()?;
+        Some(
+            self.flush_with_pending_drops(effective, cap.clock(), |drops, budget| {
+                enqueue(sender, drops, budget)
+            }),
+        )
     }
 
     /// Immediately warn about pending drops and restart the rate limit interval.

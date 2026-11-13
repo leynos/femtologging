@@ -18,7 +18,7 @@ use std::{
 use log::warn;
 use pyo3::prelude::*;
 
-use crate::handler::{FemtoHandlerTrait, FlushContext, capped_deadline, deadline_after};
+use crate::handler::{FemtoHandlerTrait, FlushCap, FlushContext, deadline_after};
 use crate::shutdown::{CompleteOnDrop, ShutdownCompletion};
 use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded, spawn};
 use crate::{
@@ -359,24 +359,20 @@ impl FemtoStreamHandler {
     /// so a stalled worker queue can be shown to consume exactly the budget
     /// the caller supplied rather than a fresh copy for each wait.
     fn flush_by_at(&self, deadline: Instant, now: &mut dyn FnMut() -> Instant) -> bool {
-        // Whichever comes first — the caller's deadline or this handler's own
-        // budget — bounds the flush as a whole. Giving each wait the budget
-        // afresh let one flush spend it twice over.
-        let effective = capped_deadline(deadline, now(), self.flush_timeout);
-        // Bind first: a guard in the `match` scrutinee lives through the send.
-        let tx = self.tx.lock().clone();
-        let Some(tx) = tx else {
-            return false;
-        };
-        let outcome =
-            self.warner
-                .flush_with_pending_drops(effective, now, |pending_drops, budget| {
-                    let (ack_tx, ack_rx) = bounded(1);
-                    tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)
-                        .ok()?;
-                    Some(move |budget| ack_rx.recv_timeout(budget).ok())
-                });
-        matches!(outcome, Ok(Ok(())))
+        // Cap first, then read the sender: the guard is taken and released
+        // inside the closure, so no lock outlives the deadline sample.
+        let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
+        let outcome = self.warner.flush_handler(
+            &mut cap,
+            || self.tx.lock().clone(),
+            |tx, pending_drops, budget| {
+                let (ack_tx, ack_rx) = bounded(1);
+                tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)
+                    .ok()?;
+                Some(move |budget| ack_rx.recv_timeout(budget).ok())
+            },
+        );
+        matches!(outcome, Some(Ok(Ok(()))))
     }
 
     /// Close the handler and wait for the worker thread to exit.

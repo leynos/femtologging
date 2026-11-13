@@ -12,7 +12,7 @@ use thiserror::Error;
 
 mod flush_command;
 
-pub(crate) use flush_command::{QueueFlushFailure, flush_command_until};
+pub(crate) use flush_command::{FlushCap, QueueFlushFailure, flush_command_until};
 
 /// The flush budget of a handler that does not configure one of its own.
 ///
