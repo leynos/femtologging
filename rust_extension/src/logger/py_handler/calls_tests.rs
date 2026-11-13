@@ -3,7 +3,9 @@
 //! A Python handler's exception message is user data and may quote a record,
 //! so the flush path reports only a bounded category. These tests drive the
 //! real path with an exception carrying a marker and assert the marker reaches
-//! neither the captured warning nor stderr.
+//! neither the captured warning nor stderr. They cover both a raising `flush`
+//! call and a raising lookup of the `flush` attribute, and keep the
+//! `AttributeError` opt-out distinct from a real lookup failure.
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -66,6 +68,50 @@ fn raising_handler(py: Python<'_>) -> PyHandler {
     PyHandler::new(py, object.unbind())
 }
 
+/// Build a handler whose `flush` attribute lookup raises a runtime error.
+fn lookup_raising_handler(py: Python<'_>) -> PyHandler {
+    let module = PyModule::from_code(
+        py,
+        c"class LookupRaising:\n    def __getattr__(self, name):\n        raise RuntimeError('SENSITIVE-flush-payload-7d1c')\n",
+        c"lookup_raising_flush_handler.py",
+        c"lookup_raising_flush_handler",
+    )
+    .expect("the lookup-raising handler module compiles");
+    let object = module
+        .getattr("LookupRaising")
+        .expect("the class exists")
+        .call0()
+        .expect("the handler constructs");
+    PyHandler::new(py, object.unbind())
+}
+
+/// Build a handler whose missing `flush` raises `AttributeError`, the opt-out.
+fn attribute_error_handler(py: Python<'_>) -> PyHandler {
+    let module = PyModule::from_code(
+        py,
+        c"class LookupOptOut:\n    def __getattr__(self, name):\n        raise AttributeError('SENSITIVE-flush-payload-7d1c')\n",
+        c"attribute_error_flush_handler.py",
+        c"attribute_error_flush_handler",
+    )
+    .expect("the opt-out handler module compiles");
+    let object = module
+        .getattr("LookupOptOut")
+        .expect("the class exists")
+        .call0()
+        .expect("the handler constructs");
+    PyHandler::new(py, object.unbind())
+}
+
+/// Take the flush-failure warnings reported so far.
+fn flush_failure_warnings() -> Vec<String> {
+    take_logged_messages()
+        .into_iter()
+        .filter(|entry| entry.level == log::Level::Warn)
+        .map(|entry| entry.message)
+        .filter(|message| message.contains("PyHandler: flush failed"))
+        .collect()
+}
+
 #[test]
 fn a_raising_flush_reports_its_category_without_the_exception_text() {
     install_test_logger();
@@ -97,5 +143,55 @@ fn a_raising_flush_reports_its_category_without_the_exception_text() {
             .iter()
             .all(|message| !message.contains(SENSITIVE_MARKER)),
         "no warning may repeat the handler's exception text: {warnings:?}",
+    );
+}
+
+#[test]
+fn a_failing_flush_lookup_reports_its_category_without_the_exception_text() {
+    install_test_logger();
+
+    Python::attach(|py| {
+        let handler = lookup_raising_handler(py);
+        let (flushed, stderr) = with_captured_stderr(py, || handler.call_python_flush(py));
+
+        assert!(
+            !flushed,
+            "a lookup that raises for another reason must report failure",
+        );
+        assert!(
+            !stderr.contains(SENSITIVE_MARKER),
+            "the flush path must not print the exception: {stderr}",
+        );
+    });
+
+    let warnings = flush_failure_warnings();
+    assert_eq!(
+        warnings,
+        [FlushFailure::LookupFailed.message()],
+        "the lookup failure must be reported as its own bounded category",
+    );
+}
+
+#[test]
+fn an_attribute_error_during_lookup_still_opts_out_of_flushing() {
+    install_test_logger();
+
+    Python::attach(|py| {
+        let handler = attribute_error_handler(py);
+        let (flushed, stderr) = with_captured_stderr(py, || handler.call_python_flush(py));
+
+        assert!(
+            flushed,
+            "an attribute error is how a handler reports it has no flush",
+        );
+        assert!(
+            stderr.is_empty(),
+            "an opt-out must not print anything: {stderr}",
+        );
+    });
+
+    assert!(
+        flush_failure_warnings().is_empty(),
+        "an opt-out is not a failure and must not emit a warning",
     );
 }
