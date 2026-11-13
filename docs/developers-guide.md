@@ -849,16 +849,20 @@ indefinitely.
 
 `FemtoLogger::flush_handlers_blocking()` creates one absolute deadline for the
 marker insertion, handler snapshot, worker acknowledgement and all handler
-flushes. Queue admission happens before taking the handler-list read lock, so a
-full queue cannot hold that lock while the caller waits. The snapshot lock and
-all channel waits consume the remaining time; callbacks run on the worker after
-the handler-list lock is released. A handler removed after the snapshot remains
+flushes. The barrier takes a brief handler-list read lock only to answer
+whether any handler is attached, and releases it before the marker is admitted.
+After admission, a second snapshot read is held only long enough to clone the
+handler owners, and it is released before the worker's start gate opens, so no
+handler callback runs while the lock is held. The snapshot lock and all channel
+waits consume the remaining time. A handler removed after the snapshot remains
 alive until the worker releases it. Built-in handlers retain their shorter
 configured timeouts.
 
-The default `FemtoHandlerTrait::flush_until(deadline)` returns `false` without
-calling legacy synchronous `flush()`. Custom handlers must override this method
-and honour the deadline; the logger cannot pre-empt arbitrary synchronous code.
+The default `FemtoHandlerTrait::flush_until(&FlushContext)` returns `false`
+without calling legacy synchronous `flush()`. Custom handlers must override
+this method and honour the deadline; the logger cannot pre-empt arbitrary
+synchronous code.
+
 Concurrent flush calls keep separate deadlines and use the existing bounded
 queue. In normal builds, logger drop waits for its own in-flight records only,
 up to the bounded drain timeout; it does not join the shared process-wide

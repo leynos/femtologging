@@ -340,6 +340,15 @@ for the compatibility rules.
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
   `.build()`.
 
+A direct `flush()` shares one configured `flush_timeout` between queue
+admission and the acknowledgement, so admission that spends part of that budget
+leaves less of it for the worker's answer. Under load, `flush()` can therefore
+return `False` even though the handler is healthy: admission may spend the
+budget while the queue is full, or the worker may not acknowledge what is left.
+The logger's `flush_handlers()` does not change this: it gives the handler the
+barrier's deadline, and the handler still caps its own wait at its configured
+`flush_timeout`.
+
 ### FemtoFileHandler
 
 - Constructor signature:

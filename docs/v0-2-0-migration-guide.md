@@ -200,6 +200,14 @@ three observable behaviours:
   to answer". `FemtoHTTPHandler.flush()` already shared one deadline and is
   unchanged.
 
+The stream, file, and rotating-file handler flushes use the same accounting. A
+direct `flush()` on any worker-queue handler now spends one configured flush
+timeout across queue admission and the acknowledgement, so the acknowledgement
+may receive less than the full timeout, and a busy worker can make `flush()`
+return `False` sooner than before. The logger's `flush_handlers()` does not
+change this: it gives the handler the barrier's deadline, and the handler still
+caps its wait at its own configured timeout.
+
 The bound on `close()` itself is the budget: a worker that misses the deadline
 is detached, so the caller is never held past it. The bound on the worker's own
 exit is looser, because it is on what the worker *starts*: no standard-library
