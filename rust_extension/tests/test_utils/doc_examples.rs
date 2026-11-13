@@ -156,88 +156,127 @@ impl Error for ContractError {}
 /// a documentation example is not mistaken for an example of its own.
 pub fn extract_examples(guide: &str) -> Result<Vec<Example>, ContractError> {
     let lines: Vec<&str> = guide.lines().collect();
-    let mut examples = Examples::default();
-    let mut index = 0;
-
-    while let Some(line) = lines.get(index) {
-        index = examples.read_line(&lines, index, line)?;
-    }
-
-    Ok(examples.items)
+    let mut scan = Scan::new(&lines);
+    while scan.advance()? {}
+    Ok(scan.examples.items)
 }
 
-impl Examples {
-    /// Handle one line and return the index of the next line to inspect.
+/// A guide being scanned, with the position reached and examples collected.
+///
+/// Keeping the lines and the cursor together means the per-line helpers take
+/// only the data that varies, instead of threading the whole guide through
+/// every call.
+struct Scan<'a> {
+    /// Guide lines, split once.
+    lines: &'a [&'a str],
+    /// Index of the next line to inspect.
+    index: usize,
+    /// Examples discovered so far.
+    examples: Examples,
+}
+
+impl<'a> Scan<'a> {
+    /// Start scanning `lines` from the first line.
+    fn new(lines: &'a [&'a str]) -> Self {
+        Self {
+            lines,
+            index: 0,
+            examples: Examples::default(),
+        }
+    }
+
+    /// Inspect the current line and move past it or the block it opens.
     ///
-    /// The loop in [`extract_examples`] relies on every arm advancing the
-    /// index, so a line is never reconsidered.
-    fn read_line(
-        &mut self,
-        lines: &[&str],
-        index: usize,
-        line: &str,
-    ) -> Result<usize, ContractError> {
+    /// Returns `false` once the guide is exhausted, so the caller's loop ends
+    /// without needing the line count.
+    fn advance(&mut self) -> Result<bool, ContractError> {
+        let Some(&line) = self.lines.get(self.index) else {
+            return Ok(false);
+        };
+        self.consume(line)?;
+        Ok(true)
+    }
+
+    /// Handle one line, moving the cursor past it or the block it opens.
+    fn consume(&mut self, line: &str) -> Result<(), ContractError> {
         if let Some(identifier) = marker_identifier(line) {
-            return self.read_marked_fence(lines, index, identifier);
+            return self.read_marked_fence(identifier);
         }
         if line.contains(MARKER_HINT) {
             return Err(ContractError::new(format!(
                 "malformed tested-example marker at line {}: {line:?}",
-                index + 1
+                self.index + 1
             )));
         }
+        self.consume_unmarked(line)
+    }
+
+    /// Handle a line that carries no marker.
+    fn consume_unmarked(&mut self, line: &str) -> Result<(), ContractError> {
         match Fence::open(line) {
-            Some(fence) => skip_unmarked_fence(lines, index, &fence),
-            None => Ok(index + 1),
+            Some(fence) => self.skip_unmarked_fence(&fence),
+            None => {
+                self.index += 1;
+                Ok(())
+            }
         }
     }
 
-    /// Read the fence that follows a marker and return the next line index.
+    /// Read the fence that follows the marker on the current line.
     ///
     /// Every marked fence is validated, and Rust fences are collected for
-    /// generation. The returned index is the first line after the terminator.
-    fn read_marked_fence(
-        &mut self,
-        lines: &[&str],
-        marker_index: usize,
-        identifier: &str,
-    ) -> Result<usize, ContractError> {
-        let identifier = validate_identifier(identifier, marker_index)?;
-        if !self.seen.insert(identifier.to_owned()) {
+    /// generation.
+    fn read_marked_fence(&mut self, identifier: &str) -> Result<(), ContractError> {
+        let identifier = validate_identifier(identifier, self.index)?;
+        if !self.examples.seen.insert(identifier.to_owned()) {
             return Err(ContractError::new(format!(
                 "duplicate tested-example identifier {identifier:?} at line {}",
-                marker_index + 1
+                self.index + 1
             )));
         }
 
-        let fence_index = marker_index + 1;
-        let Some(opening_line) = lines.get(fence_index) else {
+        let fence_index = self.index + 1;
+        let Some(opening_line) = self.lines.get(fence_index) else {
             return Err(ContractError::new(format!(
                 "the marker at line {} is unterminated",
-                marker_index + 1
+                self.index + 1
             )));
         };
         let Some(fence) = Fence::open(opening_line) else {
             return Err(ContractError::new(format!(
                 "the marker at line {} is not followed by a fenced code block",
-                marker_index + 1
+                self.index + 1
             )));
         };
         if fence.language.is_empty() {
             return Err(ContractError::new(format!(
                 "the fence after the marker at line {} has no language tag",
-                marker_index + 1
+                self.index + 1
             )));
         }
 
-        let (source, next) = read_body(lines, fence_index, &fence)?;
+        let (source, next) = read_body(self.lines, fence_index, &fence)?;
         if fence.language == RUST_LANGUAGE {
-            self.items.push(Example {
+            self.examples.items.push(Example {
                 identifier: identifier.to_owned(),
                 source,
             });
         }
-        Ok(next)
+        self.index = next;
+        Ok(())
+    }
+
+    /// Skip a fence that carries no marker, rejecting an unmarked Rust one.
+    fn skip_unmarked_fence(&mut self, fence: &Fence) -> Result<(), ContractError> {
+        if fence.language == RUST_LANGUAGE {
+            return Err(ContractError::new(format!(
+                "Rust fence at line {} is not preceded by a tested-example marker",
+                self.index + 1
+            )));
+        }
+        let (_, next) = read_body(self.lines, self.index, fence)?;
+        self.index = next;
+        Ok(())
     }
 }
 
@@ -264,22 +303,6 @@ fn validate_identifier(identifier: &str, marker_index: usize) -> Result<&str, Co
         )));
     }
     Ok(identifier)
-}
-
-/// Skip a fence that carries no marker, rejecting an unmarked Rust one.
-fn skip_unmarked_fence(
-    lines: &[&str],
-    index: usize,
-    fence: &Fence,
-) -> Result<usize, ContractError> {
-    if fence.language == RUST_LANGUAGE {
-        return Err(ContractError::new(format!(
-            "Rust fence at line {} is not preceded by a tested-example marker",
-            index + 1
-        )));
-    }
-    let (_, next) = read_body(lines, index, fence)?;
-    Ok(next)
 }
 
 /// Return the body of the fence opened at `fence_index` and the line after it.
