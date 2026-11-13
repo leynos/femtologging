@@ -1653,6 +1653,37 @@ The same focused Loom check also exposed a pre-existing break in
 `manager.rs` gates behind `not(loom)`. It is unchanged since `852bfec6` on
 `main`, so it is tracked separately as #612 rather than repaired here.
 
+## Sixth review follow-up after `593a82bb`
+
+The fifth-round assessment at 17:09 accepted the `WaitingFlush` hand-off but
+recorded a coverage gap: the controlled matrix pinned each schedule to one
+policy and one capacity, and no controlled case covered a `handle()` that was
+already blocked when a close took the shutdown. It was reported as a coverage
+gap rather than a defect, and it is now closed by widening the existing matrix.
+
+- A schedule whose outcome must not depend on the queue's overflow policy now
+  runs under `block`, `drop` and `timeout`, at capacities one and four, across
+  the rotating wrapper, the timed-rotating wrapper and the core file handler. A
+  refusal schedule keeps its own policy, because the refusal is what the case
+  tests, but it now also runs at both capacities. The matrix therefore states
+  the invariance the shutdown hand-off has to hold: the same counters under
+  every policy and every queue width that can express the schedule.
+- `BlockedHandleThenShutdown` adds the missing hand-off. It fills the queue
+  while the worker is parked, spawns a `handle()` and waits for the public
+  in-flight gauge to show that call inside its wait, then closes from another
+  thread and waits for the gauge to show the close joined it. Releasing the
+  writer frees capacity, so the case asserts the blocked record was accepted,
+  was not counted as a closed call, and that the close completed without a
+  timeout. This replaces the subprocess scenario's timing assumption with a
+  gated assertion on the outcome after release.
+- The module grew past the 400-line limit while it absorbed the wider matrix,
+  so the seven schedule bodies and their thread helpers moved to a sibling
+  `telemetry_interleaving_schedules` module. The test module keeps the
+  builders, capacities, policies and the matrix itself; both are test-only.
+
+The focused run of the widened matrix passed seven cases in 30.46 s on the
+`--no-default-features --features tracing-compat` lane.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
