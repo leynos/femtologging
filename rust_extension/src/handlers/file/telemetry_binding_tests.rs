@@ -17,7 +17,8 @@
 use super::scripted_writer::{ScriptedWriter, Stage, expect_stage, handler_with};
 use super::telemetry_event_tests::{CapturedEvent, EventCollector};
 use super::*;
-use pyo3::{Py, Python};
+use pyo3::types::PyAnyMethods;
+use pyo3::{Bound, Py, PyAny, Python};
 use rstest::rstest;
 use std::collections::BTreeMap;
 use std::sync::mpsc;
@@ -36,11 +37,15 @@ struct Observation {
 }
 
 /// Read one counter from the handler's public diagnostics map.
-pub(super) fn public_count(py: Python<'_>, handler: &Py<FemtoFileHandler>, key: &str) -> u64 {
+///
+/// The handler arrives as `PyAny` so the delegating rotating wrappers can use
+/// the same reader: every wrapper exposes the identical `wait_diagnostics()`
+/// map, and the counter name is the only thing that differs between cases.
+pub(super) fn public_count(handler: &Bound<'_, PyAny>, key: &str) -> u64 {
     let snapshot: BTreeMap<String, u64> = handler
-        .call_method0(py, "wait_diagnostics")
+        .call_method0("wait_diagnostics")
         .expect("wait_diagnostics must not raise")
-        .extract(py)
+        .extract()
         .expect("wait_diagnostics must return a counter map");
     match snapshot.get(key).copied() {
         Some(count) => count,
@@ -68,7 +73,7 @@ fn observe(
         Python::attach(|py| {
             let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
             act(py, &handler, &entered_rx);
-            let recorded = public_count(py, &handler, counter);
+            let recorded = public_count(handler.bind(py), counter);
             (recorded, handler)
         })
     });
@@ -82,11 +87,11 @@ fn observe(
 }
 
 /// Call `flush()` and assert the binding reported failure.
-fn flush_fails(py: Python<'_>, handler: &Py<FemtoFileHandler>) {
+pub(super) fn flush_fails(handler: &Bound<'_, PyAny>) {
     let acknowledged: bool = handler
-        .call_method0(py, "flush")
+        .call_method0("flush")
         .expect("flush must not raise")
-        .extract(py)
+        .extract()
         .expect("flush must return a bool");
     assert!(
         !acknowledged,
@@ -99,13 +104,13 @@ fn flush_fails(py: Python<'_>, handler: &Py<FemtoFileHandler>) {
 /// The first record is accepted and parks the worker; the second one either
 /// waits for capacity or is dropped, depending on the policy under test. Both
 /// leave the queue full when the case's own call runs.
-fn fill_queue(py: Python<'_>, handler: &Py<FemtoFileHandler>, entered: &mpsc::Receiver<Stage>) {
+pub(super) fn fill_queue(handler: &Bound<'_, PyAny>, entered: &mpsc::Receiver<Stage>) {
     handler
-        .call_method1(py, "handle", ("core", "INFO", "first"))
+        .call_method1("handle", ("core", "INFO", "first"))
         .expect("the first record must be accepted");
     expect_stage(entered, Stage::Write);
     handler
-        .call_method1(py, "handle", ("core", "INFO", "second"))
+        .call_method1("handle", ("core", "INFO", "second"))
         .expect("the second record must fill the queue");
 }
 
@@ -187,7 +192,7 @@ fn the_python_handle_binding_records_a_real_timeout() {
         OverflowPolicy::Timeout(Duration::from_millis(20)),
         "handle_timed_out",
         |py, handler, entered| {
-            fill_queue(py, handler, entered);
+            fill_queue(handler.bind(py), entered);
             assert!(
                 handler
                     .call_method1(py, "handle", ("core", "INFO", "third"))
@@ -204,6 +209,53 @@ fn the_python_handle_binding_records_a_real_timeout() {
             outcome: "handle_timed_out",
             bucket: "timeout",
             total_events: 3,
+        },
+    );
+    shut_down(&observation);
+}
+
+/// The Python `handle()` binding records a worker that died between calls.
+///
+/// The public error cannot show this: `HandlerError` reports a lost worker as
+/// the same `Closed` variant a deliberate shutdown produces, so a caller only
+/// learns that the call failed. The diagnostics keep the two apart, and a
+/// channel that vanished while the handler still looked open is the fault an
+/// operator has to act on.
+#[test]
+fn the_python_handle_binding_records_a_real_disconnection() {
+    let observation = observe(
+        ScriptedWriter::panicking_writes,
+        OverflowPolicy::Block,
+        "handle_disconnected",
+        |py, handler, entered| {
+            handler
+                .call_method1(py, "handle", ("core", "INFO", "first"))
+                .expect("the first record must be accepted");
+            expect_stage(entered, Stage::Write);
+            // The worker panics inside `write` and drops its receiver before
+            // the completion signal fires, so once completion is observed the
+            // next send is guaranteed to meet a disconnected channel.
+            assert!(
+                handler.borrow(py).completion.wait(Duration::from_secs(2)),
+                "the panicking worker must still signal completion",
+            );
+            let error = handler
+                .call_method1(py, "handle", ("core", "INFO", "second"))
+                .expect_err("a lost worker must raise");
+            assert!(
+                error.is_instance_of::<pyo3::exceptions::PyRuntimeError>(py),
+                "a lost worker must raise RuntimeError: {error}",
+            );
+        },
+    );
+
+    assert_recorded(
+        &observation,
+        &Expected {
+            operation: "handler_handle",
+            outcome: "handle_disconnected",
+            bucket: "block",
+            total_events: 2,
         },
     );
     shut_down(&observation);
@@ -269,9 +321,9 @@ fn the_python_flush_binding_records_the_real_outcome(#[case] case: FlushCase) {
         case.expected.outcome,
         |py, handler, entered| {
             if case.should_fill_queue {
-                fill_queue(py, handler, entered);
+                fill_queue(handler.bind(py), entered);
             }
-            flush_fails(py, handler);
+            flush_fails(handler.bind(py));
         },
     );
 

@@ -349,5 +349,7 @@ mod telemetry_observation_tests;
 mod telemetry_tests;
 #[cfg(all(test, feature = "tracing-compat"))]
 mod telemetry_wrapper_binding_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_wrapper_failure_tests;
 #[cfg(test)]
 mod tests;

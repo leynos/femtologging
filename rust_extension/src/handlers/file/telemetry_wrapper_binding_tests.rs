@@ -6,18 +6,19 @@
 //! through its Python method names, read the public `wait_diagnostics()` map
 //! and the internal trace event, and pin that label. They live beside the
 //! shared event collector in the file module because that collector is scoped
-//! to `handlers::file`.
+//! to `handlers::file`. The failure paths live in
+//! [`super::telemetry_wrapper_failure_tests`], which reuses the scripted
+//! wrapper builders defined here.
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::mpsc;
 
 use pyo3::{Py, PyAny, Python};
 use rstest::rstest;
 use tempfile::TempDir;
 use tracing_subscriber::prelude::*;
 
-use super::scripted_writer::{ScriptedWriter, Stage};
+use super::scripted_writer::ScriptedWriter;
 use super::telemetry_event_tests::EventCollector;
 use super::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig};
 use crate::formatter::DefaultFormatter;
@@ -72,26 +73,39 @@ fn test_config() -> HandlerConfig {
 /// Queue configuration for a wrapper built over a scripted writer.
 ///
 /// Capacity one and no periodic flush keep the worker idle until the case's
-/// own call, so the writer only reports stages that call caused.
-fn scripted_config(writer: ScriptedWriter) -> TestConfig<ScriptedWriter, DefaultFormatter> {
+/// own call, so the writer only reports stages that call caused. The policy
+/// comes from the case, because an enqueue timeout and an enqueue refusal are
+/// different outcomes of different policies.
+pub(super) fn scripted_config(
+    writer: ScriptedWriter,
+    policy: OverflowPolicy,
+) -> TestConfig<ScriptedWriter, DefaultFormatter> {
     let mut config = TestConfig::new(writer, DefaultFormatter);
     config.capacity = 1;
     config.flush_interval = 0;
-    config.overflow_policy = OverflowPolicy::Block;
+    config.overflow_policy = policy;
     config
 }
 
 /// Build a rotating wrapper over a scripted writer.
-fn rotating_over_writer(py: Python<'_>, writer: ScriptedWriter) -> Py<PyAny> {
-    let core = FemtoRotatingFileHandler::with_writer_for_test(scripted_config(writer));
+pub(super) fn rotating_over_writer(
+    py: Python<'_>,
+    writer: ScriptedWriter,
+    policy: OverflowPolicy,
+) -> Py<PyAny> {
+    let core = FemtoRotatingFileHandler::with_writer_for_test(scripted_config(writer, policy));
     Py::new(py, PyRotatingFileHandler::from_core(core))
         .expect("the rotating handler must be a valid pyclass")
         .into_any()
 }
 
 /// Build a timed-rotating wrapper over a scripted writer.
-fn timed_rotating_over_writer(py: Python<'_>, writer: ScriptedWriter) -> Py<PyAny> {
-    let inner = FemtoFileHandler::with_writer_for_test(scripted_config(writer));
+pub(super) fn timed_rotating_over_writer(
+    py: Python<'_>,
+    writer: ScriptedWriter,
+    policy: OverflowPolicy,
+) -> Py<PyAny> {
+    let inner = FemtoFileHandler::with_writer_for_test(scripted_config(writer, policy));
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
         .expect("an hourly schedule is valid");
     let core = FemtoTimedRotatingFileHandler::new_with_schedule(inner, schedule, 2);
@@ -100,53 +114,8 @@ fn timed_rotating_over_writer(py: Python<'_>, writer: ScriptedWriter) -> Py<PyAn
         .into_any()
 }
 
-/// How the scripted worker fails, and the outcome the wait must record.
-#[derive(Clone, Copy, Debug)]
-enum Failure {
-    /// A worker whose flush reports an I/O error.
-    FlushFails,
-    /// A worker that panics inside its terminal flush.
-    ClosePanics,
-}
-
-impl Failure {
-    /// Build the writer that plays out this failure.
-    fn writer(self, entered: mpsc::Sender<Stage>) -> ScriptedWriter {
-        match self {
-            Self::FlushFails => ScriptedWriter::failing_flush(entered),
-            Self::ClosePanics => ScriptedWriter::panicking_flush(entered),
-        }
-    }
-
-    /// The operation the failing wait belongs to.
-    const fn operation(self) -> &'static str {
-        match self {
-            Self::FlushFails => "handler_flush",
-            Self::ClosePanics => "handler_close",
-        }
-    }
-
-    /// The counter key and event outcome the failing wait must record.
-    const fn outcome(self) -> &'static str {
-        match self {
-            Self::FlushFails => "flush_failed",
-            Self::ClosePanics => "close_panicked",
-        }
-    }
-}
-
-/// One wrapper failure case: the wrapper, its expected kind, and the failure.
-struct FailureCase {
-    /// Builds the wrapper under test over the case's scripted writer.
-    make_wrapper: fn(Python<'_>, ScriptedWriter) -> Py<PyAny>,
-    /// The `handler_kind` every event must carry.
-    expected_kind: &'static str,
-    /// The failure the worker plays out.
-    failure: Failure,
-}
-
 /// Read the public diagnostics map for a wrapper.
-fn diagnostics_map(py: Python<'_>, handler: &Py<PyAny>) -> BTreeMap<String, u64> {
+pub(super) fn diagnostics_map(py: Python<'_>, handler: &Py<PyAny>) -> BTreeMap<String, u64> {
     handler
         .call_method0(py, "wait_diagnostics")
         .expect("wait_diagnostics must not raise")
@@ -230,97 +199,4 @@ fn each_wrapper_labels_its_own_waits(
         ["handle_accepted", "flush_acknowledged", "close_completed"],
         "the wrappers must record the outcomes they observed: {events:?}",
     );
-}
-
-/// A wrapper's failing wait is counted and labelled with its own kind.
-///
-/// The delegating wrappers share the core file handler's failure paths, so a
-/// regression in the shared binding would show up on the plain file handler
-/// first. These cases pin that each wrapper still records the failure against
-/// its own `handler_kind`, which is the only label that tells an operator which
-/// class produced the wait.
-#[rstest]
-#[case::rotating_flush_failed(FailureCase {
-    make_wrapper: rotating_over_writer,
-    expected_kind: "rotating",
-    failure: Failure::FlushFails,
-})]
-#[case::rotating_close_panicked(FailureCase {
-    make_wrapper: rotating_over_writer,
-    expected_kind: "rotating",
-    failure: Failure::ClosePanics,
-})]
-#[case::timed_rotating_flush_failed(FailureCase {
-    make_wrapper: timed_rotating_over_writer,
-    expected_kind: "timed_rotating",
-    failure: Failure::FlushFails,
-})]
-#[case::timed_rotating_close_panicked(FailureCase {
-    make_wrapper: timed_rotating_over_writer,
-    expected_kind: "timed_rotating",
-    failure: Failure::ClosePanics,
-})]
-fn each_wrapper_labels_its_failure_waits(#[case] case: FailureCase) {
-    let (entered_tx, _entered_rx) = mpsc::channel();
-    let writer = case.failure.writer(entered_tx);
-
-    let collector = EventCollector::default();
-    let subscriber = tracing_subscriber::registry().with(collector.clone());
-    let (diagnostics, handler) = tracing::subscriber::with_default(subscriber, || {
-        Python::attach(|py| {
-            let handler = (case.make_wrapper)(py, writer.clone());
-            match case.failure {
-                Failure::FlushFails => {
-                    let flushed: bool = handler
-                        .call_method0(py, "flush")
-                        .expect("flush must not raise")
-                        .extract(py)
-                        .expect("flush must return a bool");
-                    assert!(
-                        !flushed,
-                        "a flush the worker could not complete must return False",
-                    );
-                }
-                Failure::ClosePanics => {
-                    handler
-                        .call_method0(py, "close")
-                        .expect("a panicking worker must not raise from close()");
-                }
-            }
-            (diagnostics_map(py, &handler), handler)
-        })
-    });
-
-    // A flush failure leaves the handler open, so close it to keep no worker
-    // thread behind. The call runs outside the subscriber so its own event
-    // cannot be mistaken for the failing flush's.
-    writer.release();
-    if matches!(case.failure, Failure::FlushFails) {
-        Python::attach(|py| {
-            handler
-                .call_method0(py, "close")
-                .expect("the later close must not raise");
-        });
-    }
-
-    assert_eq!(
-        diagnostics[case.failure.outcome()],
-        1,
-        "the wrapper must count its {}: {diagnostics:?}",
-        case.failure.outcome(),
-    );
-    assert_eq!(
-        diagnostics["waits_in_flight"], 0,
-        "a finished wait must leave the gauge: {diagnostics:?}",
-    );
-
-    let events = collector.captured();
-    assert_eq!(events.len(), 1, "one wait must emit one event: {events:?}");
-    assert_eq!(
-        events[0].fields["handler_kind"], case.expected_kind,
-        "the failure must carry the wrapper's own kind: {events:?}",
-    );
-    assert_eq!(events[0].fields["operation"], case.failure.operation());
-    assert_eq!(events[0].fields["wait_outcome"], case.failure.outcome());
-    assert_eq!(events[0].fields["policy_bucket"], "block");
 }
