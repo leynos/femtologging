@@ -72,40 +72,62 @@ fn test_config() -> HandlerConfig {
 
 /// Queue configuration for a wrapper built over a scripted writer.
 ///
-/// Capacity one and no periodic flush keep the worker idle until the case's
-/// own call, so the writer only reports stages that call caused. The policy
-/// comes from the case, because an enqueue timeout and an enqueue refusal are
-/// different outcomes of different policies.
+/// No periodic flush keeps the worker idle until the case's own call, so the
+/// writer only reports stages that call caused. The capacity and the policy
+/// come from the case: a narrow queue is what makes a refusal or an enqueue
+/// timeout reachable, and a wider one leaves room while the worker is parked.
 pub(super) fn scripted_config(
     writer: ScriptedWriter,
     policy: OverflowPolicy,
+    capacity: usize,
 ) -> TestConfig<ScriptedWriter, DefaultFormatter> {
     let mut config = TestConfig::new(writer, DefaultFormatter);
-    config.capacity = 1;
+    config.capacity = capacity;
     config.flush_interval = 0;
     config.overflow_policy = policy;
     config
 }
 
-/// Build a rotating wrapper over a scripted writer.
+/// Build a rotating wrapper over a scripted writer with capacity one.
 pub(super) fn rotating_over_writer(
     py: Python<'_>,
     writer: ScriptedWriter,
     policy: OverflowPolicy,
 ) -> Py<PyAny> {
-    let core = FemtoRotatingFileHandler::with_writer_for_test(scripted_config(writer, policy));
+    rotating_over_writer_with_capacity(py, writer, policy, 1)
+}
+
+/// Build a rotating wrapper over a scripted writer with `capacity` slots.
+pub(super) fn rotating_over_writer_with_capacity(
+    py: Python<'_>,
+    writer: ScriptedWriter,
+    policy: OverflowPolicy,
+    capacity: usize,
+) -> Py<PyAny> {
+    let core =
+        FemtoRotatingFileHandler::with_writer_for_test(scripted_config(writer, policy, capacity));
     Py::new(py, PyRotatingFileHandler::from_core(core))
         .expect("the rotating handler must be a valid pyclass")
         .into_any()
 }
 
-/// Build a timed-rotating wrapper over a scripted writer.
+/// Build a timed-rotating wrapper over a scripted writer with capacity one.
 pub(super) fn timed_rotating_over_writer(
     py: Python<'_>,
     writer: ScriptedWriter,
     policy: OverflowPolicy,
 ) -> Py<PyAny> {
-    let inner = FemtoFileHandler::with_writer_for_test(scripted_config(writer, policy));
+    timed_rotating_over_writer_with_capacity(py, writer, policy, 1)
+}
+
+/// Build a timed-rotating wrapper over a scripted writer with `capacity` slots.
+pub(super) fn timed_rotating_over_writer_with_capacity(
+    py: Python<'_>,
+    writer: ScriptedWriter,
+    policy: OverflowPolicy,
+    capacity: usize,
+) -> Py<PyAny> {
+    let inner = FemtoFileHandler::with_writer_for_test(scripted_config(writer, policy, capacity));
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
         .expect("an hourly schedule is valid");
     let core = FemtoTimedRotatingFileHandler::new_with_schedule(inner, schedule, 2);

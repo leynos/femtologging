@@ -1544,6 +1544,49 @@ its lib count rose from 763 to 773: eight net new wrapper failure cases, the
 disconnection case, and the overlapping-closers case. Every lane ran to
 completion before the next one started.
 
+## Third review follow-up after `0c2335d0`
+
+CodeRabbit's follow-up on `0c2335d0` left two rows partly addressed. Both were
+valid against that tree.
+
+The user-guide paragraph on close confirmation was wrong about the counters
+being cumulative: an earlier `close_timed_out` stays counted after a later
+close succeeds, so "every closer counted as completed and none as timed out"
+cannot hold for a retried close. The paragraph now says the counters cover the
+handler's lifetime and that a retry is confirmed by snapshotting
+`wait_diagnostics()` before and after it and checking that `close_completed`
+increased.
+
+The proof row asked for a concurrent property or model that generates or
+controls `handle()`, `flush()` and repeated `close()` interleavings across the
+builders, capacities and policies. `telemetry_interleaving_tests.rs` adds that
+as a controlled schedule matrix: twelve `rstest` cases cross the two rotating
+wrappers with six schedules.
+
+| Schedule                      | Interleaving it controls                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `OverlappingClosers`          | Two closers share one shutdown while the worker is parked inside `write`                     |
+| `OverlappingClosersWideQueue` | The same overlap over a four-slot queue, so a full queue is not what makes the hand-off work |
+| `RetryAfterTimeout`           | A timed-out close, the release, and a retry that observes the completion                     |
+| `CallsAfterClose`             | A handle, a flush and a repeated close after a clean shutdown                                |
+| `RefusedHandleThenRetry`      | A record refused under the drop policy, then the close timeout and the retry                 |
+| `TimedOutHandleThenRetry`     | The same, with a 20 ms enqueue deadline under the timeout policy                             |
+
+Each schedule is driven by the scripted writer's gates rather than by sleeps,
+so the test chooses the interleaving instead of sampling for it. Every case
+asserts the exact counters its schedule must leave — two completions for the
+overlapping closers, one timeout that survives a successful retry, or one
+closed-handler outcome each for the late handle and flush — and the closing
+assertion requires `waits_in_flight` to return to zero, which catches a wait
+that never left its scope.
+
+One pre-existing inconsistency surfaced while writing the matrix: the rotating
+wrapper maps a handler failure to `RuntimeError`, while the timed-rotating
+wrapper maps the same failure to `ValueError`. That is unrelated to this
+change, so the matrix asserts the `Handler error:` message both wrappers
+produce rather than a class they do not share; the divergence is recorded under
+follow-up work.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -1597,6 +1640,11 @@ file handlers and the builder audit confirmed no builder work is needed;
 widening the change would make the diff harder to review and the regression
 evidence harder to scope. After main's #549, no Python binding in those three
 families holds the lock across a wait, so no follow-up issue is needed for them.
+
+The rotating wrapper maps a handler failure to `RuntimeError`, while the
+timed-rotating wrapper maps the same failure to `ValueError`. The interleaving
+matrix asserts the `Handler error:` message both produce. Aligning the classes
+is a public-API decision outside this issue and deserves its own change.
 
 ## Superseded gate interruptions and outcomes
 
