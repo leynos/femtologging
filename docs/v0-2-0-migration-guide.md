@@ -6,10 +6,12 @@ ______________________________________________________________________
 
 This document describes breaking changes and structured logging additions in
 v0.2.0, with the steps required to update calling code. Read it when upgrading
-to v0.2.0 from an earlier release, particularly when configuring loggers or
-file handlers in Python, or when constructing `FemtoLogger` values in Rust.
-Existing logging calls remain valid; the structured logging APIs add optional
-keyword arguments and restore scoped-context propagation through named loggers.
+to v0.2.0 from v0.1.0, particularly when configuring loggers or file handlers
+in Python, or when constructing `FemtoLogger` values in Rust. If you are
+upgrading from an earlier release, follow each migration guide in sequence,
+starting with the [v0.1.0 guide](v0-1-0-migration-guide.md). Existing logging
+calls remain valid; the structured logging APIs add optional keyword arguments
+and restore scoped-context propagation through named loggers.
 
 ______________________________________________________________________
 
