@@ -17,9 +17,11 @@ mod config;
 mod handler_impl;
 mod io_utils;
 pub(crate) mod policy;
+mod python;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod validations;
+mod wait_outcomes;
 mod worker;
 
 use std::{
@@ -32,17 +34,21 @@ use std::{
 
 use pyo3::prelude::*;
 
+use crate::formatter::{DefaultFormatter, FemtoFormatter};
+// The test modules reach `FemtoHandlerTrait::handle` through `use super::*`;
+// the production bindings import the trait directly in `python.rs`.
+#[cfg(test)]
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
-use crate::shutdown::ShutdownCompletion;
-use crate::sync::{JoinHandle, Mutex, Receiver, Sender, bounded};
-use crate::{
-    formatter::{DefaultFormatter, FemtoFormatter},
-    log_record::FemtoLogRecord,
+use crate::shutdown::{ShutdownCompletion, TerminalStatus};
+use crate::sync::{
+    JoinHandle, Mutex, Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded,
 };
 use io_utils::open_log_file;
 use worker::{FileCommand, WorkerConfig, spawn_worker};
+
+use super::telemetry::{WaitContext, WaitDiagnostics, WaitOutcome, WaitSite, WaitTimer};
 
 pub(crate) use builder_options::BuilderOptions;
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
@@ -51,34 +57,7 @@ pub(crate) use validations::{
 };
 pub(crate) use worker::{NoRotation, RotationStrategy};
 
-/// Owns the worker state needed to finish a handler shutdown after its Python
-/// object borrow has been released.
-pub(super) struct WorkerShutdown {
-    /// Worker thread handle retained for joining after completion.
-    handle: Option<JoinHandle<()>>,
-    /// Broadcast completion every closer waits on, so a closer that does not
-    /// own the join handle still observes worker shutdown.
-    completion: Arc<ShutdownCompletion>,
-}
-
-impl WorkerShutdown {
-    /// Wait for worker completion and join it when it reports a clean exit.
-    ///
-    /// Every caller waits on the shared completion, including one that finds
-    /// no join handle left: another closer may still be joining a worker that
-    /// has not finished writing its queued records.
-    pub(super) fn wait(self) {
-        if !self.completion.wait(Duration::from_secs(1)) {
-            log::warn!("FemtoFileHandler: worker thread did not shut down within 1s");
-            return;
-        }
-        if let Some(handle) = self.handle
-            && handle.join().is_err()
-        {
-            log::warn!("FemtoFileHandler: worker thread panicked");
-        }
-    }
-}
+pub(crate) use wait_outcomes::{EnqueueFailure, FlushOutcome, WorkerShutdown, classify_enqueue};
 
 /// File-based logging handler exposed to Python.
 ///
@@ -98,113 +77,34 @@ pub struct FemtoFileHandler {
     /// every closer waits for the same shutdown even when another closer has
     /// already taken the join handle.
     completion: Arc<ShutdownCompletion>,
+    /// Verdict the worker records as it leaves, read by closers that no
+    /// longer own the join handle.
+    terminal: Arc<TerminalStatus>,
     /// Selects the producer-side queue behaviour when delivery cannot proceed.
     overflow_policy: OverflowPolicy,
+    /// Bounded counters and duration totals for the Python-facing waits.
+    diagnostics: Arc<WaitDiagnostics>,
+    /// Records currently inside the channel send, for unit tests only.
+    ///
+    /// The public gauge marks a Python call's whole wait, which starts before
+    /// the sender is cloned, so it cannot tell a call that has begun waiting
+    /// from one whose record has reached a full queue. The interleaving tests
+    /// need that distinction; this counter is compiled out of release builds.
+    #[cfg(test)]
+    sends_in_flight: std::sync::atomic::AtomicUsize,
 }
 
-#[pymethods]
 impl FemtoFileHandler {
-    /// Create a file handler writing to `path`.
-    ///
-    /// Python usage:
-    ///   `FemtoFileHandler(path, capacity=DEFAULT_CHANNEL_CAPACITY,`
-    ///   `flush_interval=1, policy="drop")`
-    ///
-    /// - `capacity` must be greater than zero.
-    /// - `flush_interval` must be greater than zero.
-    /// - `policy` is one of: `"drop"`, `"block"`, or `"timeout:N"` (N > 0).
-    #[new]
-    #[pyo3(
-        text_signature = "(path, capacity=DEFAULT_CHANNEL_CAPACITY, flush_interval=1, policy='drop')"
-    )]
-    #[pyo3(signature=(
-        path,
-        capacity = DEFAULT_CHANNEL_CAPACITY as isize,
-        flush_interval = 1,
-        policy = "drop"
-    ))]
-    fn py_new(
-        path: String,
-        capacity: isize,
-        flush_interval: isize,
-        policy: &str,
-    ) -> PyResult<Self> {
-        let overflow_policy = policy::parse_policy_string(policy)
-            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-        let (capacity, flush_interval) = validate_params(capacity, flush_interval)?;
-        let handler_cfg = HandlerConfig {
-            capacity,
-            flush_interval,
-            overflow_policy,
-        };
-        let file = open_log_file(&path)
-            .map_err(|err| pyo3::exceptions::PyIOError::new_err(err.to_string()))?;
-        Ok(FemtoFileHandler::from_file(
-            file,
-            DefaultFormatter,
-            handler_cfg,
-        ))
-    }
-
-    /// Parses a Python record, enqueues it according to the configured
-    /// overflow policy, and maps delivery failures to a Python runtime error.
-    #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        <Self as FemtoHandlerTrait>::handle(
-            self,
-            FemtoLogRecord::new(logger, parsed_level, message),
+    /// Read the test-only gauge of records inside the channel send.
+    #[cfg(test)]
+    pub(crate) fn sends_in_flight(&self) -> u64 {
+        u64::try_from(
+            self.sends_in_flight
+                .load(std::sync::atomic::Ordering::SeqCst),
         )
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
+        .unwrap_or(u64::MAX)
     }
 
-    /// Flush queued log records to the underlying file without closing the
-    /// handler.
-    ///
-    /// Uses a fixed 1-second timeout.
-    ///
-    /// Returns
-    /// -------
-    /// bool
-    ///     ``True`` when the worker acknowledges the flush within the
-    ///     timeout.
-    ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, or the worker
-    ///     does not acknowledge before the timeout elapses.
-    ///
-    /// Examples
-    /// --------
-    /// >>> handler.flush()
-    /// True
-    /// >>> handler.close()
-    /// >>> handler.flush()
-    /// False
-    ///
-    /// The GIL is released while waiting so a Python callable formatter can
-    /// run on the worker thread.
-    #[pyo3(name = "flush")]
-    fn py_flush(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush())
-    }
-
-    /// Closes the handler, signals worker shutdown, and waits briefly for
-    /// completion before joining the worker when it reports that it has exited.
-    ///
-    /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
-    /// close can start while another thread still holds the handler in a
-    /// detached flush call.
-    #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
-        let shutdown = {
-            let handler = slf.borrow(py);
-            handler.take_shutdown()
-        };
-        py.detach(move || shutdown.wait());
-    }
-}
-
-impl FemtoFileHandler {
     /// Create a handler writing to `path` with default settings.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
@@ -269,52 +169,104 @@ impl FemtoFileHandler {
     /// Flush the worker's buffer, waiting up to one second. Returns `true` only when the flush
     /// is confirmed in time; `false` if the handler is closed, unreachable or the flush fails.
     pub fn flush(&self) -> bool {
+        matches!(self.flush_outcome(), FlushOutcome::Acknowledged)
+    }
+
+    /// Flush and report why the attempt finished.
+    ///
+    /// The Python binding records this outcome so an operator can tell a
+    /// timed-out flush from a flush of an already-closed handler, which the
+    /// public `bool` cannot express.
+    pub(crate) fn flush_outcome(&self) -> FlushOutcome {
         // Bind first: a guard in the `match` scrutinee lives through the send.
         let tx = self.tx.lock().clone();
         match tx {
             Some(tx) => self.perform_flush(&tx),
-            None => false,
+            None => FlushOutcome::Closed,
         }
     }
 
     /// Waits for the worker's flush acknowledgement without taking ownership of
     /// the worker thread.
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> bool {
+    ///
+    /// The enqueue and the acknowledgement share one deadline but are reported
+    /// separately: a request that never reached the worker and a request the
+    /// worker never answered point at different faults.
+    fn perform_flush(&self, tx: &Sender<FileCommand>) -> FlushOutcome {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if tx
-            .send_timeout(FileCommand::Flush(ack_tx), remaining)
-            .is_err()
-        {
-            return false;
+        match tx.send_timeout(FileCommand::Flush(ack_tx), remaining) {
+            Ok(()) => {}
+            Err(SendTimeoutError::Disconnected(_)) => return FlushOutcome::Disconnected,
+            Err(SendTimeoutError::Timeout(_)) => return FlushOutcome::EnqueueTimedOut,
         }
         self.wait_for_flush_completion(&ack_rx, deadline)
     }
 
-    /// Returns true only when the worker acknowledges the flush successfully
-    /// before the caller's deadline.
+    /// Classifies the worker's answer to a flush request.
     fn wait_for_flush_completion(
         &self,
         ack_rx: &Receiver<io::Result<()>>,
         deadline: Instant,
-    ) -> bool {
+    ) -> FlushOutcome {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        matches!(ack_rx.recv_timeout(remaining), Ok(Ok(())))
+        match ack_rx.recv_timeout(remaining) {
+            Ok(Ok(())) => FlushOutcome::Acknowledged,
+            Ok(Err(_)) => FlushOutcome::Failed,
+            Err(RecvTimeoutError::Timeout) => FlushOutcome::AckTimedOut,
+            // The worker dropped the acknowledgement sender without answering,
+            // which means it died between accepting the request and replying.
+            Err(RecvTimeoutError::Disconnected) => FlushOutcome::Disconnected,
+        }
+    }
+
+    /// Return the bounded overflow-policy bucket for telemetry.
+    pub(crate) fn policy_bucket(&self) -> &'static str {
+        match self.overflow_policy {
+            OverflowPolicy::Drop => "drop",
+            OverflowPolicy::Block => "block",
+            OverflowPolicy::Timeout(_) => "timeout",
+        }
+    }
+
+    /// Return the shared wait diagnostics for this handler.
+    pub(crate) fn diagnostics(&self) -> &Arc<WaitDiagnostics> {
+        &self.diagnostics
+    }
+
+    /// Time one Python-facing wait and record its outcome.
+    ///
+    /// The site names the Python class the caller reached, because the
+    /// rotating wrappers delegate to this core handler and the operator needs
+    /// to tell them apart. The policy bucket comes from this handler, not the
+    /// caller, so the label always matches the queue behaviour in force.
+    pub(crate) fn record_wait(&self, timer: WaitTimer, site: WaitSite, outcome: WaitOutcome) {
+        timer.finish(
+            self.diagnostics(),
+            WaitContext {
+                operation: site.operation,
+                handler_kind: site.handler_kind,
+                policy_bucket: self.policy_bucket(),
+            },
+            outcome,
+        );
     }
 
     /// Close the handler and wait for the worker to stop.
     ///
     /// This method is idempotent. Calling it multiple times is safe; only the
-    /// first call starts shutdown work, and every call waits for the worker to
-    /// finish before returning so a caller never leaves records unwritten.
+    /// first call starts shutdown work, and every call waits on the same
+    /// bounded completion signal. A wait that reaches its one-second limit
+    /// logs a warning and returns without joining the worker, so a timed-out
+    /// call does not confirm that queued records have been written.
     ///
     /// Threading
     /// ---------
     /// The method takes `&self` and may be called concurrently. The first call
     /// takes the worker state; every call waits for the same completion
-    /// broadcast, so a caller never returns while the worker is still writing
-    /// queued records.
+    /// broadcast, so concurrent closers share one shutdown rather than
+    /// competing for the join handle.
     pub fn close(&self) {
         self.take_shutdown().wait();
     }
@@ -328,10 +280,11 @@ impl FemtoFileHandler {
         let tx = self.tx.lock().take();
         drop(tx);
         let handle = self.handle.lock().take();
-        WorkerShutdown {
+        WorkerShutdown::new(
             handle,
-            completion: Arc::clone(&self.completion),
-        }
+            Arc::clone(&self.completion),
+            Arc::clone(&self.terminal),
+        )
     }
 
     /// Builds a handler from an existing worker writer and publishes its
@@ -355,12 +308,17 @@ impl FemtoFileHandler {
         let mut worker_cfg = WorkerConfig::from(&config);
         worker_cfg.start_barrier = start_barrier;
         let overflow_policy = config.overflow_policy;
-        let (tx, completion, handle) = spawn_worker(writer, formatter, worker_cfg, rotation);
+        let (tx, completion, terminal, handle) =
+            spawn_worker(writer, formatter, worker_cfg, rotation);
         Self {
             tx: Mutex::new(Some(tx)),
             handle: Mutex::new(Some(handle)),
             completion,
+            terminal,
             overflow_policy,
+            diagnostics: Arc::new(WaitDiagnostics::new()),
+            #[cfg(test)]
+            sends_in_flight: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -393,5 +351,33 @@ impl FemtoFileHandler {
 mod flush_ack_tests;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod outcome_paths_tests;
+#[cfg(test)]
+mod scripted_writer;
+#[cfg(test)]
+mod shutdown_paths_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_binding_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_close_binding_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_event_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_interleaving_schedules;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_interleaving_tests;
+// The observation tests count queued commands through the std channel's
+// `len`, which the Loom channel does not offer, and they drive the Python
+// binding, which needs a real interpreter and real threads. Neither exists in
+// a Loom model, so the module is compiled out there.
+#[cfg(all(test, feature = "tracing-compat", not(loom)))]
+mod telemetry_observation_tests;
+#[cfg(test)]
+mod telemetry_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_wrapper_binding_tests;
+#[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_wrapper_failure_tests;
 #[cfg(test)]
 mod tests;

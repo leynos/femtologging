@@ -8,9 +8,8 @@ revision is load-bearing — the df12 checkers and Skylos deliberately run on a
 newer interpreter than the project's 3.12 baseline — so this module pins the
 whole recipe shape rather than trusting that a tier is still wired in.
 
-The Skylos command itself is covered in detail by
-`tests/test_skylos_lint_contract.py`; here it is only asserted to be present
-and last, so the two modules do not duplicate one another.
+The Skylos command itself is the installed `df12-skylos` command, tested in
+df12-python-lints; here it is only asserted to be present and last.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ _LINT_TIER_COMMANDS: typ.Final = (
     ("$(DF12_PYLINT)", "$(PYLINT_TARGETS)"),
     ("$(AMBRLEAKS)", "tests", "femtologging/unittests"),
 )
-_SKYLOS_COMMAND_HEAD: typ.Final = ("$(SKYLOS)", "$(SKYLOS_PRODUCTION_TARGETS)")
+_SKYLOS_COMMAND: typ.Final = ("$(SKYLOS)", "check", "--repository", ".")
 
 _RUFF_TOKENS: typ.Final = ("uvx", "ruff==$(RUFF_VERSION)")
 _TY_TOKENS: typ.Final = (
@@ -134,7 +133,7 @@ def test_lint_python_runs_every_tier_in_order() -> None:
         "Lint tier contract must run Ruff, interrogate, Pylint, "
         "df12-python-lints, and ambrleaks in that order"
     )
-    assert commands[-1][: len(_SKYLOS_COMMAND_HEAD)] == _SKYLOS_COMMAND_HEAD, (
+    assert commands[-1] == _SKYLOS_COMMAND, (
         "Lint tier contract must finish with the Skylos production dead-code gate"
     )
 

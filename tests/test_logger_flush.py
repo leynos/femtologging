@@ -13,7 +13,7 @@ import typing as typ
 
 import pytest
 
-from femtologging import FemtoLogger, FileHandlerBuilder
+from femtologging import FemtoFileHandler, FemtoLogger, FileHandlerBuilder
 from tests.logger_support import (
     FLUSH_TEST_HOOKS_AVAILABLE,
     CollectingHandler,
@@ -101,6 +101,30 @@ def test_native_handler_flush_releases_gil_for_python_formatter(
         assert path.read_text(encoding="utf-8") == (
             "native.flush [INFO] formatted during the flush\n"
         ), "the flush reported success before the record reached the file"
+    finally:
+        logger.remove_handler(handler)
+        handler.close()
+
+
+def test_logger_flush_handlers_flushes_attached_file_handler(
+    tmp_path: Path,
+) -> None:
+    """A file handler attached through Python is flushed by the logger.
+
+    ``FemtoFileHandler`` exposes no Python ``flush`` method, so the wrapper
+    must forward to the native handler. Otherwise the logger would report a
+    successful flush while the record stayed in the handler's buffer.
+    """
+    path = tmp_path / "logger_flush.log"
+    logger = FemtoLogger("core")
+    handler = FemtoFileHandler(str(path), flush_interval=10_000)
+    try:
+        logger.add_handler(handler)
+        logger.info("buffered")
+        assert logger.flush_handlers(), "logger flush must report success"
+        assert path.read_text(encoding="utf-8") == "core [INFO] buffered\n", (
+            "the flush reported success before the record reached the file"
+        )
     finally:
         logger.remove_handler(handler)
         handler.close()

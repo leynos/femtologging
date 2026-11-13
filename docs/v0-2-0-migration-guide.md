@@ -1,13 +1,44 @@
 # v0.2.0 migration guide
 
+______________________________________________________________________
+
+## Who should read this
+
 This document describes breaking changes and structured logging additions in
-v0.2.0, with the steps required to update calling code. Existing logging calls
-remain valid; the structured logging APIs add optional keyword arguments and
-restore scoped-context propagation through named loggers.
+v0.2.0, with the steps required to update calling code. Read it when upgrading
+to v0.2.0 from v0.1.0, particularly when configuring loggers or file handlers
+in Python, or when constructing `FemtoLogger` values in Rust. If you are
+upgrading from an earlier release, follow each migration guide in sequence,
+starting with the [v0.1.0 guide](v0-1-0-migration-guide.md). Existing logging
+calls remain valid; the structured logging APIs add optional keyword arguments
+and restore scoped-context propagation through named loggers.
 
 ______________________________________________________________________
 
-## `BasicConfig` is now a slotted dataclass
+## Impact at a glance
+
+| Priority           | Area                            | What to do                                                                                                                               |
+| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).          |
+| Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                       |
+| Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                              |
+| Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                 |
+| Review if enabled  | Async `log_context` use         | Replace reliance on thread-local leakage between tasks with `contextvars`-aware code.                                                    |
+| Review if enabled  | Shared dispatch                 | Review handlers that keep per-logger state in `threading.local`; use `contextvars` or keep the state with the handler.                   |
+| Review if enabled  | `StdlibHandlerAdapter`          | Review handler levels and `contextvars`-dependent filters now that dispatch honours both.                                                |
+| Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                                     |
+| Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                 |
+| Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger. |
+| Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                   |
+| Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                           |
+| Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                              |
+| Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                 |
+
+_Table 1: Obligations when moving to v0.2.0._
+
+______________________________________________________________________
+
+## 1. `BasicConfig` is now a slotted dataclass
 
 `BasicConfig` (exported from `femtologging`) is now declared with
 `@dataclasses.dataclass(slots=True)`. Slots remove the per-instance `__dict__`,
@@ -48,7 +79,7 @@ cfg.filename_backup = "app.log.bak"
 
 ______________________________________________________________________
 
-## Inline structured fields
+## 2. Inline structured fields
 
 `FemtoLogger.log()`, `debug()`, `info()`, `warning()`, `error()`, and
 `critical()` now accept the optional keyword-only argument `extra`:
@@ -72,7 +103,7 @@ inline value takes precedence. `exception()` is unchanged and does not accept
 
 ______________________________________________________________________
 
-## Scoped context through named loggers
+## 3. Scoped context through named loggers
 
 `log_context()` fields now reach records emitted through `FemtoLogger` methods,
 including methods on loggers returned by `get_logger()`, while the context is
@@ -88,7 +119,7 @@ The context follows the current Python task across `await` points. Use the
 per-call `extra` argument when metadata belongs to one operation but should not
 be inherited by child tasks.
 
-## Scoped logging context follows Python tasks
+## 4. Scoped logging context follows Python tasks
 
 Python `log_context(**fields)` used to store fields in an OS-thread-local
 stack. In asynchronous code, tasks sharing an event-loop thread could observe
@@ -117,7 +148,7 @@ metadata explicitly when a request crosses that boundary.
 
 ______________________________________________________________________
 
-## Bounded logger names and shared dispatch
+## 5. Bounded logger names and shared dispatch
 
 Logger names now have explicit shape and capacity limits. A name must be
 non-empty, must not start or end with `.`, and must not contain consecutive
@@ -242,7 +273,7 @@ three observable behaviours:
 
 The bound on `close()` itself is the budget: a worker that misses the deadline
 is detached, so the caller is never held past it. The bound on the worker's own
-exit is looser, because it is on what the worker *starts*: no standard-library
+exit is looser, because it is on what the worker _starts_: no standard-library
 API cancels a blocking `connect`, `write`, or TLS handshake, so the worker may
 live on for up to one network call already in flight when the deadline fell.
 Nothing new starts after the deadline.
@@ -252,7 +283,7 @@ No API changed. The contract is unchanged for callers that already treat
 
 ______________________________________________________________________
 
-## `StdlibHandlerAdapter` honours the wrapped handler level
+## 6. `StdlibHandlerAdapter` honours the wrapped handler level
 
 `StdlibHandlerAdapter` now checks two thresholds in order. `FemtoLogger` first
 checks its own level before dispatching a record; the adapter then checks the
@@ -269,7 +300,7 @@ the adapter. For thresholds and configuration examples, see the
 
 ______________________________________________________________________
 
-## `StdlibHandlerAdapter` propagates `contextvars`
+## 7. `StdlibHandlerAdapter` propagates `contextvars`
 
 When a record is sent through `StdlibHandlerAdapter`, femtologging captures the
 producer's active `contextvars.Context` before queueing the record. On the
@@ -322,7 +353,7 @@ in the users' guide for the complete behaviour.
 
 ______________________________________________________________________
 
-## Handler filters and formatter builders
+## 8. Handler filters and formatter builders
 
 Handler builders now accept filter IDs with `with_filters([...])`. Register
 those IDs with `ConfigBuilder`, or declare them in the top-level `filters`
@@ -350,7 +381,7 @@ builder and either a direct `FormatterBuilder` or a registered formatter.
 
 ______________________________________________________________________
 
-## Bounded exception-payload filtering
+## 9. Bounded exception-payload filtering
 
 `filter_frames()` keeps its existing call pattern and adds optional keyword-only
 `max_exception_depth` and `max_exception_nodes` limits. Existing calls remain
@@ -371,6 +402,65 @@ For the complete parameter and error contract, see
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
 
 ______________________________________________________________________
+
+## 10. File-handler calls release the interpreter lock
+
+Explicit Python calls to `handle()`, `flush()`, and `close()` on the file,
+rotating-file, and timed-rotating-file handlers now release the interpreter
+lock for the whole of any wait on queue capacity, on the flush acknowledgement,
+or on worker shutdown. Another Python thread keeps running while one thread is
+parked. No call signature changes; the difference is that code which
+accidentally relied on such a call excluding other threads must now provide its
+own synchronization.
+
+The behaviour that stays the same is the one that makes this safe to adopt:
+
+- `"block"` still waits for room for as long as the worker takes to make it,
+  which may be forever if the worker is stuck. Prefer `"timeout:N"` where a
+  bounded wait is acceptable; it drops the record when the deadline expires and
+  raises `RuntimeError` from the file and rotating bindings, or `ValueError`
+  from the timed-rotating binding.
+- A `close()` that is already in progress releases its Python borrow before it
+  waits, so calls made during the wait reach a handler that is already closed:
+  `handle()` raises `RuntimeError`, `flush()` returns `False`, and a second
+  `close()` shares the same completion wait. The timed-rotating binding reports
+  that closed handler from `handle()` as `ValueError`. A `handle()` or
+  `flush()` call that is still waiting holds its shared borrow for the whole
+  wait, but a concurrent `close()` needs only a shared borrow too, so it does
+  not raise; it takes the shutdown state and waits on the same completion
+  signal, bounded by its one-second deadline.
+- The handler destructor still performs shutdown with the interpreter lock
+  held. Call `close()` explicitly during shutdown to get the detached wait.
+
+For the full contract and the concurrency scenarios that pin it, see
+"Concurrency and the GIL for file handlers" in the user guide.
+
+### Observing the detached waits
+
+A wait that no longer holds the interpreter lock is also harder to see from
+outside a stack trace, so each of the three handlers now exposes bounded
+observability for it:
+
+- `handler.wait_diagnostics()` returns a dictionary with a fixed key set: one
+  counter per outcome for `handle()`, `flush()`, and `close()`, the summed wait
+  `total_wait_micros`, the longest single wait `max_wait_micros`, and the
+  `waits_in_flight` gauge, which is non-zero while a caller is still waiting.
+  Reading it takes no worker command and records no wait, so a monitoring loop
+  cannot inflate the numbers it reports. It never carries logger names, paths,
+  messages, or raw timeout values.
+- With the `tracing-compat` feature, each wait also emits one
+  `femtologging::internal` trace event carrying `operation`, `handler_kind`,
+  `policy_bucket`, `wait_outcome`, and `elapsed_us`. The `femtologging` tracing
+  bridge ignores that target, so enabling the events cannot feed wait outcomes
+  back into the logs being written.
+
+Both surfaces are additive: no existing signature changes, and nothing must be
+configured to keep the current logging behaviour. They exist so an operator can
+distinguish a dropped record from a slow worker, and a settled close from one
+that timed out, without inspecting the process. See "Handler wait diagnostics"
+in the [developers' guide](developers-guide.md#handler-wait-diagnostics) and
+"Concurrency and the GIL for file handlers" in the
+[users' guide](users-guide.md#concurrency-and-the-gil-for-file-handlers).
 
 ## Production wheels omit the timed-rotation test hooks
 
@@ -465,7 +555,9 @@ noisy.error("dropped")
   explicit entry re-enables that logger. Its kept ancestors retain their
   existing enabled or disabled state and their attachments.
 - Set `disable_existing_loggers=False` when existing loggers should keep their
-  handlers, filters, and enabled state.
+  handlers, filters, and enabled state. It preserves a disabled flag rather
+  than clearing it, so a logger an earlier configuration disabled stays
+  disabled; name that logger explicitly to re-enable it.
 - Move diagnostic calls to a configured logger, or add the emitting logger to
   the configuration, instead of relying on propagation from an omitted logger.
 - Do not rely on a configuration rollback to retract records already queued or
@@ -473,7 +565,7 @@ noisy.error("dropped")
 
 ______________________________________________________________________
 
-## Unchanged APIs
+## What does not need to change
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,
 `force`, `handlers`) is unchanged. Constructing `BasicConfig` and calling
@@ -483,3 +575,47 @@ propagation changes. Python-backed handlers registered directly with
 `add_handler()` raises a Python `RuntimeError` with the message
 `Python-backed handlers must provide contextual dispatch`, from the Rust
 `HandlerError::MissingContextDispatch` variant.
+
+______________________________________________________________________
+
+## Migration checklist
+
+Each item carries the same obligation label as the matching row in
+[Table 1](#impact-at-a-glance).
+
+- [ ] **Required:** Handle the fallible Rust logger constructors, and update
+      callers that used their results directly as a `FemtoLogger`.
+- [ ] **Required if called:** Remove assignments to undeclared `BasicConfig`
+      attributes.
+- [ ] **Required if called:** Check dynamically built logger names against the
+      shape and registry limits.
+- [ ] **Review if enabled:** Move handler state that relied on a per-logger
+      thread to `contextvars` or into the handler itself.
+- [ ] **Review if enabled:** Review `StdlibHandlerAdapter` levels, filters, and
+      formatters.
+- [ ] **Review if enabled:** Move shared enrichment from logger filters to a
+      filter on the shared handler.
+- [ ] **Review if enabled:** Add explicit synchronization where a file-handler
+      call was relied on to exclude other Python threads.
+- [ ] **Review if enabled:** Name every logger that must keep emitting,
+      because an omitted logger is now disabled.
+      `disable_existing_loggers=False` preserves the current state but does
+      not re-enable a logger an earlier configuration disabled.
+- [ ] **Review if enabled:** Call `flush()` before `close()` on socket and HTTP
+      handlers, and accept that a stalled worker drops queued records at the
+      single shutdown deadline.
+- [ ] **Optional:** Adopt `extra=` and the exception-payload limits.
+- [ ] **Optional:** Watch `wait_diagnostics()` and, where the crate is built
+      with `tracing-compat`, the `femtologging::internal` wait events to
+      diagnose blocked or dropped handler calls.
+
+______________________________________________________________________
+
+## Common errors and fixes
+
+| Error                                                                     | Fix                                                                                                   |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `AttributeError: 'BasicConfig' object has no attribute 'filename_backup'` | Use one of the five declared fields, or keep the value in the caller's own structure.                 |
+| `RuntimeError: Python-backed handlers must provide contextual dispatch`   | Give the handler contextual-dispatch support, or register it through `ConfigBuilder` or `dictConfig`. |
+
+_Table 2: Diagnostics introduced in v0.2.0 and their remedies._

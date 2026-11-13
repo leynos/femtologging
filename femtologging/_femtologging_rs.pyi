@@ -349,6 +349,15 @@ class FemtoRotatingFileHandler:
         """
         ...
     def close(self) -> None: ...
+    def wait_diagnostics(self) -> dict[str, int]:
+        """Return the bounded counters for the Python-facing waits.
+
+        The key set is fixed: one counter per ``handle()``, ``flush()``, and
+        ``close()`` outcome, plus ``total_wait_micros`` and
+        ``max_wait_micros``.
+
+        """
+        ...
 
 class RotatingFileHandlerBuilder(_FileHandlerBuilderBase[FemtoRotatingFileHandler]):
     def __init__(self, path: str) -> None: ...
@@ -393,6 +402,15 @@ class FemtoTimedRotatingFileHandler:
     def handle(self, logger: str, level: LevelArg, message: str) -> None: ...
     def flush(self) -> bool: ...
     def close(self) -> None: ...
+    def wait_diagnostics(self) -> dict[str, int]:
+        """Return the bounded counters for the Python-facing waits.
+
+        The key set is fixed: one counter per ``handle()``, ``flush()``, and
+        ``close()`` outcome, plus ``total_wait_micros`` and
+        ``max_wait_micros``.
+
+        """
+        ...
 
 class TimedRotatingFileHandlerBuilder(
     _FileHandlerBuilderBase[FemtoTimedRotatingFileHandler]
