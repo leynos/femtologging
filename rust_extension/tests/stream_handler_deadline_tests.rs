@@ -19,7 +19,10 @@ use _femtologging_rs::{
 
 #[path = "test_utils/handle_expect.rs"]
 mod handle_expect;
+#[path = "test_utils/waiter.rs"]
+mod waiter;
 use handle_expect::HandleExpect;
+use waiter::wait_for_waiters;
 
 /// Configured flush timeout; long enough that resting on it would be obvious.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
@@ -218,7 +221,8 @@ fn stream_handler_flush_stops_queueing_once_the_shared_deadline_expires() {
 /// remainder after it is queued, so the acknowledgement stage inherits only
 /// [`ACK_REMAINDER_MS`]. A call that derived a second deadline would wait the
 /// whole configured timeout here; one that ignored the queueing time would not
-/// wait at all.
+/// wait at all. The blocked writer is released only after the call reports that
+/// it is waiting, so the only queue slot stays full across the queueing stage.
 #[test]
 fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
     let (writer, entered, release) = gated_writer(2);
@@ -240,6 +244,11 @@ fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
             (flushed, started.elapsed())
         })
     };
+    // Release only once the call is inside its wait, so the slot cannot be
+    // freed before it reaches the queueing stage. The clock's readings then
+    // spend most of the deadline there: it is read again when the command is
+    // queued, and the acknowledgement inherits only the remainder.
+    wait_for_waiters(1);
     // Free the slot while the worker is still behind the second record: the
     // command is queued, but its acknowledgement cannot arrive yet.
     release.send(()).expect("release the first write");

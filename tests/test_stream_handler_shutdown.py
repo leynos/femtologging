@@ -199,7 +199,9 @@ def _drain_gated_handler(
             handler.close()
         elapsed = time.monotonic() - started
         completed = gate.completed.is_set()
-        captured = capfd.readouterr().err
+        # Read only once completion is proven: until then the worker may still
+        # be formatting or writing, and a single read would race it.
+        captured = capfd.readouterr().err if completed else ""
     finally:
         gate.release.set()
         handler.close()
@@ -246,11 +248,12 @@ def test_stream_close_timeout_returns_before_the_worker_writes(
     The formatter stays blocked, so the worker cannot finish. ``close()`` must
     still return close to its configured timeout rather than waiting for the
     worker, and it leaves the record unwritten. Cleanup releases the formatter
-    and polls the captured stderr, so the test waits for the worker's actual
-    write instead of reading the capture once and racing it.
+    and waits for it to finish, then polls the accumulated capture, so the read
+    cannot race a worker that is still formatting or writing.
     """
     gate = _FormatterGate()
     handler = _build_gated_handler(gate, flush_after_ms=_CLOSE_TIMEOUT_MS)
+    released = False
     try:
         handler.handle("logger", "INFO", "hello")
         assert gate.entered.wait(timeout=_GATE_TIMEOUT_SECONDS), (
@@ -274,6 +277,11 @@ def test_stream_close_timeout_returns_before_the_worker_writes(
         )
     finally:
         gate.release.set()
+        # The final close may itself time out, so it cannot prove the write
+        # happened. Wait for the formatter to finish instead; the polling
+        # below then tolerates the worker's last write.
+        released = gate.completed.wait(timeout=_GATE_TIMEOUT_SECONDS)
         handler.close()
 
+    assert released, "the formatter never completed after its release"
     poll_captured_text(capfd, "gated:hello\n")

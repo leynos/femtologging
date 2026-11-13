@@ -20,8 +20,11 @@ use _femtologging_rs::{
 mod captured_log;
 #[path = "test_utils/handle_expect.rs"]
 mod handle_expect;
+#[path = "test_utils/waiter.rs"]
+mod waiter;
 use captured_log::captured_log;
 use handle_expect::HandleExpect;
+use waiter::wait_for_waiters;
 
 /// Upper bound on how long a test destructor waits for its release signal.
 ///
@@ -144,23 +147,19 @@ fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
     ));
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
 
-    let (started_tx, started_rx) = mpsc::channel();
     let (closed_tx, closed_rx) = mpsc::channel();
     let closer = {
         let handler = Arc::clone(&handler);
         thread::spawn(move || {
-            started_tx
-                .send(())
-                .expect("signal that the closer is entering close()");
             handler.close();
             let _ = closed_tx.send(());
         })
     };
-    started_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("closer should start");
+    // The counter is raised from inside `close()`'s wait, so this proves the
+    // closer is waiting rather than merely spawned and possibly descheduled.
+    wait_for_waiters(1);
     // Both conditions hold before the blocking claim below is made: the
-    // closer is inside `close()`, and the worker has entered the destructor
+    // closer is inside its wait, and the worker has entered the destructor
     // that will not return until this test releases it.
     entered_rx
         .recv_timeout(Duration::from_secs(5))
@@ -434,21 +433,18 @@ fn stream_handler_close_cannot_observe_completion_before_a_panicking_formatter_d
         .recv_timeout(Duration::from_secs(5))
         .expect("unwinding should reach the formatter destructor");
 
-    let (started_tx, started_rx) = mpsc::channel();
     let (closed_tx, closed_rx) = mpsc::channel();
     let closer = {
         let handler = Arc::clone(&handler);
         thread::spawn(move || {
-            started_tx
-                .send(())
-                .expect("signal that the closer is entering close()");
             handler.close();
             let _ = closed_tx.send(());
         })
     };
-    started_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("closer should start");
+    // The counter is raised from inside `close()`'s wait. Waiting for it rules
+    // out a closer that was descheduled before calling `close()`, which would
+    // make the blocked check below pass without a closer ever waiting.
+    wait_for_waiters(1);
 
     // The destructor is still blocked, so completion cannot have been raised:
     // a closer that returned here observed a signal raised before teardown.
