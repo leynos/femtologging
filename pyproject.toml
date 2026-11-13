@@ -489,6 +489,15 @@ filterwarnings = [
     "ignore:'maxsplit' is passed as positional argument:DeprecationWarning:gherkin.gherkin_line",
 ]
 
+[tool.df12_skylos]
+roots = ["femtologging"]
+python = "3.14"
+
+# The .pyi stub declares native signatures only, so every parameter in it is
+# trivially "unused"; exclude it alongside the in-package unit tests.
+[tool.skylos]
+exclude = ["femtologging/unittests", "femtologging/_femtologging_rs.pyi"]
+
 [tool.skylos.gate]
 strict = true
 

@@ -1073,10 +1073,10 @@ its addendum records the addition of the docstring-coverage tier below.
    `R9101,C9102,R9103,R9104,C9105,C9106,C9107,R9108,R9109,R9110,R9111,R9112,C9112`.
    `ambrleaks` sweeps Syrupy `.ambr` snapshots under `tests` and
    `femtologging/unittests` for unredacted secrets.
-5. **Skylos** (`4.33.2`) — a blocking production dead-code gate, run under
-   Python 3.14 so Skylos parses the project's syntax with its own runtime `ast`
-   implementation rather than an older one that could produce phantom findings.
-   See [Skylos dead-code gate](#skylos-dead-code-gate) below.
+5. **Skylos** (through `df12-skylos`) — a blocking production dead-code gate,
+   run under Python 3.14 so Skylos parses the project's syntax with its own
+   runtime `ast` implementation rather than an older one that could produce
+   phantom findings. See [Skylos dead-code gate](#skylos-dead-code-gate) below.
 
 Run the full lint gate with:
 
@@ -1117,11 +1117,7 @@ uv tool run --python 3.14 \
 
 
 # Tier 5: Skylos
-uv tool run --python 3.14 --from 'skylos==4.33.2' skylos \
-  --config-file pyproject.toml femtologging \
-  --exclude femtologging/unittests --exclude femtologging/_femtologging_rs.pyi \
-  --category dead_code --gate --format concise --no-upload --no-provenance \
-  --no-grep-verify
+make skylos   # df12-skylos check --repository .
 ```
 
 Prefer running the exact Makefile-derived commands (for example,
@@ -1156,17 +1152,17 @@ Investigate every Skylos finding before suppressing it:
   Both `SYMBOL` and `REASON` are required; the target rejects empty or
   whitespace-only values with exit code 2. Use `SYMBOL` rather than `NAME`,
   because Windows Subsystem for Linux (WSL) may inject `NAME` with the host
-  name. The target serializes whitelist writes with `flock` against the ignored
-  `.skylos-whitelist.lock` file, so concurrent invocations do not overwrite one
-  another. Never record a broad or unreasoned exception.
+  name. `df12-skylos allow` serializes whitelist writes with a lock on the
+  ignored `.pyproject.toml.df12.lock` file, so concurrent invocations do not
+  overwrite one another. Never record a broad or unreasoned exception.
 
-The complete Skylos Makefile contract — the scan command, its exclusions, the
-strict gate configuration, the documented-whitelist set, and the entry-point
-rule set — is pinned by `tests/test_skylos_lint_contract.py` and
-`tests/test_skylos_whitelist_boundary.py`. Both parse the Makefile through the
-pinned `makeutil` executable (`makeutil parse Makefile`, emitting JSON) rather
-than matching Makefile text, so recording a new exception requires a conscious
-update to `tests/test_skylos_lint_contract.py`.
+Skylos runs through the installed `df12-skylos` command from df12-python-lints,
+provisioned at the commit in `DF12_SKYLOS_SHA` (its `skylos` extra carries the
+one Skylos pin). The command's behaviour is tested in df12-python-lints, and CI
+runs the shared-actions `df12-skylos` action. This repository keeps the
+production roots (`[tool.df12_skylos]`), the exclusions
+(`[tool.skylos] exclude`), the strict gate and its entry-point rules in
+`pyproject.toml`.
 
 ### Makeutil bootstrap
 
@@ -1177,7 +1173,7 @@ job each install it with the shared `install-makeutil` action, which downloads
 a prebuilt release and checks it against a pinned digest and the release's own
 `.sha256` file, then smoke-test it in a `Verify makeutil` step. The assertions
 for both live in `tests/makeutil_contract.py`, called from
-`tests/test_skylos_lint_contract.py`; bump the pinned action reference there
+`tests/test_makeutil_ci_contract.py`; bump the pinned action reference there
 and in the workflows together. Before running `make test` locally, download
 `makeutil-x86_64-unknown-linux-musl` (or the `aarch64` build) from the release
 the `install-makeutil` action defaults to, listed at
