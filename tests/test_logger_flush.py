@@ -186,3 +186,41 @@ def test_python_handler_flush_failure_reports_failure(
         logger.remove_handler(handler)
 
     assert handler.flush_calls == 1, "the handler's flush was not invoked"
+
+
+class _SensitiveFlushRaisingHandler(_RecordingFlushHandler):
+    """Handler whose flush exception quotes content that must not be logged."""
+
+    def __init__(self, marker: str) -> None:
+        """Store the marker the exception message will carry."""
+        super().__init__()
+        self.marker = marker
+
+    def flush(self) -> None:
+        """Raise with a message that stands in for a record payload."""
+        self.flush_calls += 1
+        raise RuntimeError(self.marker)
+
+
+def test_python_flush_exception_text_does_not_reach_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A handler's exception message must not be printed or logged.
+
+    The message comes from the handler and may quote a record, so the flush
+    path reports only a bounded category. Printing the exception, or logging
+    its text, would leak this marker to the operator.
+    """
+    logger = FemtoLogger("flush.sensitive")
+    marker = "SENSITIVE-flush-payload-7d1c"
+    handler = _SensitiveFlushRaisingHandler(marker)
+
+    try:
+        logger.add_handler(handler)
+        assert not logger.flush_handlers(), "a raising flush must report failure"
+    finally:
+        logger.remove_handler(handler)
+
+    assert handler.flush_calls == 1, "the handler's flush was not invoked"
+    stderr = capsys.readouterr().err
+    assert marker not in stderr, f"the flush path leaked the exception: {stderr!r}"

@@ -18,6 +18,39 @@ use crate::log_record::FemtoLogRecord;
 use super::method_call::{ContextMethodCall, DirectMethodSpec};
 use super::{PyHandler, map_py_err};
 
+/// Bounded category of a failed Python handler flush.
+///
+/// A handler's exception message is user data: it comes from arbitrary Python
+/// code and may quote a record. The flush path therefore never prints or logs
+/// it, and reports only which step failed. That is what an operator needs to
+/// tell a broken handler from one that opted out of flushing, and the set of
+/// values cannot grow with user input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FlushFailure {
+    /// The handler's `flush` attribute could not be looked up.
+    LookupFailed,
+    /// Calling the handler's `flush` raised.
+    CallFailed,
+    /// The handler returned a falsy value other than `None`.
+    ResultFalse,
+}
+
+impl FlushFailure {
+    /// The whole warning this category emits, bounded and payload-free.
+    const fn message(self) -> &'static str {
+        match self {
+            Self::LookupFailed => "PyHandler: flush failed (flush_lookup_failed)",
+            Self::CallFailed => "PyHandler: flush failed (flush_call_failed)",
+            Self::ResultFalse => "PyHandler: flush failed (flush_result_false)",
+        }
+    }
+
+    /// Emit this category's warning.
+    fn report(self) {
+        log::warn!("{}", self.message());
+    }
+}
+
 impl PyHandler {
     /// Call the structured `handle_record` method with the full record dict.
     pub(super) fn call_handle_record(
@@ -143,8 +176,11 @@ impl PyHandler {
         let flush = match self.python_flush_method(py) {
             Ok(Some(flush)) => flush,
             Ok(None) => return true,
-            Err(err) => {
-                map_py_err(py, err, "get flush");
+            // The exception is dropped unprinted on purpose: it comes from the
+            // handler and may quote a record, so only the bounded category is
+            // reported. See `FlushFailure`.
+            Err(_) => {
+                FlushFailure::LookupFailed.report();
                 return false;
             }
         };
@@ -155,9 +191,15 @@ impl PyHandler {
             // without complaint. Any other value is honoured so a handler that
             // explicitly returns False can still report failure.
             Ok(result) if result.is_none() => true,
-            Ok(result) => result.is_truthy().unwrap_or(false),
-            Err(err) => {
-                map_py_err(py, err, "flush");
+            Ok(result) => {
+                let succeeded = result.is_truthy().unwrap_or(false);
+                if !succeeded {
+                    FlushFailure::ResultFalse.report();
+                }
+                succeeded
+            }
+            Err(_) => {
+                FlushFailure::CallFailed.report();
                 false
             }
         }
@@ -194,3 +236,7 @@ impl PyHandler {
             .map_err(|err| map_py_err(py, err, call.operation))
     }
 }
+
+#[cfg(all(test, not(loom)))]
+#[path = "calls_tests.rs"]
+mod tests;
