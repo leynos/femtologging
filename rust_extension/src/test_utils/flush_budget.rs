@@ -7,9 +7,11 @@
 //! admission must leave nothing for the acknowledgement. A scripted clock
 //! makes both deterministic by returning a fixed sequence of samples.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::monotonic_clock::MonotonicClock;
 use crate::rate_limited_warner::Clock;
 
 /// Deadline used by the tests, chosen so only the scripted offsets expire it.
@@ -51,6 +53,16 @@ impl ScriptedClock {
         self.start + TEST_DEADLINE
     }
 
+    /// The instant every scripted offset is measured from.
+    pub(crate) fn started_at(&self) -> Instant {
+        self.start
+    }
+
+    /// The deadline a caller with `budget` forms at this clock's start.
+    pub(crate) fn deadline_within(&self, budget: Duration) -> Instant {
+        self.start + budget
+    }
+
     /// Return the next scripted sample.
     pub(crate) fn now(&mut self) -> Instant {
         let index = self.samples.min(self.offsets.len().saturating_sub(1));
@@ -64,6 +76,62 @@ impl ScriptedClock {
     /// consuming a different budget, so the count is part of the assertion.
     pub(crate) fn samples(&self) -> usize {
         self.samples
+    }
+}
+
+/// A [`ScriptedClock`] that a [`FlushContext`] can hold.
+///
+/// `flush_until` receives its time source inside the context rather than as a
+/// closure, so a test that exercises that entry point needs a clock the context
+/// can sample. This wrapper keeps the scripted sequence behind a lock and
+/// reports it through [`MonotonicClock`], which is the trait the context reads.
+/// The samples are drawn in the same order as the closure form, so a test can
+/// assert the same sample counts it would for `flush_by_at`.
+///
+/// [`FlushContext`]: crate::handler::FlushContext
+pub(crate) struct SharedScriptedClock {
+    /// The scripted samples, taken one per request.
+    inner: Mutex<ScriptedClock>,
+}
+
+impl SharedScriptedClock {
+    /// Build a shared clock from millisecond offsets, one per sample.
+    pub(crate) fn new(offsets_ms: &[u64]) -> Self {
+        Self {
+            inner: Mutex::new(ScriptedClock::new(offsets_ms)),
+        }
+    }
+
+    /// The instant every scripted offset is measured from.
+    pub(crate) fn started_at(&self) -> Instant {
+        self.lock().started_at()
+    }
+
+    /// The deadline a caller with `budget` forms at this clock's start.
+    pub(crate) fn deadline_within(&self, budget: Duration) -> Instant {
+        self.lock().deadline_within(budget)
+    }
+
+    /// Number of samples taken so far.
+    pub(crate) fn samples(&self) -> usize {
+        self.lock().samples()
+    }
+
+    /// Take the scripted clock's lock, recovering from a poisoned mutex.
+    ///
+    /// A panic in another test thread cannot leave the sample sequence invalid:
+    /// every method either reads or appends one sample, so the recovery is
+    /// sound and keeps a failure in one test from cascading into the next.
+    fn lock(&self) -> std::sync::MutexGuard<'_, ScriptedClock> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl MonotonicClock for SharedScriptedClock {
+    fn now(&self) -> Instant {
+        self.lock().now()
     }
 }
 

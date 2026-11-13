@@ -90,6 +90,8 @@ impl FemtoHandlerTrait for SnapshotPythonHandler {
         Ok(())
     }
 
+    /// Confirm the barrier so the snapshot tests isolate handler-list
+    /// behaviour; this handler has no buffers of its own to write.
     fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
         true
     }

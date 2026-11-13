@@ -11,12 +11,13 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::formatter::DefaultFormatter;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
+use crate::monotonic_clock::SharedClock;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::stream_handler::{FemtoStreamHandler, HandlerConfig};
-use crate::test_utils::flush_budget::{ScriptedClock, WarningClock};
+use crate::test_utils::flush_budget::{ScriptedClock, SharedScriptedClock, WarningClock};
 
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 
@@ -134,10 +135,12 @@ fn acknowledgement_stops_at_the_shared_deadline() {
     FemtoHandlerTrait::handle(&handler, record("occupies one queue slot"))
         .expect("the free slot should accept the second record");
 
-    // The cap and admission checks see the start, so the marker is admitted
-    // with the whole handler budget. Only the acknowledgement sample sees that
-    // budget spent.
-    let mut clock = ScriptedClock::new(&[0, 0, 30_001]);
+    // Admission spends 600 ms of the handler's one-second budget, so the
+    // marker is admitted with only the 400 ms that remain, and the
+    // acknowledgement is offered what is left of the same deadline. That runs
+    // out at the third sample, which is why the wait returns at once instead
+    // of waiting out the full handler timeout.
+    let mut clock = ScriptedClock::new(&[0, 600, 1_000]);
     let deadline = clock.deadline();
     let began = Instant::now();
     let confirmed = handler.flush_by_at(deadline, &mut || clock.now());
@@ -154,6 +157,62 @@ fn acknowledgement_stops_at_the_shared_deadline() {
         clock.samples(),
         3,
         "the cap, queue admission and acknowledgement must each sample the clock"
+    );
+
+    writer.release_all();
+    handler.close();
+}
+
+/// A caller deadline shorter than the handler's own timeout bounds the flush
+/// through the `flush_until` entry point the logger barrier calls.
+#[test]
+fn a_caller_deadline_shorter_than_the_handler_timeout_bounds_the_flush() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let writer = BlockingFlushWriter::new(started_tx);
+    let handler = FemtoStreamHandler::with_capacity_timeout(
+        writer.clone(),
+        DefaultFormatter,
+        2,
+        Duration::from_secs(5),
+    );
+
+    // Stall the worker inside the writer, so only its own budget can free it.
+    FemtoHandlerTrait::handle(&handler, record("occupies the worker"))
+        .expect("the worker should take the first record");
+    assert_eq!(
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the worker must reach the writer"),
+        1
+    );
+
+    // The caller allows fifty milliseconds; the handler would allow five
+    // seconds. The second sample is already past the caller's deadline, so
+    // neither queue wait may block.
+    let clock = Arc::new(SharedScriptedClock::new(&[0, 100]));
+    let injected: SharedClock = clock.clone();
+    let context = FlushContext::with_clock(
+        clock.started_at(),
+        Some(clock.deadline_within(Duration::from_millis(50))),
+        injected,
+    );
+
+    let began = Instant::now();
+    let confirmed = handler.flush_until(&context);
+    let elapsed = began.elapsed();
+
+    assert!(
+        !confirmed,
+        "a worker blocked inside the writer cannot acknowledge this flush"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "the caller's 50 ms deadline must bound the wait, not the handler's five-second timeout"
+    );
+    assert_eq!(
+        clock.samples(),
+        3,
+        "the cap, queue admission and acknowledgement must each sample the context clock"
     );
 
     writer.release_all();

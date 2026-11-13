@@ -11,6 +11,10 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::handler::FlushContext;
+use crate::monotonic_clock::SharedClock;
+use crate::test_utils::flush_budget::SharedScriptedClock;
+
 /// Cloneable writer whose flush calls wait for explicit test release.
 #[derive(Clone)]
 struct BlockingFlushWriter {
@@ -272,6 +276,58 @@ fn flush_deadline_bounds_a_stalled_acknowledgement() {
     // The stalling flush has its own one-second budget, so whether the released
     // write finishes inside it is a scheduling detail. Only its completion
     // matters here; the assertion above covers the deadline under test.
+    let _ = stall_done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the stalling flush must report its outcome");
+    stall.join().expect("the stalling flush thread must exit");
+    let Ok(handler) = Arc::try_unwrap(handler) else {
+        panic!("flush test must release all handler references before shutdown");
+    };
+    handler.close();
+}
+
+/// A caller deadline shorter than the handler's fixed one-second flush timeout
+/// bounds the wait through the `flush_until` entry point.
+#[test]
+fn flush_until_lets_a_shorter_caller_deadline_bound_the_flush() {
+    let (handler, writer, stall, stall_done_rx, started_rx) = stalled_file_handler(4);
+    assert_eq!(
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the stalling flush must reach the writer"),
+        1
+    );
+
+    // The caller allows fifty milliseconds; the handler's own budget is one
+    // second. The second sample is already past the caller's deadline, so
+    // neither queue wait may block.
+    let clock = Arc::new(SharedScriptedClock::new(&[0, 100]));
+    let injected: SharedClock = clock.clone();
+    let context = FlushContext::with_clock(
+        clock.started_at(),
+        Some(clock.deadline_within(Duration::from_millis(50))),
+        injected,
+    );
+
+    let began = Instant::now();
+    let confirmed = handler.flush_until(&context);
+    let elapsed = began.elapsed();
+
+    assert!(
+        !confirmed,
+        "a worker blocked inside the writer cannot acknowledge this flush"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "the caller's 50 ms deadline must bound the wait, not the one-second timeout"
+    );
+    assert_eq!(
+        clock.samples(),
+        3,
+        "the cap, queue admission and acknowledgement must each sample the context clock"
+    );
+
+    writer.release_all_flushes();
     let _ = stall_done_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("the stalling flush must report its outcome");

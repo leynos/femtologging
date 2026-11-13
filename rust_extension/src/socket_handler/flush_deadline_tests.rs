@@ -13,12 +13,13 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::bounded;
 
 use super::{FemtoSocketHandler, SocketCommand};
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
+use crate::monotonic_clock::SharedClock;
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::shutdown_signal::ShutdownSignal;
-use crate::test_utils::flush_budget::{ScriptedClock, WarningClock};
+use crate::test_utils::flush_budget::{ScriptedClock, SharedScriptedClock, WarningClock};
 use crate::test_utils::test_worker::TestWorker;
 
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
@@ -72,10 +73,12 @@ fn acknowledgement_stops_at_the_shared_deadline() {
     // One queue slot is now taken, leaving the other for the flush marker.
     occupy_one_slot(&tx);
 
-    // The cap and admission checks see the start, so the marker is admitted
-    // with the whole handler budget. Only the acknowledgement sample sees that
-    // budget spent.
-    let mut clock = ScriptedClock::new(&[0, 0, 30_001]);
+    // Admission spends 600 ms of the handler's one-second budget, so the
+    // marker is admitted with only the 400 ms that remain, and the
+    // acknowledgement is offered what is left of the same deadline. That runs
+    // out at the third sample, which is why the wait returns at once instead
+    // of waiting out the full handler timeout.
+    let mut clock = ScriptedClock::new(&[0, 600, 1_000]);
     let deadline = clock.deadline();
     let began = Instant::now();
     let confirmed = handler.flush_by_at(deadline, &mut || clock.now());
@@ -91,6 +94,48 @@ fn acknowledgement_stops_at_the_shared_deadline() {
         "the cap, queue admission and acknowledgement must each sample the clock"
     );
 
+    let mut handler = handler;
+    handler.close();
+}
+
+/// A caller deadline shorter than the handler's own timeout bounds the flush
+/// through the `flush_until` entry point the logger barrier calls.
+#[test]
+fn a_caller_deadline_shorter_than_the_handler_timeout_bounds_the_flush() {
+    let (handler, _tx, unread) = handler_with_unread_queue(
+        2,
+        Duration::from_secs(2),
+        RateLimitedWarner::new(Duration::from_secs(1)),
+    );
+    // The caller allows fifty milliseconds; the handler would allow two
+    // seconds. The second sample is already past the caller's deadline, so
+    // neither queue wait may block.
+    let clock = Arc::new(SharedScriptedClock::new(&[0, 100]));
+    let injected: SharedClock = clock.clone();
+    let context = FlushContext::with_clock(
+        clock.started_at(),
+        Some(clock.deadline_within(Duration::from_millis(50))),
+        injected,
+    );
+
+    let began = Instant::now();
+    let confirmed = handler.flush_until(&context);
+    let elapsed = began.elapsed();
+
+    assert!(!confirmed, "an unread worker cannot acknowledge this flush");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "the caller's 50 ms deadline must bound the wait, not the handler's two-second timeout"
+    );
+    assert_eq!(
+        clock.samples(),
+        3,
+        "the cap, queue admission and acknowledgement must each sample the context clock"
+    );
+
+    // Dropping the unread receiver disconnects the queue, so closing the
+    // handler takes the immediate path instead of waiting out its timeout.
+    drop(unread);
     let mut handler = handler;
     handler.close();
 }
