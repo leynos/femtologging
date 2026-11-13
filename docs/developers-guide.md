@@ -848,15 +848,33 @@ from recursively logging its own instrumentation.
 ### Flush observability
 
 Every `FemtoLogger::flush_handlers()` call records one bounded outcome and one
-duration in process-wide, cumulative counters. No exporter publishes these
-counters yet: the names below are the internal contract a future exporter must
-match, not a metric endpoint an operator can scrape today.
+duration in process-wide, cumulative counters. Publishing them is deferred to
+[issue 551](https://github.com/leynos/femtologging/issues/551), which owns the
+supported telemetry interface, the exporter, and the alerting documentation;
+the names below are the internal contract that exporter must match. Until it
+lands, an operator reads flush health from the rate-limited warnings described
+below, not from a metric endpoint.
 
 | Metric                               | Type      | Meaning                                                                                                                                               |
 | ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `femtologging.flush.total{outcome}`  | counter   | Flush attempts by outcome: `success`, `ack_timeout`, `channel_closed`, or `handler_failure`.                                                          |
 | `femtologging.flush.duration_us`     | histogram | Flush duration in microseconds, with cumulative buckets at 100, 500, 1,000, 5,000, 10,000, 50,000, 100,000, and 1,000,000 µs plus an overflow bucket. |
 | `femtologging.flush.bridge_failures` | counter   | Logger flushes that returned `false` while `log::Log::flush` swept the registered loggers.                                                            |
+
+An operator reads the outcome label first. `ack_timeout` means the shard worker
+did not finish the records queued ahead within the shared two-second barrier,
+which usually points at a handler that blocks. `channel_closed` means the
+dispatch pool was already gone, so nothing was drained. `handler_failure` means
+the drain succeeded but at least one attached handler's `flush()` reported
+failure. `success` is the only outcome after which every record queued before
+the call had been handed to its handlers. A rising `bridge_failures` count
+isolates failures observed through `log::Log::flush`, without naming the
+logger, because logger names are unbounded user data.
+
+A Python handler that fails to flush is reported with one bounded category:
+`flush_lookup_failed`, `flush_call_failed`, or `flush_result_false`. The
+handler's exception message and traceback are never printed or logged, because
+they may quote a record.
 
 With `tracing-compat` enabled, each flush also emits a `logger_flush` span
 targeting `femtologging::internal`. The span carries
