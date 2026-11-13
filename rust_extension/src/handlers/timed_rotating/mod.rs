@@ -20,6 +20,8 @@ pub use schedule::{TimedRotationSchedule, TimedRotationWhen};
 #[cfg(feature = "python")]
 pub(crate) mod python;
 #[cfg(feature = "python")]
+mod python_time;
+#[cfg(feature = "python")]
 pub(crate) use python::PyTimedRotatingFileHandler;
 #[cfg(feature = "python")]
 pub use python::{TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};

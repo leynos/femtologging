@@ -1234,16 +1234,23 @@ while maximum refresh reads the index without taking the manager lock.
 
 Only `log()` and `flush()` need Python access. `log()` attaches to Python after
 the threshold check, resolves the target, checks the current level again, and
-then queues the record. File and stream handler `flush()` and `close()` calls
-detach their waits from the GIL. The `close()` bindings take only a shared PyO3
-object borrow: they extract owned shutdown state, release that borrow, and then
-detach, so another Python thread can use the handler while the worker exits.
-Because the shutdown state is shared, concurrent `close()` calls and a
-`close()` running beside a detached `flush()` both wait on the same completion
-broadcast; a closer that arrives after the worker has stopped returns at once,
-and a repeated close stays safe. Existing handler-specific timeouts remain
-authoritative, so a worker that never signals completion is reported and
-skipped rather than waited on indefinitely.
+then queues the record. File handler `handle()`, `flush()`, and `close()`
+calls, and stream handler `flush()` and `close()` calls, detach their waits
+from the GIL. The `close()` bindings take only a shared PyO3 object borrow:
+they extract owned shutdown state, release that borrow, and then detach, so
+another Python thread can use the handler while the worker exits. Because the
+shutdown state is shared, concurrent `close()` calls and a `close()` running
+beside a detached `flush()` both wait on the same completion broadcast; a
+closer that arrives after the worker has stopped returns at once, and a
+repeated close stays safe. The file handler's two Python-facing waits carry
+their own fixed deadlines rather than reusing the handler's write or overflow
+timeout: `flush()` gives the enqueue and the acknowledgement one second in
+total, and `close()` waits at most one second for the shared completion signal.
+Neither deadline depends on the overflow policy. A `close()` whose one-second
+deadline expires logs a warning and returns while the worker may still be
+running, so a returned `close()` is not proof that the worker stopped. The
+stream handler instead reuses its configurable `flush_timeout` for both waits,
+as described under "Python-facing lifecycle waits" below.
 
 These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
 uses no Python access and has no Python exception path. The expected failure
@@ -1269,15 +1276,73 @@ operations per the patterns in `docs/multithreading-in-pyo3.md`, so
 `log::log()` calls from Rust do not contend with handler I/O.
 
 **Python-facing lifecycle waits:** The Python bindings for the stream, file,
-rotating-file, and timed-rotating-file handlers detach from the GIL while they
-wait for their worker in `flush()` and `close()`. `close()` copies the shared
-shutdown state under a scoped borrow, and that borrow ends before the detached
-wait. This keeps caller-side lifecycle waits distinct from worker-side I/O and
-lets both a queued Python callable formatter and a callback that re-enters the
-handler in its closed state make progress. Since the state is shared rather
-than taken exclusively, concurrent closes and a close beside a detached flush
-all observe the same completion, while the handler's own timeout still bounds
-each wait.
+rotating-file, and timed-rotating-file handlers detach from the GIL for every
+wait that can block on their worker. `handle()` parses the level and builds the
+record while the interpreter lock is held, then detaches around the enqueue, so
+a `"block"` or `"timeout:N"` policy parks only the calling thread; the enqueue
+result becomes a Python exception after the detached region returns. The file,
+rotating-file, and timed-rotating-file bindings share that shape, mapping the
+failure to `RuntimeError` and, for the timed-rotating binding, `ValueError`.
+The stream binding enqueues with `try_send`, which never blocks: its `handle()`
+drops under pressure instead of waiting, so it has no lock-holding wait to
+release and stays attached. `flush()` detaches around the acknowledgement wait,
+and `close()` copies the shared shutdown state under a scoped borrow that ends
+before the detached wait. This keeps caller-side lifecycle waits distinct from
+worker-side I/O and lets both a queued Python callable formatter and a callback
+that re-enters the handler in its closed state make progress. Because the
+stream and file-family shutdown state is shared rather than taken exclusively,
+a close can start while another thread is blocked inside `handle()` or
+`flush()`; concurrent closes and a close beside a detached flush all observe
+the same completion.
+
+The socket and HTTP bindings also enqueue with `try_send` and stay attached in
+`handle()`, but their `close()` holds a mutable PyO3 borrow (`&mut self`) for
+the whole wait. A close that overlaps a detached `flush()` or another `close()`
+on the same object is refused by PyO3's borrow check with a `RuntimeError`
+("Already borrowed") rather than queuing behind it, so call `flush()` before
+`close()` and do not close from two threads at once. The wait still runs with
+the GIL released; the refusal comes from the Rust borrow, not the interpreter
+lock.
+
+The bounds are family-specific rather than one global rule. The file family
+uses fixed bounds that do not depend on the overflow policy: one second for the
+flush, computed as a single deadline that covers both the enqueue and the
+acknowledgement, so a flush command that takes most of that second to enqueue
+leaves only the remainder to wait for the acknowledgement; and one second for
+the close completion. The stream family reuses its configurable `flush_timeout`
+(default one second) for both the flush acknowledgement and the close
+completion, so raising that timeout lengthens both waits. Socket and HTTP share
+the write-timeout-based single shutdown deadline described below.
+
+**Wait observability:** Because a detached wait is invisible to another
+thread's stack, each Python-facing wait on a file handler also records evidence
+of what it did. The record is a fixed-key counter map plus the
+`total_wait_micros` sum, the `max_wait_micros` maximum single wait and the
+`waits_in_flight` gauge, exposed through `wait_diagnostics()`. It is
+implemented in the `handlers/telemetry/` module, split so no one file carries
+the whole surface: `outcome.rs` owns the closed outcome vocabulary,
+`diagnostics.rs` owns the counters, the snapshot and the in-flight `WaitGuard`,
+and `timer.rs` owns timing, `WaitScope` (which brackets the guard and the
+timer) and the event contract. One counter per outcome keeps the cardinality
+bounded: the snapshot keys are the outcome names plus the summed and maximum
+wait durations and the gauge, never a logger name, path, message, payload, or
+raw timeout value; the operation name and policy bucket appear only in the
+optional trace event. The gauge is incremented before the detached section and
+decremented by an RAII guard, so it returns to zero on the normal path and
+while unwinding; a wait that never returns is exactly the state the gauge
+exists to expose, since the outcome counters only move when a wait finishes.
+
+With the `tracing-compat` feature each wait also emits one event on the
+`femtologging::internal` target. That target is deliberately one the crate's own
+`FemtoTracingLayer` ignores, so telemetry cannot feed wait outcomes back into
+the logging pipeline: enabling it cannot produce a record that would record
+another wait, and the recursion that would otherwise arise is ruled out by
+construction rather than by a re-entrancy flag. The event is emitted after the
+detached section returns, on the interpreter-owning thread, so a tracing
+subscriber never has to attach to Python from a thread that holds no GIL. In a
+build without `tracing-compat` the emit is a compiled no-op and the per-wait
+cost is a counter update; the feature gate therefore decides whether the
+observability is present, while `wait_diagnostics()` works in every build.
 
 The socket and HTTP handlers reach the same guarantee by a different route,
 because their workers make blocking network calls rather than waiting only on a

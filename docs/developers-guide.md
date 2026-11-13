@@ -217,16 +217,17 @@ cargo bench --manifest-path rust_extension/Cargo.toml --no-default-features \
   --features log-compat --bench log_bridge
 ```
 
-The Python-facing file and stream handler `flush()` and `close()` methods use
-PyO3's detached wait path. The `close()` wrappers need only a shared
-Python-object borrow: they copy the shutdown state into Rust-owned values,
-release that borrow, and then release the GIL while they wait for the worker.
-Concurrent `close()` calls, or a `close()` beside a detached `flush()`, do not
-contend for the handler. Every caller waits on the same completion broadcast,
-so one closer does not return early merely because another has already taken
-the shutdown state; the wait stays bounded by the handler's timeout. Preserve
-the handlers' existing timeouts and idempotent-close behaviour when changing
-this boundary.
+The Python-facing file, rotating-file, timed-rotating-file and stream handler
+`flush()` and `close()` methods use PyO3's detached wait path. The `close()`
+wrappers need only a shared Python-object borrow: they copy the shutdown state
+into Rust-owned values, release that borrow, and then release the GIL while
+they wait for the worker. Concurrent `close()` calls, or a `close()` beside a
+detached `flush()`, do not contend for the handler. Every caller waits on the
+same completion broadcast, so one closer does not return early merely because
+another has already taken the shutdown state. The file family bounds each wait
+to one second; the stream handler reuses its configurable `flush_timeout`
+(default one second) for both. Preserve the handlers' existing timeouts and
+idempotent-close behaviour when changing this boundary.
 
 ### Handler shutdown signal, clock and condition-variable seams
 
@@ -726,6 +727,100 @@ send and receive operations keep their normal API shape, but Loom has no clock,
 so the heavy lane's outer timeout bounds waits that would otherwise remain
 blocked. The shard worker uses blocking `recv()` and has no idle polling tick.
 
+## Releasing the GIL at the Python boundary
+
+These file handlers let Python callers wait directly on a Rust channel, so
+their bindings give the interpreter lock back for the duration of those waits.
+The `flush()` and `close()` boundary is described in
+[Python-facing `flush()` and `close()` waits](#python-facing-flush-and-close-waits);
+this section covers `handle()`, whose wait is the unbounded one, and the
+mechanics all three operations share. `FemtoFileHandler`'s `#[pymethods]`
+block, and the rotating and timed-rotating wrappers that delegate to it, take a
+`py: Python<'_>` token and use `py.detach(...)` around the operation.
+`handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
+(`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
+(`send_timeout`). Other Python-exposed handler families also have operations
+that may block. The stream, socket and HTTP bindings detach both their
+`flush()` and their `close()` waits. The socket and HTTP `close()` methods take
+an exclusive PyO3 borrow (`&mut self`) for the whole wait, so a second
+`close()`, or a `close()` overlapping a detached `flush()`, is refused by the
+borrow check rather than queued; the file and stream families use a shared
+borrow and allow those overlaps.
+
+`py.detach` requires its closure and return type to implement `Ungil`. On
+stable Rust, PyO3 approximates that requirement through `Send`, so the bound
+rules out a closure that captured a `Python<'_>` token, but it is an
+approximation rather than a complete prohibition: a detached closure must still
+be audited to ensure it does not reach Python-bound values or call Python APIs
+without reattaching first. The compile-pass fixture in
+`rust_extension/tests/ui/pass/pyo3_detach_ungil.rs` checks the accepted
+pattern; it does not prove that every forbidden capture is rejected. The split
+below is therefore deliberate, and the fixture guards its shape:
+
+- argument parsing, `FemtoLevel::parse_py`, and record construction run
+  **before** the detach, because they can raise;
+- only the enqueue, the acknowledgement wait and the join run **inside** it;
+- `PyRuntimeError`/`PyValueError` construction runs **after** it returns, on the
+  GIL-owning side.
+
+Detaching does not branch on the overflow policy. `OverflowPolicy::Drop` uses
+`try_send` and never waits, but one uniform boundary is easier to audit than a
+policy-shaped one, and it keeps a future change to the drop path from silently
+reintroducing a wait on the locked side.
+
+Because `--cfg loom` builds `--no-default-features`, the `#[pymethods]` blocks
+still compile in that lane: PyO3 is an unconditional dependency, and the
+`python` feature only governs extension-module linking. Detaching here needs no
+`cfg(not(loom))` guard, unlike the logger worker's join: these methods receive
+their `Python<'_>` token from the caller and never attach, so a Loom model that
+somehow reached them would fail on the borrow or the token rather than
+initializing an interpreter on a Loom coroutine's small stack. The heavy lane's
+file model drives the Rust API (`with_writer_for_test`) and never reaches the
+bindings at all.
+
+### Testing the boundary
+
+Neither the Rust tests nor the Loom models can see this behaviour. The Rust
+tests call `FemtoHandlerTrait::handle` directly and never hold a GIL; the Loom
+models replace the channel and the thread with Loom's equivalents, so there is
+no interpreter to hold the lock in the first place. A Loom model that did drive
+the bindings would model nothing it is meant to explore.
+
+The evidence therefore comes from Python, in
+`tests/test_file_handler_gil_release.py`, which runs each scenario in its own
+subprocess. Isolation is the point: a binding that never releases the lock
+deadlocks rather than failing, and an in-process test would hang the suite
+instead of reporting. The parent applies a timeout and reports an expiry as a
+probable GIL deadlock.
+
+Each child parks the worker on a blocking formatter behind a capacity-1 queue,
+makes the blocking call from its own thread, and only then starts a watchdog
+thread that records a timestamp every few milliseconds. Starting the watchdog
+after a settle period — and after asserting that the blocked thread is still
+alive — is what makes the verdict sound: the call under test cannot return
+while its queue is full or its worker is parked, so a call still running at
+that point is inside the binding, and no record the watchdog makes can precede
+its entry. The verdict then requires at least five records inside the call's
+window and a window of at least half a second:
+
+- a released wait of a second or more yields hundreds of records;
+- a wait that holds the GIL yields none, because a single spin of the
+  watchdog's loop is milliseconds of pure bytecode and the calling thread never
+  releases the lock for that long.
+
+The window check matters for the bounded cases. A `"timeout:N"` or `close()`
+wait ends on its own deadline, so a call that returned early would otherwise
+collect records trivially, and a bare ordering check would pass for the defect.
+
+The subprocess scenarios pin one interleaving each, so they cannot enumerate
+the order of `handle()`, `flush()`, and `close()` calls.
+`tests/test_file_handler_lifecycle_state_machine.py` covers that gap with a
+Hypothesis `RuleBasedStateMachine` that generates bounded call sequences for
+all three builders across queue capacities and overflow policies, and asserts
+the shutdown invariants after each step. It runs in-process and does not
+control scheduling, so it complements the subprocess evidence rather than
+replacing it: the GIL verdict still comes from the child interpreters.
+
 ## Producer/worker context propagation
 
 The logger's producer path snapshots the configured handler list while holding
@@ -789,15 +884,15 @@ handler-level comparison happens before the handler filter chain. With base
 lock path; a subclass overriding `handle()` owns its internal dispatch path.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
-capture, handler-filter-chain evaluation, queue dispatch, and worker handler
-dispatch. Filter-chain events report `accepted`, `rejected`, or
-`callback_failed`. If all attached handler filters reject a record, the
-producer emits `producer_handler_dispatch` with `handler_kind=none` and
-`dispatch_outcome=no_handlers_accepted`. Events use bounded operation,
-handler-kind, and outcome fields; filter-chain events also include elapsed
-microseconds. Record payloads and context values are never included. They target
-`femtologging::internal`, which `FemtoTracingLayer` ignores to prevent tracing
-from recursively logging its own instrumentation.
+capture, handler-filter-chain evaluation, queue dispatch, worker handler
+dispatch, and the Python-facing handler waits described below. Filter-chain
+events report `accepted`, `rejected`, or `callback_failed`. If all attached
+handler filters reject a record, the producer emits `producer_handler_dispatch`
+with `handler_kind=none` and `dispatch_outcome=no_handlers_accepted`. Events
+use bounded operation, handler-kind, and outcome fields; filter-chain events
+also include elapsed microseconds. Record payloads and context values are never
+included. They target `femtologging::internal`, which `FemtoTracingLayer`
+ignores to prevent tracing from recursively logging its own instrumentation.
 
 ### Python-facing `flush()` and `close()` waits
 
@@ -818,15 +913,107 @@ borrow, several threads may close the same handler, and a close may start while
 a detached flush is still running. Each closer waits on one completion
 broadcast: every caller observes the worker's exit, and a closer that arrives
 after the worker has already stopped returns without waiting out its timeout. A
-repeated `close()` is therefore safe and still returns only once the worker has
-stopped.
+repeated `close()` is therefore safe and observes the same bounded wait.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush
-timeout and `False` otherwise, and `close()` still returns `None`. The wait in
-`close()` remains bounded by the handler's timeout: a worker that does not
-signal completion in time is reported and skipped rather than waited on
-indefinitely.
+timeout and `False` otherwise, and `close()` still returns `None`. The file
+family's `close()` wait is fixed at one second, not the overflow policy's
+timeout, while the stream handler's uses its configurable `flush_timeout`
+(default one second). A worker that does not signal completion within that
+bound is reported and skipped rather than waited on indefinitely, and the call
+returns while the worker may still be running.
+
+### Handler wait diagnostics
+
+Each Python-facing wait on a worker-backed file handler records one bounded
+counter when it returns. `FemtoFileHandler`, `FemtoRotatingFileHandler`, and
+`FemtoTimedRotatingFileHandler` expose `wait_diagnostics()`, which returns a
+dictionary with a fixed key set: one counter per outcome (`handle_accepted`,
+`handle_queue_full`, `handle_timed_out`, `handle_closed`, `handle_disconnected`,
+`handle_failed`, `flush_acknowledged`, `flush_enqueue_timed_out`,
+`flush_ack_timed_out`, `flush_closed`, `flush_disconnected`, `flush_failed`,
+`close_completed`, `close_timed_out`, `close_panicked`, `close_unknown`) plus
+`total_wait_micros`, `max_wait_micros`, and `waits_in_flight`. Counters use
+relaxed atomics: the handler path must not pay for cross-thread ordering, and a
+slightly stale snapshot is acceptable for periodic reporting.
+
+`waits_in_flight` is a gauge rather than a counter. It rises before a wait
+detaches and falls again when that wait returns, so a reader can tell an idle
+handler from one whose producer is parked on a full queue or whose closer is
+still waiting for the worker. Every detached wait in all three bindings is
+bracketed by an RAII guard that decrements it, including an early return or a
+panic unwinding through the binding; a wait that never returns is exactly the
+state the gauge exists to expose. Because it is a gauge it does not accumulate:
+successive snapshots are comparable directly, unlike the outcome counters.
+
+With the `tracing-compat` feature enabled, each wait also emits a trace event
+targeting `femtologging::internal` with `operation` (`handler_handle`,
+`handler_flush`, or `handler_close`), `handler_kind` (`file`, `rotating`, or
+`timed_rotating`), `policy_bucket` (`drop`, `block`, or `timeout`),
+`wait_outcome`, and `elapsed_us`. The event is emitted after the detached
+section returns, so it runs on the interpreter-owning thread; a tracing bridge
+never has to attach to Python from a thread that holds no GIL. Neither the
+counters nor the events carry logger names, paths, messages, payloads, or raw
+timeout values, so their cardinality stays bounded however much traffic the
+handler sees. `tests/test_wait_diagnostics.py` pins the key set and the outcome
+semantics for all three handler kinds.
+
+Activation is per accessor and per build. `wait_diagnostics()` always works and
+needs no configuration; the trace events exist only when the crate is built with
+`tracing-compat`, where each event costs one `tracing` call on the interpreter
+thread. In a build without that feature `emit_event` is a compiled no-op, so
+the only per-wait cost is the counter update: one relaxed `fetch_add` when the
+wait is marked in flight, and on return one relaxed `fetch_sub` for the gauge
+plus two relaxed `fetch_add` calls and one relaxed `fetch_max` for the outcome
+and durations, with no allocation, formatting, or lock. The timer also reads
+the clock twice, once before the detached section and once after it, so
+`elapsed_us` includes the time taken to reattach to the interpreter as well as
+the wait itself. No benchmark has measured this overhead; treat the cost
+description as a design statement rather than a measured figure. Readings are
+cumulative for the life of the handler, so an operator reports a delta between
+two snapshots rather than reinterpreting a total.
+
+The counters are diagnostic signals, not error rates:
+
+- `handle_queue_full` and `handle_timed_out` rising against
+  `handle_accepted` mean producers outrun the worker under a `drop` or
+  `timeout` policy, and records are being lost.
+- `handle_closed` is an expected post-shutdown call. `handle_disconnected`
+  means the worker's channel disappeared while the handler still looked open,
+  which points at a worker that died rather than at a deliberate close.
+- `flush_failed` points at the file or filesystem. `flush_enqueue_timed_out`
+  means the request never reached the worker because the queue was saturated;
+  `flush_ack_timed_out` means the queue accepted the request but the worker did
+  not answer in time. Acceptance by the queue is not acceptance by the worker:
+  the worker may still be formatting or writing an earlier record and may not
+  have read the flush command at all. Neither outcome implies the records were
+  lost.
+- `flush_closed` is an expected post-shutdown call; `flush_disconnected` again
+  points at a worker that died.
+- `close_timed_out` means the worker did not signal completion within the
+  one-second bound, so queued records may still be unwritten. `close_panicked`
+  means the worker signalled completion but its thread had panicked, so the
+  final flush may not have run. `close_unknown` means completion was observed
+  but no verdict was recorded. A worker that installs its exit guard records a
+  verdict before signalling completion, so this is the initial value and a
+  defensive fallback rather than an expected outcome.
+- `waits_in_flight` is a snapshot, not a verdict. A value above zero means at
+  least one caller was still inside a wait when the snapshot was taken: a
+  producer not yet accepted, a flush still unacknowledged, or a closer still
+  waiting. A zero reading does not identify the cause of latency that has
+  already ended, and a non-zero reading does not prove the worker has stopped
+  for good: a `handle()` blocked behind a busy worker keeps the gauge above
+  zero after a `close()` times out, and that worker may still recover and
+  drain. Sample the gauge over time and read it beside the outcome counters
+  rather than treating one reading as a diagnosis.
+- A `max_wait_micros` close to `total_wait_micros` with few operations
+  suggests one slow wait rather than sustained pressure; the reverse suggests
+  steady queueing.
+
+`wait_outcomes.rs` owns the classification these counters rely on, so adding a
+new outcome is a single match arm plus one key, and the fixed-key test fails
+until the Python surface and its stub agree.
 
 ## Configuration transaction
 

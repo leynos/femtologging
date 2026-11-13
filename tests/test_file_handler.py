@@ -154,7 +154,12 @@ def test_file_handler_flush_concurrent(
 ) -> None:
     """Concurrent ``flush()`` calls should each succeed."""
     path = tmp_path / "flush_concurrent.log"
-    with file_handler_factory(path, 8, 1) as handler:
+    # Each writer enqueues one record and one flush command on the same bounded
+    # channel, and ``flush()`` now releases the GIL while it waits. Five
+    # writers can therefore hold ten commands in the queue at once; capacity
+    # 16 keeps the test on the success path instead of the drop policy's
+    # documented queue-full error.
+    with file_handler_factory(path, 16, 1) as handler:
 
         def send_and_flush() -> None:
             """Handle a message and assert that flush succeeds."""

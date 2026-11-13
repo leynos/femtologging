@@ -1,0 +1,1867 @@
+# Release the GIL around Python-exposed file-handler operations that may block
+
+This ExecPlan is a living document. The sections `Constraints`, `Tolerances`,
+`Risks`, `Progress`, `Surprises & Discoveries`, `Decision Log`, and
+`Outcomes & Retrospective` must be kept up to date as work proceeds.
+
+Status: COMPLETE
+
+Related: [Issue #441](https://github.com/leynos/femtologging/issues/441)
+
+## Purpose / big picture
+
+Python can construct `FemtoFileHandler` with `policy="block"` or
+`policy="timeout:N"`, then call its public `handle()` method directly. Those
+methods enter potentially blocking Crossbeam channel operations while PyO3
+still holds the GIL, so a slow or stalled file worker can stall the entire
+interpreter rather than just the calling thread.
+
+After this work, every Python-exposed file-handler wait releases the
+interpreter lock before it waits, so other Python threads keep running while
+one thread is parked on back pressure.
+
+Observable outcomes:
+
+- `handler.handle(...)` under `policy="block"` no longer starves a second
+  Python thread.
+- `handler.flush()` and `handler.close()` release the lock across their waits.
+- A started `close()` releases its Python borrow before it waits, so calls
+  made during the wait observe a closed handler: `handle()` raises, `flush()`
+  returns `False`, and a second `close()` shares the same completion wait.
+- A blocked `handle()` still holds its shared borrow, but `close()` needs only
+  a shared borrow too, so a concurrent `close()` starts, takes the shutdown
+  state and waits on the shared completion signal instead of raising.
+- The rotating and timed-rotating wrappers inherit the same contract.
+- Python tests, isolated in subprocesses, demonstrate a second thread making
+  progress while a direct `handle()` call is blocked.
+
+## Constraints
+
+- Existing Python-visible signatures must not change except for one additive
+  method: `wait_diagnostics()` is new, and the `.pyi` stubs add only its
+  declaration for the rotating and timed-rotating wrappers.
+- Argument parsing and Python exception construction stay on the GIL-owning
+  side of the boundary.
+- The one-second file-handler `flush()` and `close()` deadlines and `Drop` are
+  unchanged; the GIL release, the outcome classification and the bounded wait
+  diagnostics are the new behaviour.
+- `--no-default-features` and `--cfg loom` builds must keep compiling. Loom
+  compiles the bindings but does not invoke Python methods or model the GIL; no
+  cfg guard is needed around `Python::detach` in these bindings.
+- `policy="block"` stays available to Python; its shutdown semantics are
+  documented rather than changed.
+
+## Tolerances (exception triggers)
+
+- If detaching changes observable Python behaviour beyond the two documented
+  borrow states — a blocked `handle()` sharing its borrow with a concurrent
+  `close()`, and a started `close()` exposing a closed handler to later calls —
+  stop and re-plan. Both states must be documented and tested.
+- If the Loom lane cannot be kept green without weakening a model, stop and
+  raise it rather than weakening the model.
+
+## Risks
+
+- **Deadlock via re-entrancy.** `py.detach` releases the lock around a wait
+  whose worker might itself need the GIL. The file worker formats through a Rust
+  `FemtoFormatter`; the Python-callable formatter is adapted at build time, so
+  the worker can acquire the GIL normally. Detaching removes a lock the caller
+  held, which can only reduce deadlock risk, not raise it.
+- **`Send` bounds.** `py.detach` requires the closure and its return type to be
+  `Ungil` (i.e. `Send`). `HandlerError` must be checked for `Send`; if it is
+  not, the closure maps it to a `Send` representation.
+- **Test flakiness.** The regression test asserts a bounded number of watchdog
+  progress records land inside the blocked call's own window. Subprocess
+  isolation, generous in-child waits and a low threshold keep it stable.
+
+## Conformance basis
+
+Issue [#441](https://github.com/leynos/femtologging/issues/441) and source
+finding `3e0c8fe12a0081918a117d28e165c10e` define the implementation scope:
+Python-exposed file-handler waits must release the GIL, and the block and
+timeout policies must be covered by observable concurrency tests. The issue's
+acceptance items map to Tasks 1–4 below and the verification obligations in
+this plan. The design contract for the detached waits is recorded in the
+"Python-facing lifecycle waits" section of
+[the design document](../rust-multithreaded-logging-framework-for-python-design.md).
+The only new public surface is the additive `wait_diagnostics()` method, which
+the design, user and migration guides document; no new dependency is
+introduced, so no separate Terms of Reference or ADR is required.
+
+## Verification plan
+
+- **Boundary invariant:** parsing and Python exception creation remain attached
+  to the interpreter; only Rust-owned values and operations cross `py.detach`.
+  PyO3 0.30.1 documents that the closure and return value must implement
+  `Ungil`; the Rust compiler checks this bound. The methods are covered by
+  `make typecheck`, every Clippy feature lane, and the Loom build included in
+  `make test`.
+- **Interpreter-progress invariant:** a full capacity-one queue parks the
+  producer in `send` or `send_timeout` while another Python thread records
+  progress inside that call's window. The subprocess tests exercise all three
+  file-handler builders; the flush and close scenarios exercise their
+  acknowledgement and shutdown waits. `make test` builds the extension and runs
+  these tests. The negative control reintroduced the original GIL-holding call
+  and failed exactly the three direct file-handler tests, so the oracle rejects
+  the intended defect.
+- **Backpressure and shutdown contract:** the one-second flush and close
+  deadlines and `Drop` remain unchanged. The scenarios check timeout failure,
+  accepted-record output, `flush() == False` after its deadline, and that a
+  concurrent Python `close()` starts while a blocked call retains its shared
+  PyO3 borrow, takes the shutdown state and waits on the shared completion
+  signal without raising. They also check that a `close()` started while the
+  worker is parked exposes a closed handler: `handle()` raises, `flush()`
+  returns `False`, and a second `close()` shares the same completion wait.
+- **External interface assumptions:** the version-matched PyO3 0.30.1 API
+  documents `Python::detach` and its `Ungil` bound at
+  <https://docs.rs/pyo3/0.30.1/pyo3/marker/struct.Python.html#method.detach>.
+  Crossbeam Channel 0.5.15 documents that `Sender::send` blocks until send or
+  disconnection, while `send_timeout` additionally returns when its duration
+  expires at
+  <https://docs.rs/crossbeam-channel/0.5.15/crossbeam_channel/struct.Sender.html>.
+  These third-party semantics are treated as assumptions; the tests exercise
+  the repository's real bindings and worker queue. No formal proof or model
+  changes are introduced; Loom continues to cover the Rust channel lifecycle,
+  while the Python subprocess tests cover the GIL boundary.
+- **Documentation invariant:** the user and developer contract stays aligned
+  with the implementation and builder outputs, and the design document's
+  "Python-facing lifecycle waits" section states the boundary the bindings
+  implement. `make markdownlint` checks prose, spelling, and links;
+  `make nixie` checks diagrams.
+
+## Progress
+
+- [x] Reconnaissance, builder audit, and source-boundary review completed.
+- [x] Tasks 1–4 implemented: shared, rotating, and timed-rotating Python
+      bindings detach around waits; builders need no changes; Python
+      subprocess regressions and user/developer documentation added.
+- [x] The negative control reintroduced the original file-handler `handle()`
+      defect and failed exactly the three file-handler tests that exercise it.
+- [x] Previously rebased onto `origin/main` at `5377ceb`, including PyO3 0.30.1
+      and the expanded Clippy feature matrix; resolved the three handler-file
+      conflicts.
+- [x] The first complete gate sequence on HEAD
+      `a994236507ae11a3280018143f8b3b70323b4892` passed
+      `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+      `make markdownlint`, and `make nixie`. The test target reported 763
+      passed, 5 skipped, 1 warning, and 66 snapshots passed; all nine GIL
+      regressions passed.
+- [x] The first `coderabbit review --agent` completed with 12
+      findings. Triage identified follow-ups: document and test PyO3 borrow
+      errors during detached `close()`, derive outer timeouts from both nested
+      subprocess budgets, and clean stale plan and prose details.
+- [x] Addressed the review follow-ups: expanded flush/close and borrow-error
+      scenarios across all three wrappers, derived nested-test deadlines from
+      their subprocess budgets, and reconciled the plan and user-guide prose.
+- [x] Completed the first-review follow-ups and reran all six deterministic
+      gates. `make test` reported 775 passed, 5 skipped, 1 warning, and all 21
+      GIL regression cases passed.
+- [x] The second CodeRabbit review completed with three findings. The two
+      support-helper docstrings now have structured parameters and documented
+      result semantics, and overflow-policy docs limit the no-wait claim to
+      `handle()` enqueues.
+- [x] Resolved Ruff's docstring follow-ups by documenting the runner's
+      no-value result in prose, as Ruff rejects a `Returns` section for an
+      implicit `None`; removed the renderer's implicit `KeyError` section.
+- [x] The third CodeRabbit review identified sentence-case headings and an
+      ineffective close instruction. The headings are normalized, and the
+      shutdown guidance now says to restore worker progress and let the
+      blocked call finish before closing.
+- [x] Reran all six deterministic gates after the third-review fixes.
+      `make test` reported 777 passed, 5 skipped, 1 warning, and all 21 GIL
+      regression cases passed; Markdownlint reported 0 errors and Nixie
+      validated every diagram.
+- [x] Rebased the 13-commit issue series from `5377ceb` onto the fetched
+      `origin/main` at `d234990`. The `range-diff` retained all 13 commits; the
+      only conflict was in `docs/users-guide.md`. The resolution preserves the
+      newer formatter guidance while carrying forward the GIL contract and
+      blocking-policy qualification.
+- [x] Reran all six deterministic gates on the rebased candidate rooted at
+      `723fb02`, including the reapplied review follow-ups. `make test` reported
+      804 passed, 5 skipped, 1 warning, and 66 snapshots passed; Markdownlint
+      checked 61 files with 0 errors, and Nixie validated every diagram. The
+      source and test files have not changed since this complete run.
+- [x] Completed the post-cooldown CodeRabbit review against the rebased
+      candidate. It reviewed 12 files and raised one valid minor documentation
+      concern: a blocked file-handler worker can leave the logger's separate
+      bounded queue unable to drain, so `logger.log()` may still drop records.
+      The user guide now distinguishes file-handler and logger queue drops.
+- [x] Reran the docs-only gates after the documentation repair: `make fmt`,
+      `make check-fmt`, `make markdownlint`, and `make nixie` passed. The
+      CodeRabbit follow-up reviewed all 12 changed files and reported 0
+      findings.
+- [x] Pushed the original implementation and created draft PR #550 with
+      `Closes #441` and the Lody session reference.
+- [x] The final CodeRabbit review identified missing coverage for a second
+      `close()` call during detached close. Added the case for all three
+      builders; the complete six-gate run passed with 807 tests passed, 5
+      skipped, 1 warning, and 66 snapshots passed.
+- [x] Committed and pushed the close-on-close review follow-up as `c6ebda9`.
+- [x] The review of `c6ebda9` found two scope overstatements: the user guide's
+      GIL guarantee needed to name explicit Python calls, and the developer
+      guide needed to acknowledge other blocking handler families. Both prose
+      findings were corrected and pushed as `da7d568`; formatting, Markdownlint
+      and Nixie passed, the draft PR body was refreshed, and CodeRabbit reported
+      no findings on the updated head.
+- [x] Rebased the branch from `33858df` onto the fetched `origin/main` at
+      `187aea7`. All 17 issue commits plus the CodeScene-directive commit
+      replayed byte-identically; only `docs/developers-guide.md` changed on
+      both sides, and the merge keeps both the target's Dependabot and Rust
+      build-standard sections and this branch's GIL sections. Every
+      target-only path remains byte-identical to the target.
+- [x] Rerun the six deterministic gates on the rebased candidate and record the
+      results here. On `ef5bc04` plus the test-isolation and CodeScene fixes,
+      `make check-fmt` (1 s), `make lint` (2 496 s, including all eight Rust
+      Clippy lanes, the five-stage Python pipeline and the Whitaker Dylint
+      pass), `make typecheck` (200 s) and `make test` (5 962 s) all exited 0.
+      `make test` reported 855 passed, 5 skipped and 66 snapshots passed.
+      `make markdownlint` and `make nixie` passed on the final head. The long
+      durations are the shared compile queue, not failing work; see
+      "Host compile admission and the build-standard contract tests".
+- [x] Committed the host-isolation fix for the build-standard contract tests as
+      `0725590` and the timed-rotating CodeScene directive as `3c92306`.
+- [x] Rebased onto the advanced `origin/main` at `f26b696` after the review
+      below. The only commit that became empty was the `typos.toml`
+      regeneration, whose content `f26b696` already contains; the remaining 22
+      commits replayed unchanged.
+- [x] Closed the post-rebase review findings: separated the two borrow states in
+      the user guide, corrected the overflow-policy exception mapping, added the
+      migration-guide section, expanded the close-scenario module docstring,
+      added the flush-acknowledgement scenario, made the close hand-off
+      deterministic with `sys.setswitchinterval`, and added a minimum-wait guard
+      to the progress oracle. See "Post-rebase CodeRabbit findings".
+- [x] Split the scenario bodies out of `tests/file_handler_gil_scenarios.py`
+      into
+      `tests/file_handler_gil_wait_scenarios.py`. The added flush-acknowledgement
+      scenario had pushed the module past the 400-line limit that Pylint's
+      `too-many-lines` check enforces; the harness and renderer stay in the
+      original module, which now composes `WAIT_BODIES` with the close bodies.
+- [x] Fixed a hosted-CI abort in `test_blocking_close_releases_the_gil` on
+      CPython 3.12 (child exit `-6`, no child output). The `close` scenario
+      parked the worker for longer than the binding's one-second shutdown wait,
+      so `close` timed out and detached the worker thread. That thread then
+      attached to Python to run the formatter while the child interpreter was
+      finalizing. PyO3 0.30 only guards against attaching during finalization
+      on CPython 3.13 and later (`#[cfg(Py_3_13)]` around the
+      `Py_IsFinalizing` check), so 3.12 reaches `PyGILState_Ensure` in the
+      finalizing interpreter and aborts. The scenario now releases the worker
+      after `CLOSE_HOLD_SECONDS` (0.6 s), which is inside the deadline, so the
+      call ends through the worker's acknowledgement and joins it. The window
+      under test stays above the 0.5 s minimum, and no detached worker
+      survives to the child's teardown. Reproduced on CPython 3.12.15 with a
+      standalone script: releasing the parked worker 1.2 s into the close
+      aborted 2 of 5 runs at interpreter exit, while releasing it at 0.6 s
+      aborted none of 20, and `tests/test_file_handler_gil_release.py` passed
+      all 27 scenarios under 3.12.15.
+- [x] Repaired the `render_scenario` doctest. The harness gained `import sys`
+      for the close probe, so the example that asserted the program starts with
+      `import threading` no longer held; it now checks that the harness and the
+      selected body both reach the rendered program.
+- [x] Addressed the five findings from the review of `ddf9984` and pushed
+      `385e48e`: the ExecPlan's `py_close` and Task 3 bullets now match the
+      shipped design, the users' guide no longer claims a refused `close()`
+      performs its shutdown wait, `flush()` is named in the borrow rules and
+      the migration guide, the v0.2.0 guide follows the documentation style
+      guide, and the `run_scenario` doctest writes into a temporary directory.
+      A new `concurrent-close-flush` scenario pins the flush borrow for all
+      three builders. On `385e48e`, `make check-fmt` (2 s),
+      `make markdownlint` (4 s), `make nixie` (0 s), `make lint` (3 651 s),
+      `make typecheck` (676 s) and `make test` (16 064 s) all exited 0;
+      `make test` reported 911 passed, 5 skipped and 66 snapshots passed.
+- [x] Rebased `6602359` onto `origin/main` at `9e6640de` (#545, the
+      interior-mutability close redesign) and reconciled the close contract.
+      All 27 commits replayed to `3694851`; the exclusive-borrow narrative in
+      the user guide, migration guide, module docstrings, tests and this plan
+      was rewritten to the shared-completion contract. See "Rebase onto
+      `origin/main` at `9e6640de` and reconciliation with #545".
+- [x] Split the Python bindings out of
+      `rust_extension/src/handlers/file/mod.rs` into `file/python.rs`. The
+      rebase merged #545's shared-borrow close into the binding file and pushed
+      it to 403 lines, over the 400-line `module-max-lines` limit. The move
+      mirrors `rotating/python.rs` and `timed_rotating/python.rs`; `mod.rs` is
+      now 292 lines and the new module 126.
+- [x] Rewrote the `concurrent-close-flush` scenario to the shared-borrow
+      contract. It had still asserted that a `close()` beside an in-flight
+      `flush()` raises `RuntimeError`; it now runs the close on its own thread,
+      asserts that it returns without raising, and releases the worker so the
+      in-flight flush still reports `True`. The matching test was renamed to
+      `test_close_while_flush_is_in_flight_returns_without_raising`. The
+      `FemtoLogRecord` import moved from `file/mod.rs` to `file/tests.rs`,
+      which is its only non-binding user, clearing an unused-import warning.
+
+- [x] Rebased `6602359` onto `origin/main` at `3e1c9ef3` (#548). All 29
+      branch-owned commits replayed with no conflicts; `git range-diff`
+      reported `=` for every entry, so each patch was preserved exactly. The
+      Weave driver was bypassed because only global attributes selected it,
+      and the branch touched none of main's files, so no lockfile needed
+      rebuilding. The rebased head is `c70a125d`.
+- [x] Addressed the two remaining review findings in `c70a125d`.
+      `concurrent-close-flush` no longer parks the worker for
+      `CLOSE_HOLD_SECONDS`: it settles, checks that the flush is still active,
+      starts the close on its own thread, checks that the closer is still
+      active, and then releases the worker. The ExecPlan no longer describes
+      the follow-up gate run as pending.
+- [x] Completed the documentation pass for the review's Developer Documentation
+      and Observability warnings. The design document's "Python-facing
+      lifecycle waits" section now covers the direct `handle()` wait, the
+      `py.detach` boundary, parsing and exception construction on the
+      interpreter side, the three file-handler wrappers, and the shared
+      close-borrow contract. The developer guide's scope sentence now names
+      the bindings that detach `flush()` from those that remain follow-up
+      work. Issue
+      [#551](https://github.com/leynos/femtologging/issues/551) was extended
+      to cover the `handle()` enqueue wait when the warning was first
+      dispositioned. That disposition was later superseded: the telemetry is
+      instrumented in this PR. #551 still owns the exporter, the bridge
+      decision and maximum-level counters, the facade-prefilter note, the
+      overhead benchmark, and the operational alerting documentation; the
+      completed and remaining criteria are listed under "Handler-wait
+      telemetry".
+- [x] Answered the second review round's Observability finding with
+      behavioural coverage rather than enum-conversion tests alone. The
+      scripted writer holds the worker at a chosen stage, so the new tests
+      drive a timed-out enqueue, a saturated queue, a dead worker, an
+      unanswered acknowledgement, an I/O flush failure, a blocked shutdown, a
+      panicking shutdown, and a later closer reading a panic recorded after an
+      earlier closer timed out. A separate `tracing-compat`-only module pins
+      the event target, the five bounded fields, and that counters still
+      record with no subscriber. The writer and its helpers live in their own
+      module so no test file exceeds 400 lines.
+- [x] Rebased the 49-commit series onto `origin/main` at `aed7f5af`, which
+      carries #590's `missing_docs` deny and #581's locked-dependency fetch.
+      `range-diff` reports every commit identical except `785732f6`, where the
+      replay merges main's new `flush()` doc comment into this branch's
+      rewritten body. `Makefile` and `rust_extension/Cargo.toml` are
+      byte-identical to the target, so neither of main's changes was lost.
+- [x] Closed the third review round's five findings. The lifecycle state
+      machine now tolerates only the failure its overflow policy documents:
+      `queue full` for `drop`, an expired send deadline for `timeout`, and
+      nothing at all for `block`. The assertion moved out of the `except`
+      handler to satisfy Ruff's `pytest-assert-in-except`, so a disconnected
+      worker still fails the example. The plan's telemetry description now
+      says sixteen outcomes and sixteen counters and names `classify_enqueue`.
+      The users guide no longer calls `"block"` a delivery guarantee.
+      `telemetry_event_tests.rs` now drives the Python `flush()` binding
+      through a real `FlushOutcome::AckTimedOut` and asserts both the counter
+      and the emitted event.
+- [x] Closed the fourth review round's three findings. This plan's constraints
+      and verification bullet are additive: existing signatures stay, and
+      `wait_diagnostics()` is the one new method. The worker closure rebinds
+      `rx` and `formatter` as body locals so they drop before `_signal` fires
+      instead of after it. `WorkerTerminal::Unknown` and the developer guide
+      now describe `Unknown` as the initial value and a defensive fallback
+      rather than an observable `panic = "abort"` outcome.
+- [x] Rebased the 53-commit series onto `origin/main` at `0f116690`, whose
+      DF12-104 change moved interrogate into its own target over `tests`,
+      `scripts`, `examples`, and `rust_extension`. The pre-rebase and
+      post-rebase trees differ by exactly that commit's 50-file, 635-insertion,
+      40-deletion delta, so no branch work was lost; `git range-diff` reports 52
+      commits identical and one whose hunk differs only because main's new
+      docstring line is now context. Seven test helpers and
+      `HandlerLifecycle.__init__` gained docstrings, and `make interrogate`
+      reports 100.0% with no MISSED rows. The full gate chain then passed on
+      `eb9ffb47`: `make test` reported 1116 passed, 6 skipped, and 66 snapshots
+      in about 39 minutes, with all four cargo lanes and pytest green.
+- [x] Split the wait-telemetry module along its three responsibilities because
+      Whitaker's `module-max-lines` lint rejected the 464-line file. `outcome`
+      owns the closed vocabulary, `diagnostics` owns the counters and the
+      snapshot, and `timer` owns the timing and the event contract, with the
+      unit tests in a fourth sibling. The file-handler event tests were split
+      the same way: `telemetry_event_tests` keeps the capture machinery and the
+      synthetic event-shape assertions, and `telemetry_binding_tests` holds the
+      five tests that drive the real Python `flush()`, `handle()`, and `close()`
+      bindings. Both suites share one collector so an event cannot be rendered
+      two ways.
+- [x] Fixed the later-close binding test, which asserted two events from one
+      subscriber scope. `tracing::subscriber::with_default` scopes capture, so
+      the second `close()` now runs under its own collector; the timeout stays
+      counted once and the completion is counted and emitted once.
+- [x] Refactored the lifecycle state machine's `handle` rule into
+      `_assert_closed_refusal` and `_assert_open_outcome`, removing the bare
+      `return` and pairing the closed and open checks.
+
+## Negative control (evidence that the tests detect the defect)
+
+The suite was run against a deliberately reintroduced defect. Only `py_handle`
+in `handlers/file/mod.rs` was changed back to calling
+`FemtoHandlerTrait::handle` directly, holding the GIL; `py_flush`, `py_close`,
+and both rotating bindings were left fixed. The extension was rebuilt
+(`make build`, exit 0) and the suite re-run:
+
+| Test                                                      | Result | Child's own diagnosis                                                                       |
+| --------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| `test_blocking_handle_releases_the_gil[file]`             | FAIL   | child never finished within the 20s budget                                                  |
+| `test_timed_handle_releases_the_gil[file]`                | FAIL   | `recorded only 2 progress record(s) during the 2.006s wait in handle (expected at least 5)` |
+| `test_close_while_handle_is_blocked_raises_runtime_error` | FAIL   | child never finished within the 20s budget                                                  |
+| `...[rotating]`, `...[timed-rotating]`                    | pass   | those bindings were left fixed                                                              |
+| `flush`, `close`                                          | pass   | those bindings were left fixed                                                              |
+
+The three failures are exactly the three tests that exercise `handle()` on the
+file handler. The 2-record result against a 5-record bar, during a 2.006 s wait
+where a released wait yields hundreds, is the discriminating signal the verdict
+was designed around. The suite is therefore regression evidence rather than a
+description of current behaviour.
+
+The fixed source was restored afterwards and the working tree confirmed
+identical to the committed revision before rebuilding.
+
+A second, cheaper control was run without any rebuild: the scenario harness was
+pointed at `ctypes.PyDLL.usleep` (holds the GIL across the callee, like a
+blocked Rust binding) and `ctypes.CDLL.usleep` (releases it). The detector
+rejected the first and accepted the second. A pure-bytecode busy-wait would
+*not* have been a valid stand-in for the defect, because CPython's eval breaker
+drops the GIL every few milliseconds; only a call that blocks below the
+interpreter reproduces the freeze.
+
+The oracle was later hardened (see "Post-rebase CodeRabbit findings"): the
+watchdog now starts only after the blocking call has been alive for 50 ms. That
+changes which assertion fires first for a GIL-holding call, so the control was
+recalibrated against the same `ctypes` pair with the hardened oracle. The
+`PyDLL` call — which holds the GIL across the callee — was rejected by the
+settle guard, and the `CDLL` call — which releases it — was accepted with
+progress records inside the call's own window. The Rust-side control above
+still stands for the production code, which this hardening does not touch.
+
+## Surprises & discoveries
+
+- `handlers/rotating/core.rs` and `handlers/timed_rotating/core.rs` both
+  `delegate!` `flush`/`close`/`handle` to an inner `FemtoFileHandler`, so the
+  wrappers are thin and the detach belongs in the wrapper `#[pymethods]`, not
+  the core.
+- `handlers/mod.rs` is **not** Python-gated: `pyo3::create_exception!` and the
+  `#[pyclass]` attributes on `FemtoFileHandler` compile without the `python`
+  feature, because `pyo3` is an unconditional dependency with `auto-initialize`
+  and `macros`. The `python` feature only gates `extension-module` linking and
+  a handful of `#[cfg(feature = "python")]` re-exports. This matters because it
+  means the `#[pymethods]` blocks always compile.
+- The `--cfg loom` lane builds `--no-default-features`, so `feature = "python"`
+  is off but the `#[pymethods]` code still compiles. **Correction to the
+  original reading:** no `cfg(not(loom))` guard is needed here.
+  `logger/worker.rs` needs one because it *attaches* to the interpreter from a
+  thread that does not have a token; these methods only consume a `Python<'_>`
+  token PyO3 already handed them. Nothing in the bindings calls
+  `Python::attach`.
+- `Python::detach` does **not** release the pyclass borrow flag. A blocked
+  `handle()` therefore holds its shared borrow for the whole wait. Under the
+  final design `close()` also needs only a shared borrow, so it starts, takes
+  the shutdown state and waits on the shared completion signal rather than
+  being rejected. Task 3 pins that contract.
+- A Loom model cannot observe the GIL at all: the model replaces both the
+  channel and the thread, so there is no interpreter holding a lock to release.
+  The regression evidence has to come from Python, which is why Task 3 spawns
+  subprocesses.
+- The timed-rotating Python wrapper maps enqueue failures to `ValueError`,
+  whereas the file and size-rotating wrappers use `RuntimeError`. The GIL
+  change keeps these existing exception mappings on the attached side of
+  `detach`; the timeout documentation and parametrized tests record the current
+  distinction instead of changing Python-visible behaviour.
+
+## Rebase onto a moved `origin/main`
+
+While the gates were running, `origin/main` advanced six commits, including a
+pyo3 upgrade and a new lint. The branch had to be rebased before it could be
+reviewed, let alone merged.
+
+| Upstream change                                                         | Effect on this branch                                                                             |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `pyo3` 0.29.3 → 0.30.1 (Dependabot #542)                                | None in source. `Python::detach` keeps the same signature and `Ungil` bounds in 0.30.1.           |
+| Deny `missing_docs_in_private_items` (#422, #453)                       | Every item on this branch already carries a doc comment, including the three `py_handle` methods. |
+| Clippy feature lanes 5 → 8 (`extension-module`, `test-util`, `default`) | Widens the matrix each lane is checked under; no source change.                                   |
+
+The three conflicted files were `handlers/file/mod.rs`,
+`handlers/rotating/python.rs` and `handlers/timed_rotating/python.rs`; upstream
+had attached doc comments to the very methods this branch rewrote. Both sides
+only ever added prose, so each hunk was resolved by keeping upstream's
+description and appending this branch's GIL contract to it, then re-applying
+the three-method change. Nothing was dropped from either side.
+
+Two artefacts came out of the resolution and were removed in their own commit:
+the merge tool appended a `// weave: run 'weave explain ...'` hint to the end
+of each resolved file, and doubled two blank lines in `handlers/file/mod.rs`.
+`rust_extension/src/logger/mod.rs` carries the same hint on `origin/main`; it
+is upstream's, and untouched here.
+
+At that point, `git rev-list --left-right --count origin/main...HEAD` reported
+`0 9`, so the branch was a strict fast-forward from main, and the diff against
+main was the intended ten files.
+
+## Rebase onto `origin/main` at `d234990`
+
+Before publication, the fetched target advanced to `d234990`
+(`Add contextual handler filters and formatters`). The previous exclusive base
+remained `5377ceb`: the earlier rebase receipt and reflog show that commit was
+`origin/main` when the issue series began, and the branch contains no merge
+commits. All 13 later commits are issue-specific.
+
+The candidate's tracked, unstaged changes and untracked test scenario were
+preserved in a verified recovery snapshot and stash before replay. The replay
+used Git's built-in `zdiff3` merge driver because the repository's tracked
+attributes select Weave for Rust files and this unattended rebase did not
+request Weave dogfooding. All 13 commits replayed. `git range-diff` shows an
+expected change to the documentation commit: it now retains the newer
+formatter-builder and percent-style guidance from the target. The only new
+conflict was in `docs/users-guide.md`; its resolution keeps those upstream
+changes and adds the file-policy qualification plus the GIL contract. The
+working changes then reapplied without conflicts. The rebased branch reports
+`0 13` against `origin/main` at `d234990`.
+
+The earlier six-gate run and CodeRabbit review apply to `a994236`, before this
+rebase. The post-cooldown reviews and follow-ups also completed on the rebased
+candidate. The close-on-close test follow-up passed all six deterministic gates
+and was pushed. The final two documentation-scope findings were corrected and
+pushed in `da7d568`; the docs gates passed and CodeRabbit reported no findings
+on that head.
+
+The earlier pre-rebase gate results did not apply to this dependency and lint
+matrix. The complete gate run on the rebased candidate is recorded in
+`Progress`.
+
+## Rebase onto `origin/main` at `187aea7`
+
+The PR target advanced again after the implementation was complete. The fetched
+target was `187aea7`; the exclusive base was `33858df`, the commit on
+`origin/main` from which the issue branch was cut. The branch contains no merge
+commits, `git cherry` marks every commit as absent upstream, and the series
+held 17 issue commits before the replay, so no inherited parent work was in
+range.
+
+The target's five new commits were dependency and build-standard changes:
+
+| Upstream change                                  | Effect on this branch                                                                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repin `install-whitaker` (#574)                  | Workflow-only; the Whitaker Dylint lane runs unchanged from this branch.                                                                                      |
+| `setup-uv` action bump (#557)                    | Workflow-only.                                                                                                                                                |
+| Rust build standard (#577)                       | Adds `.cargo/config.toml`, `rust_extension/Cargo.toml` settings, Makefile and workflow changes, and a contract test. This branch touches none of those paths. |
+| Dependabot moves to uv and groups maturin (#578) | Adds a Dependabot contract test and a developer-guide grouping section, which the merge retains.                                                              |
+| Minor-and-patch group bump (#579)                | `uv.lock` only; the target version is inherited.                                                                                                              |
+
+`merge=weave` was selected for Rust and Python files only by the user-wide
+attributes file at `~/.config/git/attributes`; the repository tracks no
+`.gitattributes` and has no `.git/info/attributes` rule. Under the unattended
+rebase policy the replay therefore used Git's built-in merge machinery with
+`zdiff3` and `-c core.attributesFile=/dev/null`, and no Weave driver
+participated.
+
+All 18 commits replayed, and `git range-diff` reports every commit unchanged.
+No conflict was raised. The only path changed on both sides is
+`docs/developers-guide.md`: the target-only paths (`.cargo/config.toml`, the
+workflows, `Makefile`, `rust_extension/Cargo.toml`, the dependency contract
+tests, and `uv.lock`) are byte-identical to `187aea7`, and the merged guide
+keeps the target's `Dependabot grouping`, `Rust build standard`,
+`Development build footprint`, and `Cranelift` sections alongside
+`Releasing the GIL at the Python boundary` and `Testing the boundary`. The
+branch now reports 18 commits ahead of `origin/main`.
+
+The earlier gate evidence applies to the pre-rebase head; the gate run for this
+candidate is recorded in `Progress`.
+
+## Rebase onto `origin/main` at `6180cd5` and reconciliation with #546
+
+While this PR awaited review, `origin/main` gained `6180cd5` (#546, "Honour
+wrapped stdlib handler levels in StdlibHandlerAdapter"). That change
+independently released the GIL around `flush()` and `close()` in the same three
+file-handler bindings, and introduced `WorkerShutdown` and `take_shutdown()` so
+a close can wait outside the Python borrow.
+
+The replay kept the issue's unique contribution and adopted the landed design
+rather than reverting it:
+
+| Area                            | Resolution                                                                                                                                                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handle()` detach               | Kept from this branch; #546 did not detach `handle()`, which is the operation issue #441 is about.                                                                                                                                                                           |
+| `flush()` detach                | Upstream's form retained; this branch's identical detach was dropped.                                                                                                                                                                                                        |
+| `close()` detach                | Upstream's `Py<Self>`/`take_shutdown()`/`detach` form retained. This branch's `&mut self` form is gone because upstream's releases the borrow before waiting.                                                                                                                |
+| Close-borrow contract           | Rewritten. A waiting close no longer rejects concurrent calls: `handle()` reaches the closed handler and raises, `flush()` returns `False`, and a second `close()` shares the same completion wait. The user guide, migration guide, module docstrings and tests now say so. |
+| Blocked-`handle()` vs `close()` | Superseded by the rebase onto `9e6640de`: both calls take only a shared borrow, so a concurrent `close()` no longer raises. See "Rebase onto `origin/main` at `9e6640de` and reconciliation with #545".                                                                      |
+| Developers' guide               | The flush/close section from #546 is kept; this branch's section was narrowed to `handle()` and the shared `Ungil` mechanics, and its test-oracle description was corrected.                                                                                                 |
+
+Conflicts appeared in the three Rust binding files and none in the tests or
+documentation, which merged textually. Three commits needed manual resolution:
+the GIL-release commit and the review-follow-up commit on the bindings, and the
+final review-follow-up commit, whose documentation claim about the exclusive
+close borrow was replaced with the landed behaviour.
+
+Running the focused concurrency suite against the rebased tree then exposed a
+defect in the adopted code. `py_close` took the exclusive borrow with
+`Py::borrow_mut`, which panics when a shared borrow is outstanding, so a
+`close()` concurrent with a blocked `handle()` surfaced as `PanicException`
+rather than the `RuntimeError` both branches document. A panic is not an
+acceptable FFI outcome, so all three bindings now use `try_borrow_mut` and map
+its refusal to `RuntimeError`. The same run showed that
+`FemtoTimedRotatingFileHandler.handle()` reports the closed handler as
+`ValueError`, matching its existing handler-error mapping; the `close-handle`
+scenario and both guides now state that instead of claiming `RuntimeError` for
+every binding. All 27 focused concurrency cases pass on the rebased tree.
+
+## Rebase onto `origin/main` at `6586148` and publication
+
+The reviewed candidate `40567ff` was rebased again after `origin/main` gained
+`6586148` (#553, bounded exception-graph traversal in `filter_frames()`). The
+replay re-applied 24 commits with `zdiff3` and produced `887c5a8`. One conflict
+appeared, in `docs/v0-2-0-migration-guide.md`: upstream added "Bounded
+exception-payload filtering" at the same place as this branch's "File-handler
+calls release the interpreter lock". Both sections were kept, separated by the
+document's horizontal rule; the rest of the replay applied cleanly.
+
+The rebase was verified before publication:
+
+- `range-diff` shows the same 24 commits with the same subjects and no dropped
+  or empty commit.
+- `git diff --check` is clean and no conflict marker remains.
+- The seven implementation and test files the negative control exercised
+  (`file/mod.rs`, `rotating/python.rs`, `timed_rotating/python.rs`,
+  `file_handler_gil_scenarios.py`, `file_handler_gil_close_scenarios.py`,
+  `file_handler_gil_support.py`, `test_file_handler_gil_release.py`) are
+  byte-identical between `40567ff` and `887c5a8`, so the recorded negative
+  control still describes the published tree.
+
+`887c5a8` was force-pushed over SSH with a lease bound to the previous remote
+head `40567ff`; `HEAD`, `refs/remotes/origin/<branch>` and `ls-remote` all
+report the same commit, and the branch upstream is the named remote branch.
+
+Two notifications were posted through the manual-comment token pool, which is
+the configured route for non-lifecycle comments:
+
+- The negative-control reply in the review thread,
+  <https://github.com/leynos/femtologging/pull/550#discussion_r4436821908>,
+  answering the request to restore GIL-holding waits and report the failures.
+- The ExecPlan assessment follow-up,
+  <https://github.com/leynos/femtologging/pull/550#issuecomment-6562066486>,
+  recording the three corrections, the #546 reconciliation, the pre-merge row
+  dispositions and the new base/head.
+
+The PR body was updated with the review follow-ups and the rebased candidate.
+The absent CI runs that had puzzled the earlier attempts are explained: both
+pushes before the rebase left the PR `CONFLICTING`, and GitHub creates no
+`pull_request` workflow run for a pull request that cannot be merged. The run on
+`887c5a8` started normally as soon as the conflict was gone.
+
+## Rebase onto `origin/main` at `9e6640de` and reconciliation with #545
+
+`origin/main` advanced to `9e6640de`, which includes #545: the file-handler
+close path was redesigned around interior mutability. `close()` now takes
+`&self`, takes the shutdown state under a mutex, and waits on a shared
+`Arc<ShutdownCompletion>` broadcast, so every closer observes the same
+completion signal and a close can start while another thread is detached in a
+flush. That design supersedes this branch's earlier exclusive-borrow close,
+which had used `try_borrow_mut` and mapped its refusal to
+`RuntimeError("Cannot close the handler while another call is using it")`.
+
+The branch was replayed from `OLD_BASE` `6586148` onto `TARGET` `9e6640de` with
+`zdiff3` and the built-in merge backend (Weave bypassed with
+`-c core.attributesFile=/dev/null`). All 27 commits replayed; `OLD_HEAD`
+`6602359` became `3694851`. Conflicts appeared in the three Rust binding files
+and in the user guide, migration guide, and the two close-scenario test modules.
+
+Resolution principle: keep #545's mechanism and this branch's purpose (release
+the GIL around the wait), and rewrite every claim that a concurrent `close()`
+raises. The resulting contract is:
+
+- `close()` takes only a shared PyO3 borrow, so it starts while a `handle()` or
+  `flush()` call is blocked. It takes the shutdown state and waits on the
+  shared completion signal, bounded by its one-second deadline; it does not
+  raise.
+- Once the shutdown state is taken, `handle()` raises `RuntimeError`
+  (`ValueError` from the timed-rotating binding), `flush()` returns `False`,
+  and a second `close()` shares the first one's completion wait.
+- A blocked `handle()` holds its own clone of the sender, so `close()` cannot
+  end that wait; the worker must make room.
+
+The `concurrent-close` scenario now asserts that `close()` returns without
+raising and that a later `handle()` reports the closed handler. The
+`close-handle`, `close-flush` and `close-close` scenarios assert the
+closed-handler observations. The stale "Common errors and fixes" row for the
+removed `RuntimeError` was deleted.
+
+## Host compile admission and the build-standard contract tests
+
+The first `make test` on the rebased candidate failed three cases in
+`tests/test_build_standard_contract.py`, a file the rebase inherited unchanged
+from `187aea7`. Two failed with `Timeout (>30.0s) from pytest-timeout` and one
+with a `cargo build failed` message in which sccache refused incremental
+compilation.
+
+`_compile_fixture` copies the repository's `.cargo/config.toml` into a one-file
+crate and removes every wrapper variable from the environment, which assumes
+the repository is the only source of Cargo configuration. It is not: this host's
+`~/.cargo/config.toml` sets
+
+```toml
+[build]
+rustc-wrapper = "/home/leynos/.local/bin/build-limits-rustc"
+rustdoc = "/home/leynos/.local/bin/build-limits-rustdoc"
+```
+
+and no environment variable overrides that. The fixture's three cargo builds
+therefore entered the shared compile-admission pool, where they queued behind
+other builds for longer than the suite-wide 30-second timeout, and the
+incremental-override case failed because the admission wrapper refuses
+incremental compilation for cache reasons.
+
+The fixtures were not weakened. `CARGO_HOME` now points at an empty temporary
+directory, so the fixture sees only the repository's own configuration, which
+is the boundary the test exists to pin. The crate has no dependencies, so the
+relocated home needs no registry cache, and the three cases pass in about a
+second. Neither the repository configuration nor the assertions changed, and
+the failure was host-specific rather than caused by the GIL change.
+
+## Post-rebase CodeRabbit findings
+
+The review of `9655df1` accepted Tasks 1–4 and found no production defect,
+while the pre-merge table still reported one error and three warnings. Each was
+dispositioned against the current tree.
+
+| Row                         | Disposition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module-Level Documentation  | Fixed. `tests/file_handler_gil_close_scenarios.py` now states that it provides reusable child-interpreter scenario bodies, which module renders them, which module runs them, and which test module parametrizes them.                                                                                                                                                                                                                                                                                                                             |
+| User-Facing Documentation   | Fixed. `docs/v0-2-0-migration-guide.md` gained a "File-handler calls release the interpreter lock" section covering direct calls, unbounded `"block"`, the per-binding timeout exception, the two borrow states, `Drop`, and explicit `close()`.                                                                                                                                                                                                                                                                                                   |
+| Testing (Compile-Time / Ui) | Partly fixed, partly adjudicated. `tests/ui/pass/pyo3_detach_ungil.rs` pins the accepted `Python<'_>` plus `py.detach` shape. A compile-fail fixture for capturing a `Bound<'_, PyString>` is not expressible on stable Rust: PyO3 has no stable negative impls, so `Ungil` is blanket-implemented for every `Send` type, and the capture compiles.                                                                                                                                                                                                |
+| Observability               | Fixed in the follow-up commit. An earlier disposition claimed the crate had no metrics or tracing subsystem; that claim was false, because `tracing-compat` already carries internal producer tracing and worker-dispatch events. This PR now instruments every wait it creates, see "Handler-wait telemetry". #551 still owns the exporter, the bridge decision and maximum-level counters, the facade-prefilter note, the overhead benchmark, and the operational alerting documentation; the completed and remaining criteria are listed there. |
+
+The inline findings were also applied:
+
+- **Two borrow states.** `docs/users-guide.md` now describes a blocked
+  `handle()` holding a shared borrow — so a concurrent `close()` raises
+  `RuntimeError` without starting its one-second wait — and a started `close()`
+  releasing its borrow before it waits, so later calls reach a closed handler
+  instead of being rejected. (Superseded by the rebase onto `9e6640de`: both
+  calls take only a shared borrow, so a concurrent `close()` no longer raises.
+  See "Rebase onto `origin/main` at `9e6640de` and reconciliation with #545".)
+- **Exception mapping.** `femtologging/overflow_policy.py` no longer claims
+  `drop()` always raises `RuntimeError`; the timed-rotating binding's
+  `ValueError` mapping is named explicitly for both `drop` and `timeout`.
+- **Flush acknowledgement coverage.** `saturate()` fills one command slot, and
+  the new `flush-ack` scenario builds with capacity 2, so the flush command is
+  enqueued at once and the caller waits on the worker's acknowledgement rather
+  than on queue capacity. The original `flush` scenario keeps its enqueue-slot
+  coverage, and its comment now says so.
+- **Close hand-off determinism.** The close-borrow probe raises
+  `sys.setswitchinterval(1.0)` before starting the closing thread. The closing
+  thread therefore keeps the interpreter lock from `Event.set()` into the
+  binding, and the probing thread, which waits with the lock released, can only
+  resume once that binding has taken the shutdown state and detached for its
+  wait. The 20 ms sleep is gone. This remains a test-synchronization
+  assumption, not a production guarantee.
+- **Progress oracle.** The inline finding on `file_handler_gil_scenarios.py`
+  said the window recorded around the call does not prove overlap with the
+  actual wait. Two changes close that gap. First, the watchdog now starts only
+  after the blocking call has been alive for `SETTLE_SECONDS` (50 ms); the call
+  cannot return while its queue is full or its worker is parked, so it is
+  provably inside the binding before any record can be attributed to it. Second,
+  `assert_progress_during` rejects a call whose window is shorter than
+  `MIN_WAIT_SECONDS` (0.5 s); without that, a call that returned immediately
+  would collect progress records from its own brief window and pass vacuously.
+  `tests/file_handler_gil_support.py` explains the order.
+
+## Review follow-up after `ddf9984`
+
+The review of `ddf9984` requested five documentation corrections. All five were
+valid against the source and are applied in the follow-up commit.
+
+- **Stale plan text.** Task 1 and Task 3 now describe the shipped `py_close`
+  flow and the five test modules, rather than the superseded
+  `self.close()`-inside-`detach` design and a single test module.
+- **`close()` contradiction.** The follow-up corrected the users' guide to say
+  that a `close()` concurrent with a blocked `handle()` was refused by the
+  borrow rules: it raised `RuntimeError` and the wait never started.
+  (Superseded by the rebase onto `9e6640de`: `close()` takes only a shared
+  borrow, so it takes the shutdown state, releases the borrow, and waits on the
+  shared completion signal instead of raising. See "Rebase onto `origin/main` at
+  `9e6640de` and reconciliation with #545".)
+- **`flush()` and the borrow.** The follow-up also named `flush()` in the
+  borrow rules: an in-flight `flush()` held the same shared borrow as a blocked
+  `handle()`, so `close()` was refused for both, and callers were told to
+  serialize `close()` against both calls. (Superseded by the rebase onto
+  `9e6640de`: `close()` now starts for both and waits on the shared completion
+  signal. The `concurrent-close-flush` scenario covers the file, rotating, and
+  timed-rotating builders.)
+- **Migration-guide structure.** `docs/v0-2-0-migration-guide.md` now has the
+  sections the documentation style guide requires: "Who should read this",
+  "Impact at a glance", numbered task sections, "What does not need to change",
+  "Migration checklist", and "Common errors and fixes". The interpreter-lock
+  change is classified "Review if enabled".
+- **Doctest side effect.** The `run_scenario` example now writes into a
+  `tempfile.TemporaryDirectory()` instead of the repository root, so
+  `pytest --doctest-modules` still executes it without leaving `timeout.log`
+  behind.
+
+## Rebase onto `origin/main` at `0dccd48d`
+
+`origin/main` advanced from `3e1c9ef` to `0dccd48d` while the review follow-ups
+were in progress. The two new commits are #585 (a `hypothesis` bump in
+`uv.lock`) and #552, the release-process work, which moved the PR's
+`mergeStateStatus` from `CLEAN` to `DIRTY`. The branch was replayed from
+`OLD_BASE` `3e1c9ef` onto `TARGET` `0dccd48d` with `zdiff3` and the built-in
+merge backend. Weave was bypassed with `-c core.attributesFile=/dev/null`
+because the only `merge=weave` rule comes from this host's global attributes
+file, not from the repository. All 34 commits replayed; `OLD_HEAD` `e26d8c8b`
+became `0135d05c` after the drop described below.
+
+Three conflicts appeared:
+
+- **`tests/test_private_docs_lint_contract.py` and
+  `tests/test_env_access_policy_contract.py`.** Both sides raised the gate
+  timeouts after the shared compile queue stalled the lanes. #552 raised them
+  to 3600 seconds and kept the original `2 * timeout + 20` test budget; this
+  branch had split the budget into `..._CALLS_PER_TEST` and
+  `..._TEST_TIMEOUT_SECONDS` at 1800 seconds. The resolution keeps the split
+  constants and #552's larger 3600-second lane budget, so the test budget
+  becomes `2 * 3600 + 60` seconds. The duplicated explanatory comment in
+  `run_policy_lane` was reduced to #552's single line.
+- **`docs/v0-2-0-migration-guide.md`.** Both branches appended a new section at
+  the same point. Both are kept: "10. File-handler calls release the
+  interpreter lock" first, then #552's "Production wheels omit the
+  timed-rotation test hooks".
+
+The replay also silently merged `tests/test_build_standard_contract.py`, where
+this branch's `CARGO_HOME` isolation and #552's independently written isolation
+landed as two copies of the same block and two overlapping docstring
+paragraphs. #552's version carries the same intent and is complete, so the
+branch's "Isolate the build-standard fixture's Cargo home" commit was dropped
+from the series and the file now matches `0dccd48d` byte for byte. `range-diff`
+shows only the two intended conflict resolutions and one hunk-context shift;
+the final tree differs from the pre-rebase tree only by the removed duplicate
+block.
+
+The rebased series ended at `0135d05c`, before the two follow-up commits that
+record it (`ad500222`) and fix the close scenario (`c5338464`). Gate results
+are recorded in "Commit gates after the rebase".
+
+## Commit gates after the rebase
+
+The chain ran once, sequentially, on `ad500222` (the rebased series plus the
+ExecPlan record). `make check-fmt`, `make markdownlint`, `make nixie`,
+`make lint` (848 seconds) and `make typecheck` (93 seconds) passed. `make test`
+returned 2 with `1 failed, 1067 passed, 6 skipped`:
+`test_operations_during_close_observe_a_closed_handler[close-file]` aborted its
+child with
+`Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` /
+`Python runtime state: finalizing`.
+
+**Diagnosis.** The abort was observed in test scaffolding, but the hazard it
+exposes is in the product. The close-during-close body parks the worker, starts
+a closer, then runs a second `close()` from the probing thread. That second
+close waits out the closer's one-second completion deadline. Only after both
+have returned does the epilogue release the worker, so the child reaches
+interpreter finalization with a detached worker that may still attach to call
+the Python formatter. CPython does not guard that window. The scaffolding only
+made the window reachable on demand: any application that exits while a
+detached worker can still call a Python-callable formatter reaches the same
+window, and on CPython 3.12 and earlier the attach aborts the process. The
+comment already in `tests/file_handler_gil_wait_scenarios.py` records the same
+hazard for its own close body, and the user guide now documents it for
+applications.
+
+**Fix (`c5338464`).** `_CLOSE_EPILOGUE` now calls `handler.close()` after
+releasing the worker and joining the closer. The trailing close shares the same
+`Arc<ShutdownCompletion>` signal, so it returns as soon as the released worker
+stops and the child cannot finalize around a live detached worker.
+
+**Evidence.** A negative control replaced the epilogue with the pre-fix text in
+a scratch harness and ran the rendered `file`/`close-close` scenario 60 times:
+3 abnormal exits (two fatal finalization aborts and one SIGSEGV). A further 80
+runs of the old epilogue produced one more SIGSEGV. The fixed scenario ran 60 +
+60 times clean in the same harness, and 5 full 30-scenario runs plus 40 targeted
+`close-close` runs were clean before the commit.
+
+The full chain was then re-run once, sequentially, on `4ba0cde3` and passed:
+
+| Gate                | Result                        | Duration |
+| ------------------- | ----------------------------- | -------- |
+| `make check-fmt`    | pass                          | 2 s      |
+| `make markdownlint` | pass                          | 8 s      |
+| `make nixie`        | pass                          | 1 s      |
+| `make lint`         | pass                          | 717 s    |
+| `make typecheck`    | pass                          | 72 s     |
+| `make test`         | pass, 1068 passed / 6 skipped | 4983 s   |
+
+Most of the wall clock is the host's shared compile-admission queue: the test
+lane waited behind hundreds of queued crates and ran one stretch uncached while
+the managed sccache server was restarting. Admission reported healthy
+throughout.
+
+## Rebase onto `origin/main` at `852bfec6`
+
+`origin/main` gained #547 (`disable_existing_loggers` becomes atomic and
+propagation is suppressed) after `0dccd48d`, so the published branch no longer
+merged cleanly. The series was replayed with the exclusive boundary
+`0dccd48d..4eddf2b3` onto `852bfec6` using
+`git -c merge.conflictStyle=zdiff3 rebase --merge --no-fork-point
+--no-update-refs --no-autostash --reapply-cherry-picks --keep-empty
+--empty=stop`.
+
+Two of the 38 replayed commits conflicted, both in prose that both sides had
+edited:
+
+- `9d7b0a38` (users guide) — #547 added `logger.get_disabled_drops()` to the
+  operational-tips bullet. The resolution keeps #547's monitoring sentence and
+  this branch's clarification that a file-handler overflow policy does not
+  change the logger queue's own overflow policy.
+- `abf5021a` (v0.2.0 migration guide) — #547 inserted a whole
+  `disable_existing_loggers` section before the heading this branch renames.
+  The resolution keeps #547's section and applies this branch's heading, "What
+  does not need to change".
+
+`git range-diff` shows every other replay as identical (`=`); the final diff
+against `852bfec6` is `git diff --check` clean. A `git merge-tree` of the old
+head and `852bfec6` had reported exactly those two conflicted files and no
+others.
+
+## Review follow-ups on the rebased candidate
+
+CodeRabbit reviewed the rebased head (`4eddf2b3`) and raised two findings. Both
+were valid, and both were fixed in `b7ccde8d`.
+
+**The users guide claimed `flush()` proves durability.** The durability bullet
+said `flush()` and `close()` "ensure on-disk consistency". They do not:
+`perform_flush` in `rust_extension/src/handlers/file/mod.rs` returns `false`
+when the channel send times out or the channel is closed, and the `close()`
+wait is bounded to one second. The bullet now says to move queued records to
+disk and to check what `flush()` reports — `True` only on worker
+acknowledgement within that timeout, `False` meaning the records were not
+confirmed written — and keeps the existing sentences on close idempotence and
+the bounded close wait.
+
+The rebase in `0079527f` tightened the same bullet again. The first fix said to
+"check what they report", which implied `close()` returns something a caller
+can test. It returns `None`, so the sentence now names `flush()` alone as the
+call whose result is a boolean.
+
+**The `concurrent-close` scenario could not observe a failing `handle()`.**
+`CONCURRENT_CLOSE_BODY` ran its in-flight call through `start_blocked`, which
+keeps an exception on the child's stderr but never fails the scenario, so a
+call that raised instead of blocking could still satisfy the progress check.
+The body now wraps the call, appends any exception, joins, and asserts the list
+is empty before the progress check.
+
+The new assertion was proved load-bearing rather than assumed. A negative
+control inserted `raise RuntimeError("negative control: handle() failed")`
+immediately after `handler.handle("core", "INFO", "third")` inside the wrapper.
+The child then failed at exactly that assertion:
+
+```text
+AssertionError: the blocked handle() failed unexpectedly: [RuntimeError('negative control: handle() failed')]
+```
+
+The unmutated scenario still passes. An earlier, cruder mutant that raised
+before the block failed at `start_watchdog_when_blocked` instead, which would
+have proved only that the scenario failed, not that the assertion fired.
+
+## Commit gates on `0079527f`
+
+The chain ran once, sequentially, on `0079527f` (the rebased series plus the
+two review fixes):
+
+| Gate                | Result                        | Duration |
+| ------------------- | ----------------------------- | -------- |
+| `make check-fmt`    | pass                          | 2 s      |
+| `make markdownlint` | pass                          | 6 s      |
+| `make nixie`        | pass                          | 0 s      |
+| `make lint`         | pass                          | 1184 s   |
+| `make typecheck`    | pass                          | 102 s    |
+| `make test`         | pass, 1073 passed / 6 skipped | 8938 s   |
+
+The test lane logged 21604 compile-slot waits; pytest itself ran in 471 s, so
+almost all of that gate's wall clock was compile admission. Admission stayed
+healthy throughout, with a `drain fault kind: live_work` and a resting
+automatic-recovery trigger while the queue drained; no gate failed on admission.
+
+The jump from 1068 to 1073 passing tests is #547's five new tests arriving with
+the rebase.
+
+Hosted CI on the same head went green except for one infrastructure failure:
+`build-wheels / verify-wheel-install` failed with a check-run annotation
+reading "The self-hosted runner lost communication with the server", and the
+job log was unavailable. One bounded rerun of the failed job passed.
+
+## Commit gates on the telemetry candidate
+
+The chain ran once, sequentially, over the working tree that carries the
+handler-wait telemetry described below:
+
+| Gate                | Result | Duration |
+| ------------------- | ------ | -------- |
+| `make check-fmt`    | pass   | 1 s      |
+| `make markdownlint` | pass   | 4 s      |
+| `make nixie`        | pass   | 0 s      |
+| `make lint`         | pass   | 2460 s   |
+| `make typecheck`    | pass   | 251 s    |
+| `make test`         | pass   | 3732 s   |
+
+Logs are `/tmp/check-fmt-femtologging-issue-441.out`,
+`/tmp/markdownlint-femtologging-issue-441.out`,
+`/tmp/nixie-femtologging-issue-441.out`, `/tmp/lint-femtologging-issue-441.out`,
+`/tmp/typecheck-femtologging-issue-441.out`, and
+`/tmp/test-femtologging-issue-441.out`; each ends with a `GATE=<name> EXIT=0`
+marker.
+
+Two lint failures shaped the candidate, and both were fixed in the source
+rather than suppressed:
+
+- the rotating binding reached 425 lines, past the 400-line module limit, so
+  the `datetime.time` extraction helpers moved to
+  `handlers/timed_rotating/python_time.rs` and `python.rs` re-exports the
+  `pub(crate)` helper the rotating builder still imports;
+- the inline `mod tests` in the telemetry module (`handlers/telemetry/mod.rs`
+  after the later split) lacked the module's required inner doc comment.
+
+`cargo check --all-targets` also passed (3 m 06 s), giving the Rust lanes an
+independent confirmation before the long gates.
+
+Admission stayed healthy throughout, but the queue was deep: the test lane
+logged thousands of `[build-limits] CRATE: waiting for a compile slot` lines
+and pytest itself accounted for only a small part of its 62 minutes. A queued
+build is not a hung one, so neither gate was killed or retried.
+
+## Review follow-ups on `6e2c1e2a`
+
+CodeRabbit reviewed `3c8ed48d` and raised five inline findings and three failed
+pre-merge rows. Each was checked against the current tree before any edit.
+
+| Finding                                                      | Disposition                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ExecPlan still said "the four test modules"                  | Fixed. Task 3 lists five modules, and the follow-up bullet now says five.                                                                                                                                                                                         |
+| ExecPlan Observability row claimed no metrics or tracing     | Already fixed before this review. The row records that `tracing-compat` already carried internal producer tracing and that this PR instruments every wait it creates.                                                                                             |
+| Users guide policy advice did not name `"block"`             | Fixed. The operational-tips bullet now recommends `policy="block"` when drops are unacceptable and says `"timeout:N"` bounds the wait but still drops on expiry, so it is not a no-drop choice.                                                                   |
+| Close probe did not prove the shutdown hand-off              | Declined, with the reasoning recorded in the PR body. The raised switch interval keeps the closing thread on the interpreter lock from its entry event through `close()` until the binding detaches, and the binding takes the shutdown state before it detaches. |
+| Close probes could pass vacuously after the deadline expired | Fixed. `CLOSE_FLUSH_PROBE` and `CLOSE_CLOSE_PROBE` now assert the closer is still alive before probing, matching the handle probe.                                                                                                                                |
+
+The three pre-merge rows were dispositioned as follows.
+
+**Developer Documentation.** The Python-facing section of
+`docs/rust-multithreaded-logging-framework-for-python-design.md` said "existing
+handler-specific timeouts remain authoritative" and that "the handler's own
+timeout still bounds each wait". Both were wrong for the file handler family:
+`perform_flush` gives the enqueue and the acknowledgement one second in total,
+and `WorkerShutdown::wait` gives the close completion one second, neither of
+which reads the overflow policy or the write timeout. The section now states
+both fixed deadlines and records that a timed-out `close()` returns while the
+worker may still be running.
+
+**Testing (Property / Proof).** Implemented rather than argued.
+`tests/test_file_handler_lifecycle_state_machine.py` adds a Hypothesis
+`RuleBasedStateMachine` that generates bounded sequences of `handle()`,
+`flush()`, and repeated `close()` for all three builders across capacities 1–4
+and the `drop`, `block`, and `timeout` policies. It asserts that `close()`
+never raises, that `handle()` names the closure after a close, that `flush()`
+reports `False` after a close, and that a pre-close call either completes or
+raises the documented overflow error. The machine runs in-process and does not
+control scheduling, so the subprocess scenarios remain the interleaving
+evidence; the module docstring says so. A negative control that flipped the
+closed-flush assertion failed all three parametrizations, and a temporary
+counter confirmed the rules execute (64 handler constructions and 174 closes in
+one run). The "Testing the boundary" section of `docs/developers-guide.md` now
+points at the state machine and says why it complements, rather than replaces,
+the subprocess evidence.
+
+**Observability.** Addressed by the handler-wait telemetry commit. The
+reconciliation comment posted to the PR records the counters, the tracing
+target, and the #551 criteria this PR completes and those it leaves open.
+
+## Commit gates on the review candidate
+
+The chain ran once, sequentially, over the tree that carries the telemetry, the
+design-document deadline correction, the developers-guide pointer, and the
+lifecycle state machine:
+
+| Gate                | Result                        | Duration |
+| ------------------- | ----------------------------- | -------- |
+| `make fmt`          | pass                          | 3 s      |
+| `make check-fmt`    | pass                          | 1 s      |
+| `make markdownlint` | pass                          | 3 s      |
+| `make nixie`        | pass                          | 0 s      |
+| `make lint`         | pass                          | 167 s    |
+| `make typecheck`    | pass                          | 20 s     |
+| `make test`         | pass, 1086 passed / 6 skipped | 1339 s   |
+
+Logs are `/tmp/fmt-femtologging-issue-441.out` and the matching `check-fmt`,
+`markdownlint`, `nixie`, `lint`, `typecheck`, and `test` files; each ends with a
+`GATE=<name> EXIT=0` marker. The `make fmt`, `check-fmt`, `markdownlint`, and
+`nixie` gates were rerun after the final ExecPlan edit and passed again.
+Admission reported a `live_work` drain fault with a
+`required recovery action: Run build-limits-recover ...` line, which is the
+host operator's business; the supervisor stayed healthy, the femtologging crate
+was admitted, and no gate was killed or retried.
+
+## Handler-wait telemetry
+
+The second review of the post-rebase candidate rejected the earlier "out of
+scope" disposition: the crate does have a metrics and tracing surface
+(`tracing-compat`, internal producer tracing, worker-dispatch events), and the
+review asked for the waits this PR introduces to be observable. The follow-up
+commit implements that rather than deferring it.
+
+- `rust_extension/src/handlers/telemetry/` (new, split so no one file carries
+  the whole surface) defines `WaitOutcome` in `outcome.rs`, a fixed set of
+  sixteen outcomes: six for `handle`, six for `flush`, and four for `close`.
+  Only the close group has `panicked` and `unknown` outcomes. `WaitDiagnostics`
+  in `diagnostics.rs` holds sixteen relaxed `AtomicU64` counters, a total and a
+  maximum wait duration, and an in-flight gauge. `timer.rs` owns `WaitTimer`,
+  which starts before `py.detach` and finishes after it on the interpreter
+  thread, so the recorded interval is the whole wait, not just the enqueue or
+  the acknowledgement. The gauge is raised by `begin_wait()` before the
+  detached section and lowered by a `WaitGuard`'s `Drop`, so it also falls
+  while a binding unwinds. `tests.rs` holds the unit tests that keep the split
+  module under the 400-line limit.
+- `rust_extension/src/handlers/file/wait_outcomes.rs` (new) owns the
+  user-visible results the core used to hide behind `bool` and `()`:
+  `FlushOutcome`, `ShutdownOutcome`, and `classify_enqueue`. `WorkerShutdown`
+  lives there too, so the bindings can take the shutdown state under a short
+  borrow and then wait without holding it. Keeping the classification in the
+  core lets the rotating wrappers reuse it instead of duplicating a match, and
+  the extraction keeps `handlers/file/mod.rs` under the 400-line limit.
+- `handlers/file/python.rs`, `handlers/rotating/python.rs`, and
+  `handlers/timed_rotating/python.rs` record every wait and expose
+  `wait_diagnostics()`, returning a `dict` with a fixed key set. The map
+  carries no logger name, path, message, or raw timeout value, so cardinality
+  cannot grow with traffic.
+- Each wait also emits one event on the `femtologging::internal` target with
+  `operation`, `handler_kind`, `policy_bucket`, `wait_outcome`, and
+  `elapsed_us`. `FemtoTracingLayer` ignores that target, so enabling tracing
+  compatibility does not duplicate the events into user handlers.
+- `docs/developers-guide.md` documents activation (the accessor always works;
+  the events need `tracing-compat`), the per-wait cost in each build, and how
+  to read the counters: saturation and timeouts under `drop`/`timeout` mean
+  producers outran the worker, `flush_failed` points at the device,
+  `close_timed_out` and `close_panicked` mean shutdown did not finish, a
+  `max_wait_micros` close to `total_wait_micros` marks one slow wait rather
+  than sustained pressure, and a non-zero `waits_in_flight` shows a caller
+  still parked. `docs/users-guide.md` describes the accessor from the caller's
+  side, names the `handler_kind` values for the rotating classes, and explains
+  the gauge. `docs/v0-2-0-migration-guide.md` records both the accessor and the
+  optional trace events as additive observability.
+- `femtologging/_femtologging_rs.pyi` declares `wait_diagnostics()` on both
+  concrete rotating handler classes, so the structural `Handler` protocol in
+  the new test file type-checks. `FemtoFileHandler` is already typed as `_Any`
+  in the stub, so it needs no change there.
+- `rust_extension/src/handlers/file/telemetry_tests.rs` pins the
+  result-to-outcome mappings for the enqueue, flush, and shutdown results and
+  the fixed `policy_bucket` vocabulary.
+- `rust_extension/src/handlers/file/outcome_paths_tests.rs` (new) drives the
+  real enqueue and flush paths with a scripted writer: a timed-out enqueue, a
+  saturated queue, a worker that died, an unanswered acknowledgement, and an
+  I/O flush failure. `rust_extension/src/handlers/file/shutdown_paths_tests.rs`
+  (new) covers a blocked shutdown, a panicking shutdown, and a later closer
+  reading a panic recorded after an earlier closer timed out.
+  `rust_extension/src/handlers/file/scripted_writer.rs` (new) holds the
+  gate-based writer and the shared helpers, so neither test module exceeds the
+  400-line limit.
+- `rust_extension/src/handlers/file/telemetry_event_tests.rs` (new), compiled
+  only with `tracing-compat`, pins the event contract: one event per wait on the
+  `femtologging::internal` target, exactly the five bounded fields, and
+  counters that still record when no subscriber is installed. It also drives
+  the real Python bindings, so `handle()`, `flush()`, and `close()` are checked
+  against a real timed-out enqueue, a real I/O failure, a real shutdown timeout
+  followed by a later completion, and a real worker panic rather than only
+  against synthetic outcomes.
+- `rust_extension/src/handlers/file/shutdown_paths_tests.rs` also constructs a
+  completion signalled before any verdict is stored, so the `Unknown` fallback
+  is asserted directly instead of being left as the one untested match arm.
+- `tests/test_wait_diagnostics.py` pins the exposed key set, the zeroed initial
+  state, successful outcomes, post-close outcomes, a queue-full drop, a
+  repeated read that changes nothing, and a block-policy wait observed as
+  in-flight for all three handler kinds.
+- `tests/test_file_handler.py` pins that a raising Python formatter does not
+  prevent `close()` from completing: the exception is printed on the worker and
+  replaced with a placeholder rather than propagated, and the handler still
+  shuts down and reports itself closed.
+
+Evidence on the candidate:
+`cargo check --no-default-features --features python`,
+`cargo test --no-default-features --lib handlers::file::` (77 passed; this
+covers the baseline lane) and
+`cargo test --no-default-features --features tracing-compat --lib
+handlers::file::telemetry`
+(25 passed) succeed. The Python contract test is covered by the full
+`make test` chain recorded in "Commit gates on the telemetry candidate".
+
+Issue [#551](https://github.com/leynos/femtologging/issues/551) asks for more
+than this PR builds. This PR completes the acceptance criteria that the waits
+it introduces make possible:
+
+- record flush, close, and handle wait durations with their success, timeout,
+  disconnected, and panic outcomes;
+- keep dimensions bounded, excluding raw targets, paths, messages, and
+  payloads;
+- keep the counting path free of Python access and of recursive logging, so
+  the `femtologging::internal` event cannot re-enter user handlers;
+- test the outcome semantics and the label bounds.
+
+Still outstanding in #551, and deliberately not built here:
+
+- a supported telemetry interface with documented export;
+- counting bridge decisions that reach the adapter and maximum-level updates;
+- documenting that facade-prefiltered calls never reach the adapter;
+- a benchmark of disabled and enabled telemetry overhead;
+- documentation of metric names, operational interpretation, and actionable
+  alerts for those bridge metrics.
+
+Counting, key-set stability, and the trace event contract belong here because
+these waits introduce them; the exporter and the bridge metrics are separate
+work with their own interfaces.
+
+## Rebase onto `origin/main` at `0f116690`
+
+`origin/main` gained #595 after `aed7f5af`: docstring coverage moved into its
+own target and now spans `tests`, `scripts`, `examples` and `rust_extension`.
+The hosted `build-test` jobs run against `refs/pull/550/merge`, which merges
+the head into the current main, so local gates on the branch's own base passed
+while all four hosted lint jobs failed at 99.6% coverage.
+
+The 53-commit series was replayed onto `0f116690`. The pre-rebase and
+post-rebase trees differ by exactly #595's 50-file, 635-insertion, 40-deletion
+diff. `git range-diff` reports 52 commits identical and one (`863a0523`) whose
+hunk differs only because main's new docstring line is now context. The replay
+selected Weave from the host's global attributes file and auto-resolved five
+entities in `tests/test_file_handler.py` with no conflicts; comparing the two
+trees confirmed nothing was lost, and future unattended rebases here pass
+`-c core.attributesFile=/dev/null`.
+
+`make interrogate` then named eight undocumented definitions: seven helpers in
+`tests/test_wait_diagnostics.py` and `HandlerLifecycle.__init__`. They now
+carry docstrings, and the gate reports 100.0% with no MISSED rows.
+
+## Commit gates on the docstring-gate candidate
+
+The chain ran once, sequentially, over `dc93ffba` plus the docstring edits,
+which `eb9ffb47` then committed unchanged:
+
+| Gate                | Result                             | Duration  |
+| ------------------- | ---------------------------------- | --------- |
+| `make fmt`          | pass, no files rewritten           | under 1m  |
+| `make check-fmt`    | pass                               | under 1m  |
+| `make markdownlint` | pass, 0 issues in 66 files         | under 1m  |
+| `make nixie`        | pass                               | about 1m  |
+| `make lint`         | pass, all eight Clippy lanes green | about 6m  |
+| `make typecheck`    | pass, `All checks passed!`         | about 1m  |
+| `make test`         | pass, 1116 passed / 6 skipped      | about 39m |
+
+`make test` ran the four cargo feature lanes and then pytest; all 76 test
+binaries reported `ok`, pytest finished in 190 s, and 66 snapshots passed. The
+managed sccache server was unavailable, so the gates compiled uncached and
+queued through compile admission; no gate failed on admission and none was
+killed or retried.
+
+## Hosted lint outage from the rolling Whitaker suite
+
+The first hosted run on `d8612ee8` (run 42455964240) failed all four
+`build-test` jobs at the `Lint` step after five to six minutes. The failing
+command is the Dylint driver probe, not consumer code:
+
+```text
+thread 'rustc' panicked at compiler/rustc_lint/src/context.rs:215:17:
+duplicate specification of lint string_continuation_style
+Error: Compilation failed with toolchain `nightly-2026-05-28`
+```
+
+The cause is upstream and unrelated to this branch, which adds no lint.
+`install-whitaker` refuses a suite pin, so every consumer takes the rolling
+lint archive from Whitaker's default-branch tip. That archive began shipping
+`libstring_continuation_style.so` alongside `libwhitaker_suite.so`, which
+already registers the same lint; the pinned installer `0.2.11` predates the new
+crate, so its pruning loop leaves the standalone library in place and
+`cargo dylint --all` registers the lint twice. Whitaker tracks this as issue
+565 with a filename-based pruning fix planned for installer `0.2.12`.
+
+Two independent checks place the fault outside this candidate: femtologging PR
+549, an unrelated branch, fails the same way in run 42456651881 at the same
+step, and the pre-rebase `16ecca09` run never reached this probe because
+interrogate failed first. Local `make lint` passes because the host's installed
+suite predates the duplicate. The candidate stays as it is; the hosted lint
+jobs need a rerun once installer `0.2.12` (or an archive without the standalone
+libraries) is available.
+
+## Rebase onto `origin/main` at `de2d40d7`
+
+`origin/main` advanced from `0f116690` to `de2d40d7`, which lands #549 and
+bounds HTTP and socket handler shutdown by one deadline. The PR then reported
+`mergeStateStatus: DIRTY`, so the green hosted run on `d6526105` had tested a
+merge ref computed against the old base and could not be relied on.
+
+The 56-commit series was replayed onto `de2d40d7` with Weave disabled
+(`-c core.attributesFile=/dev/null`) and `zdiff3`. One commit conflicted:
+`feaecba9` numbers the sections of `docs/v0-2-0-migration-guide.md`, and main
+adds a close() section at the same point. The resolution keeps both. Main's
+"Handler `close()` is bounded end to end" section stays unnumbered, as the
+other main-authored sections are, and the branch's numbering of
+`StdlibHandlerAdapter` as section 6 remains, ahead of sections 7 to 10.
+
+`git range-diff` reports 53 commits identical and three whose hunks differ only
+in context: `e807ac63`, the conflict resolution, plus `5673c343` and
+`9df53956`, where main's new headings now sit where the branch inserts prose.
+The rebased head is `c5ce399b`.
+
+The upstream lint fault recorded above also cleared. Whitaker `64a5011a` marks
+the lint experimental and ships only prunable libraries, so the rolling archive
+no longer contains `libstring_continuation_style.so`. The four failed
+`build-test` jobs on `d6526105` were rerun against it and all passed.
+
+## Commit gates on the split-telemetry candidate
+
+The telemetry module split, the binding-level event tests, and the review
+follow-ups ran as one sequential chain over `92ba7c28` plus the working-tree
+changes:
+
+| Gate                | Result                                          | Duration |
+| ------------------- | ----------------------------------------------- | -------- |
+| `make fmt`          | pass, no files rewritten                        | under 1m |
+| `make check-fmt`    | pass, 246 files already formatted               | under 1m |
+| `make markdownlint` | pass, 0 issues in 67 files                      | under 1m |
+| `make nixie`        | pass, all diagrams validated                    | under 1m |
+| `make lint`         | pass, 15 Rust lint lanes plus every Python tier | about 1h |
+| `make typecheck`    | pass, `All checks passed!`                      | about 6m |
+| `make test`         | pass, 1134 passed and 6 skipped                 | 2h 31m   |
+
+`make lint` ran all five Python stages: Ruff clean, `interrogate` at 100 %
+docstring coverage, Pylint 10.00/10 under both the managed PyPy 3.12 and the
+3.14 interpreter, `df12-python-lints` with `ambrleaks` clean, and the strict
+Skylos dead-code gate. It then ran all 15 Rust lint lanes: Clippy across the
+feature matrix with `-D warnings`, the test-support documentation contract
+tests, and the full Whitaker Dylint suite, which enforces the 400-line module
+limit that forced the telemetry split.
+
+`make test` ran the four cargo feature lanes and then pytest. All 76 test
+binaries reported `ok`, including every trybuild `compile_time_ui` case; the
+Python lane reported 728 passed, 0 failed, and 2 ignored. Pytest finished in
+342 s with 66 snapshots passed.
+
+Compile admission was healthy throughout, with all four slots held and long
+queues for most of both long gates. No gate failed on admission, and none was
+killed, retried, or duplicated to shorten a wait. The two long gates were
+launched detached in their own session and observed with bounded foreground
+tails, so the harness's two-hour background limit could not truncate them.
+
+## Commit gates on the final review candidate
+
+This candidate adds the evidence the last CodeRabbit pre-merge table still
+asked for: binding-level tests for the rotating and timed-rotating wrappers, a
+close-then-completion and a close-panic test, a bounded concurrent lifecycle
+model in pytest, the corrected stream/socket/HTTP documentation, and a
+`public_count` helper that no longer panics inside a closure.
+
+The gates ran sequentially over the working tree on top of `e1b19cec`:
+
+| Gate                | Result                                          |
+| ------------------- | ----------------------------------------------- |
+| `make fmt`          | pass, no files rewritten                        |
+| `make check-fmt`    | pass                                            |
+| `make markdownlint` | pass                                            |
+| `make nixie`        | pass                                            |
+| `make lint`         | pass, all Python tiers and all Rust lint lanes  |
+| `make typecheck`    | pass, `All checks passed!`                      |
+| `make test`         | interrupted; every lane passed separately below |
+
+`make test` was started once as a single command, and the harness killed that
+shell at its two-hour background limit while the second cargo lane was inside
+its trybuild cases. Every prerequisite of the target (`build`, `makeutil`,
+`lint-rust-clippy` with its eight feature lanes, and `loom-runner-test`) and
+the first cargo lane had already finished by then: the first lane reported 728
+passed, 0 failed, 2 ignored. The remaining three recipe lines and the pytest
+line were then run one at a time, in Makefile order, from the same candidate
+and environment:
+
+| Recipe line                                                  | Result                                     |
+| ------------------------------------------------------------ | ------------------------------------------ |
+| `cargo test --no-default-features --features python`         | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features log-compat`     | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features tracing-compat` | pass, 759 passed, 3 ignored                |
+| `uv run pytest -v --doctest-modules`                         | pass, 1152 passed, 6 skipped, 66 snapshots |
+
+The `tracing-compat` lane is the one that compiles the new telemetry tests. It
+ran all five file-binding tests, both close-binding tests, both wrapper cases,
+and the observation test, and every one passed. The pytest run executed all 18
+combinations of builder, capacity and overflow policy in
+`tests/test_wait_diagnostics_concurrency.py`, plus the subprocess GIL scenarios.
+
+The trybuild cases dominated every lane (2981 s, 3137 s, 3569 s and 4593 s)
+because the shared compile pool held long queues from other agents' work; the
+admission supervisor stayed healthy and `sccache` reported it was not serving
+compilations, so the rebuilds were uncached. The single `make test` invocation
+was killed by the harness's two-hour background limit, so its remaining recipe
+lines were run individually from the same candidate rather than that command
+being resumed. No lane was retried to shorten a wait, and no lane was run
+concurrently with another.
+
+### CodeScene duplication on the binding tests
+
+CodeScene reported a new `Code Duplication` issue on
+`rust_extension/src/handlers/file/telemetry_binding_tests.rs` for the first
+push of this candidate, naming five functions with the same structure. The five
+tests each repeated the same sequence: build the writer, build the handler,
+install a collector, attach, build the Python object, call the binding, read
+the counter, assert, release and close.
+
+The four flush cases are now one `#[rstest]` table over writer, policy,
+expected outcome and expected event count, and every case runs through one
+`observe` helper that owns the collector and public-counter read. The
+handle-timeout case shares that helper and only differs in the action it
+performs inside it. Behaviour is unchanged: the same four flush outcomes and
+the same handle timeout are asserted against the same counters and events.
+
+The refactor was gated on the same candidate with `make fmt`, `make check-fmt`,
+`make markdownlint`, `make nixie`, `make lint` and `make typecheck` all
+passing, and with the `tracing-compat` cargo lane passing (759 passed, 3
+ignored) — the only lane that compiles these tests. The other three cargo lanes
+and the Python suite do not enable `tracing-compat`, so their compiled test
+code and assertions are unchanged by this commit.
+
+### CodeScene function-argument count on the binding tests
+
+CodeScene's advisory review on `ee99bbba` then reported
+`Excess Number of Function Arguments` for `assert_recorded`, which the
+deduplication had left taking five positional parameters. Passing the same
+operation, outcome, policy bucket and event count through the call sites was
+the same data clump the duplication finding had already identified.
+
+Two small structs now carry that shape: `Expected` holds the operation,
+outcome, bucket and total event count, and `FlushCase` holds the writer
+builder, the policy, whether the queue is filled first, and an `Expected`. The
+flush table passes one `FlushCase` per case, and `assert_recorded` takes the
+observation and one `Expected`. The handle-timeout case still calls the
+assertion directly with a literal `Expected`. Behaviour and assertions are
+unchanged: the same four flush outcomes, the same handle timeout, the same
+counters and events.
+
+The follow-up was gated on the resulting working tree with `make fmt` (no files
+rewritten), `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`
+(all Python tiers, all Rust lint lanes and the Whitaker nightly lane),
+`make typecheck` (`All checks passed!`) and the `tracing-compat` cargo lane
+(759 passed, 0 failed, 3 ignored). That lane ran all four flush cases, the
+handle-timeout case, both close cases and both wrapper cases. It is the only
+lane that enables `tracing-compat`, so the other three cargo lanes and the
+Python suite compile and run the same code they did on `e2451fd2`.
+
+## Review follow-up on the formal review candidate
+
+CodeRabbit's formal review on `a5e1212b` raised five quick wins and its
+reconciliation table asked for two further proofs. All were addressed on top of
+that commit:
+
+| Finding                                       | Change                                                                     |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| In-flight guard attributed to `timer.rs`      | `WaitGuard` is attributed to `diagnostics.rs`; `timer.rs` owns `WaitScope` |
+| `max_wait_micros` described as a total        | The design note calls it the maximum single wait                           |
+| `try_recv()` could pass vacuously             | The observation test requires a bounded `recv_timeout` to time out         |
+| Bare `return` in the `-> None` helpers        | `_producer` and `_flusher` now `break` out of their loops                  |
+| Second-person pronouns in the migration guide | The introduction is impersonal and uses no second-person pronouns          |
+| `make test` recorded as passing               | The gate table marks it interrupted, with per-lane evidence below it       |
+| Wrapper failure paths not covered             | Four `#[rstest]` cases pin `flush_failed` and `close_panicked` per wrapper |
+| Command boundary observed only indirectly     | A real `handle()` call now follows the reads as a positive control         |
+| Only one closer, calling `close()` twice      | Two closers start behind the barrier, and each must record a close outcome |
+
+The wrapper failure table builds a rotating or timed-rotating wrapper over the
+scripted writer, drives one failing flush or a panicking terminal flush, reads
+the public counter map and the internal event, then releases the writer and
+closes outside the subscriber. Each case asserts the failure counter, the
+`waits_in_flight` gauge, the event count, the wrapper's own `handler_kind`, and
+the operation, outcome and policy bucket. That is the failure path the
+reconciliation table said was missing for the delegating wrappers.
+
+The observation test now uses `recv_timeout` for the same 200 ms bound as the
+drain above it, so a command still in flight after the final read fails the
+test instead of being read as silence. It then sends one real record and waits
+for the same channel to report `Stage::Write`, which proves the probe can
+detect a command at all. The concurrency model now starts two closers, so the
+close waits overlap rather than running one after another on a single thread,
+and it asserts that the close outcome counters total at least one per closer.
+
+The follow-up was gated on the resulting working tree with `make fmt` (no files
+rewritten), `make check-fmt`, `make markdownlint`, `make nixie`, `make lint`,
+`make typecheck`, and then the four cargo lanes and `pytest`:
+
+| Recipe line                                                  | Result                                     |
+| ------------------------------------------------------------ | ------------------------------------------ |
+| `cargo test --no-default-features`                           | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features python`         | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features log-compat`     | pass, 728 passed, 2 ignored                |
+| `cargo test --no-default-features --features tracing-compat` | pass, 763 passed, 3 ignored                |
+| `uv run pytest -v --doctest-modules`                         | pass, 1152 passed, 6 skipped, 66 snapshots |
+
+The `tracing-compat` lane is the only one that compiles the new evidence. Its
+lib binary ran 763 tests, including the four new wrapper failure cases, the
+observation test with its positive control, and every earlier telemetry test.
+The trybuild binary in that lane took 1337 s; the compile pool held long queues
+from other agents' work throughout, the admission supervisor stayed healthy,
+and no lane ran concurrently with another.
+
+The first `make lint` of this round was stopped by the harness's 30-minute
+default background limit while the private-docs contract test was running its
+clippy lanes. It was restarted once with a longer limit and completed with
+`rc=0`; the earlier partial run had already passed every Python tier and the
+first eight Rust lint lanes. That interruption was a harness limit, not a gate
+failure, and it was not worked around by skipping a tier.
+
+## Second review follow-up after `a2ed4f8b`
+
+CodeRabbit's review of `a2ed4f8b` approved the candidate but repeated five
+residual findings in its prose. Each was still valid against that tree, so the
+candidate was extended rather than merged on approval alone.
+
+| Finding                                                 | Change                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------- |
+| The sum and maximum were still called "two totals"      | The design note names the summed and the maximum wait duration             |
+| The guide did not say which close outcome confirms it   | The guide contrasts `close_completed` with a non-zero `close_timed_out`    |
+| The command boundary was still observed only indirectly | A helper reads the handler's own queue length at the command boundary      |
+| `handle_disconnected` had no Python-boundary case       | A panicking worker is observed through `handle()` and the public map       |
+| Two closers were not shown to wait at the same time     | Both closers are held in flight and the gauge must read two before release |
+| Wrapper failure coverage stopped at two outcomes        | A twelve-case table covers six failures for each rotating wrapper          |
+
+The observation test now counts queued commands through `FemtoFileHandler::tx`
+rather than inferring them from writer stages. It reads `wait_diagnostics()`
+four times while the worker is parked, asserts the queue is empty, then sends
+one control record and asserts the queue holds exactly one command. Without the
+control the empty reading would prove nothing, because a probe that can never
+see a command reports zero either way.
+
+`concurrent_closers_wait_on_one_shutdown` polls the public `waits_in_flight`
+gauge until it reads two, then releases the writer. A sequential pair of closes
+would leave the gauge at one, so the assertion fails unless the two waits
+really overlap. Both closers must then record `close_completed` with no
+`close_timed_out`, and the gauge must return to zero.
+
+The wrapper failure matrix in `telemetry_wrapper_failure_tests.rs` drives six
+failures through each wrapper's own Python method: an enqueue timeout, a failed
+flush, a flush acknowledgement timeout, a flush enqueue timeout, a close
+timeout, and a panic in the terminal flush. Each case asserts the counter
+through the public map, the single matching event, the wrapper's own
+`handler_kind`, the operation, the outcome, and the policy bucket. A timed-out
+close is retried after release and must then record its completion.
+
+The follow-up was gated on the resulting working tree with `make fmt` (which
+reflowed the new table), `make check-fmt`, `make markdownlint`, `make nixie`,
+`make lint`, `make typecheck`, and then the four cargo lanes and `pytest`:
+
+| Recipe line                                                  | Result                       |
+| ------------------------------------------------------------ | ---------------------------- |
+| `cargo test --no-default-features`                           | pass, 728 passed, 2 ignored  |
+| `cargo test --no-default-features --features python`         | pass, 728 passed, 2 ignored  |
+| `cargo test --no-default-features --features log-compat`     | pass, 728 passed, 2 ignored  |
+| `cargo test --no-default-features --features tracing-compat` | pass, 773 passed, 3 ignored  |
+| `uv run pytest -v --doctest-modules`                         | pass, 1152 passed, 6 skipped |
+
+The `tracing-compat` lane is the only one that compiles the new evidence, and
+its lib count rose from 763 to 773: eight net new wrapper failure cases, the
+disconnection case, and the overlapping-closers case. Every lane ran to
+completion before the next one started.
+
+## Third review follow-up after `0c2335d0`
+
+CodeRabbit's follow-up on `0c2335d0` left two rows partly addressed. Both were
+valid against that tree.
+
+The user-guide paragraph on close confirmation was wrong about the counters
+being cumulative: an earlier `close_timed_out` stays counted after a later
+close succeeds, so "every closer counted as completed and none as timed out"
+cannot hold for a retried close. The paragraph now says the counters cover the
+handler's lifetime and that a retry is confirmed by snapshotting
+`wait_diagnostics()` before and after it and checking that `close_completed`
+increased.
+
+The proof row asked for a concurrent property or model that generates or
+controls `handle()`, `flush()` and repeated `close()` interleavings across the
+builders, capacities and policies. `telemetry_interleaving_tests.rs` adds that
+as a controlled schedule matrix: twelve `rstest` cases cross the two rotating
+wrappers with six schedules.
+
+| Schedule                      | Interleaving it controls                                                                     |
+| ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `OverlappingClosers`          | Two closers share one shutdown while the worker is parked inside `write`                     |
+| `OverlappingClosersWideQueue` | The same overlap over a four-slot queue, so a full queue is not what makes the hand-off work |
+| `RetryAfterTimeout`           | A timed-out close, the release, and a retry that observes the completion                     |
+| `CallsAfterClose`             | A handle, a flush and a repeated close after a clean shutdown                                |
+| `RefusedHandleThenRetry`      | A record refused under the drop policy, then the close timeout and the retry                 |
+| `TimedOutHandleThenRetry`     | The same, with a 20 ms enqueue deadline under the timeout policy                             |
+
+Each schedule is driven by the scripted writer's gates rather than by sleeps,
+so the test chooses the interleaving instead of sampling for it. Every case
+asserts the exact counters its schedule must leave — two completions for the
+overlapping closers, one timeout that survives a successful retry, or one
+closed-handler outcome each for the late handle and flush — and the closing
+assertion requires `waits_in_flight` to return to zero, which catches a wait
+that never left its scope.
+
+One pre-existing inconsistency surfaced while writing the matrix: the rotating
+wrapper maps a handler failure to `RuntimeError`, while the timed-rotating
+wrapper maps the same failure to `ValueError`. That is unrelated to this
+change, so the matrix asserts the `Handler error:` message both wrappers
+produce rather than a class they do not share; the divergence is recorded under
+follow-up work.
+
+## Fourth review follow-up after `90f8de26`
+
+CodeRabbit accepted the documentation row and kept the testing row partly
+addressed. Its objection was specific and correct: `CallsAfterClose` waits for
+the worker to finish before it calls `handle()` and `flush()`, and the
+refused-handle schedules finish `handle()` before `close()` begins. Neither
+therefore proves anything about a call that meets a shutdown in progress, and
+the matrix reached only the two rotating wrappers, not the core handler.
+
+Three changes answer that without introducing a sampled race.
+
+- Capacity is now a case parameter rather than a property of the schedule, so
+  the same schedule runs over a narrow and a wide queue. The separate
+  `OverlappingClosersWideQueue` variant disappeared with it.
+- `file_over_writer` builds the core `FemtoFileHandler` over the scripted
+  writer, so every schedule runs across the core handler and both wrappers:
+  three builders, six schedules, two capacities where capacity matters, and
+  twenty-four cases.
+- `WaitingFlush` starts a `flush()` on its own thread and waits for the
+  worker's `Stage::Flush`, which parks the worker inside the writer's flush
+  with the acknowledgement still outstanding. The flush is therefore already
+  inside its wait when a second thread starts `close()`. A `waits_in_flight`
+  reading of two proves the closer is inside the shared completion, which it
+  only reaches after `take_shutdown` has taken the command sender; at that
+  point the main thread calls `handle()` and `flush()` while the worker is
+  still parked. Releasing the writer answers the waiting flush first, so that
+  flush must record `flush_acknowledged`, the two late calls must record
+  `handle_closed` and `flush_closed`, and the close must record one completion
+  and no timeout.
+
+That covers both halves of the objection: a call already waiting when the
+shutdown begins, and calls that arrive while the shutdown is still in progress.
+Every step is signalled by the scripted writer's gates or by the public gauge,
+so nothing depends on how fast the machine is. The module was re-run five times
+consecutively to confirm the new schedule does not sample a favourable
+interleaving.
+
+The exception-class divergence now has its own issue, #610, so the matrix's
+message-only assertion has a recorded destination rather than an unowned note.
+
+## Fifth review follow-up after `604da769`
+
+The fourth review left three inline findings open while the pre-merge rows were
+being reconciled. All three were valid.
+
+- `telemetry_observation_tests` counts queued commands through
+  `crate::sync::Sender::len`, which the Loom channel does not provide, so a
+  unit-test build with `--cfg loom` and `tracing-compat` failed name
+  resolution. The module is now gated with `not(loom)`. The ordinary
+  `tracing-compat` lane still runs it; a focused
+  `--cfg loom --features tracing-compat --tests` check confirms the module is
+  compiled out.
+- The users' guide told operators to confirm a retried `close()` by checking
+  `close_completed` alone. A closer that reaches the worker's exit can record
+  `close_panicked` or `close_unknown` instead, and further retries cannot raise
+  `close_completed`, so the guidance could never confirm those outcomes. It now
+  names all four cumulative counters.
+- The v0.2.0 migration guide invited readers upgrading from "an earlier
+  release" to skip the v0.1.0 steps. It now names v0.1.0 as the preceding
+  release and directs readers through each guide in sequence.
+
+The same focused Loom check also exposed a pre-existing break in
+`tracing_compat/tests.rs:306`, where a saturation test calls a helper that
+`manager.rs` gates behind `not(loom)`. It is unchanged since `852bfec6` on
+`main`, so it is tracked separately as #612 rather than repaired here.
+
+## Sixth review follow-up after `593a82bb`
+
+The fifth-round assessment at 17:09 accepted the `WaitingFlush` hand-off but
+recorded a coverage gap: the controlled matrix pinned each schedule to one
+policy and one capacity, and no controlled case covered a `handle()` that was
+already blocked when a close took the shutdown. It was reported as a coverage
+gap rather than a defect, and it is now closed by widening the existing matrix.
+
+- A schedule whose outcome must not depend on the queue's overflow policy now
+  runs under `block`, `drop` and `timeout`, at capacities one and four, across
+  the rotating wrapper, the timed-rotating wrapper and the core file handler. A
+  refusal schedule keeps its own policy, because the refusal is what the case
+  tests, but it now also runs at both capacities. The matrix therefore states
+  the invariance the shutdown hand-off has to hold: the same counters under
+  every policy and every queue width that can express the schedule.
+- `BlockedHandleThenShutdown` adds the missing hand-off. It fills the queue
+  while the worker is parked, spawns a `handle()` and waits for the public
+  in-flight gauge to show that call inside its wait, then closes from another
+  thread and waits for the gauge to show the close joined it. Releasing the
+  writer frees capacity, so the case asserts the blocked record was accepted,
+  was not counted as a closed call, and that the close completed without a
+  timeout. This replaces the subprocess scenario's timing assumption with a
+  gated assertion on the outcome after release.
+- The module grew past the 400-line limit while it absorbed the wider matrix,
+  so the seven schedule bodies and their thread helpers moved to a sibling
+  `telemetry_interleaving_schedules` module. The test module keeps the
+  builders, capacities, policies and the matrix itself; both are test-only.
+
+The focused run of the widened matrix passed seven cases in 30.46 s on the
+`--no-default-features --features tracing-compat` lane.
+
+## Seventh review follow-up after `ab15aebc`
+
+The sixth assessment at 18:41 accepted the widened matrix but showed that
+`BlockedHandleThenShutdown` was not yet fully controlled. `WaitScope::start`
+runs before `enqueue` clones the sender, so the public `waits_in_flight` gauge
+rises when the call merely begins. A reading of one therefore did not prove the
+record had reached the full queue, and a close that took the sender first would
+have made the case fail rather than pass. The reviewer asked for a test-only
+observation that establishes the send is waiting before `close()` starts.
+
+- `FemtoFileHandler` now carries a `#[cfg(test)]` `sends_in_flight` counter.
+  `enqueue` raises it through a `SendInFlight` drop guard around the channel
+  send, so the guard covers every exit, including a panic on the sending
+  thread. The field, the guard and the accessor are compiled out of release
+  builds.
+- The three Python classes expose that count through a `#[cfg(test)]`
+  `debug_sends_in_flight()` method, so the matrix can read it uniformly through
+  `Py<PyAny>` whichever builder produced the handler.
+- `BlockedHandleThenShutdown` now waits for that gauge to reach one before it
+  spawns the closer. Reaching one proves the record is inside the send, so the
+  sender clone the close needs is already held and the close cannot overtake
+  it. All the assertions after release are retained, and the matrix's closing
+  check now requires the send gauge to return to zero as well as the public
+  wait gauge.
+- The two CodeScene advisories raised on `ab15aebc` are cleared. The five
+  schedule bodies that took the handler, writer, stage channel and capacity as
+  four separate parameters now take one `Case` struct, which also prevents a
+  schedule from pairing one case's writer with another's handler. `spawn_close`,
+  `spawn_flush` and `spawn_handle` now share one `spawn_call` helper instead
+  of repeating the attach-and-spawn body.
+- The added method pushed `handlers/rotating/python.rs` to 402 lines, which
+  the Whitaker `module-max-lines` rule rejects above 400. The wrapper's comment
+  now points at the core method, which carries the full explanation, and the
+  module sits at 398 lines.
+
+The focused run of the matrix passed seven cases in 18.02 s on the
+`--no-default-features --features tracing-compat` lane.
+
+## Decision log
+
+- **Detach in the `#[pymethods]` shims, not the core.** The core
+  `FemtoFileHandler::flush`/`close` are also called from Rust and from `Drop`;
+  detaching is a Python-boundary concern, so it stays in the binding.
+- **Detach for every policy, not just the blocking ones.** `Drop` uses
+  `try_send` and does not wait, but branching would leave `drop` on a different
+  code path for no benefit. One uniform boundary is simpler to audit.
+- **`policy="block"` stays.** Removing it would be a breaking change and the
+  issue asks for a decision plus documentation, not removal. Its unbounded wait
+  and the fact that `close()` does not cancel it are now documented in the user
+  guide, and callers who need a wait that ends on its own are pointed at
+  `"timeout:N"`.
+- **Preserve handler-specific exception mappings.** The detached closure returns
+  the Rust error, and each binding constructs its existing Python exception
+  after the GIL is reacquired. In particular, the timed-rotating wrapper's
+  `ValueError` mapping is not normalized as part of this GIL-only change.
+- **Keep the shutdown hand-off explicit.** `close()` takes the shutdown state
+  under a short shared borrow, then releases the borrow and detaches for the
+  wait. Calls made during the wait observe a closed handler — `handle()` raises,
+  `flush()` returns `False`, and a second `close()` shares the same completion
+  wait. A blocked `handle()` or `flush()` also holds only a shared borrow, so a
+  concurrent `close()` starts, takes the shutdown state and waits on the shared
+  completion signal instead of raising. The user guide and subprocess tests pin
+  both states.
+- **Assert the *shape* of the wait, not a wall-clock threshold.** The first
+  draft asserted only that a progress event fired before the blocked thread was
+  joined. That passes for a GIL-holding binding whenever the wait ends on its
+  own deadline (`"timeout:N"`, `close()`), so the bounded scenarios now count
+  watchdog records that land strictly inside the call's own window.
+
+## Follow-up work (audited, deliberately out of scope)
+
+Issue #441 is scoped to the **file** handlers. The other handler families were
+audited when this plan was written and again after main's #549 landed; the
+current state of each Python binding is:
+
+- `rust_extension/src/http_handler/handler.rs` — `py_flush` and `py_close`
+  detach. `py_handle` stays attached, but it enqueues with `try_send`, so it
+  drops under pressure instead of waiting and has no lock-holding wait to
+  release.
+- `rust_extension/src/socket_handler/handler.rs` — the same: `py_flush` and
+  `py_close` detach, and `py_handle` uses `try_send` rather than a blocking
+  send.
+- `rust_extension/src/stream_handler.rs` — the same shape: `py_flush` and the
+  blocking part of `py_close` detach, and `py_handle` uses `try_send` rather
+  than a blocking send.
+
+None of them were changed here because the issue's acceptance criteria name the
+file handlers and the builder audit confirmed no builder work is needed;
+widening the change would make the diff harder to review and the regression
+evidence harder to scope. After main's #549, no Python binding in those three
+families holds the lock across a wait, so no follow-up issue is needed for them.
+
+The rotating wrapper maps a handler failure to `RuntimeError`, while the
+timed-rotating wrapper maps the same failure to `ValueError`. The interleaving
+matrix asserts the `Handler error:` message both produce. Aligning the classes
+is a public-API decision outside this issue, so it is tracked as #610.
+
+## Superseded gate interruptions and outcomes
+
+Earlier gate attempts were delayed or timed out while Cargo waited on shared
+host cache and compile-admission resources. Those attempts produced no source
+compiler diagnostics. The nested lint-contract timeouts were later extended;
+the complete six-gate run on HEAD `a994236507ae11a3280018143f8b3b70323b4892`
+passed. That run reported 763 Python tests passed, 5 skipped, 1 warning, and 66
+snapshots passed, including all nine then-current GIL regression cases.
+Markdownlint checked 61 files with no errors, and Nixie validated every diagram.
+
+The first requested CodeRabbit review identified twelve follow-ups, which were
+addressed and revalidated before publication. A later review requested the
+close-on-close case now recorded in `Progress`; its all-gates result supersedes
+the earlier interrupted attempts listed here. This section records those
+interruptions without attributing host contention to the implementation.
+
+## Context and orientation
+
+`rust_extension/src/handlers/file/` holds the shared file handler:
+
+- `mod.rs` — the `#[pyclass]` `FemtoFileHandler`;
+- `python.rs` — its `#[pymethods]` block (`py_new`, `py_handle`, `py_flush`,
+  `py_close`);
+- `handler_impl.rs` — `FemtoHandlerTrait::handle`, which sends through a
+  `crossbeam_channel::Sender` whose behaviour depends on `OverflowPolicy`;
+- `worker.rs` — the file worker thread, `FileCommand`, and the flush
+  acknowledgement.
+
+`rust_extension/src/handlers/rotating/python.rs` and
+`rust_extension/src/handlers/timed_rotating/python.rs` hold the Python wrappers
+`PyRotatingFileHandler` / `PyTimedRotatingFileHandler`, which delegate to core
+types built on top of `FemtoFileHandler`.
+
+The precedent is `rust_extension/src/http_handler/handler.rs`, where `py_flush`
+accepts `py: Python<'_>` and returns `py.detach(|| self.flush())`.
+
+## Plan of work
+
+### Task 1 — shared `FemtoFileHandler` bindings
+
+In `rust_extension/src/handlers/file/python.rs`:
+
+- `py_handle`: add `py: Python<'_>`; parse the level and build the record
+  before the detached section; wrap only the core `handle` call in
+  `py.detach(...)`; map the error to `PyRuntimeError` afterwards.
+- `py_flush`: add `py: Python<'_>` and return `py.detach(|| self.flush())`.
+- `py_close`: take `slf: Py<Self>`, take a shared borrow for long enough to
+  `take_shutdown()`, and release it before
+  `py.detach(move || shutdown.wait())`. A waiting `handle()` or `flush()` also
+  holds only a shared borrow, so the close is not rejected; it takes the
+  shutdown state and waits on the shared completion signal. Once a close has
+  taken that state, later calls observe the closed handler.
+- Do not add a Loom cfg guard: these methods consume the `Python<'_>` token
+  supplied by PyO3 and do not attach to Python from a Loom thread. Keep the
+  existing Loom feature lane compiling.
+
+### Task 2 — rotating and timed-rotating wrappers
+
+Same shape in `handlers/rotating/python.rs` and
+`handlers/timed_rotating/python.rs` for `handle`, `flush` and `close`. Parsing
+and exception construction stay on the GIL side. Audit builders only.
+
+### Task 3 — concurrency regression tests
+
+Five modules share the work. `tests/file_handler_gil_scenarios.py` joins a
+scenario body to the shared child-interpreter harness and renders a standalone
+program; `tests/file_handler_gil_wait_scenarios.py` and
+`tests/file_handler_gil_close_scenarios.py` hold the bodies;
+`tests/file_handler_gil_support.py` runs each program with
+`subprocess.run([sys.executable, "-c", script], timeout=...)` so a GIL deadlock
+fails the test rather than hanging the suite. Timeout assertions name the
+probable deadlock, and child failures include stderr.
+`tests/test_file_handler_gil_release.py` parametrizes every scenario over the
+file, rotating, and timed-rotating builders. The scenarios pin both the GIL
+release (the watchdog must record progress inside each wait) and the two borrow
+states around `close()`.
+
+### Task 4 — documentation
+
+`docs/users-guide.md` (contract, concurrency overview, backpressure guidance,
+rotating sections), `docs/developers-guide.md` (a section near "Loom models"),
+`docs/v0-2-0-migration-guide.md` (a migration section for callers who relied on
+the lock as an implicit mutual exclusion), and the
+`femtologging/overflow_policy.py` module docstring.
