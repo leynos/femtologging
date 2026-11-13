@@ -7,6 +7,8 @@
 //! call and a raising lookup of the `flush` attribute, and keep the
 //! `AttributeError` opt-out distinct from a real lookup failure.
 
+use std::ffi::CStr;
+
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
@@ -51,55 +53,47 @@ fn with_captured_stderr<T>(py: Python<'_>, body: impl FnOnce() -> T) -> (T, Stri
     (result, captured)
 }
 
-/// Build a handler whose `flush` raises an exception carrying the marker.
-fn raising_handler(py: Python<'_>) -> PyHandler {
-    let module = PyModule::from_code(
-        py,
-        c"class Raising:\n    def flush(self):\n        raise RuntimeError('SENSITIVE-flush-payload-7d1c')\n",
-        c"raising_flush_handler.py",
-        c"raising_flush_handler",
-    )
-    .expect("the raising handler module compiles");
+/// Build a handler by instantiating *class_name* from Python *source*.
+///
+/// The three builders below differ only in the source they compile, so the
+/// module loading and construction live here once. Each call compiles its own
+/// module, so one shared module name is enough to label a traceback.
+fn handler_from_source(py: Python<'_>, source: &CStr, class_name: &str) -> PyHandler {
+    let module = PyModule::from_code(py, source, c"flush_handler_test.py", c"flush_handler_test")
+        .expect("the test handler module compiles");
     let object = module
-        .getattr("Raising")
+        .getattr(class_name)
         .expect("the class exists")
         .call0()
         .expect("the handler constructs");
     PyHandler::new(py, object.unbind())
+}
+
+/// Build a handler whose `flush` raises an exception carrying the marker.
+fn raising_handler(py: Python<'_>) -> PyHandler {
+    handler_from_source(
+        py,
+        c"class Raising:\n    def flush(self):\n        raise RuntimeError('SENSITIVE-flush-payload-7d1c')\n",
+        "Raising",
+    )
 }
 
 /// Build a handler whose `flush` attribute lookup raises a runtime error.
 fn lookup_raising_handler(py: Python<'_>) -> PyHandler {
-    let module = PyModule::from_code(
+    handler_from_source(
         py,
         c"class LookupRaising:\n    def __getattr__(self, name):\n        raise RuntimeError('SENSITIVE-flush-payload-7d1c')\n",
-        c"lookup_raising_flush_handler.py",
-        c"lookup_raising_flush_handler",
+        "LookupRaising",
     )
-    .expect("the lookup-raising handler module compiles");
-    let object = module
-        .getattr("LookupRaising")
-        .expect("the class exists")
-        .call0()
-        .expect("the handler constructs");
-    PyHandler::new(py, object.unbind())
 }
 
 /// Build a handler whose missing `flush` raises `AttributeError`, the opt-out.
 fn attribute_error_handler(py: Python<'_>) -> PyHandler {
-    let module = PyModule::from_code(
+    handler_from_source(
         py,
         c"class LookupOptOut:\n    def __getattr__(self, name):\n        raise AttributeError('SENSITIVE-flush-payload-7d1c')\n",
-        c"attribute_error_flush_handler.py",
-        c"attribute_error_flush_handler",
+        "LookupOptOut",
     )
-    .expect("the opt-out handler module compiles");
-    let object = module
-        .getattr("LookupOptOut")
-        .expect("the class exists")
-        .call0()
-        .expect("the handler constructs");
-    PyHandler::new(py, object.unbind())
 }
 
 /// Take the flush-failure warnings reported so far.
