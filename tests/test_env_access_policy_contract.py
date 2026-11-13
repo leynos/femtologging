@@ -12,6 +12,13 @@ satisfied by `if false; then <command>; fi`. And a command's status is judged
 as well as its text, because `-` prefixes and `|| true` leave a gate that runs,
 can fail, and still reports success.
 
+The target is exercised through the real Make → uv → lane-driver boundary, but
+with a recording `cargo` first on `PATH`. That keeps the contract to status
+propagation and exact argument order without compiling anything, and stops it
+waiting on Cargo's package-cache lock when another job holds it ([#537]). Real
+enforcement stays with `rust_extension/tests/` (the probe and the `syn` source
+scan) and with `make lint`.
+
 The scan for `allow` attributes that would switch the policy off lives in
 `rust_extension/tests/env_policy_source_scan.rs`, which parses each source with
 `syn`. It began here as a line-start text scan and moved because a text scan
@@ -22,13 +29,21 @@ and misses a suppression that names the lint's group rather than the lint.
 from __future__ import annotations
 
 import itertools
-import shutil
-import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs the real target
 import tomllib
 import typing as typ
 
 import pytest
 
+from tests.env_policy_lane_support import (
+    MAKE_TIMEOUT_SECONDS,
+    FakeCargo,
+    captured_output,
+    expected_invocation,
+    policy_defaults,
+    recorded_invocations,
+    run_policy_target,
+    write_fake_cargo,
+)
 from tests.make_contract_helpers import (
     objects,
     repo_root,
@@ -37,6 +52,9 @@ from tests.make_contract_helpers import (
     text_sequence,
     variable_tokens,
 )
+
+if typ.TYPE_CHECKING:
+    from pathlib import Path
 
 type Tokens = tuple[str, ...]
 
@@ -49,10 +67,11 @@ REQUIRED_LANES: typ.Final[Tokens] = ("none", "all")
 #: Manifest feature keys that name no lane of their own.
 LANE_EXEMPT_FEATURES: typ.Final[Tokens] = ("default",)
 STANDARD_CLIPPY_TARGET: typ.Final = "lint-rust-clippy"
-# Each Rust policy lane may wait for the shared compiler pool on this host.
-POLICY_LANE_TIMEOUT_SECONDS: typ.Final = 3600
-# The contract runs the gate twice; allow both subprocess budgets plus setup.
-POLICY_CONTRACT_TIMEOUT_SECONDS: typ.Final = 2 * POLICY_LANE_TIMEOUT_SECONDS + 20
+#: Outer pytest bound. Each Make-running test starts one subprocess, so this
+#: sits above `MAKE_TIMEOUT_SECONDS` with room for fixture setup. Fake Cargo
+#: compiles nothing, so the budget covers uv provisioning and the real Make
+#: run, not a compiler queue or Cargo's package-cache lock (issue #537).
+POLICY_CONTRACT_TIMEOUT_SECONDS: typ.Final = MAKE_TIMEOUT_SECONDS + 60
 #: Shell fragments that swallow the preceding command's exit status.
 STATUS_SWALLOWING: typ.Final[Tokens] = (
     "|| true",
@@ -285,57 +304,74 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
         )
 
 
-def run_policy_lane(lanes: str) -> subprocess.CompletedProcess[str]:
-    """Run `make lint-env-policy` over the given lanes.
-
-    The lint and Cargo flags are narrowed so the run exercises the recipe's
-    exit-status handling rather than the policy itself. Production policy
-    coverage remains separately asserted as `--all-targets`. A lane naming a
-    feature the crate does not declare fails immediately, before any build.
+@pytest.fixture
+def fake_cargo(tmp_path: Path) -> FakeCargo:
+    """Install a recording `cargo` first on `PATH` and return its log path.
 
     Returns
     -------
-    subprocess.CompletedProcess[str]
-        The target's exit status and captured output.
+    FakeCargo
+        The directory holding the fake executable and the log it writes.
     """
-    make = shutil.which("make")
-    assert make is not None, "make must be on PATH to run the policy target"
-    # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is
-    # fixed here and the executable is resolved above
-    # Cargo may wait for the shared cache or compiler pool on a busy host.
-    return subprocess.run(
-        [
-            make,
-            "lint-env-policy",
-            f"ENV_POLICY_FEATURE_LANES={lanes}",
-            "ENV_POLICY_CARGO_ARGS=--lib",
-            "ENV_POLICY_LINT_ARGS=-A clippy::all",
-        ],
-        cwd=repo_root(),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=POLICY_LANE_TIMEOUT_SECONDS,
-    )
+    return write_fake_cargo(tmp_path)
 
 
-@pytest.mark.timeout(POLICY_CONTRACT_TIMEOUT_SECONDS)
-def test_a_failing_lane_fails_the_policy_target() -> None:
+# Fake Cargo removes package-cache-lock delays (#537), so this marker only has
+# to exceed MAKE_TIMEOUT_SECONDS plus fixture setup. The subprocess budget
+# covers provisioning the lane driver through uv and the real Make run, not
+# compilation; see docs/debugging/debugging-plan-2026-09-08-env-policy-timeout.md.
+POLICY_TARGET_MARKER: typ.Final = pytest.mark.timeout(POLICY_CONTRACT_TIMEOUT_SECONDS)
+
+
+@POLICY_TARGET_MARKER
+def test_a_failing_lane_fails_the_policy_target(fake_cargo: FakeCargo) -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 
-    Invariant: `make lint-env-policy` fails. This drives the real recipe rather
-    than describing it, because the shell loop it replaced reported only its
-    last command's status, and a contract that reads the recipe cannot tell the
-    difference. `badfeature` is not a declared feature, so Cargo rejects that
-    lane before building anything.
+    Invariant: `make lint-env-policy` fails, names the rejected lane, and stops
+    before the lane after it. The fake rejects the `python` lane with Cargo's
+    compile-failure status, so this drives status propagation through the real
+    Make → uv → driver boundary without compiling anything.
     """
-    failing_lane = run_policy_lane("badfeature none")
-    assert failing_lane.returncode != 0, (
-        "a failing lane must fail lint-env-policy, even when a later lane passes\n"
-        f"stdout:\n{failing_lane.stdout}\nstderr:\n{failing_lane.stderr}"
+    failing_lane = run_policy_target(
+        fake_cargo,
+        "ENV_POLICY_FEATURE_LANES=none python all",
+        reject="python",
     )
-    passing_lane = run_policy_lane("none")
+    manifest, cargo_args, lint_args = policy_defaults()
+    assert failing_lane.returncode != 0, (
+        f"a failing lane must fail lint-env-policy\n{captured_output(failing_lane)}"
+    )
+    assert "# Rust lint lane failed: python (exit 101)" in failing_lane.stdout, (
+        "the driver must name the rejected lane and its status\n"
+        f"{captured_output(failing_lane)}"
+    )
+    assert recorded_invocations(fake_cargo.log) == tuple(
+        expected_invocation(manifest, lane, cargo_args, lint_args)
+        for lane in ("none", "python")
+    ), (
+        "the driver must lint each lane up to and including the failure, in order\n"
+        f"{captured_output(failing_lane)}"
+    )
+
+
+@POLICY_TARGET_MARKER
+def test_accepting_lanes_pass_the_policy_target(fake_cargo: FakeCargo) -> None:
+    """Scenario: every default lane accepts the code.
+
+    Invariant: `make lint-env-policy` succeeds and invokes Cargo exactly once
+    per default lane, in Makefile order, with the default manifest and
+    arguments. This measures the policy wiring rather than the host's queue.
+    """
+    passing_lane = run_policy_target(fake_cargo)
+    manifest, cargo_args, lint_args = policy_defaults()
     assert passing_lane.returncode == 0, (
-        "lint-env-policy must succeed when every lane passes\n"
-        f"stdout:\n{passing_lane.stdout}\nstderr:\n{passing_lane.stderr}"
+        f"lint-env-policy must succeed when every lane passes\n"
+        f"{captured_output(passing_lane)}"
+    )
+    assert recorded_invocations(fake_cargo.log) == tuple(
+        expected_invocation(manifest, lane, cargo_args, lint_args)
+        for lane in variable_tokens("ENV_POLICY_FEATURE_LANES")
+    ), (
+        "every default lane must be linted once, in Makefile order, with the "
+        f"default arguments\n{captured_output(passing_lane)}"
     )
