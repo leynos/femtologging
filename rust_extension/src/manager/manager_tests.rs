@@ -328,17 +328,21 @@ mod log_compat {
                 .borrow(py)
                 .add_handler(Arc::new(FailingFlushHandler) as Arc<dyn FemtoHandlerTrait>)?;
 
+            // The counters are process-wide, but this sweep is the only
+            // flush the test performs and the manager holds exactly one
+            // logger, so both deltas belong to the sweep under test.
             let before = flush_metrics_snapshot();
             flush_all_handlers(py);
             let after = flush_metrics_snapshot();
 
-            assert!(
-                after.bridge_failures > before.bridge_failures,
-                "a failed flush during a bridge sweep must increment the bridge-failure counter",
+            assert_eq!(
+                after.bridge_failures,
+                before.bridge_failures + 1,
+                "the one failed flush during the sweep must be counted once",
             );
-            assert!(
-                after.outcomes[FlushOutcome::HandlerFailure.index()]
-                    > before.outcomes[FlushOutcome::HandlerFailure.index()],
+            assert_eq!(
+                after.outcomes[FlushOutcome::HandlerFailure.index()],
+                before.outcomes[FlushOutcome::HandlerFailure.index()] + 1,
                 "the failed logger flush must also be classified as a handler failure",
             );
             Ok(())

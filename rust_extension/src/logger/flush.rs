@@ -5,15 +5,25 @@
 //! flushed without holding any lock a handler could need. Both halves are
 //! timed and classified once, so the counters and the tracing span describe
 //! the same attempt.
+//!
+//! The measurement is a seam of its own. [`measure_flush_attempt`] takes the
+//! clock and the observer as parameters, so orchestration reads no ambient
+//! time source and writes no global; [`FlushMetrics`] and the tracing span are
+//! two production observers selected at the flush boundary.
 
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use crate::handler::FemtoHandlerTrait;
+use crate::monotonic_clock::MonotonicClock;
 
 use super::DrainOutcome;
 use super::FemtoLogger;
-use super::flush_metrics::{self, FlushOutcome};
+#[cfg(feature = "tracing-compat")]
+use super::flush_metrics;
+#[cfg(test)]
+use super::flush_metrics::FlushMetricsSnapshot;
+use super::flush_metrics::{FlushMetrics, FlushOutcome};
 
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
@@ -57,30 +67,17 @@ impl FemtoLogger {
     /// Drain this logger's queued records, then flush its configured handlers.
     ///
     /// The whole attempt is timed and classified once, so the counters and the
-    /// tracing span describe the same flush. The span is opened before the
-    /// drain so an external subscriber sees the wait as part of the operation;
-    /// its outcome and duration fields are recorded when the attempt ends.
+    /// tracing span describe the same flush. The production clock and observer
+    /// are chosen here, at the boundary: the orchestration below names neither
+    /// the process-wide metrics nor the tracing feature. The observer opens
+    /// its span when it is created, before the drain, so an external
+    /// subscriber sees the wait as part of the operation.
     pub(super) fn flush_handlers_blocking(&self) -> bool {
-        let started = Instant::now();
-        #[cfg(feature = "tracing-compat")]
-        let span = tracing::trace_span!(
-            target: "femtologging::internal",
-            "logger_flush",
-            operation = "logger_flush",
-            flush_outcome = tracing::field::Empty,
-            elapsed_us = tracing::field::Empty,
-        );
-        #[cfg(feature = "tracing-compat")]
-        let _entered = span.enter();
-
-        let outcome = self.flush_handlers_inner();
-        let elapsed = started.elapsed();
-        #[cfg(feature = "tracing-compat")]
-        {
-            span.record("flush_outcome", outcome.label());
-            span.record("elapsed_us", flush_metrics::elapsed_micros(elapsed));
-        }
-        flush_metrics::record_flush(outcome, elapsed);
+        let observer = production_flush_observer();
+        let outcome =
+            measure_flush_attempt(&crate::monotonic_clock::SystemClock, &observer, || {
+                self.flush_handlers_inner()
+            });
         outcome.is_success()
     }
 
@@ -173,3 +170,129 @@ impl FemtoLogger {
         all_succeeded
     }
 }
+
+/// Receives the measurement of one completed flush attempt.
+///
+/// The flush path depends on this trait rather than on the process-wide
+/// counters, so a unit test can observe exactly what one attempt reported
+/// without sharing state with every other logger in the process.
+pub(crate) trait FlushObserver {
+    /// Record the terminal `outcome` of a flush that took `elapsed`.
+    fn record(&self, outcome: FlushOutcome, elapsed: Duration);
+}
+
+/// Time one flush attempt and report its outcome to `observer`.
+///
+/// This is the whole command: one attempt, one clock reading either side of
+/// it, and one record, so a counter and a duration always describe the same
+/// flush. The attempt itself is supplied by the caller, which keeps this
+/// function free of any dependency on the shard, the handlers, or the
+/// process-wide metrics.
+pub(crate) fn measure_flush_attempt<C, O>(
+    clock: &C,
+    observer: &O,
+    attempt: impl FnOnce() -> FlushOutcome,
+) -> FlushOutcome
+where
+    C: MonotonicClock + ?Sized,
+    O: FlushObserver + ?Sized,
+{
+    let started = clock.now();
+    let outcome = attempt();
+    observer.record(outcome, clock.now().saturating_duration_since(started));
+    outcome
+}
+
+/// Production observer that counts a flush in the process-wide metrics.
+struct MetricsFlushObserver;
+
+impl FlushObserver for MetricsFlushObserver {
+    fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
+        process_flush_metrics().record(outcome, elapsed);
+    }
+}
+
+/// Observer that records a flush onto a tracing span, then delegates.
+#[cfg(feature = "tracing-compat")]
+struct TracingFlushObserver<O> {
+    /// Span whose fields describe this attempt.
+    span: tracing::Span,
+    /// Keeps the span entered for the whole attempt.
+    _entered: tracing::span::EnteredSpan,
+    /// Observer that receives the counters once the span is updated.
+    inner: O,
+}
+
+#[cfg(feature = "tracing-compat")]
+impl<O: FlushObserver> TracingFlushObserver<O> {
+    /// Open the flush span now, so a subscriber sees the drain as part of it.
+    fn start(inner: O) -> Self {
+        let span = tracing::trace_span!(
+            target: "femtologging::internal",
+            "logger_flush",
+            operation = "logger_flush",
+            flush_outcome = tracing::field::Empty,
+            elapsed_us = tracing::field::Empty,
+        );
+        let entered = span.clone().entered();
+        Self {
+            span,
+            _entered: entered,
+            inner,
+        }
+    }
+}
+
+#[cfg(feature = "tracing-compat")]
+impl<O: FlushObserver> FlushObserver for TracingFlushObserver<O> {
+    fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
+        self.span.record("flush_outcome", outcome.label());
+        self.span
+            .record("elapsed_us", flush_metrics::elapsed_micros(elapsed));
+        self.inner.record(outcome, elapsed);
+    }
+}
+
+/// The observer a production flush reports to.
+///
+/// Selected at the flush boundary rather than stored on the logger: the
+/// observer is stateless — all its state is the process-wide instance below —
+/// so keeping a copy per logger would only widen `FemtoLogger`.
+fn production_flush_observer() -> impl FlushObserver {
+    #[cfg(feature = "tracing-compat")]
+    {
+        TracingFlushObserver::start(MetricsFlushObserver)
+    }
+    #[cfg(not(feature = "tracing-compat"))]
+    {
+        MetricsFlushObserver
+    }
+}
+
+/// Return the process-wide flush metrics.
+///
+/// The instance lives here, behind the production observer, so orchestration
+/// and unit tests never reach for an ambient global.
+fn process_flush_metrics() -> &'static FlushMetrics {
+    static METRICS: OnceLock<FlushMetrics> = OnceLock::new();
+    METRICS.get_or_init(FlushMetrics::new)
+}
+
+/// Record a logger flush that failed during a `log`-bridge flush sweep.
+#[cfg(feature = "log-compat")]
+pub(crate) fn record_bridge_flush_failure() {
+    process_flush_metrics().record_bridge_failure();
+}
+
+/// Read the process-wide metrics so a test can assert one recorded flush.
+///
+/// Kept test-only: production code has no exporter yet, and a snapshot API
+/// would be a second contract to maintain before there is a reader for it.
+#[cfg(test)]
+pub(crate) fn flush_metrics_snapshot() -> FlushMetricsSnapshot {
+    process_flush_metrics().snapshot()
+}
+
+#[cfg(all(test, not(loom)))]
+#[path = "flush_tests.rs"]
+mod tests;

@@ -1,10 +1,15 @@
-//! Bounded, process-wide metrics and diagnostics for logger flushes.
+//! Bounded counters and diagnostics for logger flushes.
 //!
 //! Every completed flush is classified by its terminal outcome and timed into
-//! a fixed-bucket histogram. Both live in one process-wide [`FlushMetrics`]
-//! instance, so a process has a bounded number of counters however many loggers
-//! it creates. A flush is not on the record path, so the relaxed atomics here
-//! cost nothing that matters, and no measurement allocates.
+//! a fixed-bucket histogram. [`FlushMetrics`] is the storage for one such set
+//! of counters; the process-wide instance, and the [`FlushObserver`] that
+//! writes to it, live on the flush boundary in [`super::flush`]. Nothing here
+//! reaches for a global, so a test can drive one set of counters without
+//! sharing state with every other logger in the process. A flush is not on the
+//! record path, so the relaxed atomics here cost nothing that matters, and no
+//! measurement allocates.
+//!
+//! [`FlushObserver`]: super::flush::FlushObserver
 //!
 //! The metric names exported by this module are:
 //!
@@ -22,7 +27,6 @@
 //! warnings that report only how many failures accumulated since the previous
 //! warning.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -101,8 +105,8 @@ impl FlushOutcome {
     }
 }
 
-/// Counters and histogram shared by every logger in a process.
-struct FlushMetrics {
+/// One set of flush counters and a duration histogram.
+pub(crate) struct FlushMetrics {
     /// One counter per terminal outcome, indexed by [`FlushOutcome::index`].
     outcomes: [AtomicU64; OUTCOME_COUNT],
     /// Cumulative counts at or below each finite bound, then the overflow bucket.
@@ -128,7 +132,7 @@ struct FlushMetrics {
 
 impl FlushMetrics {
     /// Create counters at zero and warners at their default interval.
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             outcomes: std::array::from_fn(|_| AtomicU64::new(0)),
             duration_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -144,7 +148,7 @@ impl FlushMetrics {
     }
 
     /// Record one completed flush and emit a warning when it failed.
-    fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
+    pub(crate) fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
         let micros = elapsed_micros(elapsed);
         self.outcomes[outcome.index()].fetch_add(1, Ordering::Relaxed);
         for (index, bound) in DURATION_BUCKET_BOUNDS_US.iter().enumerate() {
@@ -160,7 +164,7 @@ impl FlushMetrics {
 
     /// Record a logger flush that failed during a `log`-bridge flush sweep.
     #[cfg(feature = "log-compat")]
-    fn record_bridge_failure(&self) {
+    pub(crate) fn record_bridge_failure(&self) {
         self.bridge_failures.fetch_add(1, Ordering::Relaxed);
         self.bridge_failure_warner.record_drop();
         self.bridge_failure_warner.warn_if_due(|count| {
@@ -197,7 +201,7 @@ impl FlushMetrics {
 
     /// Read every counter and bucket into a consistent-enough snapshot.
     #[cfg(test)]
-    fn snapshot(&self) -> FlushMetricsSnapshot {
+    pub(crate) fn snapshot(&self) -> FlushMetricsSnapshot {
         FlushMetricsSnapshot {
             outcomes: std::array::from_fn(|index| self.outcomes[index].load(Ordering::Relaxed)),
             duration_buckets: std::array::from_fn(|index| {
@@ -233,32 +237,6 @@ pub(crate) struct FlushMetricsSnapshot {
 /// on units and on what an overflowing duration reports.
 pub(crate) fn elapsed_micros(elapsed: Duration) -> u64 {
     u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
-}
-
-/// Return the process-wide flush metrics, creating them on first use.
-fn metrics() -> &'static FlushMetrics {
-    static METRICS: OnceLock<FlushMetrics> = OnceLock::new();
-    METRICS.get_or_init(FlushMetrics::new)
-}
-
-/// Record one completed logger flush.
-pub(crate) fn record_flush(outcome: FlushOutcome, elapsed: Duration) {
-    metrics().record(outcome, elapsed);
-}
-
-/// Read the process-wide metrics so a test can assert a real flush recorded one.
-///
-/// Kept test-only: production code has no exporter yet, and a snapshot API
-/// would be a second contract to maintain before there is a reader for it.
-#[cfg(test)]
-pub(crate) fn snapshot() -> FlushMetricsSnapshot {
-    metrics().snapshot()
-}
-
-/// Record a logger flush that failed during a `log`-bridge flush sweep.
-#[cfg(feature = "log-compat")]
-pub(crate) fn record_bridge_flush_failure() {
-    metrics().record_bridge_failure();
 }
 
 #[cfg(test)]

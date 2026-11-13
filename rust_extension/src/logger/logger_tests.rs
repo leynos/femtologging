@@ -99,23 +99,12 @@ fn flush_reports_drained_and_clears_the_backlog() {
         .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("native collecting handler should register");
 
-    let before = flush_metrics_snapshot();
     logger.log(FemtoLevel::Info, "queued");
     assert!(
         logger.flush_handlers(),
         "the shard should acknowledge a flush"
     );
-    let after = flush_metrics_snapshot();
 
-    assert!(
-        after.outcomes[FlushOutcome::Success.index()]
-            > before.outcomes[FlushOutcome::Success.index()],
-        "a successful flush must increment the process-wide success counter",
-    );
-    assert!(
-        after.duration_count > before.duration_count,
-        "a successful flush must record a duration",
-    );
     assert_eq!(
         collected_messages(&handler),
         vec!["queued"],
@@ -250,18 +239,11 @@ fn a_failing_handler_flush_does_not_skip_later_handlers() {
         .add_handler(succeeding.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("native succeeding flush handler should register");
 
-    let before = flush_metrics_snapshot();
     assert!(
         !logger.flush_handlers(),
         "a handler that fails to flush must make the logger's flush report failure"
     );
-    let after = flush_metrics_snapshot();
 
-    assert!(
-        after.outcomes[FlushOutcome::HandlerFailure.index()]
-            > before.outcomes[FlushOutcome::HandlerFailure.index()],
-        "a failed handler flush must increment the handler-failure counter",
-    );
     assert_eq!(failing.calls(), 1, "the failing handler must be flushed");
     assert_eq!(
         succeeding.calls(),
