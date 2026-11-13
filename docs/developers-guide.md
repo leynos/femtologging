@@ -352,8 +352,8 @@ are parameters, and production selects them at the flush boundary.
 `tracing-compat` the `TracingFlushObserver` around it records the outcome and
 elapsed time on the `logger_flush` span before delegating. Tests drive the
 production orchestration through `flush_handlers_measured` with a clock and
-observer they own — including their own `FlushMetrics` — so an assertion
-cannot be moved by another logger in the process.
+observer they own — including their own `FlushMetrics` — so an assertion cannot
+be moved by another logger in the process.
 
 `DrainOutcome` in `rust_extension/src/logger/dispatcher/shard/mod.rs` records
 how a barrier wait ended: `Drained`, `QueueClosed` when the shard is gone for
