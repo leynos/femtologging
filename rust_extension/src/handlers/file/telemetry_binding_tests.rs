@@ -154,17 +154,24 @@ pub(super) fn flush_fails(handler: &Bound<'_, PyAny>) {
 
 /// Fill the queue while the worker is parked inside its write.
 ///
-/// The first record is accepted and parks the worker; the second one either
-/// waits for capacity or is dropped, depending on the policy under test. Both
-/// leave the queue full when the case's own call runs.
-pub(super) fn fill_queue(handler: &Bound<'_, PyAny>, entered: &mpsc::Receiver<Stage>) {
+/// The first record is accepted and parks the worker, so the queue is empty
+/// again; one record per remaining slot then fills it exactly. The case's own
+/// call is the first one that meets a full queue, whatever the policy under
+/// test does with it.
+pub(super) fn fill_queue(
+    handler: &Bound<'_, PyAny>,
+    entered: &mpsc::Receiver<Stage>,
+    capacity: usize,
+) {
     handler
         .call_method1("handle", ("core", "INFO", "first"))
         .expect("the first record must be accepted");
     expect_stage(entered, Stage::Write);
-    handler
-        .call_method1("handle", ("core", "INFO", "second"))
-        .expect("the second record must fill the queue");
+    for index in 0..capacity {
+        handler
+            .call_method1("handle", ("core", "INFO", format!("queued {index}")))
+            .expect("a record must fit in the free slot");
+    }
 }
 
 /// What a case expects one binding call to have recorded.
@@ -245,7 +252,8 @@ fn the_python_handle_binding_records_a_real_timeout() {
         OverflowPolicy::Timeout(Duration::from_millis(20)),
         "handle_timed_out",
         |py, handler, entered| {
-            fill_queue(handler.bind(py), entered);
+            // `observe` builds a one-slot queue, so one record fills it.
+            fill_queue(handler.bind(py), entered, 1);
             assert!(
                 handler
                     .call_method1(py, "handle", ("core", "INFO", "third"))
@@ -374,7 +382,8 @@ fn the_python_flush_binding_records_the_real_outcome(#[case] case: FlushCase) {
         case.expected.outcome,
         |py, handler, entered| {
             if case.should_fill_queue {
-                fill_queue(handler.bind(py), entered);
+                // `observe` builds a one-slot queue, so one record fills it.
+                fill_queue(handler.bind(py), entered, 1);
             }
             flush_fails(handler.bind(py));
         },

@@ -344,6 +344,8 @@ mod telemetry_close_binding_tests;
 #[cfg(all(test, feature = "tracing-compat"))]
 mod telemetry_event_tests;
 #[cfg(all(test, feature = "tracing-compat"))]
+mod telemetry_interleaving_schedules;
+#[cfg(all(test, feature = "tracing-compat"))]
 mod telemetry_interleaving_tests;
 // The observation tests count queued commands through the std channel's
 // `len`, which the Loom channel does not offer, and they drive the Python

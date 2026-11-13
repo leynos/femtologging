@@ -132,7 +132,8 @@ impl Failure {
     /// Drive the failing call through the wrapper's Python method.
     fn act(self, handler: &Bound<'_, PyAny>, entered: &mpsc::Receiver<Stage>) {
         if self.should_fill_queue() {
-            fill_queue(handler, entered);
+            // These cases build a one-slot queue, so one record fills it.
+            fill_queue(handler, entered, 1);
         }
         match self {
             Self::FlushFails | Self::FlushAckTimedOut | Self::FlushEnqueueTimedOut => {
