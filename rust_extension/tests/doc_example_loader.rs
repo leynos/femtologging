@@ -9,6 +9,7 @@
 mod doc_examples;
 
 use doc_examples::extract_examples;
+use proptest::prelude::*;
 use rstest::rstest;
 
 /// A marked Rust fence is extracted with its body and identifier.
@@ -172,4 +173,50 @@ fn an_identifier_maps_to_a_generated_module_name() {
         examples[0].output_name(),
         "tests/generated/process_payload_schema_versioning.rs"
     );
+}
+
+proptest! {
+    /// Arbitrary guide text is either rejected or scanned without panicking.
+    ///
+    /// The loader runs inside the build script, where a panic would surface as
+    /// an opaque build failure rather than a contract violation.
+    #[test]
+    fn extraction_never_panics(text in ".{0,400}") {
+        let _ = extract_examples(&text);
+    }
+
+    /// A matched marker and Rust fence round-trip their body verbatim.
+    ///
+    /// The body alphabet excludes the fence character and line breaks, so the
+    /// generated guide always closes the fence the case opened.
+    #[test]
+    fn a_matched_fence_round_trips_its_body(body in "[a-z !,.;:()]{0,120}") {
+        let guide = format!("<!-- tested-example: demo -->\n```rust\n{body}\n```\n");
+        let examples = extract_examples(&guide).expect("the generated guide is valid");
+        let published = format!("{body}\n");
+        prop_assert_eq!(examples.len(), 1);
+        prop_assert_eq!(examples[0].source.as_str(), published.as_str());
+    }
+
+    /// Every accepted identifier maps to a module name that keeps it distinct.
+    ///
+    /// Dashes become underscores, and because the alphabet has no underscores
+    /// two identifiers cannot collapse to the same file name.
+    #[test]
+    fn accepted_identifiers_map_to_distinct_module_names(
+        first in "[a-z0-9]{1,4}(-[a-z0-9]{1,4}){0,3}",
+        second in "[a-z0-9]{1,4}(-[a-z0-9]{1,4}){0,3}",
+    ) {
+        prop_assume!(first != second);
+        let guide = format!(
+            concat!(
+                "<!-- tested-example: {first} -->\n```rust\nfn first() {{}}\n```\n",
+                "<!-- tested-example: {second} -->\n```rust\nfn second() {{}}\n```\n",
+            ),
+            first = first,
+            second = second,
+        );
+        let examples = extract_examples(&guide).expect("the generated guide is valid");
+        prop_assert_ne!(examples[0].output_name(), examples[1].output_name());
+    }
 }
