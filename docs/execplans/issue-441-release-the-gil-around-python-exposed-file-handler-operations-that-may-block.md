@@ -1627,6 +1627,32 @@ interleaving.
 The exception-class divergence now has its own issue, #610, so the matrix's
 message-only assertion has a recorded destination rather than an unowned note.
 
+## Fifth review follow-up after `604da769`
+
+The fourth review left three inline findings open while the pre-merge rows were
+being reconciled. All three were valid.
+
+- `telemetry_observation_tests` counts queued commands through
+  `crate::sync::Sender::len`, which the Loom channel does not provide, so a
+  unit-test build with `--cfg loom` and `tracing-compat` failed name
+  resolution. The module is now gated with `not(loom)`. The ordinary
+  `tracing-compat` lane still runs it; a focused
+  `--cfg loom --features tracing-compat --tests` check confirms the module is
+  compiled out.
+- The users' guide told operators to confirm a retried `close()` by checking
+  `close_completed` alone. A closer that reaches the worker's exit can record
+  `close_panicked` or `close_unknown` instead, and further retries cannot raise
+  `close_completed`, so the guidance could never confirm those outcomes. It now
+  names all four cumulative counters.
+- The v0.2.0 migration guide invited readers upgrading from "an earlier
+  release" to skip the v0.1.0 steps. It now names v0.1.0 as the preceding
+  release and directs readers through each guide in sequence.
+
+The same focused Loom check also exposed a pre-existing break in
+`tracing_compat/tests.rs:306`, where a saturation test calls a helper that
+`manager.rs` gates behind `not(loom)`. It is unchanged since `852bfec6` on
+`main`, so it is tracked separately as #612 rather than repaired here.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
