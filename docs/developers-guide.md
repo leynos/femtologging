@@ -181,6 +181,41 @@ install receives the same features without changing `pyproject.toml`. Coverage
 and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
 then fails before tests start if the extension omitted the hooks.
 
+### Documentation example loader
+
+`docs/documentation-style-guide.md` requires user-facing examples to be
+compiled as published, not as a copy kept beside them. `build.rs` therefore
+reads `docs/users-guide.md` and extracts every fenced block introduced by a
+`<!-- tested-example: <identifier> -->` marker into
+`rust_extension/tests/generated/`. The identifiers use lowercase letters,
+digits, and dashes; each generates one module named after the identifier with
+dashes replaced by underscores. `tests/process_payload_docs.rs` `include!`s the
+generated module, so `make test` compiles exactly the guide text.
+
+The loader is strict. An unmarked Rust fence, an unterminated fence, and a
+marker that is malformed, unnamed, repeated, or not followed by a fence all
+fail the build; a warning would leave a guide example untested. Fences in other
+languages are skipped whole, so a Rust fence quoted inside one is content
+rather than a second example.
+
+The Markdown rules live in `rust_extension/tests/test_utils/doc_examples.rs`
+and the publication and pruning of generated modules in
+`rust_extension/tests/test_utils/generated_files.rs`. Both modules are
+`#[path]`-included by `build.rs` and by the integration tests, so the code that
+runs during a build is the code the tests exercise:
+`tests/doc_example_loader.rs` covers the fence rules, including property tests,
+and `tests/generated_files.rs` covers writing, replacing, and pruning modules
+through a capability handle.
+
+The generated files are written inside `tests` rather than to `OUT_DIR` because
+the environment-policy source scan refuses any `include!` target the scan never
+walks; build output could carry a lint suppression the scan would never see,
+and that refusal is deliberately not weakened for documentation. The directory
+is ignored by Git, so regenerate it by rebuilding. The build script needs
+`camino` and `cap-std`, which are build-time dependencies only. A source
+distribution must carry `docs/users-guide.md`, which is why `pyproject.toml`
+adds it to the sdist include list.
+
 ### Rust log bridge and handler waits
 
 With `log-compat`, each logger shares its live level atomic with a Python-free
