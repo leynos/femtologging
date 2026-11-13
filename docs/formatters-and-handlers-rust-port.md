@@ -169,11 +169,11 @@ its writer and formatter are dropped, so it marks the end of the worker body,
 not the delivery of every record: a record dropped because the queue was full,
 or a write that failed, still leaves the signal raised. The worker logs flush
 I/O errors without propagating them, and a panic can bypass the final flush
-altogether. A closer whose wait times out
-observes neither the signal nor the worker's state, and may return while the
-worker is still writing; `close()` returns no status by which to tell the cases
-apart. The signal does not mark the thread's exit: thread-local destructors run
-after the worker body returns, so the thread may outlive the closer.
+altogether. A closer whose wait times out observes neither the signal nor the
+worker's state, and may return while the worker is still writing; `close()`
+returns no status by which to tell the cases apart. The signal does not mark
+the thread's exit: thread-local destructors run after the worker body returns,
+so the thread may outlive the closer.
 
 #### Sequence Diagram
 

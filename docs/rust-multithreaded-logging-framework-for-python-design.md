@@ -1352,18 +1352,17 @@ that may be full, then waiting for the worker's acknowledgement. Giving each
 wait its own timeout would let one call take nearly twice the configured limit.
 The deadline is measured on a clock injected through `HandlerConfig`, separate
 from the rate limiter, so a test can script that clock and drive both waits
-without sleeping.
-`close()` waits for the completion signal, which the worker raises after its
-body ends and its writer and formatter have been dropped, and does not join the
-thread. Joining would also wait for thread-local destructors, which user code
-can make block, so the closer drops the join handle and detaches the worker,
-which the operating system reclaims when it exits. Completion proves that the
-worker body finished and its writer and formatter were dropped, not that every
-record was delivered: a record dropped because the queue was full, or a write
-that failed, still leaves the signal raised, because the worker logs flush I/O
-errors rather than propagating them and a panic can bypass the final flush. As
-with the other handlers, it is the completion signal, not thread exit, that
-every closer waits on.
+without sleeping. `close()` waits for the completion signal, which the worker
+raises after its body ends and its writer and formatter have been dropped, and
+does not join the thread. Joining would also wait for thread-local destructors,
+which user code can make block, so the closer drops the join handle and
+detaches the worker, which the operating system reclaims when it exits.
+Completion proves that the worker body finished and its writer and formatter
+were dropped, not that every record was delivered: a record dropped because the
+queue was full, or a write that failed, still leaves the signal raised, because
+the worker logs flush I/O errors rather than propagating them and a panic can
+bypass the final flush. As with the other handlers, it is the completion
+signal, not thread exit, that every closer waits on.
 
 The socket and HTTP handlers reach the same guarantee by a different route,
 because their workers make blocking network calls rather than waiting only on a

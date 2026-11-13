@@ -249,14 +249,14 @@ destructors through channels rather than sleeping, and the Python tests poll the
 failing stage and cause in a trace event instead: a closed handler, a command
 the queue could not accept before the deadline, a queue disconnected while the
 command was being queued, an acknowledgement that timed out, a disconnected
-acknowledgement channel, and an acknowledgement reporting an I/O error each
-get their own fixed message. The queue likewise traces a full or
-disconnected queue when it drops a record. Every message is a fixed string with
-no record payload, so the trace adds no per-record or per-target dimensions,
-and all of them are `trace` level, so they are not formatted until an operator
-turns them on. The wait durations and outcome counters that would support
-alerting remain the bounded telemetry specified by issue #551, which this
-handler does not yet export.
+acknowledgement channel, and an acknowledgement reporting an I/O error each get
+their own fixed message. The queue likewise traces a full or disconnected queue
+when it drops a record. Every message is a fixed string with no record payload,
+so the trace adds no per-record or per-target dimensions, and all of them are
+`trace` level, so they are not formatted until an operator turns them on. The
+wait durations and outcome counters that would support alerting remain the
+bounded telemetry specified by issue #551, which this handler does not yet
+export.
 
 ### Handler shutdown signal, clock and condition-variable seams
 
