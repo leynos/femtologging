@@ -344,13 +344,14 @@ fields with safe defaults does not require a version bump.
   therefore leaves that window open. Restore worker progress first — do not
   park the worker and exit — then confirm completion before the process ends by
   reading `wait_diagnostics()`. Those counters are cumulative for the handler's
-  lifetime: `close_completed` counts the closers that observed the worker stop,
-  and `close_timed_out` counts the closers that returned without confirmation.
-  An earlier timeout therefore stays counted after a later close succeeds, so
-  confirm a retry by snapshotting `wait_diagnostics()` immediately before it
-  and again after it returns, and check that `close_completed` increased. A
-  non-zero `close_timed_out` only records the earlier attempt; it does not mean
-  the retry also failed.
+  lifetime: `close_completed`, `close_panicked` and `close_unknown` each count
+  a closer that reached a verdict on the worker's exit, and `close_timed_out`
+  counts the closers that returned without one. An earlier timeout therefore
+  stays counted after a later close succeeds, so confirm a retry by snapshotting
+  `wait_diagnostics()` immediately before it and again after it returns, and
+  check that one of the verdict counters increased. A non-zero
+  `close_timed_out` only records the earlier attempt; it does not mean the
+  retry also failed.
 - In Rust, `close()` takes `&self` and may be called concurrently on a shared
   handler, including while another thread flushes it. Every closer observes the
   same completion signal, and a closer that arrives after the worker has
