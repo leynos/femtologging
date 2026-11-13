@@ -340,6 +340,37 @@ that read the clock itself would make the sequence of budgets depend on how
 long the previous call took, which is untestable and is the defect the seam
 exists to prevent.
 
+### Flush clock and observer seam
+
+`rust_extension/src/logger/flush.rs` measures every flush through
+`measure_flush_attempt(clock, observer, attempt)`. It reads the injected
+`MonotonicClock` either side of one attempt, so the recorded outcome and
+duration always describe the same flush. Neither the clock nor the observer is
+ambient: the `FlushObserver` trait (`record(outcome, elapsed)`) and the clock
+are parameters, and production selects them at the flush boundary.
+`MetricsFlushObserver` reports to the process-wide flush counters, and with
+`tracing-compat` the `TracingFlushObserver` around it records the outcome and
+elapsed time on the `logger_flush` span before delegating. Tests drive the
+production orchestration through `flush_handlers_measured` with a clock and
+observer they own — including their own `FlushMetrics` — so an assertion
+cannot be moved by another logger in the process.
+
+`DrainOutcome` in `rust_extension/src/logger/dispatcher/shard/mod.rs` records
+how a barrier wait ended: `Drained`, `QueueClosed` when the shard is gone for
+good, and `TimedOut` when the worker is alive but did not answer the barrier
+within `BARRIER_TIMEOUT`. A flush therefore reports which of the two failures
+it hit rather than a bare false.
+
+The seam exists because the alternative is untestable. A helper that sampled
+the clock itself would make the measured duration depend on how long the
+previous call took, and one that wrote to the process-wide counters directly
+would share state with every logger in the process, so neither a unit test nor
+a sibling logger could rely on what it read.
+
+Python handler call plumbing — method lookup, the call itself, and the bounded
+flush-failure categories — is in
+`rust_extension/src/logger/py_handler/calls.rs`.
+
 ### Dependabot grouping for the extension build
 
 The project is uv-managed (`uv.lock`, no requirements files), so the Python
@@ -636,19 +667,26 @@ invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
 ### Loom models
 
-Eight Loom models in `rust_extension/tests/heavy/` check the handler and logger
+Nine Loom models in `rust_extension/tests/heavy/` check the handler and logger
 workers: delivery through the stream handler's queue, routing through the
 logger to every attached handler exactly once, concurrent handler attachment,
-concurrent writes and flushes through the file handler, and the shared
-worker-completion signal that concurrent closers wait on. Handler models run
-the handler worker code with Loom's synchronization primitives. Logger models
-use a Loom-specific logger-owned shard rather than the process-wide production
-`Dispatcher`; dropping the logger sends `Job::Stop` and joins that worker
-during model cleanup. Every worker spawns, queues and locks through the private
-seam in `rust_extension/src/sync.rs`, which is `std::thread`,
-`crossbeam_channel` and `parking_lot` in an ordinary build and Loom's thread,
-locks and a small bounded channel under `--cfg loom`. Loom arrives only as a
-`cfg(loom)` target dependency.
+concurrent writes and flushes through the file handler, the shared
+worker-completion signal that concurrent closers wait on, and flush ordering.
+The flush model varies the number of records queued ahead of the barrier,
+including none, and whether the handler reports failure; it asserts that the
+drain barrier is acknowledged only after every record queued ahead of it has
+been handled, and that handlers are flushed only after that acknowledgement.
+Handler models run the handler worker code with Loom's synchronization
+primitives. Logger models use a Loom-specific logger-owned shard rather than
+the process-wide production `Dispatcher`; dropping the logger sends `Job::Stop`
+and joins that worker during model cleanup. Every worker spawns, queues and
+locks through the private seam in `rust_extension/src/sync.rs`, which is
+`std::thread`, `crossbeam_channel` and `parking_lot` in an ordinary build and
+Loom's thread, locks and a small bounded channel under `--cfg loom`. Loom
+arrives only as a `cfg(loom)` target dependency. The Python-specific paths —
+the GIL-detached wait and delivery, and the manager-lock release before a
+bridge flush — are outside the `--no-default-features` Loom lane; the Python
+regression tests cover them instead.
 
 The completion models schedule registration against completion, a repeated
 completion, and a waiter that arrives after the worker has stopped. They use the
