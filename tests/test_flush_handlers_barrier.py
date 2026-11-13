@@ -190,7 +190,7 @@ class TestFlushHandlersBarrier:
             # flush that had returned already would have run its worker to
             # completion first, and completion requires this thread to release
             # the handler.
-            assert flushed == [], (
+            assert not flushed, (
                 f"the flush returned before the handler ran: {flushed!r}"
             )
         finally:
