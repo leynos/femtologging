@@ -242,14 +242,16 @@ impl PyHandler {
     }
 }
 
-/// Per-thread record of the categories the flush path reported.
-///
-/// The warning sink is the process-wide `log` facade, so a test that drains it
-/// races every other test writing there. Recording the bounded category on the
-/// calling thread gives a test its own evidence without touching that buffer,
-/// and the record never includes the handler's exception text.
 #[cfg(all(test, not(loom)))]
 mod reported {
+    //! Per-thread record of the categories the flush path reported.
+    //!
+    //! The warning sink is the process-wide `log` facade, so a test that
+    //! drains it races every other test writing there. Recording the bounded
+    //! category on the calling thread gives a test its own evidence without
+    //! touching that buffer, and the record never includes the handler's
+    //! exception text.
+
     use std::cell::RefCell;
 
     use super::FlushFailure;
