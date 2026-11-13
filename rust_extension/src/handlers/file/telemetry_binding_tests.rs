@@ -86,6 +86,59 @@ fn observe(
     }
 }
 
+/// Call a handler's `handle()` and require the record to be accepted.
+pub(super) fn call_handle(handler: &Py<PyAny>, message: &str) {
+    Python::attach(|py| {
+        handler
+            .call_method1(py, "handle", ("core", "INFO", message))
+            .expect("the record must be accepted");
+    });
+}
+
+/// Call a handler's `handle()` and return the error it raised.
+pub(super) fn call_handle_error(handler: &Py<PyAny>, message: &str) -> pyo3::PyErr {
+    Python::attach(|py| {
+        handler
+            .call_method1(py, "handle", ("core", "INFO", message))
+            .expect_err("a call the handler cannot take must raise")
+    })
+}
+
+/// Assert a refused call surfaces the handler's public error.
+///
+/// The rotating wrapper maps a handler failure to `RuntimeError` and the
+/// timed-rotating wrapper maps it to `ValueError`, so callers pin the message
+/// both produce instead of a class they do not share.
+pub(super) fn assert_handler_error(error: &pyo3::PyErr, context: &str) {
+    Python::attach(|py| {
+        let message = error.value(py).to_string();
+        assert!(
+            message.starts_with("Handler error: "),
+            "{context}: {message}",
+        );
+    });
+}
+
+/// Call a handler's `flush()` and return its acknowledgement.
+pub(super) fn call_flush(handler: &Py<PyAny>) -> bool {
+    Python::attach(|py| {
+        handler
+            .call_method0(py, "flush")
+            .expect("flush must not raise")
+            .extract(py)
+            .expect("flush must return a bool")
+    })
+}
+
+/// Call a handler's `close()`, which must not raise even on a timeout.
+pub(super) fn call_close(handler: &Py<PyAny>) {
+    Python::attach(|py| {
+        handler
+            .call_method0(py, "close")
+            .expect("close must not raise");
+    });
+}
+
 /// Call `flush()` and assert the binding reported failure.
 pub(super) fn flush_fails(handler: &Bound<'_, PyAny>) {
     let acknowledged: bool = handler

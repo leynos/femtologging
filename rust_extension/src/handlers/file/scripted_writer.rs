@@ -243,8 +243,21 @@ impl_unsupported_seek!(ScriptedWriter);
 
 /// Build a handler whose worker is driven by `writer`.
 pub(super) fn handler_with(writer: ScriptedWriter, policy: OverflowPolicy) -> FemtoFileHandler {
+    handler_with_capacity(writer, policy, 1)
+}
+
+/// Build a handler over `writer` with an explicit queue capacity.
+///
+/// Capacity is a dimension of the queue behaviour under test, so a case that
+/// needs a queue wide enough not to fill asks for it here rather than relying
+/// on the narrow default.
+pub(super) fn handler_with_capacity(
+    writer: ScriptedWriter,
+    policy: OverflowPolicy,
+    capacity: usize,
+) -> FemtoFileHandler {
     let mut cfg = TestConfig::new(writer, DefaultFormatter);
-    cfg.capacity = 1;
+    cfg.capacity = capacity;
     // Disable periodic flushing so only the explicit and terminal flushes
     // reach the scripted writer.
     cfg.flush_interval = 0;
