@@ -245,11 +245,12 @@ destructors through channels rather than sleeping, and the Python tests poll the
 `test-util`-gated waiter counter so they release a gated formatter only after
 `flush()` or `close()` has entered its wait.
 
-`flush()` returns one boolean for five different outcomes, so it names the
-failing stage in a trace event instead: a closed handler, a command that could
-not be queued within the deadline, an acknowledgement that timed out, a
-disconnected acknowledgement channel, and an acknowledgement reporting an I/O
-error each get their own fixed message. The queue likewise traces a full or
+`flush()` returns one boolean for every way it can fail, so it names the
+failing stage and cause in a trace event instead: a closed handler, a command
+the queue could not accept before the deadline, a queue disconnected while the
+command was being queued, an acknowledgement that timed out, a disconnected
+acknowledgement channel, and an acknowledgement reporting an I/O error each
+get their own fixed message. The queue likewise traces a full or
 disconnected queue when it drops a record. Every message is a fixed string with
 no record payload, so the trace adds no per-record or per-target dimensions,
 and all of them are `trace` level, so they are not formatted until an operator

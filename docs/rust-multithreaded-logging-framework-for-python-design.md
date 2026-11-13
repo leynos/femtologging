@@ -1292,8 +1292,10 @@ worker-side I/O and lets both a queued Python callable formatter and a callback
 that re-enters the handler in its closed state make progress. Because the
 stream and file-family shutdown state is shared rather than taken exclusively,
 a close can start while another thread is blocked inside `handle()` or
-`flush()`; concurrent closes and a close beside a detached flush all observe
-the same completion.
+`flush()`; concurrent closes and a close beside a detached flush wait on the
+same completion. Only a closer whose wait does not time out observes that
+completion; a timed-out closer returns without observing the signal or the
+worker's state, and `close()` returns no status distinguishing the two.
 
 The socket and HTTP bindings also enqueue with `try_send` and stay attached in
 `handle()`, but their `close()` holds a mutable PyO3 borrow (`&mut self`) for
@@ -1348,20 +1350,20 @@ Two properties of that bound are easy to get wrong. `flush()` derives one
 deadline and spends it on both waits: queueing the flush command on a channel
 that may be full, then waiting for the worker's acknowledgement. Giving each
 wait its own timeout would let one call take nearly twice the configured limit.
-The deadline is measured on the clock the handler shares with its rate limiter,
-so a test can script that clock and drive both waits without sleeping.
+The deadline is measured on a clock injected through `HandlerConfig`, separate
+from the rate limiter, so a test can script that clock and drive both waits
+without sleeping.
 `close()` waits for the completion signal, which the worker raises after its
 body ends and its writer and formatter have been dropped, and does not join the
 thread. Joining would also wait for thread-local destructors, which user code
 can make block, so the closer drops the join handle and detaches the worker,
-which the operating system reclaims when it exits. A closer that observes the
-signal returns after the records the worker did write were flushed, but
-completion does not promise delivery: a worker panic raises the signal with
-records still queued, and write errors are logged rather than returned. A
-closer whose wait times out observes neither the signal nor the worker's state,
-and `close()` returns no status by which to tell the cases apart. As with the
-other handlers, it is the completion signal, not thread exit, that every closer
-waits on.
+which the operating system reclaims when it exits. Completion proves that the
+worker body finished and its writer and formatter were dropped, not that every
+record was delivered: a record dropped because the queue was full, or a write
+that failed, still leaves the signal raised, because the worker logs flush I/O
+errors rather than propagating them and a panic can bypass the final flush. As
+with the other handlers, it is the completion signal, not thread exit, that
+every closer waits on.
 
 The socket and HTTP handlers reach the same guarantee by a different route,
 because their workers make blocking network calls rather than waiting only on a

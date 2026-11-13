@@ -549,7 +549,12 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
   the handler was already closed, the channel to the worker had been
   disconnected, or the worker reported an I/O error. The return value does not
   say which, so a caller cannot tell a disconnection from a timeout by the
-  result alone. Only a timeout is worth a bounded retry or a larger
+  result alone. Enable `trace` logging for the `FemtoStreamHandler` flush
+  messages to identify the failing stage and cause — queueing versus
+  acknowledgement, and a timeout versus a disconnection — before deciding
+  whether to retry. The fixed messages are documented in the
+  [Rust log bridge and handler waits][dev-log-bridge] section. Only a timeout
+  is worth a bounded retry or a larger
   `StreamHandlerBuilder.with_flush_after_ms()`. A closed handler must be
   rebuilt, and an I/O error needs the underlying stream repaired.
 - `close()` returns `None` whether or not it observed the worker's completion
@@ -558,6 +563,8 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
 - Do not use `close()` as a barrier for thread-local teardown. If teardown must
   finish before process exit, perform it in the formatter's own code before the
   worker body returns, or synchronize on a signal the application owns.
+
+[dev-log-bridge]: developers-guide.md#rust-log-bridge-and-handler-waits
 
 ______________________________________________________________________
 
