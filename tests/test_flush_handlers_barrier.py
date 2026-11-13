@@ -185,6 +185,14 @@ class TestFlushHandlersBarrier:
             assert flush_entered.wait(HANDSHAKE_SECONDS), (
                 "the flush call never entered flush_handlers"
             )
+            # Both handshakes were observed while the worker is still blocked
+            # inside the handler, so the barrier is still in flight here. A
+            # flush that had returned already would have run its worker to
+            # completion first, and completion requires this thread to release
+            # the handler.
+            assert flushed == [], (
+                f"the flush returned before the handler ran: {flushed!r}"
+            )
         finally:
             handler.proceed.set()
             flusher.join(HANDSHAKE_SECONDS)
