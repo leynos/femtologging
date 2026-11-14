@@ -1243,8 +1243,8 @@ shutdown state is shared, concurrent `close()` calls and a `close()` running
 beside a detached `flush()` both wait on the same completion broadcast; a
 closer that arrives after the worker has raised its completion signal returns
 at once, and a repeated close stays safe. The file handler's two Python-facing
-waits carry their own fixed deadlines rather than reusing the handler's write or
-overflow timeout: `flush()` gives the enqueue and the acknowledgement one
+waits carry their own fixed deadlines rather than reusing the handler's write
+or overflow timeout: `flush()` gives the enqueue and the acknowledgement one
 second in total, and `close()` waits at most one second for the shared
 completion signal. Neither deadline depends on the overflow policy. A `close()`
 whose one-second deadline expires logs a warning and returns while the worker
