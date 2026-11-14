@@ -22,7 +22,7 @@ mod handle_expect;
 #[path = "test_utils/waiter.rs"]
 mod waiter;
 use handle_expect::HandleExpect;
-use waiter::WaiterObservation;
+use waiter::{WaiterObservation, serialise};
 
 /// Configured flush timeout; long enough that resting on it would be obvious.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
@@ -166,6 +166,9 @@ fn block_worker(handler: &FemtoStreamHandler, entered: &Receiver<()>) {
 /// timeout per wait would instead spend the whole configured timeout here.
 #[test]
 fn stream_handler_flush_spends_the_shared_deadline_on_the_acknowledgement() {
+    // This test's flush and close move the process-wide waiter counter, so it
+    // must not run beside a test that observes it.
+    let _serial = serialise();
     let (writer, entered, release) = gated_writer(1);
     let handler = scripted_handler(writer, [0, 0, FLUSH_TIMEOUT_MS + 1]);
     block_worker(&handler, &entered);
@@ -193,6 +196,9 @@ fn stream_handler_flush_spends_the_shared_deadline_on_the_acknowledgement() {
 /// wait out a fresh timeout for space that never comes.
 #[test]
 fn stream_handler_flush_stops_queueing_once_the_shared_deadline_expires() {
+    // This test's flush and close move the process-wide waiter counter, so it
+    // must not run beside a test that observes it.
+    let _serial = serialise();
     let (writer, entered, release) = gated_writer(1);
     let handler = scripted_handler(writer, [0, FLUSH_TIMEOUT_MS + 1, FLUSH_TIMEOUT_MS + 1]);
     block_worker(&handler, &entered);

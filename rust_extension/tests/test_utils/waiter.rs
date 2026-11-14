@@ -1,15 +1,19 @@
-//! Synchronise on the test-only stream-handler waiter counter.
+//! Serialise and observe the test-only stream-handler waiter counter.
 //!
-//! A `flush()` or `close()` raises the counter only while it is blocked in a
-//! wait. Tests that must prove a call was still waiting use this helper to
-//! release a gated worker only after their own call reached that state, so the
-//! claim does not depend on elapsed time or on the caller having started
-//! before the check.
+//! A `flush()` or `close()` raises the counter for the whole time it is inside
+//! a blocking call: it is raised immediately before the call that may block and
+//! lowered when that call returns. Tests that must prove a call was waiting use
+//! this helper to release a gated worker only after their own call reached that
+//! state, so the claim does not depend on elapsed time or on the caller having
+//! started before the check.
 //!
-//! The counter is process-wide, so the observation holds an exclusive lock for
-//! the test's duration and measures a rise above the count it saw first. A
-//! lingering call from another test can neither satisfy the handshake nor be
-//! mistaken for the call under test.
+//! The counter is process-wide, so every `flush()` or `close()` in the same
+//! test binary moves it, including one that returns at once and one raised by
+//! dropping a handler. Each test in such a binary therefore holds
+//! [`serialise`] for its duration; without that, a test observing the counter
+//! could see another test's call and proceed before its own reached the wait.
+//! The observation additionally measures a rise above the count it saw first,
+//! so a call left waiting by an earlier test cannot satisfy the handshake.
 
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -25,13 +29,36 @@ const WAITER_WAIT: Duration = Duration::from_secs(10);
 /// Poll interval for the counter, which changes only at wait boundaries.
 const POLL_INTERVAL: Duration = Duration::from_millis(1);
 
-/// Serialises the tests in one binary that observe the process-wide counter.
+/// Serialises every test in one binary that can move the process-wide counter.
 static WAIT_COUNTER_LOCK: Mutex<()> = Mutex::new(());
+
+/// Exclusive hold on the waiter counter for one test's duration.
+///
+/// Hold it for the whole test, not only around the call under test: a handler
+/// dropped during teardown closes itself, and that close moves the same
+/// counter.
+pub struct WaiterSerial {
+    /// Held until the test that took it finishes.
+    _serial: MutexGuard<'static, ()>,
+}
+
+/// Take the waiter counter exclusively.
+///
+/// Every test in a binary that uses this module holds the guard, so the only
+/// calls that can move the counter while a test observes it belong to that
+/// test.
+pub fn serialise() -> WaiterSerial {
+    WaiterSerial {
+        _serial: WAIT_COUNTER_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    }
+}
 
 /// Exclusive view of the waiter counter, measured from a recorded baseline.
 pub struct WaiterObservation {
     /// Held for as long as this test observes the counter.
-    _serial: MutexGuard<'static, ()>,
+    _serial: WaiterSerial,
     /// Calls already waiting when this test took the lock.
     baseline: usize,
 }
@@ -43,9 +70,7 @@ impl WaiterObservation {
     /// cannot include that call, so the wait below can only be satisfied by a
     /// call that started afterwards.
     pub fn acquire() -> Self {
-        let serial = WAIT_COUNTER_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let serial = serialise();
         Self {
             _serial: serial,
             baseline: stream_waiter_count(),

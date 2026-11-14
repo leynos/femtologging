@@ -11,6 +11,7 @@ completed and its record has reached the stream.
 from __future__ import annotations
 
 import dataclasses
+import gc
 import threading
 import time
 import typing as typ
@@ -113,11 +114,16 @@ class _FormatterGate:
         A call left waiting by an earlier test therefore cannot satisfy the
         handshake on its own.
 
+        Cyclic garbage is collected first: dropping a handler closes it, which
+        moves the same process-wide counter, so a stale handler collected while
+        this thread polls could otherwise release the formatter early.
+
         Returns
         -------
         threading.Thread
             The started helper thread.
         """
+        gc.collect()
         waiter_count = _WAITER_COUNT
         baseline = 0 if waiter_count is None else waiter_count()
 

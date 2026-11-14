@@ -24,7 +24,7 @@ mod handle_expect;
 mod waiter;
 use captured_log::captured_log;
 use handle_expect::HandleExpect;
-use waiter::WaiterObservation;
+use waiter::{WaiterObservation, serialise};
 
 /// Upper bound on how long a test destructor waits for its release signal.
 ///
@@ -79,6 +79,9 @@ impl Drop for SlowDropFormatter {
 #[test]
 fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
+    // This test's close moves the process-wide waiter counter, so it must not
+    // run beside a test that observes it.
+    let _serial = serialise();
 
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -245,6 +248,9 @@ impl FemtoFormatter for TlsDtorFormatter {
 #[test]
 fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_blocks() {
     const FLUSH_TIMEOUT: Duration = Duration::from_millis(50);
+    // This test's close moves the process-wide waiter counter, so it must not
+    // run beside a test that observes it.
+    let _serial = serialise();
 
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -332,6 +338,9 @@ fn wait_for_warning(logger: &mut logtest::Logger, needle: &str, wait: Duration) 
 #[test]
 fn stream_handler_close_returns_promptly_after_a_worker_panic() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
+    // This test's close moves the process-wide waiter counter, so it must not
+    // run beside a test that observes it.
+    let _serial = serialise();
 
     let mut logger = captured_log();
     let (panicked_tx, panicked_rx) = mpsc::channel();
