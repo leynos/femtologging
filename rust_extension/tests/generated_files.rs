@@ -14,8 +14,95 @@ use camino::Utf8Path;
 use cap_std::ambient_authority;
 use cap_std::fs_utf8::Dir;
 use doc_examples::{Example, GENERATED_DIR, extract_examples};
-use generated_files::{prune, publish};
+use generated_files::{prune, publish, temporary_name};
+use rstest::{fixture, rstest};
 use tempfile::TempDir;
+
+/// A temporary crate root that already holds the generated directory.
+struct Crate {
+    /// Keeps the temporary directory alive for the duration of the test.
+    _temp: TempDir,
+    /// Capability handle for the crate root.
+    dir: Dir,
+}
+
+/// The file name of a module inside the generated directory.
+#[derive(Clone, Copy, Debug)]
+struct GeneratedName(&'static str);
+
+impl GeneratedName {
+    /// Return the path of this module relative to the crate root.
+    fn path(self) -> String {
+        format!("{GENERATED_DIR}/{}", self.0)
+    }
+}
+
+/// What a fixture file in the generated directory contains.
+#[derive(Clone, Copy)]
+enum Content {
+    /// Source that a build would publish.
+    Published,
+    /// Source left behind by an earlier build.
+    Stale,
+    /// A file the loader never writes.
+    Notes,
+}
+
+impl Content {
+    /// Return the text this fixture writes.
+    fn text(self) -> &'static str {
+        match self {
+            Self::Published => "fn demo() {}\n",
+            Self::Stale => "old source\n",
+            Self::Notes => "hand-written notes\n",
+        }
+    }
+}
+
+impl Crate {
+    /// Write `content` to `name`, as a build or a stale tree would.
+    fn write(&self, name: GeneratedName, content: Content) {
+        self.dir
+            .write(name.path(), content.text())
+            .expect("the generated file should be writable");
+    }
+
+    /// Read the generated file at `name`.
+    fn read(&self, name: GeneratedName) -> String {
+        self.dir
+            .read_to_string(name.path())
+            .expect("the generated file should be readable")
+    }
+
+    /// Assert the generated directory holds exactly `expected`, sorted.
+    fn assert_holds(&self, expected: &[GeneratedName]) {
+        let mut names: Vec<String> = self
+            .dir
+            .read_dir(GENERATED_DIR)
+            .expect("the generated directory should be readable")
+            .map(|entry| {
+                entry
+                    .expect("the directory entry should be readable")
+                    .file_name()
+                    .expect("the entry should have a name")
+            })
+            .collect();
+        names.sort();
+        let expected: Vec<&str> = expected.iter().map(|name| name.0).collect();
+        assert_eq!(names, expected);
+    }
+}
+
+/// Create a temporary crate root with the generated directory in place.
+#[fixture]
+fn crate_root() -> Crate {
+    let temp = tempfile::tempdir().expect("a temporary directory should exist");
+    let path = Utf8Path::from_path(temp.path()).expect("temporary paths are UTF-8");
+    let dir = Dir::open_ambient_dir(path, ambient_authority()).expect("the crate root should open");
+    dir.create_dir_all(GENERATED_DIR)
+        .expect("the generated directory should be created");
+    Crate { _temp: temp, dir }
+}
 
 /// Extract `fn demo() {}` examples under the given identifiers, as a build does.
 ///
@@ -32,104 +119,83 @@ fn examples(identifiers: &[&str]) -> Vec<Example> {
     extract_examples(&guide).expect("the generated guide should be valid")
 }
 
-/// Open a temporary crate root that already holds the generated directory.
-fn prepared_crate() -> (TempDir, Dir) {
-    let temp = tempfile::tempdir().expect("a temporary directory should exist");
-    let path = Utf8Path::from_path(temp.path()).expect("temporary paths are UTF-8");
-    let crate_dir =
-        Dir::open_ambient_dir(path, ambient_authority()).expect("the crate root should open");
-    crate_dir
-        .create_dir_all(GENERATED_DIR)
-        .expect("the generated directory should be created");
-    (temp, crate_dir)
-}
-
-/// Write `source` to `name` in the generated directory, as a build would.
-fn write_generated(crate_dir: &Dir, name: &str, source: &str) {
-    let path = format!("{GENERATED_DIR}/{name}");
-    crate_dir
-        .write(&path, source)
-        .expect("the generated file should be writable");
-}
-
-/// Read a generated module.
-fn read_generated(crate_dir: &Dir, name: &str) -> String {
-    let path = format!("{GENERATED_DIR}/{name}");
-    crate_dir
-        .read_to_string(&path)
-        .expect("the generated file should be readable")
-}
-
-/// Assert the generated directory holds exactly `expected`, in sorted order.
-fn assert_generated(crate_dir: &Dir, expected: &[&str]) {
-    let mut names: Vec<String> = crate_dir
-        .read_dir(GENERATED_DIR)
-        .expect("the generated directory should be readable")
-        .map(|entry| {
-            entry
-                .expect("the directory entry should be readable")
-                .file_name()
-                .expect("the entry should have a name")
-        })
-        .collect();
-    names.sort();
-    assert_eq!(names, expected);
-}
-
 /// Publishing writes each example to the module its identifier names.
-#[test]
-fn publishing_writes_each_example_to_its_module() {
-    let (_temp, crate_dir) = prepared_crate();
+#[rstest]
+fn publishing_writes_each_example_to_its_module(crate_root: Crate) {
+    publish(&crate_root.dir, &examples(&["first", "second"])).expect("publication should succeed");
 
-    publish(&crate_dir, &examples(&["first", "second"])).expect("publication should succeed");
-
-    assert_generated(&crate_dir, &["first.rs", "second.rs"]);
-    assert_eq!(read_generated(&crate_dir, "first.rs"), "fn demo() {}\n");
-    assert_eq!(read_generated(&crate_dir, "second.rs"), "fn demo() {}\n");
+    crate_root.assert_holds(&[GeneratedName("first.rs"), GeneratedName("second.rs")]);
+    assert_eq!(crate_root.read(GeneratedName("first.rs")), "fn demo() {}\n");
+    assert_eq!(
+        crate_root.read(GeneratedName("second.rs")),
+        "fn demo() {}\n"
+    );
 }
 
 /// Re-publishing replaces the module and leaves no in-progress file behind.
-#[test]
-fn publishing_replaces_a_module_without_leaving_a_temporary_file() {
-    let (_temp, crate_dir) = prepared_crate();
-    write_generated(&crate_dir, "example.rs", "old source\n");
+#[rstest]
+fn publishing_replaces_a_module_without_leaving_a_temporary_file(crate_root: Crate) {
+    crate_root.write(GeneratedName("example.rs"), Content::Stale);
 
-    publish(&crate_dir, &examples(&["example"])).expect("publication should succeed");
+    publish(&crate_root.dir, &examples(&["example"])).expect("publication should succeed");
 
-    assert_eq!(read_generated(&crate_dir, "example.rs"), "fn demo() {}\n");
-    assert_generated(&crate_dir, &["example.rs"]);
+    assert_eq!(
+        crate_root.read(GeneratedName("example.rs")),
+        "fn demo() {}\n"
+    );
+    crate_root.assert_holds(&[GeneratedName("example.rs")]);
 }
 
-/// Pruning removes only modules the guide no longer publishes.
-#[test]
-fn pruning_removes_modules_no_longer_published() {
-    let (_temp, crate_dir) = prepared_crate();
-    write_generated(&crate_dir, "kept.rs", "fn demo() {}\n");
-    write_generated(&crate_dir, "removed.rs", "old source\n");
+/// Two publications of one example never share a temporary path.
+#[rstest]
+fn each_publication_takes_its_own_temporary_name() {
+    let example = &examples(&["example"])[0];
 
-    prune(&crate_dir, &examples(&["kept"])).expect("pruning should succeed");
+    let first = temporary_name(example);
+    let second = temporary_name(example);
 
-    assert_generated(&crate_dir, &["kept.rs"]);
+    assert_ne!(first, second, "concurrent builds must not collide");
+    for name in [&first, &second] {
+        assert!(name.starts_with("tests/generated/example.rs."), "{name}");
+        assert!(name.ends_with(".tmp"), "{name}");
+    }
 }
 
-/// A guide that stops publishing examples removes the last module too.
-#[test]
-fn pruning_removes_every_module_when_the_guide_publishes_nothing() {
-    let (_temp, crate_dir) = prepared_crate();
-    write_generated(&crate_dir, "first.rs", "fn demo() {}\n");
+/// Pruning keeps exactly the modules the guide still publishes.
+///
+/// A module whose identifier disappeared is removed, and a guide that stops
+/// publishing examples leaves the generated directory empty.
+#[rstest]
+#[case(
+    &[
+        (GeneratedName("kept.rs"), Content::Published),
+        (GeneratedName("removed.rs"), Content::Stale),
+    ],
+    &["kept"],
+    &[GeneratedName("kept.rs")]
+)]
+#[case(&[(GeneratedName("only.rs"), Content::Published)], &[], &[])]
+fn pruning_keeps_only_published_modules(
+    crate_root: Crate,
+    #[case] initial: &[(GeneratedName, Content)],
+    #[case] retained: &[&str],
+    #[case] expected: &[GeneratedName],
+) {
+    for (name, content) in initial {
+        crate_root.write(*name, *content);
+    }
 
-    prune(&crate_dir, &[]).expect("pruning should succeed");
+    prune(&crate_root.dir, &examples(retained)).expect("pruning should succeed");
 
-    assert_generated(&crate_dir, &[]);
+    crate_root.assert_holds(expected);
 }
 
 /// Files the loader never writes are not generated modules and survive pruning.
-#[test]
-fn pruning_keeps_files_that_are_not_generated_modules() {
-    let (_temp, crate_dir) = prepared_crate();
-    write_generated(&crate_dir, "notes.txt", "hand-written notes\n");
+#[rstest]
+fn pruning_keeps_files_that_are_not_generated_modules(crate_root: Crate) {
+    crate_root.write(GeneratedName("notes.txt"), Content::Notes);
 
-    prune(&crate_dir, &[]).expect("pruning should succeed");
+    prune(&crate_root.dir, &[]).expect("pruning should succeed");
 
-    assert_generated(&crate_dir, &["notes.txt"]);
+    crate_root.assert_holds(&[GeneratedName("notes.txt")]);
 }

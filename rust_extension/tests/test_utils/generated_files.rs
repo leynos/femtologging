@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cap_std::fs_utf8::Dir;
 
@@ -19,6 +20,33 @@ const TEMP_SUFFIX: &str = ".tmp";
 
 /// Extension of a generated module.
 const GENERATED_EXTENSION: &str = ".rs";
+
+/// Sequence that keeps one process's temporary names apart.
+static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Return a temporary name that no concurrent publisher can choose.
+///
+/// Two builds may publish the same example at once. A single shared temporary
+/// path would let the first rename consume the file the second is about to
+/// rename, so the second build would fail on a path that is not its own. The
+/// process id separates builds and the sequence separates publications within
+/// one build; the final rename into place stays atomic either way.
+///
+/// # Examples
+///
+/// Two calls never return the same path:
+///
+/// ```rust,no_run
+/// assert_ne!(temporary_name(&example), temporary_name(&example));
+/// ```
+pub(crate) fn temporary_name(example: &Example) -> String {
+    let sequence = TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let process = std::process::id();
+    format!(
+        "{}.{process}.{sequence}{TEMP_SUFFIX}",
+        example.output_name()
+    )
+}
 
 /// Write each example into the generated directory.
 ///
@@ -35,7 +63,7 @@ const GENERATED_EXTENSION: &str = ".rs";
 /// ```
 pub fn publish(crate_dir: &Dir, examples: &[Example]) -> io::Result<()> {
     for example in examples {
-        let temp_name = format!("{}{TEMP_SUFFIX}", example.output_name());
+        let temp_name = temporary_name(example);
         crate_dir.write(&temp_name, &example.source)?;
         crate_dir.rename(&temp_name, crate_dir, example.output_name())?;
     }
