@@ -896,24 +896,64 @@ ignores to prevent tracing from recursively logging its own instrumentation.
 
 ### Python-facing `flush()` and `close()` waits
 
-The stream, file, rotating-file, and timed-rotating-file handlers run their I/O
-on worker threads. Their Python bindings release the GIL with
-`Python::detach()` before waiting for that worker in `flush()` and `close()`,
-so a Python callable formatter queued on the worker can run to completion
-instead of deadlocking against a producer that still holds the GIL. `close()`
-takes only a shared Python-object borrow: it copies the shutdown state and the
-owning worker handle out of the handler, releases the borrow, then detaches and
-waits outside it. A Python callback that re-enters the handler during shutdown
-therefore observes the closed state instead of blocking on a borrow held by the
-waiter. `tests/test_handler_close_reentry.py` is the regression test for that
-path.
+Every built-in handler runs its I/O on a worker thread. The Python bindings of
+the stream, file, rotating-file, timed-rotating-file, socket, and HTTP handlers
+release the GIL with `Python::detach()` before waiting for that worker in
+`flush()` and `close()`, so a Python callable formatter queued on the worker
+can run to completion instead of deadlocking against a producer that still
+holds the GIL, and other Python threads keep running during a slow network
+shutdown. For the stream, file, rotating-file, and timed-rotating-file handlers,
+`close()` takes only a shared Python-object borrow: it copies the shutdown
+state and the owning worker handle out of the handler, releases the borrow,
+then detaches and waits outside it. A Python callback that re-enters the
+handler during shutdown therefore observes the closed state instead of blocking
+on a borrow held by the waiter. `tests/test_handler_close_reentry.py` is the
+regression test for that path.
 
-Because the shutdown state is shared rather than moved out by an exclusive
-borrow, several threads may close the same handler, and a close may start while
-a detached flush is still running. Each closer waits on one completion
-broadcast: every caller observes the worker's exit, and a closer that arrives
-after the worker has already stopped returns without waiting out its timeout. A
-repeated `close()` is therefore safe and observes the same bounded wait.
+`FemtoLogger.flush_handlers()` follows the same GIL rule, because the dispatch
+worker takes the GIL to reach handlers attached from Python. It then flushes
+every configured handler, and a handler registered from Python is flushed
+through `PyHandler::flush()`: a built-in handler is flushed through its native
+implementation with the GIL detached, and a user-defined handler is asked to
+flush through its own `flush` method, which runs with the interpreter attached,
+so whether other Python threads run while it blocks depends on the operation it
+blocks on. Those calls run on the thread that called `flush_handlers()`, after
+the dispatch worker has drained the logger's queue, not on the dispatch worker
+itself. Every handler is flushed even when an earlier one fails, and the
+results are combined afterwards; one handler's failure must not leave the
+records buffered in the handlers after it. A missing or non-callable `flush`
+method counts as success, a Python `bool` return value is read for its truth,
+and any other return value counts as success; one that raises counts as
+failure. A Python exception is printed for the user with `PyErr::display`,
+which, unlike `PyErr::print`, does not run `sys.excepthook`, so a `flush` that
+raises `SystemExit` cannot end the interpreter. The structured log carries only
+bounded `handler_kind` and `category` fields (`interpreter_unavailable`,
+`flush_lookup`, `flush_call`, or the native `flush_failed`), never the
+exception text or record payloads. A native flush that reports failure is
+logged in the same shape, with `category=flush_failed`, so a `False` return from
+`flush_handlers()` names the handler an operator has to look at rather than
+only whether it was reached through Python: `handler_kind` is the built-in
+handler type (`stream`, `file`, `rotating-file`, `timed-rotating-file`,
+`socket`, or `http`) for a built-in handler, and `custom` for a user-defined
+one. Under the `tracing-compat` feature the flush also runs inside an
+`info_span!` named `flush_registered_handler`, carrying `handler_kind` and
+`flush_outcome`, so the queue-crossing wait appears as a timed span rather than
+only as an event emitted after it returns. No metrics facility is added for
+this path: the crate has no metrics dependency, and the `wait_diagnostics()`
+counters described below already report wait latency (`total_wait_micros`,
+`max_wait_micros`) and every outcome, so a second metrics surface would
+duplicate them without adding bounded-cardinality labels.
+`tests/test_custom_handler_flush.py` pins the reported results and delivery,
+`tests/test_flush_releases_gil.py` pins the formatter and flush cases, and
+`tests/test_network_handler_gil_release.py` pins the network shutdown case.
+
+Because that shutdown state is shared rather than moved out by an exclusive
+borrow, several threads may close the same stream or file handler, and a close
+may start while a detached flush is still running. Each closer waits on one
+completion broadcast: every caller observes the worker's exit, and a closer
+that arrives after the worker has already stopped returns without waiting out
+its timeout. A repeated `close()` is therefore safe and observes the same
+bounded wait.
 
 Detaching preserves the existing return values and bounds. `flush()` still
 returns `True` only when the worker acknowledges within the handler's flush

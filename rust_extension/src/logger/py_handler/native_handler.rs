@@ -1,8 +1,9 @@
 //! Native dispatch for built-in handlers registered through Python.
 
+use log::warn;
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
-use pyo3::{Bound, PyAny};
+use pyo3::{Bound, PyAny, PyClass};
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::handlers::{
@@ -54,6 +55,39 @@ impl NativeHandlerKind {
         }
     }
 
+    /// A bounded label for the built-in handler, for structured logs and
+    /// spans.
+    ///
+    /// This names the handler type rather than the `native`/`custom` split:
+    /// when `flush_handlers()` reports a failure, an operator needs to know
+    /// which built-in handler failed, not only that it was a native one.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Stream => "stream",
+            Self::File => "file",
+            Self::RotatingFile => "rotating-file",
+            Self::TimedRotatingFile => "timed-rotating-file",
+            Self::Socket => "socket",
+            Self::Http => "http",
+        }
+    }
+
+    /// Flush the wrapped built-in handler, releasing the GIL while it waits.
+    ///
+    /// The handler's own Python `flush` method releases the GIL for the same
+    /// reason: a Python callable formatter needs it on the worker thread
+    /// before the flush can be acknowledged.
+    pub(super) fn flush(self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
+        match self {
+            Self::Stream => flush_builtin::<FemtoStreamHandler>(py, obj, self),
+            Self::File => flush_builtin::<FemtoFileHandler>(py, obj, self),
+            Self::RotatingFile => flush_builtin::<PyRotatingFileHandler>(py, obj, self),
+            Self::TimedRotatingFile => flush_builtin::<PyTimedRotatingFileHandler>(py, obj, self),
+            Self::Socket => flush_builtin::<FemtoSocketHandler>(py, obj, self),
+            Self::Http => flush_builtin::<FemtoHTTPHandler>(py, obj, self),
+        }
+    }
+
     /// Dispatch the record through the matching built-in handler while
     /// retaining its metadata, including structured key/value fields.
     ///
@@ -90,6 +124,38 @@ impl NativeHandlerKind {
                 .extract::<PyRef<'_, FemtoHTTPHandler>>()
                 .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
+        }
+    }
+}
+
+/// Flush one built-in handler with the interpreter detached for the wait.
+///
+/// Extraction needs the GIL, but the wait must not hold it: a built-in whose
+/// formatter is a Python callable needs the GIL on its worker thread before
+/// it can acknowledge. `T` is `Sync`, so the shared borrow is safe to carry
+/// into the detached closure.
+fn flush_builtin<T>(py: Python<'_>, obj: &Bound<'_, PyAny>, kind: NativeHandlerKind) -> bool
+where
+    T: FemtoHandlerTrait + PyClass + Sync,
+{
+    match obj.extract::<PyRef<'_, T>>() {
+        Ok(handler) => {
+            let handler: &T = &handler;
+            let flushed = py.detach(|| handler.flush());
+            if !flushed {
+                // `flush_handlers()` newly reports these failures, so an
+                // operator needs a bounded record of the handler failing to
+                // flush rather than only a `False` return.
+                warn!(
+                    "PyHandler: flush failed: handler_kind={}, category=flush_failed",
+                    kind.label()
+                );
+            }
+            flushed
+        }
+        Err(err) => {
+            map_py_err(py, err.into(), "extract handler for flush");
+            false
         }
     }
 }

@@ -341,6 +341,22 @@ builder and either a direct `FormatterBuilder` or a registered formatter.
 
 ______________________________________________________________________
 
+## `flush_handlers()` reaches the handler
+
+`FemtoLogger.flush_handlers()` now flushes each registered handler rather than
+only waiting for the dispatch worker to accept the queued records. A built-in
+handler is flushed through its own native implementation; a custom handler that
+defines `flush` now receives a call it did not receive before, and can use it
+to persist buffered records. A missing or non-callable `flush` still counts as
+success, so an existing handler that does not define one needs no change. The
+method runs on the thread that called `flush_handlers()`, after the queued
+records have been dispatched, and every registered handler is flushed even when
+an earlier one fails. An exception raised by `flush` is printed to stderr and
+makes `flush_handlers()` return `False`, so keep the method non-blocking and
+defensive, as with `handle`.
+
+______________________________________________________________________
+
 ## 9. Bounded exception-payload filtering
 
 `filter_frames()` keeps its existing call pattern and adds optional keyword-only
