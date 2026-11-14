@@ -21,7 +21,11 @@ use super::map_py_err;
 /// flush rather than silently succeeding: the caller asked for buffered records
 /// to reach their destination, and a wrapper that cannot be unwrapped cannot
 /// promise that.
-fn flush_native<T>(py: Python<'_>, obj: &Bound<'_, PyAny>, label: &str) -> bool
+///
+/// The handler kind is carried into both diagnostics: a failed flush names the
+/// built-in handler that failed, so the `False` from `flush_handlers()` points
+/// at one handler rather than only at the call.
+fn flush_native<T>(py: Python<'_>, obj: &Bound<'_, PyAny>, kind: NativeHandlerKind) -> bool
 where
     T: FemtoHandlerTrait + pyo3::PyClass,
 {
@@ -38,12 +42,15 @@ where
                 // `flush_handlers()` reports these failures, so an operator
                 // needs a bounded record of the handler failing to flush
                 // rather than only a `False` return.
-                warn!("PyHandler: flush failed: handler_kind=native, category=flush_failed");
+                warn!(
+                    "PyHandler: flush failed: handler_kind={}, category=flush_failed",
+                    kind.label()
+                );
             }
             flushed
         }
         Err(err) => {
-            map_py_err(py, err.into(), label);
+            map_py_err(py, err.into(), kind.extract_label());
             false
         }
     }
@@ -90,6 +97,39 @@ impl NativeHandlerKind {
         }
     }
 
+    /// A bounded label for the built-in handler, for structured logs and
+    /// spans.
+    ///
+    /// This names the handler type rather than the `native`/`custom` split:
+    /// when `flush_handlers()` reports a failure, an operator needs to know
+    /// which built-in handler failed, not only that it was a native one.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Stream => "stream",
+            Self::File => "file",
+            Self::RotatingFile => "rotating-file",
+            Self::TimedRotatingFile => "timed-rotating-file",
+            Self::Socket => "socket",
+            Self::Http => "http",
+        }
+    }
+
+    /// The operation named when extracting this handler from its wrapper
+    /// fails.
+    ///
+    /// This is the existing diagnostic text, kept per variant so the message
+    /// names the type the caller expected to find in the wrapper.
+    const fn extract_label(self) -> &'static str {
+        match self {
+            Self::Stream => "extract FemtoStreamHandler",
+            Self::File => "extract FemtoFileHandler",
+            Self::RotatingFile => "extract FemtoRotatingFileHandler",
+            Self::TimedRotatingFile => "extract FemtoTimedRotatingFileHandler",
+            Self::Socket => "extract FemtoSocketHandler",
+            Self::Http => "extract FemtoHTTPHandler",
+        }
+    }
+
     /// Dispatch the record through the matching built-in handler while
     /// retaining its metadata, including structured key/value fields.
     ///
@@ -129,6 +169,7 @@ impl NativeHandlerKind {
         }
     }
 
+// refused_by: container_member · collision: `Self::Stream => flush_builtin::<FemtoStreamHandler>(py, obj),` +5 more
     /// Flush the matching built-in handler through its native implementation.
     ///
     /// Going through the trait rather than a Python-visible `flush` method
@@ -138,22 +179,13 @@ impl NativeHandlerKind {
     /// stayed in its buffer.
     pub(super) fn flush(self, py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
         match self {
-            Self::Stream => {
-                flush_native::<FemtoStreamHandler>(py, obj, "extract FemtoStreamHandler")
-            }
-            Self::File => flush_native::<FemtoFileHandler>(py, obj, "extract FemtoFileHandler"),
-            Self::RotatingFile => {
-                flush_native::<PyRotatingFileHandler>(py, obj, "extract FemtoRotatingFileHandler")
-            }
-            Self::TimedRotatingFile => flush_native::<PyTimedRotatingFileHandler>(
-                py,
-                obj,
-                "extract FemtoTimedRotatingFileHandler",
-            ),
-            Self::Socket => {
-                flush_native::<FemtoSocketHandler>(py, obj, "extract FemtoSocketHandler")
-            }
-            Self::Http => flush_native::<FemtoHTTPHandler>(py, obj, "extract FemtoHTTPHandler"),
+            Self::Stream => flush_native::<FemtoStreamHandler>(py, obj, self),
+            Self::File => flush_native::<FemtoFileHandler>(py, obj, self),
+            Self::RotatingFile => flush_native::<PyRotatingFileHandler>(py, obj, self),
+            Self::TimedRotatingFile => flush_native::<PyTimedRotatingFileHandler>(py, obj, self),
+            Self::Socket => flush_native::<FemtoSocketHandler>(py, obj, self),
+            Self::Http => flush_native::<FemtoHTTPHandler>(py, obj, self),
         }
     }
 }
+
