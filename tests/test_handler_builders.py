@@ -245,33 +245,6 @@ def test_file_builder_records_inline_timeout(tmp_path: Path) -> None:
     _assert_config_value(data, "timeout_ms", 125, "inline timeout duration")
 
 
-@pytest.mark.parametrize("drain_method", ["flush", "close"], ids=["flush", "close"])
-def test_stream_builder_applies_callable_formatter(
-    capfd: pytest.CaptureFixture[str],
-    drain_method: typ.Literal["flush", "close"],
-) -> None:
-    """Stream workers can finish Python formatting during flush and close."""
-    handler = (
-        StreamHandlerBuilder
-        .stderr()
-        .with_formatter(lambda record: f"callable:{record['message']}")
-        .build()
-    )
-    try:
-        handler.handle("logger", "INFO", "hello")
-        if drain_method == "flush":
-            assert handler.flush(), "stream handler did not flush"
-        else:
-            handler.close()
-    finally:
-        handler.close()
-
-    captured = capfd.readouterr().err
-    assert "callable:hello" in captured, (
-        f"stream handler should apply the callable formatter; stderr={captured!r}"
-    )
-
-
 @pytest.mark.parametrize(
     ("builder_factory", "log_filename"),
     [

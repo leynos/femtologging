@@ -1241,16 +1241,16 @@ they extract owned shutdown state, release that borrow, and then detach, so
 another Python thread can use the handler while the worker exits. Because the
 shutdown state is shared, concurrent `close()` calls and a `close()` running
 beside a detached `flush()` both wait on the same completion broadcast; a
-closer that arrives after the worker has stopped returns at once, and a
-repeated close stays safe. The file handler's two Python-facing waits carry
-their own fixed deadlines rather than reusing the handler's write or overflow
-timeout: `flush()` gives the enqueue and the acknowledgement one second in
-total, and `close()` waits at most one second for the shared completion signal.
-Neither deadline depends on the overflow policy. A `close()` whose one-second
-deadline expires logs a warning and returns while the worker may still be
-running, so a returned `close()` is not proof that the worker stopped. The
-stream handler instead reuses its configurable `flush_timeout` for both waits,
-as described under "Python-facing lifecycle waits" below.
+closer that arrives after the worker has raised its completion signal returns
+at once, and a repeated close stays safe. The file handler's two Python-facing
+waits carry their own fixed deadlines rather than reusing the handler's write
+or overflow timeout: `flush()` gives the enqueue and the acknowledgement one
+second in total, and `close()` waits at most one second for the shared
+completion signal. Neither deadline depends on the overflow policy. A `close()`
+whose one-second deadline expires logs a warning and returns while the worker
+may still be running, so a returned `close()` is not proof that the worker
+stopped. The stream handler instead reuses its configurable `flush_timeout` for
+both waits, as described under "Python-facing lifecycle waits" below.
 
 These outcomes apply to Python access in `log()` and `flush()`; `enabled()`
 uses no Python access and has no Python exception path. The expected failure
@@ -1292,8 +1292,10 @@ worker-side I/O and lets both a queued Python callable formatter and a callback
 that re-enters the handler in its closed state make progress. Because the
 stream and file-family shutdown state is shared rather than taken exclusively,
 a close can start while another thread is blocked inside `handle()` or
-`flush()`; concurrent closes and a close beside a detached flush all observe
-the same completion.
+`flush()`; concurrent closes and a close beside a detached flush wait on the
+same completion. Only a closer whose wait does not time out observes that
+completion; a timed-out closer returns without observing the signal or the
+worker's state, and `close()` returns no status distinguishing the two.
 
 The socket and HTTP bindings also enqueue with `try_send` and stay attached in
 `handle()`, but their `close()` holds a mutable PyO3 borrow (`&mut self`) for
@@ -1343,6 +1345,24 @@ subscriber never has to attach to Python from a thread that holds no GIL. In a
 build without `tracing-compat` the emit is a compiled no-op and the per-wait
 cost is a counter update; the feature gate therefore decides whether the
 observability is present, while `wait_diagnostics()` works in every build.
+
+Two properties of that bound are easy to get wrong. `flush()` derives one
+deadline and spends it on both waits: queueing the flush command on a channel
+that may be full, then waiting for the worker's acknowledgement. Giving each
+wait its own timeout would let one call take nearly twice the configured limit.
+The deadline is measured on a clock injected through `HandlerConfig`, separate
+from the rate limiter, so a test can script that clock and drive both waits
+without sleeping. `close()` waits for the completion signal, which the worker
+raises after its body ends and its writer and formatter have been dropped, and
+does not join the thread. Joining would also wait for thread-local destructors,
+which user code can make block, so the closer drops the join handle and
+detaches the worker, which the operating system reclaims when it exits.
+Completion proves that the worker body finished and its writer and formatter
+were dropped, not that every record was delivered: a record dropped because the
+queue was full, or a write that failed, still leaves the signal raised, because
+the worker logs flush I/O errors rather than propagating them and a panic can
+bypass the final flush. As with the other handlers, it is the completion
+signal, not thread exit, that every closer waits on.
 
 The socket and HTTP handlers reach the same guarantee by a different route,
 because their workers make blocking network calls rather than waiting only on a

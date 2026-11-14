@@ -343,11 +343,28 @@ fields with safe defaults does not require a version bump.
   underlying `io::Write`.
 - `handler.flush()` waits (up to one second by default) for the worker to flush
   buffered writes and returns `True` only when the worker acknowledges
-  `Ok(())`. It returns `False` if the underlying I/O flush fails, the handler
-  has already been closed, the worker channel has been dropped, or the timeout
-  expires. Python `flush()` and `close()` release the GIL while waiting, so the
-  worker can run Python formatters before acknowledging. `handler.close()`
-  shuts down the worker thread and should be called before process exit.
+  `Ok(())`. One deadline, set by the flush timeout, bounds the whole call:
+  queueing the flush command and waiting for the acknowledgement share it. It
+  returns `False` if the underlying I/O flush fails, the handler has already
+  been closed, the worker channel has been dropped, or the deadline expires.
+- `handler.close()` stops accepting records and waits, up to the handler's
+  flush timeout, for the worker to process the records already queued; call it
+  before process exit. Both `flush()` and `close()` release the GIL while they
+  wait so a Python callable formatter can run to completion on the worker
+  thread during either call. `close()` returns no status, so a caller cannot
+  tell from the return value whether the worker finished.
+
+  The wait is bounded by the handler's flush timeout, which
+  `StreamHandlerBuilder.with_flush_after_ms()` sets. If the timeout expires,
+  `close()` returns without the worker having finished; the worker keeps
+  processing its queue and can still write to the stream after `close()`
+  returns. A successful `close()` returns once the worker raises its completion
+  signal, without joining the worker thread: joining would also wait for
+  thread-local destructors, which user code can make block, so the worker is
+  detached and reclaimed by the operating system when it exits. Completion does
+  not guarantee delivery, because a worker panic still signals completion with
+  records queued, and write errors are logged rather than reported to the
+  caller.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
