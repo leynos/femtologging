@@ -68,7 +68,8 @@ handler.close()
 
 # The handler's worker formats the record in Python and waits for a release
 # that only another Python thread can give, so a flush that holds the GIL
-# deadlocks until the formatter times out.
+# deadlocks until the formatter times out. The release waits for the flush to
+# begin, so the test cannot pass before there is a flush to exercise.
 FLUSH_FORMATTER_SCRIPT = """
 import pathlib
 import sys
@@ -78,6 +79,7 @@ from femtologging import FileHandlerBuilder, get_logger
 
 path = pathlib.Path(sys.argv[1])
 formatter_entered = threading.Event()
+flush_started = threading.Event()
 release_formatter = threading.Event()
 
 
@@ -90,6 +92,9 @@ def pause_formatter(record):
 
 def release():
     formatter_entered.wait(timeout=5)
+    # Wait for the flush itself. Releasing as soon as the formatter is entered
+    # would free it during dispatch, before there is a flush to test.
+    flush_started.wait(timeout=5)
     release_formatter.set()
 
 
@@ -99,6 +104,13 @@ logger.add_handler(handler)
 threading.Thread(target=release, daemon=True).start()
 
 logger.info("paused")
+# The main thread holds the GIL from here into flush_handlers(), so a worker
+# released after this point still cannot finish the formatter unless the flush
+# lets go of the GIL.
+flush_started.set()
+assert not release_formatter.is_set(), (
+    "the formatter was released before flush_handlers() began"
+)
 assert logger.flush_handlers(), "flush_handlers stalled behind the GIL"
 handler.close()
 assert path.read_text(encoding="utf-8") == "formatted paused\\n", (

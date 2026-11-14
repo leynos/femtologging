@@ -68,8 +68,20 @@ def silent_server() -> cabc.Iterator[int]:
         connection.close()
 
 
-def _ticks_during(call: cabc.Callable[[], object]) -> tuple[int, float]:
-    """Return how often another thread ran during ``call``, and its duration."""
+def _ticks_during(
+    prepare: cabc.Callable[[], cabc.Callable[[], object]],
+) -> tuple[int, float]:
+    """Measure another thread's progress during the wait ``prepare`` sets up.
+
+    ``prepare`` builds the handler and queues its work once the ticker is
+    already running, and hands back the wait to measure. Setting up inside the
+    timed region would let the setup hide the very stall under test.
+
+    Returns
+    -------
+    The number of ticks another thread completed during the measured call, and
+    the call's duration in seconds.
+    """
     ticks = [0]
     has_ticked = threading.Event()
     is_finished = threading.Event()
@@ -84,14 +96,16 @@ def _ticks_during(call: cabc.Callable[[], object]) -> tuple[int, float]:
     ticker = threading.Thread(target=tick, daemon=True)
     ticker.start()
     assert has_ticked.wait(timeout=5), "the ticker thread never started"
-    ticks_before = ticks[0]
-    started = time.monotonic()
-    call()
-    elapsed = time.monotonic() - started
-    ticks_during = ticks[0] - ticks_before
-    is_finished.set()
-    ticker.join()
-    return ticks_during, elapsed
+    try:
+        call = prepare()
+        ticks_before = ticks[0]
+        started = time.monotonic()
+        call()
+        elapsed = time.monotonic() - started
+        return ticks[0] - ticks_before, elapsed
+    finally:
+        is_finished.set()
+        ticker.join()
 
 
 def _stalled_socket_handler(port: int) -> _NetworkHandler:
@@ -133,11 +147,19 @@ def test_wait_on_a_stalled_worker_lets_python_threads_run(
     silent_server: int,
 ) -> None:
     """Other Python threads keep running while the handler waits on its worker."""
-    handler = build_handler(silent_server)
+    built: list[_NetworkHandler] = []
+
+    def prepare() -> cabc.Callable[[], object]:
+        """Build and queue the handler once the ticker is running."""
+        handler = build_handler(silent_server)
+        built.append(handler)
+        return getattr(handler, method)
+
     try:
-        ticks, elapsed = _ticks_during(getattr(handler, method))
+        ticks, elapsed = _ticks_during(prepare)
     finally:
-        handler.close()
+        for handler in built:
+            handler.close()
     assert elapsed >= MINIMUM_WAIT_SECONDS, (
         f"{method}() returned after {elapsed:.3f}s, so the worker never stalled "
         "and this test proved nothing"

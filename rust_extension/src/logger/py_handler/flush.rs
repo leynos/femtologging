@@ -85,10 +85,15 @@ impl PyHandler {
     /// `0` included, counts as success. Only a Python `bool` is read for its
     /// truth, because that is all `extract::<bool>` accepts.
     ///
-    /// A Python exception is printed for the user, as one raised from `handle`
-    /// is. The structured log carries only bounded labels — the handler kind
-    /// and whether the lookup or the call failed — because the exception text
-    /// may contain record payloads or other sensitive data.
+    /// A Python exception is printed for the user. `handle` reports one with
+    /// `PyErr::print`, which runs `sys.excepthook` through `PyErr_PrintEx(0)`;
+    /// that exits the process when the exception is a `SystemExit`, and a
+    /// `flush` must not be able to end the interpreter from
+    /// `flush_handlers()`. The traceback is printed with `PyErr::display`
+    /// instead, which reports the same text without the hook and so cannot
+    /// terminate. The structured log carries only bounded labels — the handler
+    /// kind and whether the lookup or the call failed — because the exception
+    /// text may contain record payloads or other sensitive data.
     fn call_python_flush(&self, py: Python<'_>) -> bool {
         let method = match self.obj.bind(py).getattr("flush") {
             Ok(method) => method,
@@ -114,13 +119,17 @@ impl PyHandler {
 /// Print a Python flush exception and log a bounded failure category.
 ///
 /// Printing keeps the traceback available to the user, matching the `handle`
-/// path. Only the bounded category and handler kind reach the structured log.
+/// path. `PyErr::display` is used rather than `PyErr::print`: the latter
+/// restores the error and calls `PyErr_PrintEx(0)`, which runs
+/// `sys.excepthook` and so exits the process when a `flush` raises
+/// `SystemExit`. Only the bounded category and handler kind reach the
+/// structured log.
 fn report_python_flush_failure(
     py: Python<'_>,
     err: PyErr,
     handler_kind: &'static str,
     category: &'static str,
 ) {
-    err.print(py);
+    err.display(py);
     warn!("PyHandler: flush failed: handler_kind={handler_kind}, category={category}");
 }

@@ -4,7 +4,8 @@ A custom handler registered from Python is flushed through its own ``flush``
 method, on the thread that called ``flush_handlers()``, after the logger's
 queued records have been dispatched. These tests pin the reported result for
 each shape of ``flush`` a handler can present, and that one handler's failure
-does not leave the handlers after it unflushed.
+does not leave the handlers after it unflushed. A ``flush`` that raises
+``SystemExit`` is included: reporting it must not end the interpreter.
 """
 
 from __future__ import annotations
@@ -50,6 +51,46 @@ assert handler.flushes >= 1, "the handler's flush never ran"
 assert handler.records_at_flush == 1, (
     "flush ran before the record was dispatched to the handler"
 )
+"""
+
+# ``PyErr::print`` restores the error and calls ``PyErr_PrintEx(0)``, which
+# exits the process for a ``SystemExit``. A flush that raises one is reported
+# like any other failure, so the process must survive and the handler after it
+# must still be flushed. A fresh interpreter is needed because the failure being
+# guarded against would end the pytest process.
+SYSTEM_EXIT_SCRIPT = """
+from femtologging import get_logger
+
+
+class Exiting:
+    def handle(self, logger, level, message):
+        pass
+
+    def flush(self):
+        raise SystemExit(7)
+
+
+class Recording:
+    def __init__(self):
+        self.flushes = 0
+
+    def handle(self, logger, level, message):
+        pass
+
+    def flush(self):
+        self.flushes += 1
+        return True
+
+
+exiting = Exiting()
+recording = Recording()
+logger = get_logger("custom.flush.system-exit")
+logger.add_handler(exiting)
+logger.add_handler(recording)
+
+assert logger.flush_handlers() is False, "a SystemExit flush must fail the call"
+assert recording.flushes == 1, "the handler after the SystemExit was not flushed"
+print("survived")
 """
 
 
@@ -99,6 +140,25 @@ def test_flush_handlers_delivers_buffered_records() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_flush_handlers_survives_a_flush_raising_system_exit() -> None:
+    """A ``flush`` raising ``SystemExit`` fails the call without exiting.
+
+    ``PyErr::print`` would run ``sys.excepthook`` and end the process on
+    ``SystemExit``; the flush path prints with ``PyErr::display`` instead. The
+    script runs in a fresh interpreter so the failure it guards against would
+    be observable rather than fatal to the test run.
+    """
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
+        [sys.executable, "-c", SYSTEM_EXIT_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "survived" in result.stdout, result.stdout
 
 
 def test_flush_handlers_reports_a_false_flush() -> None:

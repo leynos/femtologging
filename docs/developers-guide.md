@@ -924,13 +924,14 @@ results are combined afterwards; one handler's failure must not leave the
 records buffered in the handlers after it. A missing or non-callable `flush`
 method counts as success, a Python `bool` return value is read for its truth,
 and any other return value counts as success; one that raises counts as
-failure. A Python exception is printed for the user, and the structured log
-carries only bounded `handler_kind` and `category` fields
-(`interpreter_unavailable`, `flush_lookup`, or `flush_call`), never the
-exception text. `tests/test_custom_handler_flush.py` pins the reported results
-and delivery, `tests/test_flush_releases_gil.py` pins the formatter and flush
-cases, and `tests/test_network_handler_gil_release.py` pins the network
-shutdown case.
+failure. A Python exception is printed for the user with `PyErr::display`,
+which, unlike `PyErr::print`, does not run `sys.excepthook`, so a `flush` that
+raises `SystemExit` cannot end the interpreter. The structured log carries only
+bounded `handler_kind` and `category` fields (`interpreter_unavailable`,
+`flush_lookup`, or `flush_call`), never the exception text.
+`tests/test_custom_handler_flush.py` pins the reported results and delivery,
+`tests/test_flush_releases_gil.py` pins the formatter and flush cases, and
+`tests/test_network_handler_gil_release.py` pins the network shutdown case.
 
 Because that shutdown state is shared rather than moved out by an exclusive
 borrow, several threads may close the same stream or file handler, and a close
