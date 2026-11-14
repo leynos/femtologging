@@ -12,6 +12,16 @@ use doc_examples::extract_examples;
 use proptest::prelude::*;
 use rstest::rstest;
 
+/// Extract the single example in `guide` and return the source it publishes.
+///
+/// The fence-closing cases differ only in the Markdown they scan, so they
+/// share this helper instead of repeating the extraction and indexing.
+fn only_example_source(guide: &str) -> String {
+    let examples = extract_examples(guide).expect("the guide should be valid");
+    assert_eq!(examples.len(), 1, "the guide should hold one example");
+    examples[0].source.clone()
+}
+
 /// A marked Rust fence is extracted with its body and identifier.
 #[test]
 fn a_marked_rust_fence_is_extracted() {
@@ -43,12 +53,18 @@ fn a_marked_tilde_fence_is_extracted() {
     assert_eq!(examples[0].source, "fn demo() {}\n");
 }
 
-/// A longer fence contains a shorter one instead of ending at it.
-#[test]
-fn a_longer_fence_may_contain_a_shorter_one() {
-    let guide = "<!-- tested-example: example -->\n````rust\nlet s = \"```\";\n````\n";
-    let examples = extract_examples(guide).expect("the guide should be valid");
-    assert_eq!(examples[0].source, "let s = \"```\";\n");
+/// Only a longer run of the opener's character closes a fence.
+///
+/// The first case puts a standalone three-backtick line inside a four-backtick
+/// fence, so it fails if a shorter run closes the fence. The second puts a
+/// tilde line inside a backtick fence, so it fails if the closer ignores the
+/// character it was opened with. In both the inner line stays in the body.
+#[rstest]
+#[case("````rust\nlet s = \"```\";\n```\n````\n", "let s = \"```\";\n```\n")]
+#[case("```rust\nfn demo() {}\n~~~\n```\n", "fn demo() {}\n~~~\n")]
+fn only_a_matching_fence_run_closes(#[case] fence: &str, #[case] expected: &str) {
+    let guide = format!("<!-- tested-example: example -->\n{fence}");
+    assert_eq!(only_example_source(&guide), expected);
 }
 
 /// A fence run followed by text is content, not a closing fence.
@@ -61,8 +77,8 @@ fn a_fence_run_followed_by_text_does_not_close() {
         "``` this line is content\n",
         "```\n",
     );
-    let examples = extract_examples(guide).expect("the guide should be valid");
-    assert!(examples[0].source.contains("``` this line is content"));
+    let source = only_example_source(guide);
+    assert!(source.contains("``` this line is content"));
 }
 
 /// An unmarked Rust fence is an error, whatever its info string or character.
@@ -196,6 +212,40 @@ proptest! {
         let published = format!("{body}\n");
         prop_assert_eq!(examples.len(), 1);
         prop_assert_eq!(examples[0].source.as_str(), published.as_str());
+    }
+
+    /// A guide of several marked fences publishes every one, in order.
+    ///
+    /// The bodies avoid the fence character and line breaks, so each fence
+    /// closes where the case opened it. Identifiers are distinct, so the case
+    /// also covers a guide the loader accepts as a whole.
+    #[test]
+    fn every_marked_fence_is_published_in_document_order(
+        bodies in proptest::collection::vec("[a-z !,.;:()]{0,40}", 1..6),
+    ) {
+        let mut guide = String::new();
+        for (index, body) in bodies.iter().enumerate() {
+            guide.push_str(&format!(
+                "<!-- tested-example: case-{index} -->\n```rust\n{body}\n```\n"
+            ));
+        }
+
+        let examples = extract_examples(&guide).expect("the generated guide is valid");
+
+        let identifiers: Vec<String> = examples
+            .iter()
+            .map(|example| example.identifier.clone())
+            .collect();
+        let expected_identifiers: Vec<String> =
+            (0..bodies.len()).map(|index| format!("case-{index}")).collect();
+        prop_assert_eq!(identifiers, expected_identifiers);
+
+        let sources: Vec<String> = examples
+            .iter()
+            .map(|example| example.source.clone())
+            .collect();
+        let expected_sources: Vec<String> = bodies.iter().map(|body| format!("{body}\n")).collect();
+        prop_assert_eq!(sources, expected_sources);
     }
 
     /// Every accepted identifier maps to a module name that keeps it distinct.
