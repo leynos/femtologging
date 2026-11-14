@@ -13,8 +13,6 @@ from __future__ import annotations
 import subprocess  # ruff: ignore[suspicious-subprocess-import] runs this interpreter
 import sys
 
-import pytest
-
 from femtologging import get_logger
 
 # A fresh interpreter keeps the logger's dispatch shard idle, so the record is

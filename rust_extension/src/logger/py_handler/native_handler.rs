@@ -169,7 +169,6 @@ impl NativeHandlerKind {
         }
     }
 
-// refused_by: container_member · collision: `Self::Stream => flush_builtin::<FemtoStreamHandler>(py, obj),` +5 more
     /// Flush the matching built-in handler through its native implementation.
     ///
     /// Going through the trait rather than a Python-visible `flush` method
@@ -188,4 +187,3 @@ impl NativeHandlerKind {
         }
     }
 }
-
