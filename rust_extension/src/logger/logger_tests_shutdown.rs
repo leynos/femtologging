@@ -49,6 +49,19 @@ impl FemtoHandlerTrait for HeldHandler {
     }
 }
 
+/// Releases a blocked test handler when dropped.
+///
+/// A failed assertion unwinds through the test body; without this the worker
+/// would stay blocked inside `handle` and hold the shard for the rest of the
+/// test run.
+struct ReleaseOnDrop(std::sync::mpsc::Sender<()>);
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
 #[test]
 fn a_pool_hands_out_every_shard_in_turn() {
     let dispatcher = pool_with(3);
@@ -219,5 +232,44 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
         collected_messages(&collector),
         vec!["still fits"],
         "the record admitted after the idle flushes must still be delivered"
+    );
+}
+
+/// A logger whose handler never returns reports an acknowledgement timeout.
+///
+/// The barrier waits for the record the stuck handler is holding, so the
+/// flush must give up after one budget and report failure. Releasing the
+/// handler afterwards proves the logger is still usable rather than wedged by
+/// the timed-out attempt. The outcome the timeout records is covered by the
+/// flush command tests, which inject their own clock and observer.
+#[test]
+fn a_blocked_handler_makes_the_logger_flush_time_out() {
+    let logger =
+        FemtoLogger::new("flush.timeout".into()).expect("test logger should be constructible");
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release = ReleaseOnDrop(release_tx);
+    let handler = Arc::new(HeldHandler {
+        started: started_tx,
+        release: parking_lot::Mutex::new(release_rx),
+    }) as Arc<dyn FemtoHandlerTrait>;
+    logger
+        .add_handler(handler)
+        .expect("native blocking handler should register");
+
+    logger.log(FemtoLevel::Info, "blocked");
+    started_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("the worker should enter the blocking handler");
+
+    assert!(
+        !logger.flush_handlers(),
+        "a flush whose barrier is not answered must report failure"
+    );
+
+    drop(release);
+    assert!(
+        logger.flush_handlers(),
+        "the logger must recover once the blocked handler returns"
     );
 }

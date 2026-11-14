@@ -343,6 +343,10 @@ mod tests;
 mod enabled_tests;
 
 #[cfg(test)]
+#[path = "log_compat/flush_tests.rs"]
+mod flush_tests;
+
+#[cfg(test)]
 #[path = "log_compat/diagnostics_tests.rs"]
 mod diagnostics_tests;
 

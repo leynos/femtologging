@@ -53,7 +53,7 @@ use std::ptr::NonNull;
 #[cfg(not(loom))]
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
-pub(crate) use shard::{LoggerBudget, Shard};
+pub(crate) use shard::{DrainOutcome, LoggerBudget, Shard};
 
 /// Threads a dispatcher starts when the machine reports no useful limit.
 ///

@@ -77,6 +77,12 @@ pub(super) struct Manager {
 /// Process-wide registry lock for logger identities and runtime configuration.
 pub(super) static MANAGER: Lazy<RwLock<Manager>> = Lazy::new(|| RwLock::new(Manager::default()));
 
+/// Check whether a test can acquire the manager write lock without blocking.
+#[cfg(all(test, feature = "python", feature = "log-compat"))]
+pub(crate) fn manager_write_available_for_test() -> bool {
+    MANAGER.try_write().is_some()
+}
+
 /// Python-free mirror of registered logger thresholds.
 ///
 /// The `log` bridge's enablement check must not attach to Python, so each
@@ -303,20 +309,46 @@ pub(crate) fn replace_runtime_state(
     )
 }
 
-/// Flush every registered logger for the Rust `log` bridge; ignore failures.
+/// Flush every registered logger for the Rust `log` bridge.
+///
 /// Snapshot under lock, then flush outside it: a GIL-holding `get_logger`
 /// writer could otherwise starve the queued handler a flush barrier awaits.
 /// `reset_manager` also drops loggers outside the lock.
+///
+/// A failed logger flush is counted internally and warned about rather than
+/// discarded. The bridge cannot report a failure to its caller —
+/// `log::Log::flush` returns nothing — so today the rate-limited warning is the
+/// only evidence an operator gets that a handler is not draining. The counter
+/// is not yet exported; issue #551 tracks the telemetry interface.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers(py: Python<'_>) {
-    let loggers: Vec<Py<FemtoLogger>> = MANAGER
-        .read()
-        .loggers
-        .values()
-        .map(|logger| logger.clone_ref(py))
-        .collect();
+    flush_all_handlers_with_metrics(py, crate::logger::process_flush_metrics());
+}
+
+/// Sweep every registered logger, counting bridge failures in `metrics`.
+///
+/// The target is a parameter so a test can drive a real sweep against counters
+/// it owns. Every logger's own flush still reports through its production
+/// observer; only the bridge-level failure counter is redirected here.
+#[cfg(feature = "log-compat")]
+pub(crate) fn flush_all_handlers_with_metrics(
+    py: Python<'_>,
+    metrics: &crate::logger::FlushMetrics,
+) {
+    let loggers: Vec<Py<FemtoLogger>> = {
+        let manager = MANAGER.read();
+        manager
+            .loggers
+            .values()
+            .map(|logger| logger.clone_ref(py))
+            .collect()
+    };
     for logger in loggers {
-        let _ = logger.borrow(py).flush_handlers();
+        let borrowed_logger = logger.borrow(py);
+        let logger_ref: &FemtoLogger = &borrowed_logger;
+        if !py.detach(|| logger_ref.flush_handlers()) {
+            crate::logger::record_bridge_flush_failure(metrics);
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 # libtest names it. A model missing from a run, or a passing test not named
 # here, fails the lane; see scripts/run_loom_models.py.
 loom_file_flush::loom_file_handler_flush_concurrent
+loom_flush::loom_flush_barrier_orders_records_before_handler_flush
 loom_push::loom_stream_push_delivery
 loom_shutdown_completion::loom_shutdown_completion_follows_teardown_after_a_worker_panic
 loom_shutdown_completion::loom_shutdown_completion_follows_writer_and_formatter_teardown

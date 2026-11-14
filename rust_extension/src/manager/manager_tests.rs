@@ -205,9 +205,12 @@ mod log_compat {
     use pyo3::Python;
     use serial_test::serial;
 
-    use super::super::registry::{MANAGER, flush_all_handlers, get_logger, reset_manager};
+    use super::super::registry::{
+        MANAGER, flush_all_handlers, flush_all_handlers_with_metrics, get_logger, reset_manager,
+    };
     use crate::handler::{FemtoHandlerTrait, HandlerError};
     use crate::log_record::FemtoLogRecord;
+    use crate::logger::FlushMetrics;
 
     /// Handler that counts how often the manager flushes a logger.
     #[derive(Clone)]
@@ -293,6 +296,54 @@ mod log_compat {
                 flushes.load(Ordering::SeqCst),
                 loggers.len(),
                 "flush should be invoked once per registered logger",
+            );
+            Ok(())
+        })
+    }
+
+    /// Handler whose flush fails, so a sweep has something to count.
+    struct FailingFlushHandler;
+
+    impl FemtoHandlerTrait for FailingFlushHandler {
+        fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+            Ok(())
+        }
+
+        fn flush(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    /// A failed logger flush during a sweep is counted, not silently discarded.
+    #[test]
+    #[serial]
+    fn flush_all_handlers_counts_a_failed_logger_flush() -> pyo3::PyResult<()> {
+        Python::attach(|py| -> pyo3::PyResult<()> {
+            reset_manager();
+
+            let logger = get_logger(py, "bridge.flush.failure")?;
+            logger
+                .borrow(py)
+                .add_handler(Arc::new(FailingFlushHandler) as Arc<dyn FemtoHandlerTrait>)?;
+
+            // The sweep counts into metrics this test owns, so no other logger
+            // in the binary can move the assertion.
+            let metrics = FlushMetrics::new();
+            flush_all_handlers_with_metrics(py, &metrics);
+            let snapshot = metrics.snapshot();
+
+            assert_eq!(
+                snapshot.bridge_failures, 1,
+                "the one failed flush during the sweep must be counted once",
+            );
+            assert_eq!(
+                snapshot.outcomes,
+                [0, 0, 0, 0],
+                "the bridge counter is the only counter this sweep may write",
             );
             Ok(())
         })

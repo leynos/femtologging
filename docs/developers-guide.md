@@ -59,10 +59,13 @@ Write an example so it runs on its own. Bind every name it uses, and show a
 value rather than an assertion, so a wrong answer is a failure and not a silent
 pass.
 
-Skip an example only with a written reason beside it. `capture_records` is the
-one skipped here: running it would need a live logger, an emission through the
-process-wide macros, and a bounded wait on the worker that delivers the record,
-and an example that waits on a race is the shape
+Skip an example only with a written reason beside it. `capture_records` used to
+be skipped because its process-wide macro emission needed a bounded wait for a
+Python handler, and `flush_handlers()` held the GIL during that wait
+([issue 451](https://github.com/leynos/femtologging/issues/451)). The flush
+barrier now releases the GIL, so the example exercises enqueue, flush, and
+inspection directly without waiting on a delivery race. An example that waits
+on a race is the shape
 [issue 476](https://github.com/leynos/femtologging/issues/476) is about. A
 skipped example is inert text, never compiled, so it cannot be trusted the way
 an executed one can.
@@ -76,6 +79,28 @@ records for type checking. `scripts/conftest.py` excludes
 block and cannot be resolved from the project environment;
 `make lint-lanes-test` runs that script, and its examples, in the environment
 that can.
+
+### Documented examples
+
+User-facing documents mark each executable Python fence with
+`<!-- tested-example: <identifier> -->`. `tests/documented_examples.py` loads
+that fence from the published document, so a test executes the shipped text
+rather than a copy of it.
+`load_tested_python_example(document_path, identifier)` returns the fence body
+and raises `ValueError` when:
+
+- the identifier is not lowercase kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`);
+- the marker appears zero times or more than once in the document;
+- the marker is not immediately followed by a `python`-tagged fence;
+- the closing fence carries anything but trailing whitespace, which means the
+  match reached a language-tagged opening fence rather than the end of the
+  example.
+
+`tests/test_documented_examples.py` pins those constraints and runs the user
+guide's `flush-handlers-usage` example with `runpy`, then checks that the
+record it logs reached the file it flushes. The policy that every executable
+fence in a user-facing document carries a marker is in the
+[documentation style guide](documentation-style-guide.md).
 
 ## Typos spelling checker
 
@@ -346,6 +371,37 @@ Keep the helper functions taking the sampled instant as a parameter. A helper
 that read the clock itself would make the sequence of budgets depend on how
 long the previous call took, which is untestable and is the defect the seam
 exists to prevent.
+
+### Flush clock and observer seam
+
+`rust_extension/src/logger/flush.rs` measures every flush through
+`measure_flush_attempt(clock, observer, attempt)`. It reads the injected
+`MonotonicClock` either side of one attempt, so the recorded outcome and
+duration always describe the same flush. Neither the clock nor the observer is
+ambient: the `FlushObserver` trait (`record(outcome, elapsed)`) and the clock
+are parameters, and production selects them at the flush boundary.
+`MetricsFlushObserver` reports to the process-wide flush counters, and with
+`tracing-compat` the `TracingFlushObserver` around it records the outcome and
+elapsed time on the `logger_flush` span before delegating. Tests drive the
+production orchestration through `flush_handlers_measured` with a clock and
+observer they own — including their own `FlushMetrics` — so an assertion cannot
+be moved by another logger in the process.
+
+`DrainOutcome` in `rust_extension/src/logger/dispatcher/shard/mod.rs` records
+how a barrier wait ended: `Drained`, `QueueClosed` when the shard is gone for
+good, and `TimedOut` when the worker is alive but did not answer the barrier
+within `BARRIER_TIMEOUT`. A flush therefore reports which of the two failures
+it hit rather than a bare false.
+
+The seam exists because the alternative is untestable. A helper that sampled
+the clock itself would make the measured duration depend on how long the
+previous call took, and one that wrote to the process-wide counters directly
+would share state with every logger in the process, so neither a unit test nor
+a sibling logger could rely on what it read.
+
+Python handler call plumbing — method lookup, the call itself, and the bounded
+flush-failure categories — is in
+`rust_extension/src/logger/py_handler/calls.rs`.
 
 ### Dependabot grouping for the extension build
 
@@ -643,22 +699,30 @@ invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
 ### Loom models
 
-Ten Loom models in `rust_extension/tests/heavy/` check the handler and logger
-workers: delivery through the stream handler's queue, routing through the
-logger to every attached handler exactly once, concurrent handler attachment,
-concurrent writes and flushes through the file handler, and the shared
-worker-completion signal that concurrent closers wait on. Two of those models
-drive the shutdown guard the stream worker really uses, so they require a
-closer that observes completion to see the worker's writer and formatter
-already dropped, both when the body ends normally and when it unwinds. Handler
-models run the handler worker code with Loom's synchronization primitives.
-Logger models use a Loom-specific logger-owned shard rather than the
-process-wide production `Dispatcher`; dropping the logger sends `Job::Stop` and
-joins that worker during model cleanup. Every worker spawns, queues and locks
-through the private seam in `rust_extension/src/sync.rs`, which is
-`std::thread`, `crossbeam_channel` and `parking_lot` in an ordinary build and
-Loom's thread, locks and a small bounded channel under `--cfg loom`. Loom
-arrives only as a `cfg(loom)` target dependency.
+Eleven Loom models in `rust_extension/tests/heavy/` check the handler and
+logger workers: delivery through the stream handler's queue, routing through
+the logger to every attached handler exactly once, concurrent handler
+attachment, concurrent writes and flushes through the file handler, the shared
+worker-completion signal that concurrent closers wait on, and flush ordering.
+Two of those models drive the shutdown guard the stream worker really uses, so
+they require a closer that observes completion to see the worker's writer and
+formatter already dropped, both when the body ends normally and when it
+unwinds. The flush model varies the number of records queued ahead of the
+barrier, including none, and whether the handler reports failure; it asserts
+that the drain barrier is acknowledged only after every record queued ahead of
+it has been handled, and that handlers are flushed only after that
+acknowledgement. Handler models run the handler worker code with Loom's
+synchronization primitives. Logger models use a Loom-specific logger-owned
+shard rather than the process-wide production `Dispatcher`; dropping the logger
+sends `Job::Stop` and joins that worker during model cleanup. Every worker
+spawns, queues and locks through the private seam in
+`rust_extension/src/sync.rs`, which is `std::thread`, `crossbeam_channel` and
+`parking_lot` in an ordinary build and Loom's thread, locks and a small bounded
+channel under `--cfg loom`. Loom arrives only as a `cfg(loom)` target
+dependency. The Python-specific paths — the GIL-detached wait and delivery, and
+the manager-lock release before a bridge flush — are outside the
+`--no-default-features` Loom lane; the Python regression tests cover them
+instead.
 
 The completion models schedule registration against completion, a repeated
 completion, and a waiter that arrives after the worker has stopped. They use the
@@ -744,11 +808,32 @@ shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
 `flush_handlers()` queues a barrier only when that logger has work in flight.
-The barrier drains records ahead of it on the same shard and has a two-second
-timeout; an idle logger does not consume a queue slot or wait for unrelated
-work. Dropping a logger follows the same per-logger in-flight check. The pool
-itself lives for the process lifetime. If the operating system refuses to start
-a worker, construction returns `DispatcherError` in Rust or `RuntimeError`
+The barrier drains records ahead of it on the same shard; an idle logger does
+not consume a queue slot or wait for unrelated work. The Python wrapper
+releases the GIL while the worker acknowledges the barrier and attached
+handlers flush, so Python handlers can run. That includes a built-in handler
+flushed through its native implementation: a Python formatter on its worker
+thread needs the same GIL the flush would otherwise hold while waiting for the
+acknowledgement. Enqueueing the flush marker and waiting for its
+acknowledgement share a two-second timeout. Flushing attached handlers can take
+additional time. The method returns `True` only when the worker acknowledges
+the marker in time and every handler flush succeeds; it returns `False` if the
+marker cannot be enqueued or acknowledged in time, or a handler flush fails.
+
+The Rust `log::Log::flush` bridge snapshots logger references under the
+`MANAGER` read guard, releases the guard, then detaches each logger's blocking
+flush. This avoids a lock cycle: a Python manager writer can hold the GIL while
+waiting for the write lock, while the detached flush waits for a Python
+callback to acquire the GIL. The bridge ignores each logger's boolean result
+because `log::Log::flush` returns `()`.
+
+Builds with `python,test-util` also expose `wait_for_flush_entry_for_test()`,
+`drain_flush_signals_for_test()`, and `cancel_flush_wait_for_test()` for
+bounded regression-test coordination. Normal `python` builds omit these hooks.
+
+Dropping a logger follows the same per-logger in-flight check. The pool itself
+lives for the process lifetime. If the operating system refuses to start a
+worker, construction returns `DispatcherError` in Rust or `RuntimeError`
 through Python. The pool is not marked failed, so a later construction retries.
 
 The production pool is outside the Loom model. Each Loom run owns and stops its
@@ -928,6 +1013,50 @@ use bounded operation, handler-kind, and outcome fields; filter-chain events
 also include elapsed microseconds. Record payloads and context values are never
 included. They target `femtologging::internal`, which `FemtoTracingLayer`
 ignores to prevent tracing from recursively logging its own instrumentation.
+
+### Flush observability
+
+Every `FemtoLogger::flush_handlers()` call records one bounded outcome and one
+duration in process-wide, cumulative counters. Publishing them is deferred to
+[issue 551](https://github.com/leynos/femtologging/issues/551), which owns the
+supported telemetry interface, the exporter, and the alerting documentation;
+the names below are the internal contract that exporter must match. Until it
+lands, an operator reads flush health from the rate-limited warnings described
+below, not from a metric endpoint.
+
+| Metric                               | Type      | Meaning                                                                                                                                               |
+| ------------------------------------ | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `femtologging.flush.total{outcome}`  | counter   | Flush attempts by outcome: `success`, `ack_timeout`, `channel_closed`, or `handler_failure`.                                                          |
+| `femtologging.flush.duration_us`     | histogram | Flush duration in microseconds, with cumulative buckets at 100, 500, 1,000, 5,000, 10,000, 50,000, 100,000, and 1,000,000 µs plus an overflow bucket. |
+| `femtologging.flush.bridge_failures` | counter   | Logger flushes that returned `false` while `log::Log::flush` swept the registered loggers.                                                            |
+
+The labels above are the contract the exporter must publish; until issue 551
+lands, no metric endpoint exposes them. An operator reads flush health today
+from two signals that do exist: the rate-limited warnings described below, and,
+with `tracing-compat`, the `logger_flush` span, whose `flush_outcome` field
+carries these labels. Each label means the following. `ack_timeout` means the
+shard worker did not finish the records queued ahead within the shared
+two-second barrier, which usually points at a handler that blocks.
+`channel_closed` means the dispatch pool was already gone, so nothing was
+drained. `handler_failure` means the drain succeeded but at least one attached
+handler's `flush()` reported failure. `success` is the only outcome after which
+every record queued before the call had been handed to its handlers. The
+bridge-failure count isolates failures observed through `log::Log::flush`,
+without naming the logger, because logger names are unbounded user data.
+
+A Python handler that fails to flush is reported with one bounded category:
+`flush_lookup_failed`, `flush_call_failed`, or `flush_result_false`. The
+handler's exception message and traceback are never printed or logged, because
+they may quote a record.
+
+With `tracing-compat` enabled, each flush also emits a `logger_flush` span
+targeting `femtologging::internal`. The span carries
+`operation = "logger_flush"` and records `flush_outcome` and `elapsed_us`; the
+outcome values match the counter labels. Acknowledgement timeouts, handler
+failures, and bridge failures also emit rate-limited warnings (at most one per
+five seconds per boundary) that report only a count. Neither the span nor the
+warnings include record payloads or logger names, because both are unbounded
+user data.
 
 ### Python-facing `flush()` and `close()` waits
 
