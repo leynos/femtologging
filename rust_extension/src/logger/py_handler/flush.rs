@@ -84,11 +84,14 @@ impl PyHandler {
     }
 
     /// A bounded label for the wrapped handler kind, for structured logs.
+    ///
+    /// A built-in handler reports its own type, so a failed
+    /// `flush_handlers()` names the handler an operator has to look at
+    /// rather than only the `native`/`custom` split.
     fn handler_kind(&self) -> &'static str {
-        if self.native_handler.is_some() {
-            "native"
-        } else {
-            "custom"
+        match self.native_handler {
+            Some(kind) => kind.label(),
+            None => "custom",
         }
     }
 

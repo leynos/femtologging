@@ -930,15 +930,19 @@ raises `SystemExit` cannot end the interpreter. The structured log carries only
 bounded `handler_kind` and `category` fields (`interpreter_unavailable`,
 `flush_lookup`, `flush_call`, or the native `flush_failed`), never the
 exception text or record payloads. A native flush that reports failure is
-logged in the same shape, so a `False` return from `flush_handlers()` names the
-handler kind that failed. Under the `tracing-compat` feature the flush also
-runs inside an `info_span!` named `flush_registered_handler`, carrying
-`handler_kind` and `flush_outcome`, so the queue-crossing wait appears as a
-timed span rather than only as an event emitted after it returns. No metrics
-facility is added for this path: the crate has no metrics dependency, and the
-`wait_diagnostics()` counters described below already report wait latency
-(`total_wait_micros`, `max_wait_micros`) and every outcome, so a second metrics
-surface would duplicate them without adding bounded-cardinality labels.
+logged in the same shape, with `category=flush_failed`, so a `False` return from
+`flush_handlers()` names the handler an operator has to look at rather than
+only whether it was reached through Python: `handler_kind` is the built-in
+handler type (`stream`, `file`, `rotating-file`, `timed-rotating-file`,
+`socket`, or `http`) for a built-in handler, and `custom` for a user-defined
+one. Under the `tracing-compat` feature the flush also runs inside an
+`info_span!` named `flush_registered_handler`, carrying `handler_kind` and
+`flush_outcome`, so the queue-crossing wait appears as a timed span rather than
+only as an event emitted after it returns. No metrics facility is added for
+this path: the crate has no metrics dependency, and the `wait_diagnostics()`
+counters described below already report wait latency (`total_wait_micros`,
+`max_wait_micros`) and every outcome, so a second metrics surface would
+duplicate them without adding bounded-cardinality labels.
 `tests/test_custom_handler_flush.py` pins the reported results and delivery,
 `tests/test_flush_releases_gil.py` pins the formatter and flush cases, and
 `tests/test_network_handler_gil_release.py` pins the network shutdown case.
