@@ -26,6 +26,19 @@ impl PyHandler {
     /// destination, so claiming success would let `flush_handlers` return
     /// `True` over records that were never written.
     pub(super) fn flush_registered_handler(&self) -> bool {
+        // The span covers the queue-crossing wait itself, so the interval an
+        // operator sees is the one this flush spent waiting on the handler,
+        // not just the instant its outcome was logged.
+        #[cfg(feature = "tracing-compat")]
+        let span = tracing::info_span!(
+            target: "femtologging::internal",
+            "flush_registered_handler",
+            handler_kind = self.handler_kind(),
+            flush_outcome = tracing::field::Empty,
+        );
+        #[cfg(feature = "tracing-compat")]
+        let _entered = span.enter();
+
         let flushed = self.report_flush(|| {
             Python::try_attach(|py| match self.native_handler {
                 Some(native_handler) => native_handler.flush(py, self.obj.bind(py)),
@@ -33,12 +46,18 @@ impl PyHandler {
             })
         });
         #[cfg(feature = "tracing-compat")]
-        tracing::trace!(
-            target: "femtologging::internal",
-            operation = "flush_registered_handler",
-            handler_kind = self.handler_kind(),
-            flush_outcome = if flushed { "succeeded" } else { "failed" },
-        );
+        {
+            span.record(
+                "flush_outcome",
+                if flushed { "succeeded" } else { "failed" },
+            );
+            tracing::trace!(
+                target: "femtologging::internal",
+                operation = "flush_registered_handler",
+                handler_kind = self.handler_kind(),
+                flush_outcome = if flushed { "succeeded" } else { "failed" },
+            );
+        }
         flushed
     }
 

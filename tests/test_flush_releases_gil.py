@@ -112,10 +112,14 @@ assert not release_formatter.is_set(), (
     "the formatter was released before flush_handlers() began"
 )
 assert logger.flush_handlers(), "flush_handlers stalled behind the GIL"
-handler.close()
+# Read before close(): the record must be on disk because the flush waited for
+# the handler, not because close() later drained the worker. If PyHandler's
+# flush returned without delegating, the formatter would still be blocked here
+# and this read would find an empty file.
 assert path.read_text(encoding="utf-8") == "formatted paused\\n", (
-    "the blocked formatter never completed, so the flush held the GIL"
+    "flush_handlers() returned before the record reached the file"
 )
+handler.close()
 """
 
 FILE_BUILDERS = {
@@ -174,8 +178,12 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     through ``PyHandler::flush()``. Its worker is parked in a Python formatter
     that only another Python thread can release; that thread can run only if
     the flush releases the GIL, and the flush can finish only if the formatter
-    does. A fresh interpreter keeps the logger's dispatch shard idle, so the
-    record is admitted rather than refused behind earlier tests' work.
+    does. The file is read before ``close()``, so the record can be there only
+    because the flush waited for the handler: a ``PyHandler::flush()`` that did
+    not delegate would return with the formatter still blocked, and the read
+    would find an empty file. A fresh interpreter keeps the logger's dispatch
+    shard idle, so the record is admitted rather than refused behind earlier
+    tests' work.
     """
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
         [sys.executable, "-c", FLUSH_FORMATTER_SCRIPT, str(tmp_path / "app.log")],
