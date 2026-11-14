@@ -66,6 +66,13 @@ tracing-compat = ["python", "tracing", "tracing-subscriber"]
 incremental = false
 debug = 0
 
+# The documentation-example loader in `build.rs` reads the user guide and
+# writes the generated modules through capability handles, as the Dylint
+# filesystem policy requires. These are build-time dependencies only.
+[build-dependencies]
+camino = "1.2.0"
+cap-std = { version = "4.0.3", features = ["fs_utf8"] }
+
 [dev-dependencies]
 criterion = "0.8"
 rstest = "0.28"

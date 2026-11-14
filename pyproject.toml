@@ -471,6 +471,10 @@ python-packages = ["femtologging"]
 # opts in through `.github/uv-test-util.toml`; development and heavy tests pass
 # their feature set explicitly.
 features = ["python"]
+# `rust_extension/build.rs` extracts the tested examples from the user guide,
+# so an sdist must carry that guide or a source build fails before it compiles
+# anything. Wheels already contain the compiled extension and need neither.
+include = [{ path = "docs/users-guide.md", format = "sdist" }]
 
 [tool.pytest.ini_options]
 timeout = 30

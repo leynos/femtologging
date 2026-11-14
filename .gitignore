@@ -225,3 +225,6 @@ bin/act
 # Skylos allow lock and analysis cache
 .pyproject.toml.df12.lock
 .skylos/
+
+# Rust examples loaded from the user guide by `rust_extension/build.rs`.
+rust_extension/tests/generated/
