@@ -1,5 +1,6 @@
 //! Native dispatch for built-in handlers registered through Python.
 
+use log::warn;
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
 use pyo3::{Bound, PyAny};
@@ -32,7 +33,14 @@ where
         // the `PyRef` guard while the handler stays alive in `obj`.
         Ok(handler) => {
             let handler_ref: &T = &handler;
-            py.detach(|| FemtoHandlerTrait::flush(handler_ref))
+            let flushed = py.detach(|| FemtoHandlerTrait::flush(handler_ref));
+            if !flushed {
+                // `flush_handlers()` reports these failures, so an operator
+                // needs a bounded record of the handler failing to flush
+                // rather than only a `False` return.
+                warn!("PyHandler: flush failed: handler_kind=native, category=flush_failed");
+            }
+            flushed
         }
         Err(err) => {
             map_py_err(py, err.into(), label);

@@ -1178,7 +1178,11 @@ reports only a bounded category; the handler's exception text is never printed
 or logged, for the reason given under [Flush observability](#flush-observability).
 An interpreter that cannot be attached, which happens only while the process is
 shutting down, leaves the handler unflushed and reports
-`interpreter_unavailable`. `tests/test_custom_handler_flush.py` pins the
+`interpreter_unavailable`. Under the `tracing-compat` feature each of these
+flushes also runs inside an `info_span!` named `flush_registered_handler`,
+carrying `handler_kind` and `flush_outcome`, so the queue-crossing wait appears
+as a timed span rather than only as an event emitted after it returns.
+`tests/test_custom_handler_flush.py` pins the
 reported results and delivery, `tests/test_flush_releases_gil.py` pins the
 formatter and flush cases, and `tests/test_network_handler_gil_release.py` pins
 the network shutdown case.
