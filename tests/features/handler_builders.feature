@@ -181,3 +181,8 @@ Feature: Handler builders
   Scenario: HTTP handler requires URL
     Given an empty HTTPHandlerBuilder
     Then building the HTTP handler fails with "HTTP handler requires a URL"
+
+  Scenario: HTTP handler builder rejects an unencodable header
+    Given an HTTPHandlerBuilder for URL "http://localhost:8080/log"
+    When I set HTTP header "bad header" with value "secret-value"
+    Then building the HTTP handler fails mentioning "invalid HTTP header name"

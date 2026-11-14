@@ -16,10 +16,9 @@
 
 use std::{io, sync::Arc, time::Instant};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
-use ureq::{Agent, AgentBuilder};
+use ureq::{Agent, tls::RootCerts};
 
 use crate::{
     log_record::FemtoLogRecord,
@@ -29,10 +28,11 @@ use crate::{
 };
 
 use super::{
-    config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
-    response::{ResponseClass, classify_status},
+    response::ResponseClass,
     serialize::{serialize_json, serialize_url_encoded},
+    transport::{build_agent, execute},
 };
 
 /// Spawns a background worker thread to process HTTP commands.
@@ -83,10 +83,11 @@ struct Worker {
 impl Worker {
     /// Create a worker; it starts with the configured HTTP timeouts.
     fn new(config: HTTPHandlerConfig, signal: Arc<ShutdownSignal>) -> Self {
-        let agent = AgentBuilder::new()
-            .timeout_connect(config.connect_timeout)
-            .timeout(config.write_timeout)
-            .build();
+        let agent = build_agent(
+            config.connect_timeout,
+            config.write_timeout,
+            RootCerts::PlatformVerifier,
+        );
         let backoff = BackoffState::new(config.backoff.clone());
         let warner = RateLimitedWarner::new(config.warn_interval);
         Self {
@@ -172,85 +173,16 @@ impl Worker {
             return Some(self.agent.clone());
         }
         let budget = self.signal.remaining()?;
-        Some(
-            AgentBuilder::new()
-                .timeout_connect(budget.min(self.config.connect_timeout))
-                .timeout(budget)
-                .build(),
-        )
+        Some(build_agent(
+            budget.min(self.config.connect_timeout),
+            budget,
+            RootCerts::PlatformVerifier,
+        ))
     }
 
     /// Execute one request; HTTP 503 is classified as retryable.
     fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
-        // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
-        let request = match self.config.method {
-            HTTPMethod::GET => self.build_get_request(payload, agent),
-            HTTPMethod::POST => self.build_post_request(payload, agent),
-        };
-
-        match request {
-            Ok(response) => Ok(classify_status(response.status())),
-            Err(err) => match *err {
-                ureq::Error::Status(code, _) => Ok(classify_status(code)),
-                ureq::Error::Transport(transport_err) => Err(transport_err.to_string()),
-            },
-        }
-    }
-
-    /// Build a GET request; the payload follows any existing query data.
-    fn build_get_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let url = if self.config.url.contains('?') {
-            format!("{}&{}", self.config.url, payload)
-        } else {
-            format!("{}?{}", self.config.url, payload)
-        };
-        let mut req = agent.get(&url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
-        req.call().map_err(Box::new)
-    }
-
-    /// Build a POST request; JSON format sends an `application/json` body.
-    fn build_post_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let mut req = agent.post(&self.config.url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
-
-        let content_type = match self.config.format {
-            SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
-            SerializationFormat::Json => "application/json",
-        };
-        req = req.set("Content-Type", content_type);
-        req.send_string(payload).map_err(Box::new)
-    }
-
-    /// Add authentication; bearer configuration sets an `Authorization` header.
-    fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
-        match &self.config.auth {
-            AuthConfig::None => req,
-            AuthConfig::Basic { username, password } => {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64_encode(credentials.as_bytes());
-                req.set("Authorization", &format!("Basic {}", encoded))
-            }
-            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {}", token)),
-        }
-    }
-
-    /// Apply every configured custom header to the request.
-    fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
-        for (key, value) in &self.config.headers {
-            req = req.set(key, value);
-        }
-        req
+        execute(&self.config, agent, payload)
     }
 
     /// Logs a retryable failure, then says whether this record gets another
@@ -387,11 +319,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// Base64-encode a byte slice for Basic auth.
-fn base64_encode(input: &[u8]) -> String {
-    BASE64_STANDARD.encode(input)
 }
 
 #[cfg(test)]

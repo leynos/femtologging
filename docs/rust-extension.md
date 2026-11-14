@@ -397,6 +397,53 @@ retains responsibility for importing arbitrary user-defined factories.
   `with_bearer_token` methods remain available so existing code keeps working,
   but the typed stub surface points users at the combined methods first.
 
+## HTTP transport and TLS
+
+The native HTTP worker uses ureq 3.4 with the `native-tls` feature. The
+migration from ureq 2 keeps the transport's observable behaviour; the contracts
+below are pinned by `rust_extension/src/http_handler/request_shape_tests.rs` and
+`tls_tests.rs`.
+
+- **TLS trust.** The agent selects `TlsProvider::NativeTls` with
+  `RootCerts::PlatformVerifier`, so certificates are validated against the
+  host's trust store, as they were under ureq 2. ureq 3 otherwise defaults to
+  Rustls with bundled WebPKI roots, which would silently change which
+  certificates the handler trusts. The dependency disables ureq's default
+  features (keeping only `gzip` and `native-tls`), so that Rustls stack is not
+  compiled at all.
+- **Timeouts.** `connect_timeout` maps to `timeout_connect` and covers TCP
+  connection establishment and the TLS handshake. `write_timeout` maps to
+  `timeout_global`, which bounds the whole attempt: request, response headers,
+  and any body read. A shutdown drain rebuilds the agent around the remaining
+  budget and clamps the connect timeout to it, because a connect timeout takes
+  precedence over the global one.
+- **Status handling.** `http_status_as_error(false)` leaves every response with
+  a status to the retry classifier: 2xx succeeds, 429 and 5xx retry, and other
+  4xx responses are permanent. A `StatusCode` error is classified the same way
+  if that setting is ever changed.
+- **Proxy discovery.** `proxy(None)` keeps ureq 3's `Proxy::try_from_env`
+  default switched off, matching ureq 2 without its `proxy-from-env` feature.
+- **Redirects.** Redirects stop after five hops, and exceeding the limit is a
+  transport error, so the record follows the normal retry policy. The
+  `Authorization` header is stripped on every redirect
+  (`RedirectAuthHeaders::Never`), matching ureq 2. That setting covers
+  `Authorization` only: a custom credential header such as `X-Api-Key` is
+  forwarded to the redirect target, as it was under ureq 2.
+- **Headers.** Authentication, configured headers, and the POST content type
+  are resolved into one case-insensitive map before the request is built,
+  because ureq 3 appends a header per call instead of replacing it. Configured
+  authentication is applied first, a custom header of the same name replaces
+  it, and the serialization format's content type replaces a custom
+  `Content-Type` on a POST. A GET request appends its payload to the existing
+  query with `&`, or starts one with `?`.
+- **Response bodies.** The worker classifies the status and never reads the
+  body. A declared body that never arrives therefore cannot delay the attempt
+  or turn a delivered record into a retry.
+- **No internal retries.** ureq 2 retried an idempotent request once when a
+  recycled connection had closed. ureq 3 does not, so a GET that hits a stale
+  pooled connection surfaces as a transport error and is retried by the
+  handler's own backoff policy.
+
 ## HTTP handler shutdown contract
 
 `FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs` is
