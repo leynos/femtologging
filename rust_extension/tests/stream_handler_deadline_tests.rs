@@ -231,6 +231,10 @@ fn stream_handler_flush_stops_queueing_once_the_shared_deadline_expires() {
 /// it is waiting, so the only queue slot stays full across the queueing stage.
 #[test]
 fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
+    // Take the counter before the handler and the call exist: setup, an unwind
+    // and teardown all stay inside the guard, so its rise can only come from
+    // the flusher started below.
+    let waiters = WaiterObservation::acquire();
     let (writer, entered, release) = gated_writer(2);
     let handler = Arc::new(scripted_handler(writer, ACK_READINGS));
 
@@ -242,9 +246,6 @@ fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
     // the clock can advance past the queueing stage before it is.
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "queued"));
 
-    // Take the counter before the call exists, so its rise can only come from
-    // the flusher started below.
-    let waiters = WaiterObservation::acquire();
     let flusher = {
         let handler = Arc::clone(&handler);
         std::thread::spawn(move || {
@@ -295,6 +296,10 @@ fn stream_handler_flush_gives_the_acknowledgement_the_deadlines_remainder() {
 /// come from a flusher that has not started yet.
 #[test]
 fn stream_handler_flush_acknowledges_only_after_the_record_is_written() {
+    // Take the counter before the handler and the call exist: setup, an unwind
+    // and teardown all stay inside the guard, so its rise can only come from
+    // the flusher started below.
+    let waiters = WaiterObservation::acquire();
     let (writer, entered, release) = gated_writer(1);
     let handler = Arc::new(FemtoStreamHandler::with_capacity_timeout(
         writer,
@@ -307,7 +312,6 @@ fn stream_handler_flush_acknowledges_only_after_the_record_is_written() {
         .recv_timeout(RELEASE_WAIT)
         .expect("worker should block in its first write");
 
-    let waiters = WaiterObservation::acquire();
     let (flushed_tx, flushed_rx) = mpsc::channel();
     let flusher = {
         let handler = Arc::clone(&handler);

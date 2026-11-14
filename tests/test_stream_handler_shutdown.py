@@ -19,7 +19,6 @@ import typing as typ
 import pytest
 
 from femtologging import StreamHandlerBuilder, rust
-from tests.helpers import poll_captured_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -67,6 +66,14 @@ class _WaiterNotObservedError(Exception):
     def __init__(self) -> None:
         """Record that the waiter handshake timed out."""
         super().__init__("no native stream-handler call was observed waiting")
+
+
+class _WorkerNotFinishedError(Exception):
+    """No close observed the worker's completion before the deadline."""
+
+    def __init__(self) -> None:
+        """Record that the worker never reported completion."""
+        super().__init__("no close() observed the worker's completion")
 
 
 class _StreamHandler(typ.Protocol):
@@ -203,6 +210,32 @@ def _drain_proved_the_worker_finished(
     return formatter_completed and elapsed_seconds < close_timeout_seconds
 
 
+def _close_until_the_worker_finishes(
+    handler: _StreamHandler, *, close_timeout_ms: int
+) -> None:
+    """Close repeatedly until a call observes the worker's completion.
+
+    A `close()` that returns before its configured timeout observed the
+    completion signal, which the worker raises only after its body ended, and
+    so after its writer and formatter were dropped. No write can follow that
+    point, which is what makes a single capture read safe. A call that waits
+    out the timeout proves nothing about the write, so it is repeated.
+
+    Raises
+    ------
+    _WorkerNotFinishedError
+        If no call observes completion before the gate timeout.
+    """
+    deadline = time.monotonic() + _GATE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        started = time.monotonic()
+        handler.close()
+        if time.monotonic() - started < close_timeout_ms / 1000 / 2:
+            return
+        time.sleep(_WAITER_POLL_SECONDS)
+    raise _WorkerNotFinishedError
+
+
 def _drain_gated_handler(
     capfd: pytest.CaptureFixture[str],
     drain_method: _DrainMethod,
@@ -299,9 +332,10 @@ def test_stream_close_timeout_returns_before_the_worker_writes(
 
     The formatter stays blocked, so the worker cannot finish. ``close()`` must
     still return close to its configured timeout rather than waiting for the
-    worker, and it leaves the record unwritten. Cleanup releases the formatter
-    and waits for it to finish, then polls the accumulated capture, so the read
-    cannot race a worker that is still formatting or writing.
+    worker, and it leaves the record unwritten. Cleanup releases the formatter,
+    waits for it to finish, and then closes until a call observes the worker's
+    completion. That signal follows the worker's last write, so the capture is
+    read once, afterwards, and cannot race a write.
     """
     gate = _FormatterGate()
     handler = _build_gated_handler(gate, flush_after_ms=_CLOSE_TIMEOUT_MS)
@@ -329,11 +363,19 @@ def test_stream_close_timeout_returns_before_the_worker_writes(
         )
     finally:
         gate.release.set()
-        # The final close may itself time out, so it cannot prove the write
-        # happened. Wait for the formatter to finish instead; the polling
-        # below then tolerates the worker's last write.
+        # The first close timed out, so it says nothing about the write. Wait
+        # for the formatter to finish, then close until a call observes the
+        # worker's completion, which follows its last write.
         released = gate.completed.wait(timeout=_GATE_TIMEOUT_SECONDS)
-        handler.close()
+        if released:
+            _close_until_the_worker_finishes(
+                handler, close_timeout_ms=_CLOSE_TIMEOUT_MS
+            )
+        else:
+            handler.close()
 
     assert released, "the formatter never completed after its release"
-    poll_captured_text(capfd, "gated:hello\n")
+    captured = capfd.readouterr().err
+    assert "gated:hello\n" in captured, (
+        f"the released worker's write should reach stderr; stderr={captured!r}"
+    )

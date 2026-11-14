@@ -134,6 +134,10 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_formatter_drop_blocks()
 #[test]
 fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+    // Take the counter before the handler exists: setup failure, an unwind and
+    // teardown all stay inside the guard, so its rise can only come from the
+    // closer started below.
+    let waiters = WaiterObservation::acquire();
 
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -150,9 +154,6 @@ fn stream_handler_close_waits_for_formatter_teardown_when_timeout_permits() {
     ));
     handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, "hello"));
 
-    // Take the counter before the closer exists, so its rise can only come
-    // from the closer started below.
-    let waiters = WaiterObservation::acquire();
     let (closed_tx, closed_rx) = mpsc::channel();
     let closer = {
         let handler = Arc::clone(&handler);
@@ -421,6 +422,10 @@ impl Drop for PanicSlowDropFormatter {
 #[test]
 fn stream_handler_close_cannot_observe_completion_before_a_panicking_formatter_drops() {
     const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+    // Take the counter before the handler exists: setup failure, an unwind and
+    // teardown all stay inside the guard, so its rise can only come from the
+    // closer started below.
+    let waiters = WaiterObservation::acquire();
 
     let (panicked_tx, panicked_rx) = mpsc::channel();
     let (entered_tx, entered_rx) = mpsc::channel();
@@ -445,7 +450,6 @@ fn stream_handler_close_cannot_observe_completion_before_a_panicking_formatter_d
         .recv_timeout(Duration::from_secs(5))
         .expect("unwinding should reach the formatter destructor");
 
-    let waiters = WaiterObservation::acquire();
     let (closed_tx, closed_rx) = mpsc::channel();
     let closer = {
         let handler = Arc::clone(&handler);
