@@ -40,9 +40,8 @@ impl<'a> FilteredRecord<'a> {
         let optional_count = usize::from(f.contains("threadName") && r.thread_name.is_some())
             + usize::from(f.contains("exc_info") && r.exc_info.is_some())
             + usize::from(f.contains("stack_info") && r.stack_info.is_some())
-            + r.key_values
-                .keys()
-                .filter(|k| f.contains(k.as_str()))
+            + r.custom_key_values()
+                .filter(|(key, _)| f.contains(*key))
                 .count();
 
         base_count + optional_count
@@ -56,9 +55,9 @@ impl<'a> FilteredRecord<'a> {
     where
         S: Serializer,
     {
-        for (k, v) in self.record.key_values {
-            if self.fields.contains(k.as_str()) {
-                map.serialize_entry(k, v)?;
+        for (key, value) in self.record.custom_key_values() {
+            if self.fields.contains(key) {
+                map.serialize_entry(key, value)?;
             }
         }
         Ok(())

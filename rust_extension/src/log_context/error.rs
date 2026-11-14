@@ -26,6 +26,12 @@ pub enum LogContextError {
         /// Maximum permitted UTF-8 byte length of a key.
         max: usize,
     },
+    /// A context key collided with a reserved record or metadata field.
+    #[error("context key '{key}' is reserved and cannot be used for structured fields")]
+    ReservedKey {
+        /// The reserved key that was supplied.
+        key: String,
+    },
     /// A context value exceeded the byte-length limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]
     ValueTooLong {

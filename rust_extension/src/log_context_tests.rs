@@ -215,6 +215,96 @@ fn reject_too_many_keys(_isolated_context: ()) {
     );
 }
 
+/// Built-in names that structured-field admission must reject.
+const RESERVED_STRUCTURED_KEYS: &[&str] = &[
+    "name",
+    "logger",
+    "levelname",
+    "level",
+    "levelno",
+    "msg",
+    "message",
+    "filename",
+    "lineno",
+    "module",
+    "module_path",
+    "line_number",
+];
+
+#[rstest]
+fn push_rejects_reserved_context_keys(_isolated_context: ()) {
+    for key in RESERVED_STRUCTURED_KEYS {
+        let err = push_log_context([(*key, "value")])
+            .err()
+            .unwrap_or_else(|| panic!("reserved key '{key}' should be rejected"));
+        assert_eq!(
+            err,
+            LogContextError::ReservedKey {
+                key: (*key).to_owned(),
+            }
+        );
+    }
+}
+
+#[rstest]
+fn merge_rejects_reserved_explicit_key_values(_isolated_context: ()) {
+    for key in RESERVED_STRUCTURED_KEYS {
+        let explicit = BTreeMap::from([((*key).to_owned(), String::from("value"))]);
+        let err = merge_context_values(&explicit).expect_err("reserved key should be rejected");
+        assert_eq!(
+            err,
+            LogContextError::ReservedKey {
+                key: (*key).to_owned(),
+            }
+        );
+    }
+}
+
+#[rstest]
+fn rejected_nested_push_leaves_active_context_unchanged(_isolated_context: ()) {
+    let outer = push_log_context([("request_id", "outer")]).expect("outer context should push");
+
+    let err = push_log_context([("name", "inner")])
+        .err()
+        .expect("reserved key should be rejected");
+    assert_eq!(
+        err,
+        LogContextError::ReservedKey {
+            key: String::from("name"),
+        }
+    );
+
+    let active = merge_context_values(&BTreeMap::new()).expect("context should merge");
+    assert_eq!(
+        active,
+        BTreeMap::from([(String::from("request_id"), String::from("outer"))])
+    );
+    drop(outer);
+}
+
+#[rstest]
+fn near_miss_keys_are_accepted(_isolated_context: ()) {
+    for key in ["Name", "logger_name", "msg_id", "request_id"] {
+        let guard =
+            push_log_context([(key, "value")]).expect("near-miss key should not be reserved");
+        drop(guard);
+    }
+}
+
+#[rstest]
+fn reserved_name_check_runs_before_value_limits(_isolated_context: ()) {
+    let oversized = "v".repeat(MAX_VALUE_BYTES + 1);
+    let err = push_log_context([("name", oversized.as_str())])
+        .err()
+        .expect("reserved key should be rejected");
+    assert_eq!(
+        err,
+        LogContextError::ReservedKey {
+            key: String::from("name"),
+        }
+    );
+}
+
 #[rstest]
 fn reject_total_bytes_exceeded(_isolated_context: ()) {
     let value_len = 300usize;
