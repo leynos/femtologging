@@ -163,8 +163,9 @@ fn each_publication_takes_its_own_temporary_name() {
 
 /// Pruning keeps exactly the modules the guide still publishes.
 ///
-/// A module whose identifier disappeared is removed, and a guide that stops
-/// publishing examples leaves the generated directory empty.
+/// A module whose identifier disappeared is removed, a guide that stops
+/// publishing examples leaves the generated directory empty, and files the
+/// loader never writes survive because they are not generated modules.
 #[rstest]
 #[case(
     &[
@@ -175,6 +176,11 @@ fn each_publication_takes_its_own_temporary_name() {
     &[GeneratedName("kept.rs")]
 )]
 #[case(&[(GeneratedName("only.rs"), Content::Published)], &[], &[])]
+#[case(
+    &[(GeneratedName("notes.txt"), Content::Notes)],
+    &[],
+    &[GeneratedName("notes.txt")]
+)]
 fn pruning_keeps_only_published_modules(
     crate_root: Crate,
     #[case] initial: &[(GeneratedName, Content)],
@@ -188,14 +194,4 @@ fn pruning_keeps_only_published_modules(
     prune(&crate_root.dir, &examples(retained)).expect("pruning should succeed");
 
     crate_root.assert_holds(expected);
-}
-
-/// Files the loader never writes are not generated modules and survive pruning.
-#[rstest]
-fn pruning_keeps_files_that_are_not_generated_modules(crate_root: Crate) {
-    crate_root.write(GeneratedName("notes.txt"), Content::Notes);
-
-    prune(&crate_root.dir, &[]).expect("pruning should succeed");
-
-    crate_root.assert_holds(&[GeneratedName("notes.txt")]);
 }
