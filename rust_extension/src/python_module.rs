@@ -94,6 +94,18 @@ pub(crate) fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+/// Reports how many stream-handler calls are blocked in a wait.
+///
+/// The shutdown regression tests release a gated formatter only once the
+/// native call has entered its wait, so they do not depend on elapsed time.
+/// The function exists only when the extension is built with `test-util`.
+#[cfg(feature = "test-util")]
+#[pyfunction]
+#[pyo3(name = "_stream_waiter_count")]
+fn stream_waiter_count_for_test() -> usize {
+    crate::stream_handler::waiting_count()
+}
+
 /// Register Python-only functions with the module.
 pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
@@ -109,6 +121,7 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
             clear_timed_rotation_test_times_for_test,
             m
         )?)?;
+        m.add_function(wrap_pyfunction!(stream_waiter_count_for_test, m)?)?;
     }
     m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
     m.add_function(wrap_pyfunction!(

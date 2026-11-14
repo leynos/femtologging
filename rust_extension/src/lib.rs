@@ -140,6 +140,10 @@ pub use socket_handler::{
     BackoffPolicy, FemtoSocketHandler, SocketHandlerConfig, SocketTransport, TcpTransport,
     TlsOptions, UnixTransport,
 };
+/// Expose the count of stream-handler calls currently waiting, for tests that
+/// must synchronise on the wait itself rather than on elapsed time.
+#[cfg(feature = "test-util")]
+pub use stream_handler::waiting_count as stream_waiter_count;
 /// Re-export stream handler and config.
 pub use stream_handler::{FemtoStreamHandler, HandlerConfig as StreamHandlerConfig};
 #[cfg(all(feature = "python", feature = "tracing-compat"))]

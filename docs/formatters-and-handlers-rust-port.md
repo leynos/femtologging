@@ -158,10 +158,22 @@ bounded queue size is 1024 records, but `FemtoStreamHandler::with_capacity`
 lets callers configure a custom capacity when needed. Flushing is driven by a
 timeout measured in milliseconds.
 
-Dropping a handler closes its channel and waits briefly for the worker thread
-to finish flushing. If the thread does not exit within the configured flush
-timeout (one second by default), a warning is printed, and the drop continues,
-preventing deadlocks during shutdown.
+Dropping a handler closes its channel and waits briefly for the worker to
+finish flushing. If the worker does not signal completion within the configured
+flush timeout (one second by default), a warning is printed, and the drop
+continues, preventing deadlocks during shutdown. The closer does not join the
+worker: joining would also wait for thread-local destructors, which user code
+can make block, so the thread is detached and reclaimed by the operating system
+when it exits. The completion signal is raised after the worker body ends and
+its writer and formatter are dropped, so it marks the end of the worker body,
+not the delivery of every record: a record dropped because the queue was full,
+or a write that failed, still leaves the signal raised. The worker logs flush
+I/O errors without propagating them, and a panic can bypass the final flush
+altogether. A closer whose wait times out observes neither the signal nor the
+worker's state, and may return while the worker is still writing; `close()`
+returns no status by which to tell the cases apart. The signal does not mark
+the thread's exit: thread-local destructors run after the worker body returns,
+so the thread may outlive the closer.
 
 #### Sequence Diagram
 

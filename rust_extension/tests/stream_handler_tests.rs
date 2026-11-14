@@ -1,7 +1,7 @@
 //! Behavioural tests for the stream handler and its worker thread lifecycle.
 
 use std::io::{self, Write};
-use std::sync::Barrier;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,7 @@ use rstest::*;
 
 #[path = "test_utils/mod.rs"]
 mod test_utils;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Barrier;
 use test_utils::fixtures::handler_tuple;
 use test_utils::handle_expect::HandleExpect;
 use test_utils::shared_buffer::std::read_output;

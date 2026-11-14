@@ -8,19 +8,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Source of time for [`RateLimitedWarner`].
+/// Source of time for [`RateLimitedWarner`] and the stream handler's flush deadline.
 pub trait Clock: Send + Sync {
     /// Return the current time in milliseconds since an arbitrary epoch.
     fn now_millis(&self) -> u64;
 }
 
-/// [`Clock`] implementation backed by [`Instant`].
-struct RealClock {
+/// [`Clock`] implementation backed by [`Instant`], used outside tests.
+pub struct SystemClock {
     /// Instant captured at construction; elapsed time is reported relative to it.
     start: Instant,
 }
 
-impl Default for RealClock {
+impl Default for SystemClock {
     fn default() -> Self {
         Self {
             start: Instant::now(),
@@ -28,7 +28,7 @@ impl Default for RealClock {
     }
 }
 
-impl Clock for RealClock {
+impl Clock for SystemClock {
     fn now_millis(&self) -> u64 {
         self.start.elapsed().as_millis() as u64
     }
@@ -57,7 +57,7 @@ pub struct RateLimitedWarner {
 impl RateLimitedWarner {
     /// Create a new [`RateLimitedWarner`] using the provided interval.
     pub fn new(interval: Duration) -> Self {
-        Self::with_clock(interval, Arc::new(RealClock::default()))
+        Self::with_clock(interval, Arc::new(SystemClock::default()))
     }
 
     /// Create a new [`RateLimitedWarner`] with a custom clock.
