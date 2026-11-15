@@ -1030,3 +1030,38 @@ the four cargo lanes (no-default-features, `python`, `log-compat`,
 The earlier 2026-11-02 attempt is retained as history: it failed only on the
 dylint doc-comment rule, and the host was saturated by other agents' builds, so
 its `make test` stage never completed before the session ended.
+
+2026-11-15, second review round: CodeRabbit reviewed the tip and raised three
+findings, all accepted and fixed in `c4d3758`:
+
+- The logger test that refuses a record mid-drain slept for 100 ms to let the
+  flushing thread reach its drain wait. That is slow when it works and flaky
+  when the thread is descheduled. A test-only hook on `FemtoLogger` now parks
+  the flushing thread exactly where the drain wait begins, so the refusal is
+  provably mid-drain. With the previous flush order restored, the test fails
+  deterministically rather than intermittently.
+- `RateLimitedWarner` guarded its counter drain with a `parking_lot::Mutex`. A
+  child forked while another thread held it inherited a locked word that no
+  thread in the child could release, so the child's first warning deadlocked —
+  and loggers survive `fork` by design. The drain lock now records the owning
+  process ID: a word owned by another process is a reservation copied by
+  `fork`, which the child clears, while a live thread of the same process still
+  excludes another. Guards release with a compare-exchange against their own
+  process ID, so a stale inherited guard cannot free a lock its child has since
+  taken. Acquire and release orderings carry the handoff; the counter and
+  timestamp stay `Relaxed`.
+- `run_stream_worker` signalled completion before its implicit function-end
+  drops, so the signal could arrive while the writer and formatter were still
+  alive. Both are now dropped before the send. The accompanying test blocks
+  inside the writer's destructor and asserts nothing has been signalled yet; it
+  fails if the send is moved back.
+
+The deterministic gates ran on `c4d3758` through `scrutineer`
+(`/tmp/gates-issue-440-20261115T011727Z/`): `make markdownlint`, `make nixie`,
+`make lint` (605 s), `make typecheck` (38 s) and `make test` (1526 s, pytest
+856 passed and 5 skipped, 66 snapshots) all passed. `make check-fmt` failed on
+the gate-evidence paragraph that the previous entry added without running the
+Markdown formatter; `1c04c61` reflowed exactly that paragraph, and check-fmt,
+markdownlint and nixie were re-run on the resulting tip. The code gated after
+that commit is unchanged, since `1c04c61` and the entry below touch only this
+document.
