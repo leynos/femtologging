@@ -262,44 +262,57 @@ impl RateLimitedWarner {
     ///
     /// [`flush`]: RateLimitedWarner::flush
     pub fn warn_if_due(&self, mut warn: impl FnMut(u64)) {
-        // Avoid clock reads for the common empty case. Recheck under the lock
-        // because a concurrent flush may drain this count before the claim.
-        if self.dropped.load(Ordering::Relaxed) == 0 {
+        if !self.is_warning_due() {
             return;
         }
-        let now = self.clock.now_millis();
-        // Suppressed calls are the common case on the refusal paths, so they
-        // return before touching the shared lock. `last_warn` only moves
-        // forward, so this stale read can only claim a warning is due when it
-        // is not; the recheck under the lock decides that for real.
-        let observed = self.last_warn.load(Ordering::Relaxed);
-        if observed != u64::MAX && now.saturating_sub(observed) < self.interval_ms {
-            return;
-        }
-        let count = {
-            let _drain_guard = self.drain_lock.lock();
-            // A concurrent flush may have taken the observed batch while the
-            // clock was sampled. Do not claim an interval when there is nothing
-            // left to report.
-            if self.dropped.load(Ordering::Relaxed) == 0 {
-                return;
-            }
-            let prev = self.last_warn.load(Ordering::Relaxed);
-            if prev != u64::MAX && now.saturating_sub(prev) < self.interval_ms {
-                return;
-            }
-            // `compare_exchange` ensures callers using the same observed
-            // timestamp cannot both claim this warning interval.
-            if !try_claim_interval(&self.last_warn, prev, now) {
-                return;
-            }
-            // The lock covers the recheck, claim and swap, so `flush` cannot
-            // empty a due batch after its interval has been claimed.
-            self.dropped.swap(0, Ordering::Relaxed)
-        };
+        let count = self.claim_due_batch();
         if count > 0 {
             warn(count);
         }
+    }
+
+    /// Report whether a warning could be due, without taking the drain lock.
+    ///
+    /// Avoids clock reads for the common empty case, then compares the stale
+    /// `last_warn` read against the interval. Suppressed calls are the common
+    /// case on the refusal paths, so they must return before touching the
+    /// shared lock. The read is sound without the lock because the timestamp
+    /// only moves forward: a stale read can only claim a warning is due when it
+    /// is not, and [`Self::claim_due_batch`] decides that under the lock.
+    fn is_warning_due(&self) -> bool {
+        if self.dropped.load(Ordering::Relaxed) == 0 {
+            return false;
+        }
+        let now = self.clock.now_millis();
+        let observed = self.last_warn.load(Ordering::Relaxed);
+        observed == u64::MAX || now.saturating_sub(observed) >= self.interval_ms
+    }
+
+    /// Claim this interval and take the batch it covers, or return zero.
+    ///
+    /// The lock covers the recheck, the claim and the swap, so a concurrent
+    /// [`Self::flush`] can neither empty a due batch after its interval has
+    /// been claimed nor take the batch this call observes as pending. The
+    /// caller re-reads nothing after this returns, and the callback runs with
+    /// the lock released.
+    fn claim_due_batch(&self) -> u64 {
+        let _drain_guard = self.drain_lock.lock();
+        // A concurrent flush may have taken the observed batch while the clock
+        // was sampled, so do not claim an interval with nothing to report.
+        if self.dropped.load(Ordering::Relaxed) == 0 {
+            return 0;
+        }
+        let now = self.clock.now_millis();
+        let prev = self.last_warn.load(Ordering::Relaxed);
+        if prev != u64::MAX && now.saturating_sub(prev) < self.interval_ms {
+            return 0;
+        }
+        // `compare_exchange` ensures callers using the same observed timestamp
+        // cannot both claim this warning interval.
+        if !try_claim_interval(&self.last_warn, prev, now) {
+            return 0;
+        }
+        self.dropped.swap(0, Ordering::Relaxed)
     }
 
     /// Immediately warn about any dropped records.
