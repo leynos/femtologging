@@ -588,10 +588,10 @@ handler is flushed through its native implementation with the GIL detached; a
 user-defined handler is asked to flush through its own `flush` method, which
 lets a buffering handler persist its records. Every handler is flushed even
 when an earlier one fails, and the results are combined. A missing or
-non-callable `flush` counts as success, a Python `bool` return value is read
-for its truth, any other return value counts as success, and a raised exception
-is reported as failure. The structured log records only bounded handler-kind
-and failure-category fields, never the exception text.
+non-callable `flush` counts as success, a `None` return counts as success, any
+other return value is read for its truthiness, and a raised exception is
+reported as failure. The structured log records only bounded handler-kind and
+failure-category fields, never the exception text.
 
 ## 4. Leveraging Rust's Strengths
 

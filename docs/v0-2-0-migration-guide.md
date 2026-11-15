@@ -391,9 +391,10 @@ to persist buffered records. A missing or non-callable `flush` still counts as
 success, so an existing handler that does not define one needs no change. The
 method runs on the thread that called `flush_handlers()`, after the queued
 records have been dispatched, and every registered handler is flushed even when
-an earlier one fails. An exception raised by `flush` is printed to stderr and
-makes `flush_handlers()` return `False`, so keep the method non-blocking and
-defensive, as with `handle`.
+an earlier one fails. A `flush` that returns `None` succeeds, and every other
+result succeeds only when it is truthy. An exception raised by `flush` logs a
+bounded warning that omits the exception text and makes `flush_handlers()`
+return `False`, so keep the method non-blocking and defensive, as with `handle`.
 
 ______________________________________________________________________
 

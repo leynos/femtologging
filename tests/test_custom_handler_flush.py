@@ -6,12 +6,22 @@ queued records have been dispatched. These tests pin the reported result for
 each shape of ``flush`` a handler can present, and that one handler's failure
 does not leave the handlers after it unflushed. A ``flush`` that raises
 ``SystemExit`` is included: reporting it must not end the interpreter.
+
+The named cases below pin the decision table; the Hypothesis properties that
+follow check the same rules over generated return values and handler lists,
+so a regression in classification or aggregation is caught beyond the examples
+someone thought to list.
 """
 
 from __future__ import annotations
 
+import itertools
 import subprocess  # ruff: ignore[suspicious-subprocess-import] runs this interpreter
 import sys
+import typing as typ
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 from femtologging import get_logger
 
@@ -240,3 +250,96 @@ def test_flush_handlers_flushes_every_handler_after_a_failure() -> None:
     )
     assert failing.flushes == 1, "the failing handler was not flushed"
     assert recording.flushes == 1, "a failed flush skipped the handler after it"
+
+
+if typ.TYPE_CHECKING:
+    from femtologging import FemtoLogger
+
+
+_PROPERTY_LOGGER_IDS = itertools.count()
+
+
+def _fresh_logger() -> FemtoLogger:
+    """Return a logger no other test or generated case has used.
+
+    The logger registry is process-wide, and handlers accumulate on a logger,
+    so a shared name would make every generated case flush the handlers of the
+    cases before it.
+
+    Returns
+    -------
+    FemtoLogger
+        A logger whose handler list starts empty.
+    """
+    return get_logger(f"custom.flush.property.{next(_PROPERTY_LOGGER_IDS)}")
+
+
+class _Unboolable:
+    """Flush result whose truthiness raises, as a broken ``__bool__`` would."""
+
+    def __bool__(self) -> bool:
+        """Refuse to answer, as a broken ``__bool__`` would."""
+        raise TypeError
+
+
+def _expected_flush_success(result: object) -> bool:
+    """Classify a flush result the way the documented contract does.
+
+    ``None`` is success because Python's flush protocol reports failure by
+    raising. Any other result is read for its truthiness, and a truthiness
+    check that raises cannot report success.
+
+    Returns
+    -------
+    bool
+        Whether the documented contract reports this result as success.
+    """
+    if result is None:
+        return True
+    try:
+        return bool(result)
+    except Exception:  # ruff: ignore[blind-except] a raising __bool__ fails the flush
+        return False
+
+
+_RESULT_VALUES = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.integers(),
+    st.floats(),
+    st.text(),
+    st.lists(st.integers()),
+    st.dictionaries(st.text(), st.integers()),
+    st.builds(_Unboolable),
+)
+
+
+@given(result=_RESULT_VALUES)
+def test_flush_result_classification_follows_python_truthiness(result: object) -> None:
+    """A non-``None`` flush result succeeds exactly when it is truthy."""
+    handler = _RecordingHandler(result=result)
+    logger = _fresh_logger()
+    logger.add_handler(handler)
+
+    assert logger.flush_handlers() is _expected_flush_success(result), (
+        f"flush_handlers() disagreed with the documented rule for {result!r}"
+    )
+    assert handler.flushes == 1, "the handler's flush did not run exactly once"
+
+
+@given(outcomes=st.lists(st.booleans(), min_size=1, max_size=8))
+def test_flush_handlers_aggregates_generated_handler_outcomes(
+    outcomes: list[bool],
+) -> None:
+    """The call succeeds exactly when every generated handler succeeds."""
+    handlers = [_RecordingHandler(result=outcome) for outcome in outcomes]
+    logger = _fresh_logger()
+    for handler in handlers:
+        logger.add_handler(handler)
+
+    assert logger.flush_handlers() is all(outcomes), (
+        f"flush_handlers() disagreed with all({outcomes!r})"
+    )
+    assert [handler.flushes for handler in handlers] == [1] * len(handlers), (
+        "a failed flush left a handler after it unflushed"
+    )
