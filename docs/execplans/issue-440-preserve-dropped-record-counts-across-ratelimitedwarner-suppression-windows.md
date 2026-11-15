@@ -1106,3 +1106,18 @@ The library unit tests (772 passed) and the stream-handler, handler and logger
 integration tests pass on the rebased tip. The full deterministic gates must
 run again before the next review round, because the rebase changed the tree
 under every gate.
+
+2026-11-15, gates on the rebased tip (`486c014`): all six deterministic gates
+passed, run sequentially through `scrutineer` with logs in
+`/tmp/gates-issue-440-20261115T0210Z/` (see `progress.log` and the six
+`*.status` files for `ALL_GATES_PASS`). `make check-fmt` (1 s),
+`make markdownlint` (5 s) and `make nixie` (0 s) passed first, then `make lint`
+(443 s, 605 s version in the earlier run), `make typecheck` (110 s) and
+`make test` (2244 s). The four cargo lanes each reported 998 passing tests
+(1050 in the `tracing-compat` lane) with no failures, and the whole-suite
+pytest step reported 1178 passed, 5 skipped and 66 snapshots. The build-limits
+pool was healthy but saturated by other agents throughout, so the long
+durations reflect queueing rather than slow work.
+
+This entry and the one above touch only this document; the code gated at
+`486c014` is unchanged.
