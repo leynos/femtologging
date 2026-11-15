@@ -1810,8 +1810,10 @@ actor is whoever triggered the run, so a person pushing to a Dependabot branch
 would flip the runner. A push and a dispatch have no pull request, so both
 values are empty strings (falsy) and the expression selects Ubicloud; a
 Dependabot pull request therefore builds cold on the hosted pool. `ci.yml` runs
-on pull requests only, so there is no main-branch cache writer: Ubicloud's
-cache proxy is scoped by ref, and each pull request warms its own scope.
+on pull requests only, and Ubicloud's cache proxy is scoped by ref, so each
+pull request warms its own scope. The one main-branch writer whose cache the
+pull-request lanes read is `coverage-main.yml`'s baseline publisher, described
+under [Coverage publication](#coverage-publication).
 
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
@@ -1839,6 +1841,52 @@ the matrix (`runs-on: ${{ matrix.runner }}` over an Ubicloud value), and
 asserts an exact inventory of the jobs that can land on Ubicloud with their
 runner class and ceiling. A change that adds, removes or re-times such a job
 fails it until the inventory is updated in the same commit.
+
+## Coverage publication
+
+CV-005 splits coverage in two. A pull request still generates a Cobertura
+report and ratchets against the stored baseline, but it publishes nothing and
+never contacts CodeScene: `generate-coverage` runs with `with-ratchet: 'true'`
+and `publish-artefact: 'false'`, and its job declares no environment. The
+default branch owns both persistent outputs, in `coverage-main.yml`, which a
+push to `main` alone triggers.
+
+That publisher has two jobs. `coverage-upload` measures on a hosted runner,
+hands its figures to the next job through the `coverage-baseline-handover`
+artefact, and uploads the report to CodeScene. `publish-baseline: never` keeps
+the measuring runner out of the cache store entirely, because that store is not
+the one the pull-request lanes read: a ratchet there could never fail and a
+baseline saved there would never be restored. `coverage-baseline` then ratchets
+the handed-over figures and saves the advanced baseline.
+
+The upload is optional and guarded twice. A token-presence step writes
+`available` and binds no secret; the upload step runs only when that output is
+`'true'` and `github.ref` is `refs/heads/main`. The token reaches the uploader
+as its `access-token` input and sits in no `env`, because the upload action is
+composite and hands its step's environment to the nested steps it runs. Until
+the owner provisions `CS_ACCESS_TOKEN` in the `codescene` environment, the step
+reports `available=false` and skips; the baseline job still runs, so a missing
+token cannot hide a coverage regression.
+
+The `codescene` environment admits `main` alone, and no pull-request-reachable
+job may declare it. The publisher's concurrency group is keyed on the ref and
+never cancels, so a newer push cannot abandon an in-flight upload or baseline
+write. `tests/test_coverage_publisher_contract.py` holds the whole split: one
+publisher, one environment holder, the single recorded call into another
+repository, the canonical guard and seven ways to weaken it, no token in any
+`env`, identical measurement inputs on both lanes, and fail-closed trigger and
+reachability readers.
+
+Both lanes must measure the same population, so every input that defines it
+(`output-path`, `format`, `cargo-manifest`, `with-default-features`, `features`,
+`pytest-workers`) is identical. The baseline is published from an Ubicloud
+runner because the pull-request lanes run there and a cache written on one
+runner provider is not read by the other; a push has no pull request, so the
+placement expression selects Ubicloud.
+
+Known exception: a Dependabot pull request merged by `dependabot-automerge` with
+`GITHUB_TOKEN` fires no push event, so that merge publishes nothing until the
+next push to `main`.
 
 ## Validation
 
