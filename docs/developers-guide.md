@@ -1186,23 +1186,34 @@ other falsy return value, `False` and `0` included, reports failure, and so
 does a `flush` that raises. A failed flush reports only a bounded category; the
 handler's exception text is never printed or logged, for the reason given under
 [Flush observability](#flush-observability).
+
 The one path outside that rule is not a flush failure at all: when an attached
 handler cannot be unwrapped into its built-in type, the extraction error takes
 the ordinary handler-error path and is printed with its traceback, because it
 reports a registration mistake rather than a `flush` that ran and failed. An
 interpreter that cannot be attached, which happens only while the process is
 shutting down, leaves the handler unflushed and reports
-`interpreter_unavailable`. In every one of these messages `handler_kind` names
-the handler an operator has to look at: the built-in handler type (`stream`,
-`file`, `rotating-file`, `timed-rotating-file`, `socket`, or `http`), or
-`custom` for a user-defined handler. Under the `tracing-compat` feature each of
-these flushes also runs inside an `info_span!` named
-`flush_registered_handler`, carrying the same `handler_kind` and
-`flush_outcome`, so the queue-crossing wait appears as a timed span rather than
-only as an event emitted after it returns. `tests/test_custom_handler_flush.py`
-pins the reported results and delivery, `tests/test_flush_releases_gil.py` pins
-the formatter and flush cases, and `tests/test_network_handler_gil_release.py`
-pins the network shutdown case.
+`interpreter_unavailable`.
+
+The warnings do not all carry the same fields, and the difference is
+deliberate. A built-in handler that reports a failed native flush logs
+`handler_kind=<type>, category=flush_failed`, where the type is `stream`,
+`file`, `rotating-file`, `timed-rotating-file`, `socket` or `http`. An
+interpreter that could not be attached logs
+`handler_kind=<type>, category=interpreter_unavailable`, and there the field
+may read `custom`, because that failure can reach a user-defined handler too. A
+user-defined handler whose own `flush` ran and failed logs a fixed message that
+carries only the category, `flush_lookup_failed`, `flush_call_failed` or
+`flush_result_false`; it has no `handler_kind` field, because the category
+already says the handler is custom and which step failed. Under the
+`tracing-compat` feature every flush also runs inside an `info_span!` named
+`flush_registered_handler`, which records `handler_kind` — the type label
+above, or `custom` — and `flush_outcome`, but no failure category, so the
+queue-crossing wait appears as a timed span rather than only as an event
+emitted after it returns. `tests/test_custom_handler_flush.py` pins the
+reported results and delivery, `tests/test_flush_releases_gil.py` pins the
+formatter and flush cases, and `tests/test_network_handler_gil_release.py` pins
+the network shutdown case.
 
 Because the shutdown state is shared rather than moved out by an exclusive
 borrow, several threads may close the same handler, and a close may start while
