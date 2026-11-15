@@ -192,9 +192,11 @@ calls its `flush()` when it defines one and treats a missing or non-callable
 `flush` as success. A `flush()` that returns `None` — as
 `logging.Handler.flush()` does — counts as success, and any other falsy return
 value counts as failure. An exception, or an error other than a missing or
-non-callable `flush` attribute, also counts as failure. Enqueueing the flush
-marker and waiting for its acknowledgement share a two-second timeout. Flushing
-attached handlers can take additional time. The method returns `True` when the
+non-callable `flush` attribute, also counts as failure. One two-second deadline
+covers the whole barrier — resolving dispatch state, enqueueing the marker,
+waiting for its acknowledgement, and flushing every attached handler. A
+synchronous handler callback can overrun its own wait, but the caller does not
+get a separate budget for handler flushing. The method returns `True` when the
 worker acknowledges the marker in time and every handler flush succeeds; it
 returns `False` if the marker cannot be enqueued or acknowledged in time, or
 any handler flush fails. A failing handler does not stop the remaining handlers
@@ -367,14 +369,15 @@ worker has exited, or a handler reports failure or lacks deadline support. A
 user-defined Python handler is asked to flush itself: the barrier calls its
 callable `flush` method. A handler with no callable `flush` has nothing to
 drain, so it is confirmed once the record reaches it; one whose `flush` raises
-or returns a falsy value reports failure, and its exception text is never
-printed. The timeout bounds the caller's Rust barrier wait; it cannot stop a
-synchronous handler callback that is still running. In normal builds, logger
-drop waits for its own in-flight records only, up to the bounded drain timeout,
-and does not join the shared process-wide worker. A callback that violates its
-deadline may keep that worker occupied after the flush returns `False`. PyO3
-must reacquire the interpreter before returning to Python, so interpreter
-contention can delay the Python return beyond the barrier deadline.
+or returns a falsy value other than `None` reports failure, and its exception
+text is never printed. `None` counts as success, as Python's flush protocol
+reports success that way. The timeout bounds the caller's Rust barrier wait; it
+cannot stop a synchronous handler callback that is still running. In normal
+builds, logger drop waits for its own in-flight records only, up to the bounded
+drain timeout, and does not join the shared process-wide worker. A callback
+that violates its deadline may keep that worker occupied after the flush returns
+`False`. PyO3 must reacquire the interpreter before returning to Python, so
+interpreter contention can delay the Python return beyond the barrier deadline.
 
 Custom Rust handlers that should participate must implement the deadline-aware
 `FemtoHandlerTrait::flush_until(context)` contract. Its default fails closed

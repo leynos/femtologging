@@ -162,10 +162,12 @@ class FemtoLogger:
         preempted. A user-defined Python handler is asked to flush itself: the
         barrier calls its callable ``flush`` method. A handler with no callable
         ``flush`` opts out and is confirmed once the record reaches it, while
-        one whose ``flush`` raises or returns a falsy value reports failure;
-        the exception text is never printed in case it quotes a record. The
-        call runs synchronously on the worker, so the deadline bounds the wait
-        for the answer rather than the duration of the handler's own flush.
+        one whose ``flush`` raises or returns a falsy value other than
+        ``None`` reports failure; ``None`` counts as success, as
+        Python's flush protocol reports success that way. The exception
+        text is never printed in case it quotes a record. The call runs
+        synchronously on the worker, so the deadline bounds the wait for
+        the answer rather than the duration of the handler's own flush.
         Flush callbacks run on the worker without the handler-list
         lock. Every handler in the snapshot is offered the budget that remains
         even after an earlier one reports failure, so one broken handler does
@@ -191,8 +193,10 @@ class FemtoLogger:
         or any built-in or custom Rust handler flush is not confirmed by the
         shared deadline; when the worker has exited; or when a handler reports
         failure or does not implement the deadline-aware contract. A
-        user-defined Python handler cannot report failure: reaching it counts
-        as confirmation.
+        user-defined Python handler is confirmed when its callable ``flush``
+        returns ``None`` or a truthy value; a handler with no callable
+        ``flush`` is confirmed once the record reaches it; a ``flush`` that
+        raises or returns another falsy value reports failure.
 
         """
         ...

@@ -211,13 +211,6 @@ impl FemtoLogger {
     /// the barrier, so an external subscriber sees the wait as part of the
     /// operation.
     pub(super) fn flush_handlers_blocking(&self) -> BarrierOutcome {
-        // Announced here rather than in `flush_handlers`: the Python entry
-        // point reaches the barrier through `flush_handlers_detached`, and the
-        // test gate that releases a blocked handler callback must open for
-        // either entry point.
-        #[cfg(all(feature = "python", feature = "test-util"))]
-        self.flush_test_hooks.signal_entered();
-
         let observer = production_flush_observer();
         measure_flush_attempt(&crate::monotonic_clock::SystemClock, &observer, || {
             self.flush_handlers_with_timing(FlushDeadline::system(Duration::from_millis(
@@ -300,9 +293,26 @@ impl FemtoLogger {
             };
         }
 
-        shard.flush_handlers_until(timing, |snapshot_sender| {
-            self.send_handler_snapshot_until(snapshot_sender, timing)
-        })
+        shard.flush_handlers_until(
+            timing,
+            |snapshot_sender| self.send_handler_snapshot_until(snapshot_sender, timing),
+            || self.notify_barrier_waiting(),
+        )
+    }
+
+    /// Announce that the barrier is now waiting on its worker.
+    ///
+    /// A Python regression test releases a blocked handler callback only once
+    /// the flush reaches the point where the whole barrier waits on the
+    /// worker. Announcing at barrier entry instead would let a flush that had
+    /// merely started — still short of the wait, and free to stall on the
+    /// registry or the queue before it — release that callback, so the test's
+    /// in-flight assertion would no longer be about the wait itself. Both
+    /// Python entry points reach the barrier, so the notification lives here
+    /// rather than in `flush_handlers`.
+    fn notify_barrier_waiting(&self) {
+        #[cfg(all(feature = "python", feature = "test-util"))]
+        self.flush_test_hooks.signal_entered();
     }
 
     /// Snapshot handlers only after marker admission, so a rejected marker has

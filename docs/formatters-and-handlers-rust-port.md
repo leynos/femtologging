@@ -73,11 +73,12 @@ method. A custom handler that needs to participate in
 the context's deadline itself; synchronous arbitrary handler code cannot be
 preempted by the logger.
 
-User-defined Python handlers are the exception. The barrier has no flush
-protocol it can invoke on them, so it confirms only that the record was
-dispatched to the handler. A Python handler that buffers records must flush
-that buffer itself; `flush_handlers()` returning `true` does not mean its
-buffer is empty.
+User-defined Python handlers are the exception. For them the barrier calls the
+handler's callable `flush`, treating a missing or non-callable `flush` as an
+opt-out that is confirmed once the record reaches the handler, a `None` or
+truthy return as success, and a raise or any other falsy return as failure. The
+call runs synchronously on the worker, so the deadline bounds the wait for the
+answer rather than the duration of the handler's own flush.
 
 Implementations respect the configured overflow policy when forwarding a record
 to the worker queue. `Drop` uses `try_send`, immediately returning

@@ -126,6 +126,14 @@ pub(crate) struct Shard {
     /// join that model thread before the run ends.
     #[cfg(loom)]
     worker: Mutex<Option<JoinHandle<()>>>,
+    /// Flush callers currently waiting for room in the bounded queue.
+    ///
+    /// A test that needs to know a flush caller is blocked in admission — not
+    /// merely scheduled, or still on its way there — polls this. Without it the
+    /// only way to tell is to sleep and hope, which passes whether or not the
+    /// caller ever reached the queue.
+    #[cfg(all(test, not(loom)))]
+    marker_waiters: std::sync::atomic::AtomicUsize,
 }
 
 impl Shard {
@@ -151,6 +159,8 @@ impl Shard {
             depth,
             #[cfg(loom)]
             worker: Mutex::new(Some(_worker)),
+            #[cfg(all(test, not(loom)))]
+            marker_waiters: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -206,6 +216,8 @@ impl Shard {
             queue,
             permits: Arc::new(Permits::new(depth)),
             depth,
+            #[cfg(all(test, not(loom)))]
+            marker_waiters: std::sync::atomic::AtomicUsize::new(0),
         };
         (shard, jobs)
     }
@@ -258,6 +270,17 @@ impl Shard {
     #[cfg(all(test, not(loom)))]
     pub(crate) fn queued_jobs_for_test(&self) -> usize {
         self.queue.len()
+    }
+
+    /// Count flush callers waiting for room in the bounded queue right now.
+    ///
+    /// A test uses this to prove a caller really is blocked in admission: a
+    /// thread that has merely been spawned, or that has not reached the queue
+    /// yet, is not counted, so a wait on this figure cannot pass by accident.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn marker_waiters_for_test(&self) -> usize {
+        self.marker_waiters
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Finish the queued work and join the worker, which only a Loom run has.

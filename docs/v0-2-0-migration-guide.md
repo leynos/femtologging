@@ -489,10 +489,11 @@ logger-owned worker during cleanup.
 A user-defined Python handler is asked to flush itself: the barrier calls its
 callable `flush` method. A handler that defines no callable `flush` opts out
 and is confirmed once the record reaches it; one whose `flush` raises or
-returns a falsy value reports failure, and the exception text is never printed
-in case it quotes a record. The call runs synchronously on the worker, so the
-barrier deadline bounds the wait for the answer, not the duration of the
-handler's own `flush`.
+returns a falsy value other than `None` reports failure, and the exception text
+is never printed in case it quotes a record. `None` counts as success, as
+Python's flush protocol reports success that way. The call runs synchronously
+on the worker, so the barrier deadline bounds the wait for the answer, not the
+duration of the handler's own `flush`.
 
 Python-facing calls release the GIL while waiting for the worker. CPython must
 reacquire the interpreter before returning to Python, so interpreter contention

@@ -242,7 +242,7 @@ where
         if self.backup_count == 0 {
             return Ok(());
         }
-        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        let parent = backup_directory(&self.path);
         let base_name = self
             .path
             .file_name()
@@ -317,4 +317,43 @@ pub(super) fn has_os_prefix(value: &OsString, prefix: &OsString) -> bool {
         .as_os_str()
         .as_encoded_bytes()
         .starts_with(prefix.as_os_str().as_encoded_bytes())
+}
+
+/// The directory that holds a log path's rotated siblings.
+///
+/// A single-component path such as `app.log` has a parent of `""`, not `None`,
+/// and `read_dir("")` fails on Unix. Retention must therefore treat an empty
+/// parent as the current directory — which is what the empty string means —
+/// or it silently skips every rollover.
+fn backup_directory(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for locating the directory a rotation's backups live in.
+
+    use super::backup_directory;
+    use std::path::Path;
+
+    /// A bare filename must scan the current directory, not the empty path.
+    #[test]
+    fn a_bare_file_name_scans_the_current_directory() {
+        assert_eq!(backup_directory(Path::new("app.log")), Path::new("."));
+    }
+
+    /// A directory component is kept as it is written.
+    #[test]
+    fn a_parent_directory_is_preserved() {
+        assert_eq!(
+            backup_directory(Path::new("logs/app.log")),
+            Path::new("logs")
+        );
+        assert_eq!(
+            backup_directory(Path::new("/var/log/app.log")),
+            Path::new("/var/log")
+        );
+    }
 }

@@ -678,9 +678,10 @@ calling `flush()`, so a legacy custom handler cannot make the logger caller
 wait indefinitely. A custom handler must override `flush_until(context)` to opt
 into barrier flushing and must return by the context's deadline. The logger
 cannot preempt synchronous handler code that violates this contract. A
-user-defined Python handler has no such protocol: the barrier confirms only
-that its record was dispatched, so a buffering Python handler must flush its
-own buffer. The marker is admitted before the handler-list read lock is taken,
+user-defined Python handler is different: the barrier calls the handler's
+callable `flush` when it defines one (a missing or non-callable `flush` is an
+opt-out), and does not consider its buffer drained unless that `flush`
+confirms. The marker is admitted before the handler-list read lock is taken,
 and that lock is released before callbacks run. Handler changes completed
 before the snapshot are reflected in this barrier. A handler removed afterwards
 remains alive for that flush; concurrent additions after the snapshot are

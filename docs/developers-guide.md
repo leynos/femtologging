@@ -1666,11 +1666,12 @@ a drop.
 implementation. Any other Python object is asked to flush itself, exactly as
 the legacy `flush()` path does, because only the handler knows where it buffers.
 `flush_until` therefore calls the handler's callable `flush` and maps the
-answer onto the barrier: a missing or non-callable `flush` is an opt-out, a
-call that raises or returns a falsy value is a failure, and the exception
-itself is never printed in case it quotes a record. The call runs synchronously
-on the worker, so the barrier's deadline bounds the wait for the answer, not
-the duration of the handler's own `flush`.
+answer onto the barrier: a missing or non-callable `flush` is an opt-out; a
+call that raises, or returns a falsy value other than `None`, is a failure; and
+`None` counts as success, because Python's flush protocol reports success that
+way. An exception is never printed, in case it quotes a record. The call runs
+synchronously on the worker, so the barrier's deadline bounds the wait for the
+answer, not the duration of the handler's own `flush`.
 
 The `log` bridge's flush sweep calls each registered logger's detached barrier
 in turn and returns `true` only when every logger confirmed. Each logger gets

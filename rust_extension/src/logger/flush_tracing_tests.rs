@@ -140,9 +140,19 @@ pub(super) fn assert_unconfirmed_flush_trace(collector: &InternalEventCollector)
         .find(|event| is_flush_caller_complete(event))
         .expect("the caller should trace its final flush outcome");
     assert_eq!(caller_event.fields["outcome"], "unconfirmed");
-    assert_eq!(
-        caller_event.fields["failure_stage"],
-        "handler_flush_unconfirmed"
+    // The worker's callback runs synchronously, so a worker paused inside it
+    // can reach the caller's deadline before reporting its own verdict. That
+    // is the timeout sequence the wait above deliberately tolerates, and the
+    // caller then records its own acknowledgement timeout rather than the
+    // handler's stage — which the worker event above has already asserted.
+    let caller_stage = caller_event.fields["failure_stage"].as_str();
+    assert!(
+        matches!(
+            caller_stage,
+            "handler_flush_unconfirmed" | "acknowledgement_timed_out"
+        ),
+        "the caller must report the handler's verdict or its own acknowledgement \
+         timeout, got {caller_stage:?}"
     );
     assert_flush_event_fields(
         caller_event,

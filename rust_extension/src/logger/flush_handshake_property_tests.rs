@@ -91,11 +91,15 @@ fn flush(
     snapshot: Vec<Arc<dyn FemtoHandlerTrait>>,
 ) -> Result<(), FlushFailureStage> {
     let timing = FlushDeadline::with_clock(GENEROUS_BUDGET, system_clock());
-    shard.flush_handlers_until(&timing, |sender| {
-        sender
-            .try_send(snapshot)
-            .map_err(|_| FlushFailureStage::WorkerStartDisconnected)
-    })
+    shard.flush_handlers_until(
+        &timing,
+        |sender| {
+            sender
+                .try_send(snapshot)
+                .map_err(|_| FlushFailureStage::WorkerStartDisconnected)
+        },
+        || {},
+    )
 }
 
 /// Wait for the shard's queue to drain, failing the generated case on timeout.
@@ -201,14 +205,16 @@ proptest! {
             // The registry read times out, so no snapshot is transferred and
             // the start gate is closed by dropping its sender.
             let timing = FlushDeadline::with_clock(GENEROUS_BUDGET, system_clock());
-            shard.flush_handlers_until(&timing, |_sender| {
-                Err(FlushFailureStage::HandlerSnapshotTimedOut)
-            })
+            shard.flush_handlers_until(
+                &timing,
+                |_sender| Err(FlushFailureStage::HandlerSnapshotTimedOut),
+                || {},
+            )
         } else {
             // A deadline that has already elapsed stops before the marker is
             // admitted, so the queue keeps only the records ahead of it.
             let timing = FlushDeadline::with_clock(Duration::ZERO, system_clock());
-            shard.flush_handlers_until(&timing, |_sender| Ok(()))
+            shard.flush_handlers_until(&timing, |_sender| Ok(()), || {})
         };
         let expected = if reject_with_snapshot_failure {
             FlushFailureStage::HandlerSnapshotTimedOut
@@ -282,14 +288,19 @@ fn a_handler_is_not_invoked_until_the_snapshot_is_handed_over() {
     std::thread::scope(|scope| {
         let caller = scope.spawn(|| {
             let timing = FlushDeadline::with_clock(GENEROUS_BUDGET, system_clock());
-            shard.flush_handlers_until(&timing, |sender| {
-                let _ = sender.try_send(snapshot);
-                let _ = snapshot_sent_tx.send(());
-                // Stands in for the registry read lock: the worker must not act
-                // on the snapshot while its producer is still holding it.
-                let _ = release_prepare_rx.recv();
-                Ok(())
-            })
+            shard.flush_handlers_until(
+                &timing,
+                |sender| {
+                    let _ = sender.try_send(snapshot);
+                    let _ = snapshot_sent_tx.send(());
+                    // Stands in for the registry read lock: the worker must not
+                    // act on the snapshot while its producer is still holding
+                    // it.
+                    let _ = release_prepare_rx.recv();
+                    Ok(())
+                },
+                || {},
+            )
         });
 
         snapshot_sent_rx

@@ -328,11 +328,10 @@ returns. Logger drop waits only for the logger's own in-flight records for the
 bounded drain timeout; it does not join the process-wide worker. Loom models
 join their logger-owned workers. The logger creates no helper threads or
 detached flush tasks, and concurrent markers remain bounded by the existing
-queue capacity. Python-backed handlers use a no-op Rust flush and are not
-called back into Python by this barrier, so for a user-defined Python handler
-the barrier confirms only that the record was dispatched. Such a handler that
-buffers must flush its own buffer; `flush_handlers()` returning `true` does not
-mean that buffer is empty.
+queue capacity. A built-in handler is flushed through its native
+implementation. A user-defined Python handler is called back into Python, and
+only its own `flush` returning `None` or a truthy value confirms it, so a
+handler that buffers must drain that buffer there.
 
 ### 3.3 `FemtoLogRecord` Structure
 
@@ -1585,11 +1584,15 @@ still return `True`. A logger with no work in flight skips the marker and does
 not wait for unrelated shard work. Its Python wrapper releases the GIL across
 the blocking wait so Python handlers can run.
 
-Enqueueing the flush marker and waiting for its acknowledgement share a
-two-second timeout. Flushing attached handlers can take additional time. The
-method returns `True` when the worker acknowledges the marker in time and every
-handler flush succeeds, and `False` when marker enqueue or acknowledgement
-fails or a handler flush fails.
+Resolving the dispatch, enqueueing the flush marker, waiting for its
+acknowledgement, and flushing each attached handler are all measured against
+one two-second deadline, so a slow stage leaves less budget for the rest rather
+than restarting a timeout. A synchronous Python `flush` callback runs to
+completion on the shard worker, so it can overrun that deadline; it does not
+extend it, and the caller reports the failure rather than waiting for a later
+stage. The method returns `True` when the worker acknowledges the marker in
+time and every handler flush succeeds, and `False` when dispatch resolution,
+marker enqueue, acknowledgement, or a handler flush fails.
 
 `flush_configured_handlers()` copies the handler list under the read guard,
 releases the guard, and then calls `flush()` on every entry. A failing handler

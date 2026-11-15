@@ -89,7 +89,11 @@ pub(crate) enum QueueFlushFailure {
 ///
 /// Returns [`QueueFlushFailure::Enqueue`] when the bounded queue stays full for
 /// the whole budget, and [`QueueFlushFailure::Acknowledgement`] when the
-/// worker accepts the command but does not answer in time.
+/// worker accepts the command but does not answer before the deadline. The
+/// second case includes an answer that is *received* after the deadline: a
+/// zero-budget receive can still take a message that was already queued, and a
+/// descheduled waiter can observe it late, so the clock is sampled once more
+/// before an acknowledgement is reported as success.
 pub(crate) fn flush_command_until<A, Ack>(
     deadline: Instant,
     now: &mut dyn FnMut() -> Instant,
@@ -101,5 +105,14 @@ where
     let Some(await_acknowledgement) = enqueue(remaining(deadline, now())) else {
         return Err(QueueFlushFailure::Enqueue);
     };
-    await_acknowledgement(remaining(deadline, now())).ok_or(QueueFlushFailure::Acknowledgement)
+    let acknowledged = await_acknowledgement(remaining(deadline, now()))
+        .ok_or(QueueFlushFailure::Acknowledgement)?;
+    // A handler's flush contract promises not to report success after its
+    // deadline. The receive above enforces that only as far as the channel
+    // does: a ready message wins over an expired budget, so the answer itself
+    // has to be checked against the clock before it counts.
+    if now() > deadline {
+        return Err(QueueFlushFailure::Acknowledgement);
+    }
+    Ok(acknowledged)
 }

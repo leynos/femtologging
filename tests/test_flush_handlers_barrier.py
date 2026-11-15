@@ -149,12 +149,21 @@ class TestFlushHandlersBarrier:
         and the flush cannot finish; with the interpreter released, both
         proceed.
 
-        The barrier is observed through its own test hook. Rust code inside the
-        flush call signals ``wait_for_flush_entry_for_test``, so the signal
-        cannot be satisfied before the native barrier has started — unlike a
-        profiler event for the C function, which fires before it runs. The
-        handler stays blocked until after that signal, so the in-flight
-        assertion cannot be explained by a flush that has not begun.
+        The barrier is observed through its own test hook. Rust code signals
+        ``wait_for_flush_entry_for_test`` only after the flush marker has been
+        admitted and the worker has been started, immediately before the
+        barrier waits for the worker's acknowledgement — unlike a profiler
+        event for the C function, which fires before it runs. The handler stays
+        blocked until after that signal, so the in-flight assertion cannot be
+        explained by a flush that has not begun.
+
+        Signalling at that boundary rather than at barrier entry is what makes
+        this a regression test for the wait itself: a flush that had merely
+        started, and then stalled on the registry or the queue before reaching
+        the worker, would still deliver an entry signal. Here the handler
+        cannot be released until the flush is already blocked on the worker, so
+        the in-flight assertion is about the wait the interpreter must be
+        released for.
         """
         if not FLUSH_TEST_HOOKS_AVAILABLE:
             pytest.skip(
@@ -192,11 +201,12 @@ class TestFlushHandlersBarrier:
                 "the worker never reached the handler; the flush is holding the "
                 "interpreter the worker needs"
             )
-            # The signal comes from inside the Rust barrier, and the handler is
+            # The signal comes from inside the Rust barrier, only once the
+            # marker is admitted and the worker started, and the handler is
             # still blocked inside the callback, so the barrier cannot have
             # completed: completion requires this thread to release it.
             assert wait_for_flush_entry(logger, ENTRY_TIMEOUT_MS), (
-                "the flush call never reached the barrier"
+                "the flush call never reached the barrier wait"
             )
             assert not flushed, (
                 f"the flush returned before the handler ran: {flushed!r}"

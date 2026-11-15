@@ -73,7 +73,7 @@ impl FemtoFileHandler {
     ///
     /// The enqueue and the acknowledgement share one deadline but are reported
     /// separately: a request that never reached the worker and a request the
-    /// worker never answered point at different faults.
+    /// worker answered too late point at different faults.
     fn flush_outcome_at(
         &self,
         deadline: Instant,
@@ -107,8 +107,9 @@ impl FemtoFileHandler {
                 Some(SendTimeoutError::Disconnected(_)) => FlushOutcome::Disconnected,
                 _ => FlushOutcome::EnqueueTimedOut,
             },
-            // The acknowledgement closure always answers, so this variant only
-            // guards the shape of the shared helper's result.
+            // Either the closure's own receive timed out, or it returned an
+            // answer the shared helper saw arrive after the deadline. Both are
+            // a late acknowledgement from this handler's point of view.
             Err(QueueFlushFailure::Acknowledgement) => FlushOutcome::AckTimedOut,
         }
     }

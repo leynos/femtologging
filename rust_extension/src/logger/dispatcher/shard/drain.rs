@@ -20,6 +20,35 @@ use crate::sync::{RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_time
 
 use super::{BARRIER_TIMEOUT, DrainOutcome, Job, Shard};
 
+/// Counts one flush caller as waiting for room in the bounded queue.
+///
+/// The count exists only for tests, which need to know a caller is blocked in
+/// admission rather than merely scheduled. It is released when the guard drops,
+/// so every path out of the send — admitted, timed out, disconnected — stops
+/// counting the caller.
+#[cfg(all(test, not(loom)))]
+struct MarkerWaiter<'a>(&'a Shard);
+
+#[cfg(all(test, not(loom)))]
+impl MarkerWaiter<'_> {
+    /// Start counting before the caller blocks in the bounded send.
+    fn new(shard: &Shard) -> MarkerWaiter<'_> {
+        shard
+            .marker_waiters
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        MarkerWaiter(shard)
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+impl Drop for MarkerWaiter<'_> {
+    fn drop(&mut self) {
+        self.0
+            .marker_waiters
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 impl Shard {
     /// Wait for the shard to finish the work queued ahead of this call.
     ///
@@ -123,13 +152,20 @@ impl Shard {
     /// until that lock is released before invoking callbacks. The queue remains
     /// the only task bound, so concurrent timeouts cannot create extra threads
     /// or unbounded queued work.
-    pub(crate) fn flush_handlers_until<F>(
+    ///
+    /// `on_waiting` runs once the worker has been told to start, immediately
+    /// before this call waits for the acknowledgement. It exists so a caller
+    /// can mark the one point where the whole barrier is now blocked on the
+    /// worker, which is the boundary a GIL-releasing flush has to keep clear.
+    pub(crate) fn flush_handlers_until<F, W>(
         &self,
         deadline: &FlushDeadline,
         prepare_snapshot: F,
+        on_waiting: W,
     ) -> Result<(), FlushFailureStage>
     where
         F: FnOnce(Sender<Vec<Arc<dyn FemtoHandlerTrait>>>) -> Result<(), FlushFailureStage>,
+        W: FnOnce(),
     {
         let (handlers_tx, handlers_rx) = bounded(1);
         let (start_tx, start_rx) = bounded(1);
@@ -146,7 +182,15 @@ impl Shard {
             drop(job);
             return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
         }
-        match self.queue.send_timeout(job, deadline.remaining()) {
+        let admission = {
+            // Counted only while the send is in progress, because a caller
+            // blocked waiting for queue room is the state a test must be able
+            // to observe. The guard releases the count on every path out.
+            #[cfg(all(test, not(loom)))]
+            let _waiting = MarkerWaiter::new(self);
+            self.queue.send_timeout(job, deadline.remaining())
+        };
+        match admission {
             Ok(()) => {}
             Err(SendTimeoutError::Timeout(_)) => {
                 return Err(FlushFailureStage::MarkerEnqueueTimedOut);
@@ -168,6 +212,10 @@ impl Shard {
         if start_tx.try_send(()).is_err() {
             return Err(FlushFailureStage::WorkerStartDisconnected);
         }
+        // The marker is admitted and the worker holds the snapshot, so from
+        // here the whole barrier waits on that worker. A caller that needs to
+        // mark that boundary reports it now, not at barrier entry.
+        on_waiting();
         match recv_timeout(&ack_rx, deadline.remaining()) {
             Ok(result) => result,
             Err(RecvTimeoutError::Timeout) => Err(FlushFailureStage::AcknowledgementTimedOut),

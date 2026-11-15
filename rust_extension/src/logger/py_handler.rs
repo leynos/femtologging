@@ -219,8 +219,10 @@ impl FemtoHandlerTrait for PyHandler {
     /// after `handle` or `handle_record` returns, and only the handler knows
     /// how to drain that buffer, so the barrier calls its `flush` method. A
     /// handler without a callable `flush` has nothing to drain and confirms by
-    /// opting out; one that raises or returns a falsy value reports failure.
-    /// The exception itself is never printed, in case it quotes a record.
+    /// opting out; one that raises, or returns a value that is falsy but not
+    /// `None`, reports failure, because CPython's `None` is the usual "no
+    /// result" answer from a successful flush. The exception itself is never
+    /// printed, in case it quotes a record.
     ///
     /// The barrier's deadline bounds the wait for the handler to answer, not
     /// the duration of the handler's own `flush` call, which runs to

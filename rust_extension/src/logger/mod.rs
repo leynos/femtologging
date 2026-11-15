@@ -1,9 +1,5 @@
 //! Core [`FemtoLogger`] implementation for filtering and asynchronous dispatch
 //! through the process-wide shard pool, including rebinding after `fork`.
-#![allow(
-    clippy::too_many_arguments,
-    reason = "PyO3 macro-generated wrappers expand Python-call signatures"
-)]
 
 #[cfg(feature = "python")]
 mod context_snapshot;

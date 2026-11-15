@@ -142,7 +142,11 @@ fn a_caller_deadline_shorter_than_the_handler_timeout_bounds_the_flush() {
 
 /// A flush whose marker never enters a saturated queue must keep its due drop
 /// count for the next warning, rather than swallowing it with the failed flush.
+///
+/// The installed test logger is process-wide, so this test must not overlap a
+/// sibling that reads or replaces the same buffer.
 #[test]
+#[serial_test::serial]
 fn failed_flush_enqueue_reports_its_drops_on_the_next_warning() {
     install_test_logger();
     let clock = Arc::new(WarningClock::default());

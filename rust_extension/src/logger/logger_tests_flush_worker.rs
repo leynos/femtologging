@@ -3,7 +3,6 @@
 use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread::ScopedJoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::handler::{FemtoHandlerTrait, HandlerError, remaining};
@@ -11,6 +10,9 @@ use crate::log_record::FemtoLogRecord;
 use crate::sync::{Receiver, Sender, bounded};
 
 use super::logger_tests_flush::flush_bound;
+use super::logger_tests_flush_waits::{
+    all_flush_callers_finished, wait_for_marker_waiters, wait_for_queued_jobs,
+};
 use super::{FemtoLogger, Shard};
 
 /// A deliberately noncompliant callback that occupies the one logger worker.
@@ -174,32 +176,6 @@ fn flush_handler_destruction_does_not_extend_the_caller_wait() {
     });
 }
 
-/// Block until the shard reports `expected` queued jobs.
-///
-/// Yields politely rather than sleeping so the shard worker can drain, and
-/// fails the test if the queue never reaches that depth within the flush bound.
-fn wait_for_queued_jobs(shard: &Shard, expected: usize) {
-    let deadline = Instant::now() + flush_bound();
-    while shard.queued_jobs_for_test() != expected && Instant::now() < deadline {
-        std::thread::yield_now();
-    }
-    assert_eq!(
-        shard.queued_jobs_for_test(),
-        expected,
-        "the shard queue should hold {expected} job(s) while the worker is blocked"
-    );
-}
-
-/// Report whether every spawned flush caller finished within the flush bound.
-fn all_flush_callers_finished(callers: &[&ScopedJoinHandle<'_, bool>]) -> bool {
-    let deadline = Instant::now() + flush_bound();
-    let have_finished = || callers.iter().all(|caller| caller.is_finished());
-    while !have_finished() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    have_finished()
-}
-
 #[test]
 fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
     let shard = Box::leak(Box::new(
@@ -228,17 +204,13 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
         let second = scope.spawn(move || second_logger.flush_handlers());
         wait_for_queued_jobs(shard, 1);
 
-        let (third_started_tx, third_started_rx) = bounded(1);
         let third_logger = &logger;
-        let third = scope.spawn(move || {
-            let _ = third_started_tx.send(());
-            third_logger.flush_handlers()
-        });
-        third_started_rx
-            .recv_timeout(flush_bound())
-            .expect("the third flush caller should start");
-        // Give the caller time to reach the full queue's timed send.
-        std::thread::sleep(Duration::from_millis(100));
+        let third = scope.spawn(move || third_logger.flush_handlers());
+        // The queue is full and its worker is blocked, so the third caller can
+        // only be counted as waiting for room while it is blocked in
+        // admission. Handler removal therefore runs after the full-queue path
+        // is entered, not after a guess about when it might be.
+        wait_for_marker_waiters(shard, 1);
         assert!(
             !third.is_finished(),
             "the third flush caller should still be waiting to enqueue its marker"

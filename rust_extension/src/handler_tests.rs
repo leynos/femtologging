@@ -137,3 +137,29 @@ fn a_partial_admission_leaves_the_remainder_for_the_acknowledgement() {
         "the acknowledgement must receive the budget admission left behind"
     );
 }
+
+/// An answer that was only observed after the deadline must not confirm.
+///
+/// A receive with no budget left still takes a message that is already
+/// queued, and a descheduled waiter can observe a ready answer late, so a
+/// returned answer is not by itself a timely one. The helper samples the clock
+/// once more and rejects the confirmation on its own account.
+#[test]
+fn an_answer_observed_after_the_deadline_does_not_confirm() {
+    // The third sample is one millisecond past the thirty-second deadline.
+    let mut clock = ScriptedClock::new(&[0, 0, 30_001]);
+    let deadline = clock.deadline();
+    // The return type is written out because the outcome is only ever
+    // asserted as an error, which would leave the success type uninferred.
+    let acknowledge = |_ack_budget: Duration| -> Option<()> { Some(()) };
+    let outcome = flush_command_until(deadline, &mut || clock.now(), |_enqueue_budget| {
+        Some(acknowledge)
+    });
+
+    assert_eq!(outcome, Err(QueueFlushFailure::Acknowledgement));
+    assert_eq!(
+        clock.samples(),
+        3,
+        "admission, acknowledgement and the lateness check must each sample the clock"
+    );
+}

@@ -40,5 +40,8 @@ mod logger_tests_flush_deadline;
 #[path = "logger_tests_flush_legacy.rs"]
 mod logger_tests_flush_legacy;
 #[cfg(not(loom))]
+#[path = "logger_tests_flush_waits.rs"]
+mod logger_tests_flush_waits;
+#[cfg(not(loom))]
 #[path = "logger_tests_flush_worker.rs"]
 mod logger_tests_flush_worker;
