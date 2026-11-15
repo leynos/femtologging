@@ -35,9 +35,13 @@ pub mod prune_test_support {
     use super::gil_and_clean_manager;
 
     /// Create a temporary directory that is removed when the fixture drops.
+    ///
+    /// The error is returned rather than panicking here: a fixture is setup, not
+    /// a recognized test body, so the caller decides whether a missing temporary
+    /// directory fails its test.
     #[fixture]
-    pub fn temp_dir() -> TempDir {
-        tempfile::tempdir().expect("tempdir must create a temporary directory")
+    pub fn temp_dir() -> Result<TempDir, std::io::Error> {
+        tempfile::tempdir()
     }
 
     /// Install a `core` logger whose only handler is the stderr stream handler.
@@ -45,8 +49,8 @@ pub mod prune_test_support {
     /// Every definition declared here is attached to a logger, so the published
     /// registries match the declaration exactly and callers can compare against
     /// a known baseline.
-    pub fn install_core_logger() {
-        configured_baseline().expect("the default baseline configuration should always build");
+    pub fn install_core_logger() -> Result<(), ConfigError> {
+        configured_baseline()
     }
 
     /// Build the stderr-handler baseline, leaving the manager reset first.
