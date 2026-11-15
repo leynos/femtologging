@@ -5,8 +5,7 @@
 _First pre-release of 0.2.0. Applications upgrading from 0.1 should follow the
 [0.2.0 migration guide](docs/v0-2-0-migration-guide.md). Known issue: a second
 thread's `flush()` or `close()` on a socket or HTTP handler raises
-`RuntimeError` while another thread's `close()` is waiting
-([#592](https://github.com/leynos/femtologging/pull/592))._
+`RuntimeError` while another thread's `close()` is waiting._
 
 ### Changed
 
@@ -47,6 +46,16 @@ thread's `flush()` or `close()` on a socket or HTTP handler raises
   ([#484](https://github.com/leynos/femtologging/pull/484), [#549](https://github.com/leynos/femtologging/pull/549)).
 - Bound `FemtoSocketHandler.flush()` by one write timeout instead of two
   ([#549](https://github.com/leynos/femtologging/pull/549)).
+- **Breaking:** release the GIL while explicit `handle()`, `flush()`, and
+  `close()` calls on file, rotating, and timed-rotating handlers wait, so those
+  calls no longer keep other Python threads out, and bound their `close()` to
+  one second ([#550](https://github.com/leynos/femtologging/pull/550)).
+- **Breaking:** call a Python handler's `flush()` from `flush_handlers()`, and
+  return `False` when it raises or returns a falsy value other than `None`
+  ([#555](https://github.com/leynos/femtologging/pull/555)).
+- Bound `FemtoStreamHandler.flush()` by one flush timeout instead of two, and
+  let `close()` return at that timeout instead of joining the worker thread
+  ([#594](https://github.com/leynos/femtologging/pull/594)).
 - **Breaking:** return `Result<(), HandlerError>` from the Rust
   `FemtoLogger::add_handler()` and reject Python-backed handlers that lack
   contextual dispatch with `HandlerError::MissingContextDispatch`
@@ -86,6 +95,9 @@ thread's `flush()` or `close()` on a socket or HTTP handler raises
 - Add `RuntimeConfigBuilder` and `LoggerMutationBuilder` to change handlers,
   filters, levels, and propagation on running loggers in one transactional step
   ([#363](https://github.com/leynos/femtologging/pull/363)).
+- Add `wait_diagnostics()` to the file, rotating, and timed-rotating handlers,
+  with matching `femtologging::internal` trace events under `tracing-compat`
+  ([#550](https://github.com/leynos/femtologging/pull/550)).
 - Add the `get_context_dropped()` and `get_context_capture_failures()` logger
   counters
   ([#425](https://github.com/leynos/femtologging/pull/425), [#454](https://github.com/leynos/femtologging/pull/454)).
@@ -99,5 +111,14 @@ thread's `flush()` or `close()` on a socket or HTTP handler raises
   and `close()` wait on worker threads, which previously stalled, could lose
   queued records, and froze other Python threads
   ([#546](https://github.com/leynos/femtologging/pull/546), [#549](https://github.com/leynos/femtologging/pull/549)).
+- Release the GIL while file handlers wait in `handle()`, and while stream
+  handlers wait in `flush()` and `close()`
+  ([#550](https://github.com/leynos/femtologging/pull/550), [#594](https://github.com/leynos/femtologging/pull/594)).
+- Keep the GIL released while `flush_handlers()` flushes each handler, so a
+  Python handler or formatter can run instead of deadlocking
+  ([#555](https://github.com/leynos/femtologging/pull/555)).
+- Warn, at a limited rate, when a logger fails to flush through the Rust `log`
+  bridge, instead of discarding the failure
+  ([#555](https://github.com/leynos/femtologging/pull/555)).
 
 [0.2.0-beta1]: https://github.com/leynos/femtologging/releases/tag/v0.2.0-beta1

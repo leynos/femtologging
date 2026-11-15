@@ -31,22 +31,25 @@ raises `RuntimeError` while the first `close()` is waiting. The
 
 ## Impact at a glance
 
-| Priority           | Area                                                                       | What to do                                                                       |
-| ------------------ | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Required if called | [Logger names](#1-keep-logger-names-stable-and-bounded)                    | Stop deriving logger names from requests, users, or other data                   |
-| Required if called | [`BasicConfig`](#2-use-only-the-fields-of-basicconfig)                     | Keep your own state out of `BasicConfig` instances                               |
-| Required if called | [`RuntimeConfigBuilder`](#3-attach-everything-a-runtime-change-declares)   | Attach every handler and filter a runtime change declares                        |
-| Required if called | [Test hooks](#4-stop-using-the-timed-rotation-test-hooks)                  | Build with `test-util` if you use the timed-rotation test hooks                  |
-| Required if called | [Rust API](#5-handle-the-fallible-rust-apis)                               | Handle the new `Result` values in Rust code                                      |
-| Review if enabled  | [`disable_existing_loggers`](#6-name-the-loggers-that-must-keep-emitting)  | Name every logger that must keep emitting                                        |
-| Review if enabled  | [Thread-local state](#7-move-handler-state-off-threadinglocal)             | Move handler state from `threading.local` to `contextvars`                       |
-| Review if enabled  | [Standard library handler levels](#8-check-wrapped-handler-levels)         | Check the `level` of handlers wrapped in `StdlibHandlerAdapter`                  |
-| Review if enabled  | [Failed configuration](#9-apply-a-corrected-configuration-after-a-failure) | Stop relying on a failed configuration applying part of its changes              |
-| Review if enabled  | [Network shutdown](#10-flush-network-handlers-before-closing-them)         | Flush socket and HTTP handlers before `close()` discards what is left            |
-| Review if enabled  | [Exception payloads](#11-check-payloads-passed-to-filter_frames)           | Check very large or hand-built payloads passed to `filter_frames()`              |
-| Review if enabled  | [Rust `log` macros](#12-guard-expensive-rust-log-arguments)                | Guard expensive `log` macro arguments                                            |
-| Recommended        | [Handler filters](#13-move-application-wide-enrichment-to-the-handler)     | Attach application-wide enrichment to the shared handler                         |
-| Optional           | [New features](#14-adopt-the-new-features)                                 | Adopt structured fields, formatters, rotation, and runtime changes when you like |
+| Priority           | Area                                                                         | What to do                                                                       |
+| ------------------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Required if called | [Logger names](#1-keep-logger-names-stable-and-bounded)                      | Stop deriving logger names from requests, users, or other data                   |
+| Required if called | [`BasicConfig`](#2-use-only-the-fields-of-basicconfig)                       | Keep your own state out of `BasicConfig` instances                               |
+| Required if called | [`RuntimeConfigBuilder`](#3-attach-everything-a-runtime-change-declares)     | Attach every handler and filter a runtime change declares                        |
+| Required if called | [Test hooks](#4-stop-using-the-timed-rotation-test-hooks)                    | Build with `test-util` if you use the timed-rotation test hooks                  |
+| Required if called | [Rust API](#5-handle-the-fallible-rust-apis)                                 | Handle the new `Result` values in Rust code                                      |
+| Review if enabled  | [`disable_existing_loggers`](#6-name-the-loggers-that-must-keep-emitting)    | Name every logger that must keep emitting                                        |
+| Review if enabled  | [Thread-local state](#7-move-handler-state-off-threadinglocal)               | Move handler state from `threading.local` to `contextvars`                       |
+| Review if enabled  | [Standard library handler levels](#8-check-wrapped-handler-levels)           | Check the `level` of handlers wrapped in `StdlibHandlerAdapter`                  |
+| Review if enabled  | [Failed configuration](#9-apply-a-corrected-configuration-after-a-failure)   | Stop relying on a failed configuration applying part of its changes              |
+| Review if enabled  | [Network shutdown](#10-flush-network-handlers-before-closing-them)           | Flush socket and HTTP handlers before `close()` discards what is left            |
+| Review if enabled  | [Exception payloads](#11-check-payloads-passed-to-filter_frames)             | Check very large or hand-built payloads passed to `filter_frames()`              |
+| Review if enabled  | [Rust `log` macros](#12-guard-expensive-rust-log-arguments)                  | Guard expensive `log` macro arguments                                            |
+| Review if enabled  | [Custom handler flushes](#13-return-a-truthful-result-from-handler-flush)    | Return `None` or `True` from a custom handler's `flush()` when it succeeds       |
+| Review if enabled  | [File handler threads](#14-lock-around-file-handler-calls-yourself)          | Add your own lock where a file handler call kept other threads out               |
+| Review if enabled  | [Stream handler shutdown](#15-expect-stream-handlers-to-stop-waiting-sooner) | Stop treating a slow stream `flush()` or `close()` as having finished            |
+| Recommended        | [Handler filters](#16-move-application-wide-enrichment-to-the-handler)       | Attach application-wide enrichment to the shared handler                         |
+| Optional           | [New features](#17-adopt-the-new-features)                                   | Adopt structured fields, formatters, rotation, and runtime changes when you like |
 
 *Table 1: Obligations when moving from v0.1.0 to v0.2.0.*
 
@@ -219,9 +222,10 @@ assert noisy.error("still seen") is not None
 assert get_logger("root").flush_handlers()
 ```
 
-To keep every existing logger, set `disable_existing_loggers` to `False`
-instead. Naming a disabled logger in a later configuration enables it again;
-its kept ancestors keep whatever state they had. See
+To keep every existing logger as it is, set `disable_existing_loggers` to
+`False` instead. That does not re-enable a logger an earlier configuration
+disabled: name it in a later configuration to enable it again. Its kept
+ancestors keep whatever state they had. See
 [Disable loggers a configuration omits](users-guide.md#disable-loggers-a-configuration-omits).
 
 ## 7. Move handler state off `threading.local`
@@ -378,7 +382,85 @@ a macro's arguments for a target held below the process-wide maximum, so add an
 explicit `log::log_enabled!` guard around expensive ones. See
 [Bridge the log and tracing crates](users-guide.md#bridge-the-log-and-tracing-crates).
 
-## 13. Move application-wide enrichment to the handler
+## 13. Return a truthful result from handler `flush()`
+
+`flush_handlers()` now calls the `flush()` method of a handler you wrote in
+Python. In 0.1 it never did, so a handler that buffered records was not asked
+to write them. Its result now counts:
+
+- Returning `None`, as `logging.Handler.flush()` does, or a true value counts
+  as success.
+- Returning `False`, `0`, or another false value, or raising, makes
+  `flush_handlers()` return `False`. The other handlers are still flushed.
+- A handler without a `flush()` method counts as flushed.
+
+<!-- tested-example: migration-handler-flush -->
+```python
+from femtologging import get_logger
+
+
+class Buffered:
+    def __init__(self) -> None:
+        self.pending: list[str] = []
+        self.written: list[str] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        self.pending.append(message)
+
+    def flush(self) -> None:
+        self.written.extend(self.pending)
+        self.pending.clear()
+
+
+logger = get_logger("orders")
+handler = Buffered()
+logger.add_handler(handler)
+logger.info("order 7 shipped")
+
+assert logger.flush_handlers()
+assert handler.written == ["order 7 shipped"]
+```
+
+A flush also covers only the records queued when it starts. Stop the threads
+that log before flushing and closing handlers at shutdown; see
+[Shut down cleanly](users-guide.md#shut-down-cleanly).
+
+## 14. Lock around file handler calls yourself
+
+Explicit `handle()`, `flush()`, and `close()` calls on `FemtoFileHandler`,
+`FemtoRotatingFileHandler`, and `FemtoTimedRotatingFileHandler` now release the
+GIL while they wait. Other Python threads keep running during slow file I/O,
+which also means one of these calls no longer keeps them out. If your code
+relied on that, add your own lock.
+
+Two related changes:
+
+- Once a `close()` has started, other threads see a closed handler: `handle()`
+  raises `RuntimeError` (`ValueError` from the timed-rotating handler),
+  `flush()` returns `False`, and a second `close()` waits for the first.
+- `close()` now waits at most one second for the worker, then logs a warning
+  and returns. Call it yourself at shutdown: the destructor holds the GIL while
+  it waits.
+
+See
+[Concurrency and the GIL for file handlers](users-guide.md#concurrency-and-the-gil-for-file-handlers).
+
+## 15. Expect stream handlers to stop waiting sooner
+
+`FemtoStreamHandler` applies its flush timeout, set with
+`StreamHandlerBuilder.with_flush_after_ms()`, once per call:
+
+- **`flush()` waits one timeout, not two.** Handing over the request and
+  waiting for the answer used to get a full timeout each. A flush that
+  succeeded only in that second window now returns `False`.
+- **`close()` returns at the timeout.** It no longer joins the worker thread,
+  so a slow thread-local destructor cannot hold it up. The worker can still be
+  running, and writing to the stream, after `close()` returns.
+
+`close()` returns `None` either way. If your shutdown must know that the worker
+finished, or that a thread-local destructor ran, signal that from your own code.
+
+## 16. Move application-wide enrichment to the handler
 
 Logger filters do not run for records propagated from child loggers, so a
 filter on `root` misses records logged through `shop.api`. Handler builders now
@@ -456,7 +538,7 @@ with open("app.log", encoding="utf-8") as log_file:
     assert log_file.read() == "shop accepted\n"
 ```
 
-## 14. Adopt the new features
+## 17. Adopt the new features
 
 Everything in this section is additive, so existing logging calls keep working.
 
@@ -488,6 +570,9 @@ Everything in this section is additive, so existing logging calls keep working.
   wait. A call made straight after logging could previously stall until its
   timeout and report failure, `close()` could lose records still queued, and a
   slow network shutdown froze every other Python thread.
+- **Wait diagnostics.** File handlers report how their `handle()`, `flush()`,
+  and `close()` waits ended through `wait_diagnostics()`. See
+  [Concurrency and the GIL for file handlers](users-guide.md#concurrency-and-the-gil-for-file-handlers).
 
 <!-- tested-example: migration-extra -->
 ```python
@@ -523,6 +608,12 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
 - [ ] Flush socket and HTTP handlers before closing them, and check what
   `flush()` returns.
 - [ ] Add `log::log_enabled!` guards around expensive Rust `log` arguments.
+- [ ] Check that custom handlers' `flush()` methods return `None` or `True`
+  when they succeed.
+- [ ] Add a lock wherever a file handler call was relied on to keep other
+  threads out.
+- [ ] Check that shutdown does not assume a stream handler's worker has
+  finished when `close()` returns.
 - [ ] Consider moving application-wide enrichment to handler filters.
 
 ## Common errors and fixes

@@ -461,8 +461,20 @@ assert handler.flush()
 handler.close()
 ```
 
-`with_flush_after_ms()` sets how long `flush()` waits for the worker, in
-milliseconds.
+`with_flush_after_ms()` sets the handler's flush timeout in milliseconds; the
+default is one second. It limits both calls that wait for the worker:
+
+- `flush()` returns `True` once the worker has flushed the stream. Handing over
+  the request and waiting for the answer share the one timeout, so a slow
+  worker makes `flush()` return `False`. So do a closed handler and a failed
+  write.
+- `close()` stops accepting records and waits, up to the same timeout, for the
+  worker to write what is already queued. If the time runs out, `close()`
+  returns anyway and the worker goes on writing to the stream in the background.
+  `close()` returns `None` in both cases, so it cannot tell you which happened.
+
+Both calls release the GIL while they wait, so a Python formatter can finish
+its work on the worker thread.
 
 ### Write to a file
 
@@ -488,14 +500,80 @@ not seconds: the worker flushes the file after that many writes.
 `policy` decides what happens when the handler's queue is full:
 
 - `"drop"` (the default) discards the record.
-- `"block"` makes the logger's worker wait until there is room.
+- `"block"` waits until there is room. The wait has no time limit: if the
+  worker stops draining, because of a stalled disk or a formatter that never
+  returns, the wait lasts as long as that does.
 - `"timeout:N"` waits up to `N` milliseconds, then discards the record.
+
+Who waits depends on how the record arrives. Through a logger, it is the shared
+dispatch worker that waits, which delays every logger on its shard. A direct
+`handler.handle()` call waits in your thread, and when it discards a record it
+raises `RuntimeError`.
 
 `FileHandlerBuilder` offers the same settings fluently, through
 `with_capacity()`, `with_flush_after_records()`, `with_filters()`,
 `with_overflow_policy(OverflowPolicy.drop() | OverflowPolicy.block() |
 OverflowPolicy.timeout(ms))`,
 and `with_formatter()`.
+
+#### Concurrency and the GIL for file handlers
+
+`flush()` returns `True` when the worker confirms the flush within one second,
+and `False` otherwise. `True` means the flush itself succeeded. It does not
+prove that every record reached the disk, because a record whose write fails is
+reported and skipped.
+
+`close()` can be called more than once, and from several threads. The first
+call shuts the worker down, and every call waits for the same outcome, for at
+most one second. If the worker has not finished by then, `close()` logs a
+warning and returns while the worker may still be running.
+
+Explicit `handle()`, `flush()`, and `close()` calls release the GIL while they
+wait, so your other Python threads keep running during slow file I/O. This has
+three consequences:
+
+- Code that relied on one of these calls keeping other Python threads out must
+  now use its own lock.
+- Once a `close()` has started, other threads see a closed handler: `handle()`
+  raises `RuntimeError`, `flush()` returns `False`, and a second `close()`
+  waits for the first to finish.
+- `close()` does not cancel a `handle()` that is already waiting under
+  `"block"`. Let the worker catch up before closing.
+
+Call `close()` yourself rather than leaving it to garbage collection. The
+destructor does the same shutdown, but it holds the GIL while it waits.
+
+On CPython 3.12 and earlier, a worker that is still running a Python formatter
+when the interpreter shuts down can crash the process. If a `close()` timed
+out, get the worker moving again and confirm that it finished before the
+process exits.
+
+`handler.wait_diagnostics()` tells you how those waits went. It returns a
+dictionary with the same keys every time: a count for each outcome of
+`handle()`, `flush()`, and `close()` (such as `handle_queue_full` or
+`close_timed_out`), the total and longest wait in microseconds, and
+`waits_in_flight`, the number of calls waiting right now. Reading it is cheap
+and records nothing. The counts cover the handler's whole life, so to check one
+call, compare a reading taken before it with one taken after:
+
+<!-- tested-example: guide-file-wait-diagnostics -->
+```python
+from femtologging import FemtoFileHandler
+
+handler = FemtoFileHandler("diagnostics.log")
+handler.handle("app", "INFO", "hello")
+
+before = handler.wait_diagnostics()
+handler.close()
+after = handler.wait_diagnostics()
+
+assert after["close_completed"] == before["close_completed"] + 1
+assert after["waits_in_flight"] == 0
+```
+
+With the `tracing-compat` feature, each wait also emits a
+`femtologging::internal` trace event, described in the
+[developers' guide](developers-guide.md#handler-wait-diagnostics).
 
 ### Rotate files by size
 
@@ -530,6 +608,10 @@ the handler keeps appending to the existing file instead of losing records.
 
 `RotatingFileHandlerBuilder` offers the same settings, plus `with_max_bytes()`
 and `with_backup_count()`.
+
+A full queue, `flush()`, `close()`, and `wait_diagnostics()` all behave as they
+do for `FemtoFileHandler`; see
+[Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
 
 ### Rotate files on a schedule
 
@@ -571,6 +653,10 @@ else:
 - `TimedRotatingFileHandlerBuilder` offers the same settings through
   `with_when()`, `with_interval()`, `with_backup_count()`, `with_utc()`, and
   `with_at_time()`.
+- A full queue, `flush()`, `close()`, and `wait_diagnostics()` behave as they
+  do for `FemtoFileHandler`, except that `handle()` raises `ValueError` where
+  the other file handlers raise `RuntimeError`. See
+  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
 
 ### Send records over a socket
 
@@ -723,6 +809,12 @@ logged. Keep them fast and thread-safe: a slow handler delays every logger on
 the same shard, not only the one it is attached to. Records that arrive while
 the shard is at capacity are dropped and counted. An exception raised by a
 handler is printed to standard error and the next record is handled as normal.
+
+Give the handler a `flush()` method if it buffers anything. `flush_handlers()`
+calls it: returning `None` (as `logging.Handler.flush()` does) or `True` counts
+as success, while `False`, any other falsy value, or an exception makes
+`flush_handlers()` return `False`. A handler without `flush()` counts as
+flushed.
 
 `add_handler()` accepts built-in and Python handlers alike. `remove_handler()`
 returns whether it found the handler, and `clear_handlers()` removes them all.
@@ -1545,13 +1637,15 @@ Socket and HTTP handlers also discard records still queued when `close()`
 reaches its deadline. No counter records these; a warning reports the count
 instead.
 
-If drops are unacceptable, raise handler capacities or use a blocking or
-timeout policy. Bear in mind where the waiting happens: a handler attached to a
-logger is fed by the shared dispatch worker, so a blocking policy makes that
-worker wait, which delays every logger on the shard. Your thread keeps going
-until the logger's allowance or the shard is used up, and from then on records
-are dropped and counted in `get_dropped()`. A handler that never returns holds
-its shard's worker, so the other loggers on that shard can start dropping too.
+If drops are unacceptable, raise handler capacities or give file handlers the
+`"block"` policy. `"timeout:N"` still discards a record when its time runs out,
+and neither policy changes what happens at the logger's own queue. Bear in mind
+where the waiting happens: a handler attached to a logger is fed by the shared
+dispatch worker, so a blocking policy makes that worker wait, which delays
+every logger on the shard. Your thread keeps going until the logger's allowance
+or the shard is used up, and from then on records are dropped and counted in
+`get_dropped()`. A handler that never returns holds its shard's worker, so the
+other loggers on that shard can start dropping too.
 
 If the operating system cannot start the dispatch pool because the process has
 reached its thread limit, creating a logger raises `RuntimeError`, and the next
@@ -1623,8 +1717,7 @@ records.
   `Already borrowed`). A record that reaches the handler during that window is
   dropped, as it would be once the handler is closed, but the same error is
   also printed to standard error. Stop logging, then close each network handler
-  from one thread. The fix is tracked in
-  [#592](https://github.com/leynos/femtologging/pull/592).
+  from one thread.
 - `reset_manager()` removes every registered logger. It exists for tests, is
   not thread-safe, and must not run while other threads hold loggers.
 - Femtologging's loggers are separate from the standard library's
@@ -1679,6 +1772,10 @@ handlers, so an enabled record can still be rejected or dropped later.
 A name the logger registry refuses falls back to the `root` logger. The `log`
 bridge reports this with a rate-limited warning, while the `tracing` layer
 currently falls back silently.
+
+`log::logger().flush()` flushes every registered femtologging logger. The `log`
+crate gives that call no way to report failure, so a logger that fails to flush
+is reported with a rate-limited warning instead.
 
 ### Validate exception schema versions
 
@@ -1773,7 +1870,7 @@ differences are deliberate:
   run on shared dispatch workers. Wrap standard handlers in
   `StdlibHandlerAdapter`.
 - **Back-pressure.** Queues are bounded and drop records when full, where the
-  standard library blocks.
+  standard library blocks. File handlers can be set to wait instead.
 - **Logger names.** Names have length and character limits, and the registry
   holds at most 10,000 named loggers.
 - **Formatting.** `FormatterBuilder` supports `%`-style format strings only,
