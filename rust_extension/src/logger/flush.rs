@@ -42,6 +42,10 @@ pub(super) use super::flush_snapshot::flush_handler_snapshot_at;
 pub(super) use super::flush_snapshot::flush_handler_snapshot_until;
 use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS};
 
+// The `log` bridge is the only consumer, through the re-export in the parent
+// module, so this follows that feature or `-D unused-imports` fails a lane with
+// the bridge compiled out.
+#[cfg(feature = "log-compat")]
 pub(crate) use super::flush_measure::process_flush_metrics;
 #[cfg(feature = "log-compat")]
 pub(crate) use super::flush_measure::record_bridge_flush_failure;

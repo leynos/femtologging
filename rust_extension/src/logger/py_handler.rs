@@ -15,6 +15,9 @@ use std::any::Any;
 #[cfg(feature = "python")]
 use crate::handler::FemtoHandlerTrait;
 use crate::handler::HandlerError;
+// Only the feature-enabled wrapper has a record to dispatch; the fallback in
+// `no_python` brings its own import.
+#[cfg(feature = "python")]
 use crate::log_record::FemtoLogRecord;
 use log::warn;
 
