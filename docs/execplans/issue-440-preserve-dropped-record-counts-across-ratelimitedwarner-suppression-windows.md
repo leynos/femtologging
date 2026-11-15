@@ -1121,3 +1121,27 @@ durations reflect queueing rather than slow work.
 
 This entry and the one above touch only this document; the code gated at
 `486c014` is unchanged.
+
+2026-11-15, first CodeRabbit round on PR #613: one finding, on
+`flush_reports_drops_recorded_while_the_queue_drains`. The test-only drain hook
+waited on its resume channel without a timeout, and both the resume and release
+senders were owned by the test function rather than the scope, so an assertion
+failure inside `thread::scope` unwound without dropping them. The parked hook
+and the blocked handler then kept waiting on channels only the failed test
+could feed, and `thread::scope` joined the flush thread before the panic could
+propagate: a test failure would have hung the suite instead of reporting.
+
+`d7382d5` bounds the hook's wait with `recv_timeout` and moves both senders
+into the scope closure, so an unwinding closure drops them and disconnecting
+the channels releases the hook and the handler. The join then completes and the
+original assertion failure is reported.
+
+2026-11-15, gates on `d7382d5`: all six deterministic gates passed again,
+sequentially through `scrutineer`, with logs in
+`/tmp/gates-issue-440-20261115T0900Z/`. `make check-fmt` (1 s),
+`make markdownlint` (8 s) and `make nixie` (0 s) passed, then `make lint` (641
+s), `make typecheck` (57 s) and `make test` (2647 s). The first `make test`
+attempt was stopped by the runner's 30-minute cap after two lanes with no
+failure; the re-run was green end to end, with 998 passing tests in each of the
+first three lanes, 1050 in `tracing-compat`, and 1178 pytest tests passing with
+5 skipped and 66 snapshots.
