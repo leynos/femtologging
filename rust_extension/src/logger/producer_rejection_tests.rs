@@ -291,16 +291,23 @@ fn flush_reports_drops_recorded_while_the_queue_drains() {
     let (resume_flush_tx, resume_flush_rx) = bounded(1);
     logger.set_drain_hook_for_test(move || {
         let _ = at_drain_tx.send(());
-        let _ = resume_flush_rx.recv();
+        // Bounded, so a hook left waiting by an already-failed test returns
+        // instead of parking the flush thread where `thread::scope` joins it.
+        let _ = resume_flush_rx.recv_timeout(Duration::from_secs(5));
     });
 
-    thread::scope(|scope| {
-        let flush = scope.spawn(|| logger.flush_handlers());
+    // The senders are owned by the scope so an assertion failure drops them
+    // while unwinding. Kept outside it, they would outlive the failure and
+    // leave the parked hook and the blocked handler waiting on channels that
+    // `thread::scope` is trying to join.
+    let logger_ref = &logger;
+    thread::scope(move |scope| {
+        let flush = scope.spawn(move || logger_ref.flush_handlers());
         at_drain_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the flush should reach its drain wait");
         assert!(
-            logger
+            logger_ref
                 .log(FemtoLevel::Info, "refusal during the drain")
                 .is_some(),
             "the full queue should refuse the record during the drain",
