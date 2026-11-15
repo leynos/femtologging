@@ -17,11 +17,14 @@ import typing as typ
 import pytest
 
 from tests.documentation_examples import (
+    DOCUMENTS,
     REPOSITORY_ROOT,
     DocumentedExample,
     documented_example,
     load_documented_examples,
+    read_document,
     run_example,
+    unmarked_fences,
 )
 
 if typ.TYPE_CHECKING:
@@ -114,6 +117,17 @@ def test_published_output_matches_its_example(
     assert result.stdout + result.stderr == output.body, (
         f"{output.source}:{output.line}: output differs from {example.id}"
     )
+
+
+@pytest.mark.parametrize("document", DOCUMENTS)
+def test_every_fence_is_marked(document: str) -> None:
+    """Every fence in a published document is a tested example.
+
+    The shared loader only reports unmarked fences, so this is where the style
+    guide's rule that every user-facing fence is tested is enforced.
+    """
+    unmarked = unmarked_fences(document, read_document(document))
+    assert not unmarked, f"fences without a tested-example marker: {unmarked}"
 
 
 def test_every_published_example_has_a_check() -> None:

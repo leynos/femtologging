@@ -1,4 +1,4 @@
-"""Failure contracts for the documented-example fence loader."""
+"""Contracts for the documented-example fence loader."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 from tests.documentation_examples import (
     DocumentationExampleError,
     parse_document,
+    unmarked_fences,
 )
 
 
@@ -37,6 +38,39 @@ def test_a_longer_fence_can_quote_a_shorter_one() -> None:
     assert example.body == "```\n", "the quoted fence should stay in the body"
 
 
+def test_a_fence_line_with_an_info_string_stays_in_the_body() -> None:
+    """Only a bare fence closes an example, as CommonMark requires.
+
+    A line such as "```python" opens a fence; read as a closer, it would end
+    the example early and leave its remaining lines outside it.
+    """
+    text = (
+        "<!-- tested-example: nested -->\n```markdown\n```python\nprint('two')\n```\n"
+    )
+    [example] = parse_document("doc.md", text)
+    assert example.body == "```python\nprint('two')\n", (
+        "the inner opening fence and its code should stay in the body"
+    )
+
+
+@pytest.mark.parametrize(
+    "closing",
+    [
+        pytest.param("```\n", id="bare"),
+        pytest.param("```   \n", id="trailing-spaces"),
+        pytest.param("```\t\n", id="trailing-tab"),
+        pytest.param("```", id="end-of-file"),
+    ],
+)
+def test_closing_fence_allows_trailing_whitespace(closing: str) -> None:
+    """Whitespace after a closing fence, or the end of the file, still closes it."""
+    text = f"<!-- tested-example: sample -->\n```python\nprint('one')\n{closing}"
+    [example] = parse_document("doc.md", text)
+    assert example.body == "print('one')\n", (
+        f"the closing fence {closing!r} must end the example"
+    )
+
+
 def test_prose_without_fences_yields_nothing() -> None:
     """A document with no fences has no examples and no errors."""
     assert not parse_document("doc.md", "# Title\n\nJust prose.\n"), (
@@ -45,23 +79,56 @@ def test_prose_without_fences_yields_nothing() -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "diagnostic"),
+    ("text", "expected"),
     [
         pytest.param(
             "```python\nassert True\n```\n",
-            "doc.md:1: fence is missing a tested-example marker",
+            ["doc.md:1: fence is missing a tested-example marker"],
             id="unmarked-fence",
         ),
         pytest.param(
             "~~~bash\nls\n~~~\n",
-            "doc.md:1: fence is missing a tested-example marker",
+            ["doc.md:1: fence is missing a tested-example marker"],
             id="unmarked-tilde-fence",
         ),
         pytest.param(
             "- item\n\n  ```python\n  assert True\n  ```\n",
-            "doc.md:3: fence must start at column 0",
+            ["doc.md:3: fence must start at column 0"],
             id="indented-fence",
         ),
+        pytest.param(
+            "<!-- tested-example: marked -->\n```python\nassert 1\n```\n",
+            [],
+            id="marked-fence",
+        ),
+    ],
+)
+def test_unmarked_fences_are_reported(text: str, expected: list[str]) -> None:
+    """Every fence without a marker is named with its location."""
+    assert unmarked_fences("doc.md", text) == expected, (
+        "each unmarked fence should be reported once, at its opening line"
+    )
+
+
+def test_a_marker_inside_an_unmarked_fence_is_not_read() -> None:
+    """An unmarked block is skipped whole, so its contents cannot pose as markup."""
+    text = (
+        "````markdown\n"
+        "<!-- tested-example: quoted -->\n"
+        "```python\nassert 1\n```\n"
+        "````\n"
+    )
+    assert not parse_document("doc.md", text), (
+        "a marker quoted inside another fence must not become an example"
+    )
+    assert unmarked_fences("doc.md", text) == [
+        "doc.md:1: fence is missing a tested-example marker"
+    ], "only the outer fence should be reported"
+
+
+@pytest.mark.parametrize(
+    ("text", "diagnostic"),
+    [
         pytest.param(
             "<!-- tested-example: -->\n```python\nassert 1\n```\n",
             "doc.md:1: malformed tested-example marker",
@@ -83,6 +150,11 @@ def test_prose_without_fences_yields_nothing() -> None:
             id="marker-separated-by-blank-line",
         ),
         pytest.param(
+            "<!-- tested-example: indented -->\n  ```python\n  assert 1\n  ```\n",
+            "doc.md:1: marker is not followed by a fence",
+            id="marker-above-indented-fence",
+        ),
+        pytest.param(
             "Intro.\n<!-- tested-example: orphan -->\n",
             "doc.md:2: marker has no fence",
             id="marker-without-fence",
@@ -96,6 +168,11 @@ def test_prose_without_fences_yields_nothing() -> None:
             "<!-- tested-example: open -->\n```python\nassert 1\n",
             "doc.md:2: fence is not terminated",
             id="unterminated-fence",
+        ),
+        pytest.param(
+            "Intro.\n```python\nassert 1\n",
+            "doc.md:2: fence is not terminated",
+            id="unterminated-unmarked-fence",
         ),
         pytest.param(
             (
