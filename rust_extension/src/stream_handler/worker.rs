@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::formatter::DefaultFormatter;
     use crate::shutdown::ShutdownCompletion;
-    use crate::sync::bounded;
+    use crate::sync::{Receiver, Sender, bounded};
 
     /// Writer that holds the worker inside its own destructor until released.
     struct BlockingDropWriter {

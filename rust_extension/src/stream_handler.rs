@@ -14,6 +14,8 @@ mod shutdown;
 
 mod waiter;
 
+mod warning;
+
 mod worker;
 
 use std::{
@@ -23,7 +25,7 @@ use std::{
     time::Duration,
 };
 
-use log::{trace, warn};
+use log::trace;
 use pyo3::prelude::*;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
@@ -44,6 +46,7 @@ use shutdown::StreamShutdown;
 use waiter::WaitGuard;
 #[cfg(feature = "test-util")]
 pub use waiter::waiting_count;
+use warning::warn_dropped;
 use worker::run_stream_worker;
 
 /// Commands the worker thread takes from the queue, in order.
@@ -56,23 +59,6 @@ enum StreamCommand {
     Record(FemtoLogRecord),
     /// Flush request carrying the worker's I/O result acknowledgement channel.
     Flush(Sender<io::Result<()>>),
-}
-
-/// Report that `count` records were dropped by this handler.
-///
-/// Shaped to be passed directly as the reporting closure of
-/// [`RateLimitedWarner::warn_if_due`] and [`RateLimitedWarner::flush`], so all
-/// five call sites report through this one message: the three refusal paths in
-/// [`FemtoHandlerTrait::handle`], [`FemtoHandlerTrait::flush`], and
-/// [`FemtoStreamHandler::close`].
-///
-/// The rendered text ends with `log records dropped in the last interval`, which
-/// `tests/stream_handler_logging_tests.rs` strips to read the count back. That
-/// test cannot import this function, so it holds its own copy of the suffix:
-/// changing the wording here means changing it there too, or the count the test
-/// asserts will silently stop being parsed.
-fn warn_dropped(count: u64) {
-    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
 }
 
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
@@ -394,30 +380,5 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
 
     fn as_any(&self) -> &dyn Any {
         self
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Tests for the stream handler's shutdown reporting.
-
-    use super::*;
-
-    /// The Python `close()` path calls `take_shutdown` directly, so the flush
-    /// must live there: the Python object stays alive after `handler.close()`,
-    /// and nothing else reports what was still pending.
-    #[test]
-    fn take_shutdown_reports_pending_drops() {
-        let handler = FemtoStreamHandler::new(io::sink(), DefaultFormatter);
-        handler.warner.record_drop();
-        assert_eq!(handler.warner.pending_drops(), 1);
-
-        let shutdown = handler.take_shutdown();
-        assert_eq!(
-            handler.warner.pending_drops(),
-            0,
-            "shutdown must report the drops still pending",
-        );
-        shutdown.wait();
     }
 }
