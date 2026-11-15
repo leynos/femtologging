@@ -171,7 +171,7 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-
       - name: Test and measure coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@14c325b60788814cd50298eb8060228daee3b842
+        uses: leynos/shared-actions/.github/actions/generate-coverage@203eedc136c14c28041e92c06a929383807b3a3f
         env:
           FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
           UV_CONFIG_FILE: ${{ github.workspace }}/.github/uv-test-util.toml
@@ -196,6 +196,13 @@ jobs:
           # the stack-info snapshot records pytest's own call stack, and
           # an xdist worker replaces it with execnet frames.
           pytest-workers: ''
+          # The pull request measures coverage for its own ratchet check and
+          # nothing else: it neither publishes the report nor contacts
+          # CodeScene. Main owns both, in coverage-main.yml, and the workflow
+          # contracts hold the split. Every input that defines what is
+          # measured must match that publisher field for field.
+          with-ratchet: 'true'
+          publish-artefact: 'false'
 
   build-wheels:
     permissions:
