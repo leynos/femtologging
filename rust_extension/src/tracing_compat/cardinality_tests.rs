@@ -86,16 +86,15 @@ fn dispatch_overflow_targets(dispatch: &Dispatch) {
     }
 }
 
-fn create_root_logger() -> (Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize) {
+fn create_root_logger() -> PyResult<(Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize)> {
     Python::attach(|py| {
-        let root = manager::get_logger(py, "root").expect("root should be available");
+        let root = manager::get_logger(py, "root")?;
         let handler = Arc::new(CollectingHandler::default());
         root.borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native collecting handler should register");
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)?;
         let initial_worker_count = worker_count_for_test();
         assert!(initial_worker_count > 0, "resolving root starts the pool");
-        (root, handler, initial_worker_count)
+        Ok((root, handler, initial_worker_count))
     })
 }
 
@@ -158,7 +157,8 @@ fn tracing_target_resolution_keeps_cardinality_bounded() {
 fn tracing_target_saturation_child() {
     let subscriber = tracing_subscriber::registry().with(FemtoTracingLayer);
     let dispatch = Dispatch::new(subscriber);
-    let (root, handler, initial_worker_count) = create_root_logger();
+    let (root, handler, initial_worker_count) =
+        create_root_logger().expect("root logger setup should succeed");
 
     dispatch_valid_targets(&dispatch);
 
