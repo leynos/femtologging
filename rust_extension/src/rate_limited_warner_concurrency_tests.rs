@@ -1,6 +1,6 @@
 //! Tests for atomic interval claims and synchronized warning drains.
 
-use super::{Clock, RateLimitedWarner};
+use super::{Clock, ForkSafeDrainLock, RateLimitedWarner};
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::sync::Mutex;
@@ -147,5 +147,52 @@ fn suppressed_call_does_not_wait_for_the_drain_lock() {
         warner.pending_drops(),
         1,
         "a suppressed call must leave the count pending"
+    );
+}
+
+/// A live thread of the same process keeps the drain lock held.
+#[test]
+fn drain_lock_is_held_against_the_owning_process() {
+    let lock = ForkSafeDrainLock::new();
+    let guard = lock.try_lock(7).expect("a free lock should be takeable");
+    assert!(
+        lock.try_lock(7).is_none(),
+        "a second caller in the same process must not take the lock",
+    );
+    drop(guard);
+    assert!(
+        lock.try_lock(7).is_some(),
+        "dropping the guard must release the lock",
+    );
+}
+
+/// A forked child reclaims the drain lock instead of deadlocking on it.
+///
+/// The parent can fork while another thread holds the lock. That thread does
+/// not exist in the child, but a parking-lot mutex would stay locked forever;
+/// the lock records its owner so a child can tell the difference.
+#[test]
+fn drain_lock_inherited_from_another_process_is_reclaimed() {
+    let lock = ForkSafeDrainLock::new();
+    let parent_guard = lock
+        .try_lock(41)
+        .expect("the parent should take the free lock");
+
+    let child_guard = lock
+        .try_lock(42)
+        .expect("a child process should reclaim an inherited lock");
+    // The parent's guard object survives into the child too. Dropping it there
+    // must not release the lock the child now owns: its stored owner is the
+    // parent's process ID, which no longer matches the word.
+    drop(parent_guard);
+    assert!(
+        lock.try_lock(42).is_none(),
+        "the stale guard must not free the child's lock",
+    );
+
+    drop(child_guard);
+    assert!(
+        lock.try_lock(42).is_some(),
+        "dropping the child's guard must release the lock",
     );
 }

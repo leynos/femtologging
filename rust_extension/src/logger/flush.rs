@@ -150,6 +150,13 @@ impl FemtoLogger {
         if budget.in_flight() == 0 {
             return DrainOutcome::Drained;
         }
+        // The flush has passed every point where the drop warners used to be
+        // reported and is about to wait; a test hook here can record a refusal
+        // that is provably mid-drain rather than one that merely races the wait.
+        #[cfg(all(test, not(loom)))]
+        if let Some(hook) = self.drain_hook.get() {
+            hook();
+        }
         #[cfg(not(loom))]
         if let Some(drained) =
             pyo3::Python::try_attach(|py| py.detach(|| shard.wait_for_drain_outcome()))

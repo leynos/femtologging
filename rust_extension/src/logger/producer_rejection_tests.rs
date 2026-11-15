@@ -284,11 +284,21 @@ fn flush_reports_drops_recorded_while_the_queue_drains() {
     let _ = take_logged_messages();
     assert_eq!(logger.drop_warner.pending_drops(), 1);
 
+    // The hook parks the flushing thread exactly where the drain wait begins,
+    // so the refusal below is provably mid-drain. Sleeping here instead would
+    // be slow when it works and flaky when the flush thread is descheduled.
+    let (at_drain_tx, at_drain_rx) = bounded(1);
+    let (resume_flush_tx, resume_flush_rx) = bounded(1);
+    logger.set_drain_hook_for_test(move || {
+        let _ = at_drain_tx.send(());
+        let _ = resume_flush_rx.recv();
+    });
+
     thread::scope(|scope| {
         let flush = scope.spawn(|| logger.flush_handlers());
-        // Let the flush thread reach its drain wait before the refusal below,
-        // so the drop is recorded mid-drain rather than before the flush.
-        thread::sleep(Duration::from_millis(100));
+        at_drain_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the flush should reach its drain wait");
         assert!(
             logger
                 .log(FemtoLevel::Info, "refusal during the drain")
@@ -298,6 +308,9 @@ fn flush_reports_drops_recorded_while_the_queue_drains() {
         release_tx
             .send(())
             .expect("the worker should still be waiting for its first record");
+        resume_flush_tx
+            .send(())
+            .expect("the flush should still be waiting to be released");
         assert!(
             flush.join().expect("the flush thread should not panic"),
             "the accepted record should drain after the handler is released",

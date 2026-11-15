@@ -263,6 +263,17 @@ impl FemtoLogger {
         Self::from_shard(name, None, shard)
     }
 
+    /// Install a hook that runs when an explicit flush reaches its drain wait.
+    ///
+    /// A test that needs a record refused *during* an explicit flush has to
+    /// know the flush has started waiting; sleeping and hoping is slow when it
+    /// works and flaky when it does not. The hook is called on the flushing
+    /// thread, before the wait, and only for the logger it was installed on.
+    #[cfg(all(test, not(loom)))]
+    pub(super) fn set_drain_hook_for_test(&self, hook: impl Fn() + Send + Sync + 'static) {
+        let _ = self.drain_hook.set(std::sync::Arc::new(hook));
+    }
+
     /// Assemble a logger on a shard with the default context snapshot provider.
     fn from_shard(name: String, parent: Option<String>, shard: ShardHandle) -> Self {
         Self::assembled(
@@ -319,6 +330,8 @@ impl FemtoLogger {
             context_capture_warner: RateLimitedWarner::default(),
             #[cfg(not(loom))]
             dispatch,
+            #[cfg(all(test, not(loom)))]
+            drain_hook: std::sync::OnceLock::new(),
             #[cfg(loom)]
             shard,
             #[cfg(loom)]
