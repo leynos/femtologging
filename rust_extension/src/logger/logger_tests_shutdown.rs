@@ -2,7 +2,7 @@
 
 use super::logger_tests_helpers::{CollectingHandler, collected_messages};
 use super::*;
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use crate::logger::dispatcher::{Dispatcher, Shard, shared_with_shards_for_test};
 use std::any::Any;
 use std::sync::Arc;
@@ -42,6 +42,10 @@ impl FemtoHandlerTrait for HeldHandler {
         let _ = self.started.send(());
         let _ = self.release.lock().recv();
         Ok(())
+    }
+
+    fn flush_until(&self, _context: &FlushContext) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -122,6 +122,10 @@ fn a_panicking_handler_does_not_silence_later_records() {
             panic!("handler boom");
         }
 
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+            true
+        }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
@@ -156,6 +160,10 @@ fn a_handler_error_does_not_skip_later_handlers() {
     impl FemtoHandlerTrait for FailingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
             Err(HandlerError::Message("handler failed".to_owned()))
+        }
+
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+            true
         }
 
         fn as_any(&self) -> &dyn Any {
@@ -215,7 +223,7 @@ impl FemtoHandlerTrait for FlushOutcomeHandler {
         Ok(())
     }
 
-    fn flush(&self) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.succeeds
@@ -283,7 +291,7 @@ impl FemtoHandlerTrait for AttachingFlushHandler {
         Ok(())
     }
 
-    fn flush(&self) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         if !self
             .attached_once
             .swap(true, std::sync::atomic::Ordering::Relaxed)

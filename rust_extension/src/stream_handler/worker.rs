@@ -43,12 +43,25 @@ where
 }
 
 /// Flushes the writer and sends the exact I/O result to the waiting producer.
-fn handle_flush_command<W: Write>(writer: &mut W, ack: crate::sync::Sender<io::Result<()>>) {
+///
+/// The flush caller's due drop warning travels on the command so the logging
+/// callback runs here, on the worker, rather than on a thread with a deadline
+/// to keep. The warning is emitted after the acknowledgement is sent, so a
+/// slow logging backend cannot make the caller time out first.
+fn handle_flush_command<W: Write>(
+    writer: &mut W,
+    ack: crate::sync::Sender<io::Result<()>>,
+    pending_drops: Option<u64>,
+) {
     let flush_result = writer.flush();
-    if flush_result.is_err() {
+    let flush_failed = flush_result.is_err();
+    let _ = ack.send(flush_result);
+    if flush_failed {
         warn!("FemtoStreamHandler flush error");
     }
-    let _ = ack.send(flush_result);
+    if let Some(count) = pending_drops {
+        warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+    }
 }
 
 /// Owns the writer and formatter on the background thread until the queue closes.
@@ -71,7 +84,9 @@ pub(super) fn run_stream_worker<W, F>(
                 StreamCommand::Record(record) => {
                     handle_record_command(&mut writer, &formatter, record);
                 }
-                StreamCommand::Flush(ack) => handle_flush_command(&mut writer, ack),
+                StreamCommand::Flush(ack, pending_drops) => {
+                    handle_flush_command(&mut writer, ack, pending_drops);
+                }
             }
         }
         flush_with_warning(&mut writer);

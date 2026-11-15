@@ -8,6 +8,7 @@ mod core;
 #[cfg(test)]
 mod core_tests;
 mod handler;
+mod rotation_strategy;
 mod schedule;
 #[cfg(test)]
 mod schedule_tests;

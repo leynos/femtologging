@@ -285,9 +285,15 @@ impl Worker {
     /// immediately without blocking until those retries complete. Callers
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
+    ///
+    /// The acknowledgement goes first so the drop count the handler moved here
+    /// is reported from the worker rather than by the caller when it wakes.
+    fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
         // Ignore send error: if the receiver has dropped, there's nothing to do.
         let _ = ack.send(());
+        if let Some(count) = pending_drops {
+            warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+        }
     }
 
     /// Attempt each queued command once, then acknowledge the shutdown.
@@ -308,7 +314,9 @@ impl Worker {
             }
             match rx.try_recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
@@ -335,7 +343,9 @@ impl Worker {
             }
             match rx.recv() {
                 Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(HTTPCommand::Shutdown(ack)) => {
                     self.drain_pending(&rx, Some(ack));
                     return;

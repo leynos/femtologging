@@ -737,6 +737,19 @@ linker itself:
   is the isolation boundary: it takes none of the development standard (no
   `mold` flag and no inherited `RUSTFLAGS`).
 
+### Whitaker duplicate dylint registration
+
+The installer revision this repository previously pinned registered the
+`string_continuation_style` dylint library twice, so every consumer's
+`build-test` failed while loading the lint suite. A branch-local CI step
+deleted the duplicate shared library before linting. Main now pins the
+installer at `0.2.12` (`c77fca64`, PR #605), whose `build-test` job runs
+`make lint` and passes on Python 3.12, 3.13 and 3.14, so the duplicate
+registration is fixed upstream. `.github/workflows/ci.yml` on this branch is
+byte-identical to main: no workaround remains. Reinstate one only if the pinned
+revision regresses to an installer that registers the lint library twice; the
+upstream issue is leynos/whitaker#565.
+
 ### Locked dependency fetch before tests
 
 A test that starts its own Cargo build (the trybuild compile-time UI tests, for
@@ -1109,25 +1122,32 @@ rate-limited warning without waiting. One logger's records remain FIFO on its
 shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
-`flush_handlers()` queues a barrier only when that logger has work in flight.
-The barrier drains records ahead of it on the same shard; an idle logger does
-not consume a queue slot or wait for unrelated work. The Python wrapper
-releases the GIL while the worker acknowledges the barrier and attached
-handlers flush, so Python handlers can run. That includes a built-in handler
-flushed through its native implementation: a Python formatter on its worker
-thread needs the same GIL the flush would otherwise hold while waiting for the
-acknowledgement. Enqueueing the flush marker and waiting for its
-acknowledgement share a two-second timeout. Flushing attached handlers can take
-additional time. The method returns `True` only when the worker acknowledges
-the marker in time and every handler flush succeeds; it returns `False` if the
-marker cannot be enqueued or acknowledged in time, or a handler flush fails.
+`flush_handlers()` queues a flush marker when the logger has handlers; with no
+handlers it waits only for that logger's in-flight records. One absolute
+two-second deadline spans dispatch resolution, the marker's admission, the
+handler snapshot, the worker's acknowledgement, and each handler's flush, so
+the call is bounded once rather than once per stage. Built-in handlers keep
+their shorter per-handler timeouts, and every handler in the snapshot is
+offered whatever budget remains after an earlier one reports failure, so one
+broken handler does not leave records buffered in the handlers after it. The
+[flush barrier](#logger-handler-flush-barrier) section describes the handshake
+in more detail.
+
+The Python wrapper releases the GIL while the barrier runs, so Python handlers
+can run. That includes a built-in handler flushed through its native
+implementation: a Python formatter on its worker thread needs the same GIL the
+flush would otherwise hold while waiting for the acknowledgement. The method
+returns `True` only when every stage completes within the deadline and every
+handler flush is confirmed; it returns `False` if the deadline expires, the
+shard is gone, or a handler does not confirm its flush.
 
 The Rust `log::Log::flush` bridge snapshots logger references under the
 `MANAGER` read guard, releases the guard, then detaches each logger's blocking
 flush. This avoids a lock cycle: a Python manager writer can hold the GIL while
 waiting for the write lock, while the detached flush waits for a Python
 callback to acquire the GIL. The bridge ignores each logger's boolean result
-because `log::Log::flush` returns `()`.
+because `log::Log::flush` returns `()`, and counts a failed logger flush in a
+separate bridge-failure counter.
 
 Builds with `python,test-util` also expose `wait_for_flush_entry_for_test()`,
 `drain_flush_signals_for_test()`, and `cancel_flush_wait_for_test()` for
@@ -1140,10 +1160,11 @@ only while a detached wait is in flight and reports whether it counted,
 `python` builds omit every one of these hooks, and
 `femtologging/_femtologging_rs.pyi` declares them for type checkers.
 
-Dropping a logger follows the same per-logger in-flight check. The pool itself
-lives for the process lifetime. If the operating system refuses to start a
-worker, construction returns `DispatcherError` in Rust or `RuntimeError`
-through Python. The pool is not marked failed, so a later construction retries.
+Dropping a logger follows the same per-logger in-flight check and does not
+queue a flush marker. The pool itself lives for the process lifetime. If the
+operating system refuses to start a worker, construction returns
+`DispatcherError` in Rust or `RuntimeError` through Python. The pool is not
+marked failed, so a later construction retries.
 
 The production pool is outside the Loom model. Each Loom run owns and stops its
 own shard so worker threads do not survive between model iterations; the
@@ -1341,9 +1362,13 @@ events report `accepted`, `rejected`, or `callback_failed`. If all attached
 handler filters reject a record, the producer emits `producer_handler_dispatch`
 with `handler_kind=none` and `dispatch_outcome=no_handlers_accepted`. Events
 use bounded operation, handler-kind, and outcome fields; filter-chain events
-also include elapsed microseconds. Record payloads and context values are never
-included. They target `femtologging::internal`, which `FemtoTracingLayer`
-ignores to prevent tracing from recursively logging its own instrumentation.
+also include elapsed microseconds. A flush barrier opens its own span and
+reports two linked events: `worker_complete` from the worker, with the elapsed
+microseconds it spent flushing plus the queue wait it absorbed, and
+`caller_complete` with the outcome the caller finally returned after any
+interpreter hand-off. Record payloads and context values are never included.
+They target `femtologging::internal`, which `FemtoTracingLayer` ignores to
+prevent tracing from recursively logging its own instrumentation.
 
 ### Flush observability
 
@@ -1571,6 +1596,100 @@ The counters are diagnostic signals, not error rates:
 `wait_outcomes.rs` owns the classification these counters rely on, so adding a
 new outcome is a single match arm plus one key, and the fixed-key test fails
 until the Python surface and its stub agree.
+
+## Logger handler flush barrier
+
+`FemtoLogger::flush_handlers_blocking()` creates one absolute deadline for the
+marker insertion, handler snapshot, worker acknowledgement and all handler
+flushes. The barrier takes a brief handler-list read lock only to answer
+whether any handler is attached, and releases it before the marker is admitted.
+After admission, a second snapshot read is held only long enough to clone the
+handler owners, and it is released before the worker's start gate opens, so no
+handler callback runs while the lock is held. The snapshot lock and all channel
+waits consume the remaining time. A handler removed after the snapshot remains
+alive until the worker releases it. Built-in handlers retain their shorter
+configured timeouts.
+
+The default `FemtoHandlerTrait::flush_until(&FlushContext)` returns `false`
+without calling legacy synchronous `flush()`. Custom handlers must override
+this method and honour the deadline; the logger cannot pre-empt arbitrary
+synchronous code.
+
+Concurrent flush calls keep separate deadlines and use the existing bounded
+queue. In normal builds, logger drop waits for its own in-flight records only,
+up to the bounded drain timeout; it does not join the shared process-wide
+worker. A violating callback may keep that worker occupied and retain its
+handler after the caller returns `false`. Loom models join their logger-owned
+worker during cleanup.
+
+Python-facing calls release the GIL across the barrier. Native Rust callers do
+not acquire or release it, so callers that already hold the interpreter must
+release it when queued Python work needs to run. PyO3 reacquires the
+interpreter before returning to Python; that hand-off may delay the Python
+return beyond the Rust barrier deadline, in which case the result is `false`.
+
+### Worker hand-off
+
+A flush marker carries [`FlushDeadline`], which captures the caller's tracing
+span and dispatcher when the barrier starts. The shard worker installs that
+dispatcher with `tracing::dispatcher::with_default` around the marker's job, so
+a subscriber installed only on the caller's thread still receives the worker's
+`worker_complete` event, and the caller's `caller_complete` event shares its
+span. Installing the dispatcher per job rather than once per worker also stops
+one caller's subscriber leaking into the next flush on that shard. An enqueue
+that never reaches the worker fails before a marker exists, so that flush emits
+the caller event alone; the failure stage names the refused wait.
+
+`tracing` delivers events synchronously, so a subscriber that blocks delays
+whichever thread recorded the event. The barrier deadline covers the barrier's
+own waits — the snapshot lock, the queue, the acknowledgement and the handler
+flushes — and not the application's subscriber. The caller samples the clock
+and decides the outcome before it emits `caller_complete`, so a slow subscriber
+can delay the Python return but cannot change what the flush reports, exactly
+as it cannot for a record the application emits itself.
+
+### Deferred drop warnings
+
+Handler flush commands carry the warner's due drop count so the worker, not the
+flush caller, invokes the logging callback. `RateLimitedWarner::take_due`
+removes that count without calling anything, `flush_with_pending_drops` sends
+it with the marker, and `restore_drops` puts it back when the marker never
+entered the queue. Restoration keeps the figure attached to the next warning: a
+full or closed queue would otherwise strand the drops the failed flush was
+meant to report. `warn_if_due` keeps suppressed drops pending until the
+interval expires, and `flush` reports any restored count, so neither path loses
+a drop.
+
+### Python-defined handlers
+
+`PyHandler` flushes a recognized built-in handler through its native
+implementation. Any other Python object is asked to flush itself, exactly as
+the legacy `flush()` path does, because only the handler knows where it buffers.
+`flush_until` therefore calls the handler's callable `flush` and maps the
+answer onto the barrier: a missing or non-callable `flush` is an opt-out, a
+call that raises or returns a falsy value is a failure, and the exception
+itself is never printed in case it quotes a record. The call runs synchronously
+on the worker, so the barrier's deadline bounds the wait for the answer, not
+the duration of the handler's own `flush`.
+
+The `log` bridge's flush sweep calls each registered logger's detached barrier
+in turn and returns `true` only when every logger confirmed. Each logger gets
+its own two-second deadline; the sweep does not share one aggregate deadline,
+so a slow logger cannot consume another's budget. The `log::Log::flush()`
+adapter keeps its unit-return contract and discards the confirmation result.
+
+Each logger records fixed-cardinality flush diagnostics: attempt and
+confirmation counts, terminal failures by stage, and five elapsed-time buckets.
+Those buckets are disjoint ranges — up to 10 ms, over 10 to 100 ms, over 100 to
+500 ms, over 500 ms to 2 s, and over 2 s — so each attempt increments exactly
+one; they are not cumulative. Recording touches only relaxed atomics, so a
+snapshot may observe concurrent updates at different instants.
+`FemtoLogger.get_flush_diagnostics()` exposes that snapshot to Python;
+exporting it through a shared metrics backend remains tracked by issue `#551`.
+
+See the [Rust extension guide](rust-extension.md) and the
+[multithreaded logging design](rust-multithreaded-logging-framework-for-python-design.md#flush-barrier-states)
+for the queue state machine and deadline transitions.
 
 ## Configuration transaction
 

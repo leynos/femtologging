@@ -59,12 +59,25 @@ common trait:
 pub trait FemtoHandlerTrait: Send + Sync {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
     fn flush(&self) -> bool { true }
+    fn flush_until(&self, _context: &FlushContext) -> bool { false }
 }
 
 /// Base Python-exposed class. Methods are no-ops by default.
 #[pyclass(name = "FemtoHandler", subclass)]
 pub struct FemtoHandler;
 ```
+
+The default deliberately fails closed without calling the synchronous `flush()`
+method. A custom handler that needs to participate in
+`FemtoLogger::flush_handlers()` must override `flush_until(context)` and honour
+the context's deadline itself; synchronous arbitrary handler code cannot be
+preempted by the logger.
+
+User-defined Python handlers are the exception. The barrier has no flush
+protocol it can invoke on them, so it confirms only that the record was
+dispatched to the handler. A Python handler that buffers records must flush
+that buffer itself; `flush_handlers()` returning `true` does not mean its
+buffer is empty.
 
 Implementations respect the configured overflow policy when forwarding a record
 to the worker queue. `Drop` uses `try_send`, immediately returning

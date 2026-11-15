@@ -22,6 +22,7 @@ use pyo3::{Bound, Py, PyAny, Python};
 use rstest::rstest;
 use std::collections::BTreeMap;
 use std::sync::mpsc;
+use std::time::Duration;
 use tracing_subscriber::prelude::*;
 
 /// What one Python binding call left behind.

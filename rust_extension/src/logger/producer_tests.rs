@@ -267,6 +267,10 @@ impl FemtoHandlerTrait for ContextAwareTestHandler {
         Ok(())
     }
 
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+        true
+    }
+
     fn is_python_backed(&self) -> bool {
         true
     }

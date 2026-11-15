@@ -8,7 +8,7 @@ use pyo3::{Py, PyAny};
 
 use crate::{
     filters::FemtoFilter,
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     log_record::FemtoLogRecord,
 };
 
@@ -65,6 +65,15 @@ impl FemtoHandlerTrait for HandlerRecordSnapshot {
 
     fn flush(&self) -> bool {
         self.handler.flush()
+    }
+
+    /// Forward the deadline-aware flush to the wrapped handler.
+    ///
+    /// A filtered attachment is flushed through this wrapper, so without this
+    /// forwarding a handler behind a producer filter could never confirm a
+    /// barrier flush.
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.handler.flush_until(context)
     }
 
     fn as_any(&self) -> &dyn Any {
