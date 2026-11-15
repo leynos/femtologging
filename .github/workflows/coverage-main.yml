@@ -1,0 +1,141 @@
+name: Coverage (main)
+
+# Main owns both persistent coverage outputs: the ratchet baseline and the
+# CodeScene upload. Pull requests generate coverage only for their own ratchet
+# check, in ci.yml; they neither publish a report nor contact CodeScene.
+#
+# The measurement runs on a GitHub-hosted runner because it blocks nobody's
+# work; the baseline is published from an Ubicloud job because the pull
+# request lanes run there and a cache written on one runner provider is not
+# read by the other. `publish-baseline: never` keeps the measuring job out of
+# the cache store entirely and hands its figures to the publisher through a
+# workflow artefact.
+#
+# Known exception: a Dependabot pull request merged by dependabot-automerge
+# with GITHUB_TOKEN fires no push event, so that merge publishes nothing until
+# the next push to main.
+
+on:
+  push:
+    branches: [main]
+
+# One group per ref, never cancelled. A cancelled publisher abandons both its
+# upload and its baseline write. With cancellation off, runs never overlap and
+# a newer push replaces any pending run, so uploads land in commit order and
+# the newest baseline wins. A manual "Re-run jobs" on an older run is an
+# operator action: it keeps that run's commit and republishes its coverage and
+# baseline until the next push supersedes it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  coverage-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # The CodeScene token lives in this environment, whose deployment policy
+    # admits `main` alone. No pull-request-reachable job may declare it, so a
+    # change on a branch can never read the token; the workflow contracts hold
+    # that split.
+    environment: codescene
+    permissions:
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      BUILD_PROFILE: debug
+      # The Python ratchet baseline key carries the interpreter's major.minor,
+      # so this must name one of ci.yml's required lanes for the two figures to
+      # be compared. 3.14 is a required, non-experimental lane there.
+      UV_PYTHON: "3.14"
+      FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
+      UV_CONFIG_FILE: ${{ github.workspace }}/.github/uv-test-util.toml
+      # One of the two exclusions from the build standard: a coverage build is
+      # a measurement, so it takes neither the parallel frontend nor the mold
+      # linker. Assigning RUSTFLAGS displaces every `rustflags` table in
+      # .cargo/config.toml.
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job never pushes, so the checkout token need not persist in
+          # the clone's config.
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Install rust
+        # A hosted job that runs the suite installs the pinned toolchain and
+        # linker, as `ci.yml`'s build-test does: the build-tool preflight may be
+        # reached from a suite step, so the tools must be there. The coverage
+        # build itself does not use the linker: the RUSTFLAGS assignment below
+        # displaces the repository's rustflags, so no `-fuse-ld=mold` reaches
+        # the compiler.
+        uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
+        with:
+          install-mold: 'true'
+      # Every input that defines what is measured must match ci.yml's coverage
+      # step field for field, or the baseline this job writes describes a
+      # different population from the one pull requests ratchet against.
+      - name: Generate coverage
+        uses: leynos/shared-actions/.github/actions/generate-coverage@203eedc136c14c28041e92c06a929383807b3a3f
+        with:
+          output-path: coverage.xml
+          format: cobertura
+          cargo-manifest: rust_extension/Cargo.toml
+          with-default-features: false
+          features: python,test-util
+          pytest-workers: ''
+          with-ratchet: 'true'
+          # This runner's cache store is not the one the Ubicloud pull-request
+          # lanes read, so a ratchet here could never fail and a save here
+          # would never be restored. `never` skips both and hands the figures
+          # to `coverage-baseline`, which publishes from an Ubicloud runner.
+          publish-baseline: never
+          baseline-artefact-name: coverage-baseline-handover
+      # Whether the token is set, as a plain step output. The expression is
+      # evaluated before the shell runs, so this step binds nothing: the token
+      # sits in no `env` in this workflow, because the upload action is
+      # composite and hands its step's `env` to the nested steps it runs.
+      - name: Check CodeScene token
+        id: codescene-token
+        run: echo "available=${{ secrets.CS_ACCESS_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      # The push trigger is already restricted to main; the ref conjunct keeps
+      # the upload confined there if a dispatch trigger is ever added. Absent
+      # coverage still ratchets: the baseline job runs whatever this upload
+      # does, so a missing token cannot hide a coverage regression.
+      - name: Upload coverage data to CodeScene
+        if: ${{ steps.codescene-token.outputs.available == 'true' && github.ref == 'refs/heads/main' }}
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@203eedc136c14c28041e92c06a929383807b3a3f
+        with:
+          path: coverage.xml
+          format: cobertura
+          mode: upload
+          access-token: ${{ secrets.CS_ACCESS_TOKEN }}
+
+  coverage-baseline:
+    needs: coverage-upload
+    # The pull-request lanes run on Ubicloud, and they restore the baseline
+    # from the cache store they can read. This job therefore runs there too and
+    # compiles nothing; it only ratchets the handed-over figures and saves the
+    # advanced baseline.
+    # A push has no pull request, so both halves of the condition are empty and
+    # the expression selects Ubicloud, which is the cache store the
+    # pull-request lanes read.
+    runs-on: >-
+      ${{ (github.event.pull_request.head.repo.fork
+      || github.event.pull_request.user.login == 'dependabot[bot]')
+      && 'ubuntu-latest' || 'ubicloud-standard-2' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Publish the ratchet baseline
+        uses: leynos/shared-actions/.github/actions/publish-coverage-baseline@203eedc136c14c28041e92c06a929383807b3a3f
+        with:
+          artefact-name: coverage-baseline-handover
