@@ -1019,10 +1019,10 @@ because this review changed code after the `da4f859` gate run.
 deterministic gate. The first attempt failed at the Whitaker dylint stage
 because the new inline `mod tests` in `stream_handler.rs` lacked its inner doc
 comment; adding it and amending the commit fixed the only finding. After that,
-`make lint` (609 s), `make typecheck` (80 s) and `make test` (781 s) all
-exited zero, with `make check-fmt`, `make markdownlint` and `make nixie`
-passing alongside. The whole-suite pytest step reported 856 passed and 5
-skipped, and the four cargo lanes (no-default-features, `python`, `log-compat`,
+`make lint` (609 s), `make typecheck` (80 s) and `make test` (781 s) all exited
+zero, with `make check-fmt`, `make markdownlint` and `make nixie` passing
+alongside. The whole-suite pytest step reported 856 passed and 5 skipped, and
+the four cargo lanes (no-default-features, `python`, `log-compat`,
 `tracing-compat`) all passed. Logs are
 `/tmp/gates-issue-440-20261115T002500Z.out` and its `.status` file, which holds
 `ALL_GATES_PASS`.
