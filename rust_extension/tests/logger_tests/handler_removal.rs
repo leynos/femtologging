@@ -14,7 +14,8 @@ use super::{
 fn handler_can_be_removed(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = FemtoLogger::new("core".to_string()).expect("test logger should be constructible");
-    attach_native_handler(&logger, Arc::clone(&handler));
+    attach_native_handler(&logger, Arc::clone(&handler))
+        .expect("native test handler should register");
     logger.log(FemtoLevel::Info, "one");
     // The record is queued on the shared shard, so flushing the handler alone
     // can run before the worker delivers "one". `flush_handlers` waits on the
