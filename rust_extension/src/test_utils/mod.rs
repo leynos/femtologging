@@ -20,5 +20,6 @@ pub mod frame_test_helpers;
     )
 ))]
 pub(crate) mod isolated_child;
+pub mod json_round_trip;
 #[cfg(feature = "python")]
 pub mod traceback_test_helpers;
