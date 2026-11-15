@@ -9,12 +9,15 @@
 
 use super::*;
 use rstest::*;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Barrier, Mutex, mpsc};
 use std::thread;
 
 /// A test clock that advances only when the test requests it.
-struct FakeClock {
+///
+/// Shared with the concurrency tests, which mix clock advances into racing
+/// warn and flush calls.
+pub(super) struct FakeClock {
     /// Current fake time in milliseconds.
     now: AtomicU64,
 }
@@ -34,7 +37,8 @@ impl Clock for FakeClock {
 }
 
 impl FakeClock {
-    fn advance(&self, ms: u64) {
+    /// Move the fake clock forward by `ms` milliseconds.
+    pub(super) fn advance(&self, ms: u64) {
         self.now.fetch_add(ms, Ordering::Relaxed);
     }
 }
@@ -306,74 +310,4 @@ fn callback_runs_after_releasing_the_drain_lock() {
         "the paused warning and the flush each report their own drop"
     );
     assert_eq!(warner.pending_drops(), 0);
-}
-
-/// Scenario: threads record, warn, flush and move the clock concurrently.
-///
-/// Invariant: conservation. Every recorded drop is reported exactly once, so
-/// the callback counts sum to the number of `record_drop` calls, and no
-/// callback is handed an empty batch.
-#[rstest]
-#[case::two_threads(2, 60)]
-#[case::four_threads(4, 40)]
-fn concurrent_callers_conserve_every_drop(#[case] thread_count: usize, #[case] ops: usize) {
-    let clock = Arc::new(FakeClock::default());
-    // A one-millisecond interval, so the clock advance on thread 0 crosses the
-    // boundary and the run mixes due and suppressed calls.
-    let warner = Arc::new(RateLimitedWarner::with_clock(
-        Duration::from_millis(1),
-        Arc::clone(&clock) as Arc<dyn Clock>,
-    ));
-    let recorded = AtomicU64::new(0);
-    let reported = AtomicU64::new(0);
-    let saw_empty_batch = AtomicBool::new(false);
-    let start = Barrier::new(thread_count);
-
-    thread::scope(|scope| {
-        for index in 0..thread_count {
-            let warner = Arc::clone(&warner);
-            let clock = Arc::clone(&clock);
-            let recorded = &recorded;
-            let reported = &reported;
-            let saw_empty_batch = &saw_empty_batch;
-            let start = &start;
-            scope.spawn(move || {
-                start.wait();
-                let mut warn = |count: u64| {
-                    if count == 0 {
-                        saw_empty_batch.store(true, Ordering::Relaxed);
-                    }
-                    reported.fetch_add(count, Ordering::Relaxed);
-                };
-                for step in 0..ops {
-                    warner.record_drop();
-                    recorded.fetch_add(1, Ordering::Relaxed);
-                    match step % 3 {
-                        0 => warner.warn_if_due(&mut warn),
-                        1 if index == 0 => clock.advance(1),
-                        _ => warner.flush(&mut warn),
-                    }
-                }
-            });
-        }
-    });
-
-    let mut tail = Vec::new();
-    warner.flush(|count| tail.push(count));
-    let reported = reported.load(Ordering::Relaxed) + tail.iter().sum::<u64>();
-    let recorded = recorded.load(Ordering::Relaxed);
-
-    assert!(
-        !saw_empty_batch.load(Ordering::Relaxed),
-        "no callback should be handed an empty batch"
-    );
-    assert_eq!(
-        warner.pending_drops(),
-        0,
-        "the final flush should leave nothing pending"
-    );
-    assert_eq!(
-        reported, recorded,
-        "every recorded drop should be reported exactly once"
-    );
 }

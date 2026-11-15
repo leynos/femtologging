@@ -1,10 +1,12 @@
 //! Tests for atomic interval claims and synchronized warning drains.
 
+use super::tests::FakeClock;
 use super::{Clock, ForkSafeDrainLock, RateLimitedWarner};
+use rstest::rstest;
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -194,5 +196,102 @@ fn drain_lock_inherited_from_another_process_is_reclaimed() {
     assert!(
         lock.try_lock(42).is_some(),
         "dropping the child's guard must release the lock",
+    );
+}
+
+/// Shared state every conservation worker reads and updates.
+struct ConservationRun<'a> {
+    /// Warner under test.
+    warner: &'a RateLimitedWarner,
+    /// Clock the capturing thread advances.
+    clock: &'a FakeClock,
+    /// Drops the threads have recorded, counted by the threads themselves.
+    recorded: &'a AtomicU64,
+    /// Drops the callbacks have reported.
+    reported: &'a AtomicU64,
+    /// Set if any callback is handed an empty batch.
+    saw_empty_batch: &'a AtomicBool,
+    /// Releases every worker at the same instant.
+    start: &'a Barrier,
+}
+
+impl ConservationRun<'_> {
+    /// Exercise one thread's share of the mixed workload.
+    fn work(&self, index: usize, ops: usize) {
+        self.start.wait();
+        let mut warn = |count: u64| self.report(count);
+        for step in 0..ops {
+            self.warner.record_drop();
+            self.recorded.fetch_add(1, Ordering::Relaxed);
+            match step % 3 {
+                0 => self.warner.warn_if_due(&mut warn),
+                1 if index == 0 => self.clock.advance(1),
+                _ => self.warner.flush(&mut warn),
+            }
+        }
+    }
+
+    /// Account for one callback batch, flagging an empty one.
+    fn report(&self, count: u64) {
+        if count == 0 {
+            self.saw_empty_batch.store(true, Ordering::Relaxed);
+        }
+        self.reported.fetch_add(count, Ordering::Relaxed);
+    }
+}
+
+/// Scenario: threads record, warn, flush and move the clock concurrently.
+///
+/// Invariant: conservation. Every recorded drop is reported exactly once, so
+/// the callback counts sum to the number of `record_drop` calls, and no
+/// callback is handed an empty batch.
+#[rstest]
+#[case::two_threads(2, 60)]
+#[case::four_threads(4, 40)]
+fn concurrent_callers_conserve_every_drop(#[case] thread_count: usize, #[case] ops: usize) {
+    let clock = Arc::new(FakeClock::default());
+    // A one-millisecond interval, so the clock advance on thread 0 crosses the
+    // boundary and the run mixes due and suppressed calls.
+    let warner = RateLimitedWarner::with_clock(
+        Duration::from_millis(1),
+        Arc::clone(&clock) as Arc<dyn Clock>,
+    );
+    let recorded = AtomicU64::new(0);
+    let reported = AtomicU64::new(0);
+    let saw_empty_batch = AtomicBool::new(false);
+    let start = Barrier::new(thread_count);
+    let run = ConservationRun {
+        warner: &warner,
+        clock: clock.as_ref(),
+        recorded: &recorded,
+        reported: &reported,
+        saw_empty_batch: &saw_empty_batch,
+        start: &start,
+    };
+
+    thread::scope(|scope| {
+        for index in 0..thread_count {
+            let run = &run;
+            scope.spawn(move || run.work(index, ops));
+        }
+    });
+
+    let mut tail = Vec::new();
+    warner.flush(|count| tail.push(count));
+    let reported = reported.load(Ordering::Relaxed) + tail.iter().sum::<u64>();
+    let recorded = recorded.load(Ordering::Relaxed);
+
+    assert!(
+        !saw_empty_batch.load(Ordering::Relaxed),
+        "no callback should be handed an empty batch"
+    );
+    assert_eq!(
+        warner.pending_drops(),
+        0,
+        "the final flush should leave nothing pending"
+    );
+    assert_eq!(
+        reported, recorded,
+        "every recorded drop should be reported exactly once"
     );
 }

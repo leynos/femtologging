@@ -243,23 +243,33 @@ fn flush_reports_drops_held_back_by_the_warning_interval() {
     );
 }
 
-/// A drop recorded while the dispatch queue is draining is still reported by
-/// the same explicit flush.
+/// The channel ends a mid-drain flush test must release.
 ///
-/// `flush_handlers_blocking` reports drop warnings only after the drain. A
-/// producer refused during the wait records its drop after any earlier call to
-/// the warners, and `RateLimitedWarner::flush` reports the counts present when
-/// it runs, so flushing first would return with that drop still pending.
-#[test]
-#[serial]
-fn flush_reports_drops_recorded_while_the_queue_drains() {
-    install_test_logger();
+/// Held as one value so the scope owns them: an assertion failure drops them
+/// while unwinding, which disconnects the hook and the blocked handler instead
+/// of leaving `thread::scope` waiting on threads only the failed test could
+/// feed.
+struct FlushRelease {
+    /// Releases the handler holding the only dispatch permit.
+    release_handler: Sender<()>,
+    /// Signalled by the test-only hook once the flush is parked.
+    at_drain: Receiver<()>,
+    /// Released when the test is ready for the flush to continue.
+    resume_flush: Sender<()>,
+}
+
+/// Build a logger whose next flush parks at the drain wait.
+///
+/// The queue is full, one record is in flight behind a blocked handler, and
+/// one drop is pending from a suppressed refusal, so the flush that follows is
+/// provably mid-drain when the hook fires.
+fn prepare_parked_flush() -> (FemtoLogger, FlushRelease) {
     let shard: &'static Shard = Box::leak(Box::new(
         Shard::start(0, 1).expect("a one-record test shard should start"),
     ));
     let logger = FemtoLogger::assembled_for_test("producer-drain-flush".to_string(), shard);
     let (started_tx, started_rx) = bounded(1);
-    let (release_tx, release_rx) = bounded(1);
+    let (release_handler, release_rx) = bounded(1);
     logger
         .add_handler(Arc::new(BlockingHandler {
             started: started_tx,
@@ -287,8 +297,8 @@ fn flush_reports_drops_recorded_while_the_queue_drains() {
     // The hook parks the flushing thread exactly where the drain wait begins,
     // so the refusal below is provably mid-drain. Sleeping here instead would
     // be slow when it works and flaky when the flush thread is descheduled.
-    let (at_drain_tx, at_drain_rx) = bounded(1);
-    let (resume_flush_tx, resume_flush_rx) = bounded(1);
+    let (at_drain_tx, at_drain) = bounded(1);
+    let (resume_flush, resume_flush_rx) = bounded(1);
     logger.set_drain_hook_for_test(move || {
         let _ = at_drain_tx.send(());
         // Bounded, so a hook left waiting by an already-failed test returns
@@ -296,34 +306,18 @@ fn flush_reports_drops_recorded_while_the_queue_drains() {
         let _ = resume_flush_rx.recv_timeout(Duration::from_secs(5));
     });
 
-    // The senders are owned by the scope so an assertion failure drops them
-    // while unwinding. Kept outside it, they would outlive the failure and
-    // leave the parked hook and the blocked handler waiting on channels that
-    // `thread::scope` is trying to join.
-    let logger_ref = &logger;
-    thread::scope(move |scope| {
-        let flush = scope.spawn(move || logger_ref.flush_handlers());
-        at_drain_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the flush should reach its drain wait");
-        assert!(
-            logger_ref
-                .log(FemtoLevel::Info, "refusal during the drain")
-                .is_some(),
-            "the full queue should refuse the record during the drain",
-        );
-        release_tx
-            .send(())
-            .expect("the worker should still be waiting for its first record");
-        resume_flush_tx
-            .send(())
-            .expect("the flush should still be waiting to be released");
-        assert!(
-            flush.join().expect("the flush thread should not panic"),
-            "the accepted record should drain after the handler is released",
-        );
-    });
+    (
+        logger,
+        FlushRelease {
+            release_handler,
+            at_drain,
+            resume_flush,
+        },
+    )
+}
 
+/// Assert one flush reported both the suppressed and the mid-drain drop.
+fn assert_flush_reported_the_drain(logger: &FemtoLogger) {
     assert_eq!(
         logger.drop_warner.pending_drops(),
         0,
@@ -341,4 +335,45 @@ fn flush_reports_drops_recorded_while_the_queue_drains() {
         1,
         "one flush warning should carry both pending drops",
     );
+}
+
+/// A drop recorded while the dispatch queue is draining is still reported by
+/// the same explicit flush.
+///
+/// `flush_handlers_blocking` reports drop warnings only after the drain. A
+/// producer refused during the wait records its drop after any earlier call to
+/// the warners, and `RateLimitedWarner::flush` reports the counts present when
+/// it runs, so flushing first would return with that drop still pending.
+#[test]
+#[serial]
+fn flush_reports_drops_recorded_while_the_queue_drains() {
+    install_test_logger();
+    let (logger, release) = prepare_parked_flush();
+    let logger_ref = &logger;
+    thread::scope(move |scope| {
+        let flush = scope.spawn(move || logger_ref.flush_handlers());
+        release
+            .at_drain
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the flush should reach its drain wait");
+        assert!(
+            logger_ref
+                .log(FemtoLevel::Info, "refusal during the drain")
+                .is_some(),
+            "the full queue should refuse the record during the drain",
+        );
+        release
+            .release_handler
+            .send(())
+            .expect("the worker should still be waiting for its first record");
+        release
+            .resume_flush
+            .send(())
+            .expect("the flush should still be waiting to be released");
+        assert!(
+            flush.join().expect("the flush thread should not panic"),
+            "the accepted record should drain after the handler is released",
+        );
+        assert_flush_reported_the_drain(logger_ref);
+    });
 }
