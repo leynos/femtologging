@@ -43,10 +43,19 @@ LARGE_MESSAGE = "x" * (256 * 1024)
 LARGE_MESSAGE_COUNT = 32
 
 
+class _SilentServer(typ.NamedTuple):
+    """A server that accepts connections and never answers them."""
+
+    port: int
+    connected: threading.Event
+    """Set once a handler has connected, so a test can wait for that."""
+
+
 @pytest.fixture
-def silent_server() -> cabc.Iterator[int]:
-    """Yield the port of a server that accepts connections and never reads."""
+def silent_server() -> cabc.Iterator[_SilentServer]:
+    """Yield a server that accepts connections and never reads or answers."""
     connections: list[socket.socket] = []
+    connected = threading.Event()
     with socket.create_server(("127.0.0.1", 0)) as listener:
         listener.settimeout(0.05)
         is_stopping = threading.Event()
@@ -58,10 +67,11 @@ def silent_server() -> cabc.Iterator[int]:
                     connections.append(listener.accept()[0])
                 except TimeoutError:
                     continue
+                connected.set()
 
         acceptor = threading.Thread(target=accept_forever, daemon=True)
         acceptor.start()
-        yield listener.getsockname()[1]
+        yield _SilentServer(listener.getsockname()[1], connected)
         is_stopping.set()
         acceptor.join()
     for connection in connections:
@@ -108,28 +118,34 @@ def _ticks_during(
         ticker.join()
 
 
-def _stalled_socket_handler(port: int) -> _NetworkHandler:
-    """Build a socket handler whose worker is blocked writing to ``port``."""
+def _stalled_socket_handler(server: _SilentServer) -> _NetworkHandler:
+    """Build a socket handler whose worker is blocked writing to ``server``."""
     handler = (
         SocketHandlerBuilder()
-        .with_tcp("127.0.0.1", port)
+        .with_tcp("127.0.0.1", server.port)
         .with_write_timeout_ms(WRITE_TIMEOUT_MS)
         .build()
     )
     for _ in range(LARGE_MESSAGE_COUNT):
         handler.handle("app", "INFO", LARGE_MESSAGE)
+    # Wait for the worker to connect before the caller starts timing, so the
+    # measured call cannot arrive after the worker has finished with the peer.
+    assert server.connected.wait(timeout=5), "the socket worker never connected"
     return typ.cast("_NetworkHandler", handler)
 
 
-def _stalled_http_handler(port: int) -> _NetworkHandler:
-    """Build an HTTP handler whose worker awaits a response from ``port``."""
+def _stalled_http_handler(server: _SilentServer) -> _NetworkHandler:
+    """Build an HTTP handler whose worker awaits a response from ``server``."""
     handler = (
         HTTPHandlerBuilder()
-        .with_endpoint(f"http://127.0.0.1:{port}/ingest")
+        .with_endpoint(f"http://127.0.0.1:{server.port}/ingest")
         .with_write_timeout_ms(WRITE_TIMEOUT_MS)
         .build()
     )
     handler.handle("app", "INFO", "never answered")
+    # The request timeout starts when the worker sends, so measuring from the
+    # connection leaves the whole timeout inside the call being measured.
+    assert server.connected.wait(timeout=5), "the HTTP worker never connected"
     return typ.cast("_NetworkHandler", handler)
 
 
@@ -142,15 +158,15 @@ def _stalled_http_handler(port: int) -> _NetworkHandler:
     ],
 )
 def test_wait_on_a_stalled_worker_lets_python_threads_run(
-    build_handler: cabc.Callable[[int], _NetworkHandler],
+    build_handler: cabc.Callable[[_SilentServer], _NetworkHandler],
     method: str,
-    silent_server: int,
+    silent_server: _SilentServer,
 ) -> None:
     """Other Python threads keep running while the handler waits on its worker."""
     built: list[_NetworkHandler] = []
 
     def prepare() -> cabc.Callable[[], object]:
-        """Build and queue the handler once the ticker is running."""
+        """Build and block the handler's worker before the timed call begins."""
         handler = build_handler(silent_server)
         built.append(handler)
         return getattr(handler, method)

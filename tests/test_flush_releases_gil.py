@@ -67,51 +67,86 @@ handler.close()
 """
 
 # The handler's worker formats the record in Python and waits for a release
-# that only another Python thread can give, so a flush that holds the GIL
-# deadlocks until the formatter times out. The release waits for the flush to
-# begin, so the test cannot pass before there is a flush to exercise.
+# only another Python thread can give. The release thread is started once the
+# formatter is already blocked, and gives way after a delay far longer than
+# the flush needs to reach the handler, so the release can only happen while
+# the flush is waiting on that handler. A flush that held the GIL through the
+# wait would block the release and the ticker thread below, and the formatter
+# would time out. The ticker counts the interpreter time the flush lets other
+# Python code have, which fails a GIL-holding flush even if the formatter
+# somehow escaped.
 FLUSH_FORMATTER_SCRIPT = """
 import pathlib
 import sys
 import threading
+import time
 
 from femtologging import FileHandlerBuilder, get_logger
 
 path = pathlib.Path(sys.argv[1])
 formatter_entered = threading.Event()
-flush_started = threading.Event()
 release_formatter = threading.Event()
+ticker_started = threading.Event()
+is_finished = threading.Event()
+ticks = [0]
+
+TICK_SECONDS = 0.005
+RELEASE_DELAY_SECONDS = 0.5
+FORMATTER_TIMEOUT_SECONDS = 5.0
 
 
 def pause_formatter(record):
     formatter_entered.set()
-    if not release_formatter.wait(timeout=5):
+    if not release_formatter.wait(timeout=FORMATTER_TIMEOUT_SECONDS):
         raise TimeoutError("no other thread could release the formatter")
     return f"formatted {record['message']}"
 
 
-def release():
-    formatter_entered.wait(timeout=5)
-    # Wait for the flush itself. Releasing as soon as the formatter is entered
-    # would free it during dispatch, before there is a flush to test.
-    flush_started.wait(timeout=5)
+def release_after_delay():
+    time.sleep(RELEASE_DELAY_SECONDS)
     release_formatter.set()
+
+
+def count_ticks():
+    ticker_started.set()
+    while not is_finished.is_set():
+        ticks[0] += 1
+        time.sleep(TICK_SECONDS)
 
 
 handler = FileHandlerBuilder(str(path)).with_formatter(pause_formatter).build()
 logger = get_logger("gil.flush.formatter")
 logger.add_handler(handler)
-threading.Thread(target=release, daemon=True).start()
+
+ticker = threading.Thread(target=count_ticks, daemon=True)
+ticker.start()
+assert ticker_started.wait(timeout=5), "the ticker thread never started"
 
 logger.info("paused")
-# The main thread holds the GIL from here into flush_handlers(), so a worker
-# released after this point still cannot finish the formatter unless the flush
-# lets go of the GIL.
-flush_started.set()
-assert not release_formatter.is_set(), (
-    "the formatter was released before flush_handlers() began"
-)
+assert formatter_entered.wait(timeout=5), "the handler's worker never formatted"
+
+# Start the release only now, so its delay is measured from a point at which
+# the flush is the next thing to run. Set before the delay, a release could
+# fire before the flush reached the handler and would prove nothing.
+release = threading.Thread(target=release_after_delay, daemon=True)
+release.start()
+
+ticks_before = ticks[0]
+started = time.monotonic()
 assert logger.flush_handlers(), "flush_handlers stalled behind the GIL"
+elapsed = time.monotonic() - started
+is_finished.set()
+ticker.join()
+
+assert elapsed >= 0.2, (
+    f"flush_handlers() returned after {elapsed:.3f}s, so the blocked formatter "
+    "was not what the flush waited for and this test proved nothing"
+)
+observed = ticks[0] - ticks_before
+assert observed >= 10, (
+    f"another Python thread ran only {observed} times during {elapsed:.3f}s of "
+    "flush_handlers(), so the wait held the GIL"
+)
 # Read before close(): the record must be on disk because the flush waited for
 # the handler, not because close() later drained the worker. If PyHandler's
 # flush returned without delegating, the formatter would still be blocked here
@@ -172,18 +207,19 @@ def test_stream_flush_succeeds_with_a_python_formatter() -> None:
 def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     tmp_path: Path,
 ) -> None:
-    """``flush_handlers()`` lets another thread release a blocked formatter.
+    """``flush_handlers()`` lets other Python threads run while it waits.
 
     The handler is registered from Python, so ``flush_handlers()`` reaches it
     through ``PyHandler::flush()``. Its worker is parked in a Python formatter
-    that only another Python thread can release; that thread can run only if
-    the flush releases the GIL, and the flush can finish only if the formatter
-    does. The file is read before ``close()``, so the record can be there only
-    because the flush waited for the handler: a ``PyHandler::flush()`` that did
-    not delegate would return with the formatter still blocked, and the read
-    would find an empty file. A fresh interpreter keeps the logger's dispatch
-    shard idle, so the record is admitted rather than refused behind earlier
-    tests' work.
+    that only another Python thread can release. The release is requested once
+    the formatter is already blocked and takes effect half a second later, so
+    it can only land while the flush waits on that handler: a flush that kept
+    the GIL would block the release, time the formatter out, and leave the
+    ticker thread silent. The ticker counts how often another Python thread
+    ran during the call, and the file is read before ``close()``, so the
+    record can be there only because the flush waited for the handler. A fresh
+    interpreter keeps the logger's dispatch shard idle, so the record is
+    admitted rather than refused behind earlier tests' work.
     """
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
         [sys.executable, "-c", FLUSH_FORMATTER_SCRIPT, str(tmp_path / "app.log")],
