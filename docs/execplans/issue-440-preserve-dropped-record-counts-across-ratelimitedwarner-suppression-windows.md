@@ -1145,3 +1145,38 @@ attempt was stopped by the runner's 30-minute cap after two lanes with no
 failure; the re-run was green end to end, with 998 passing tests in each of the
 first three lanes, 1050 in `tracing-compat`, and 1178 pytest tests passing with
 5 skipped and 66 snapshots.
+
+2026-11-15, second review round and CodeScene: the CodeRabbit finding is
+resolved in `d7382d5` (bounded hook wait, senders owned by the scope), and a
+fresh `coderabbit review --agent` against `origin/main` returned no findings.
+The CodeScene check on PR #613 still failed three rules, all introduced by this
+branch:
+
+- critical `Bumpy Road Ahead` in `concurrent_callers_conserve_every_drop`;
+- advisory `Large Method` in
+  `flush_reports_drops_recorded_while_the_queue_drains`;
+- advisory `Complex Method` in `RateLimitedWarner::warn_if_due`.
+
+`f381049` splits `warn_if_due` into `is_warning_due` (the lock-free pre-check,
+with the argument for why a stale `last_warn` read is sound) and
+`claim_due_batch` (the locked recheck, claim and swap). The clock is now read
+under the lock; a later sample can only make the interval test stricter.
+`62b2761` moves the conservation scenario into
+`rate_limited_warner_concurrency_tests.rs` behind a `ConservationRun` helper
+and splits the mid-drain test into `prepare_parked_flush` and
+`assert_flush_reported_the_drain`. The release senders travel as one
+`FlushRelease` value owned by the scope, so the earlier hang guarantee survives.
+
+2026-11-15, gates on `62b2761`: `make check-fmt`, `make markdownlint` and
+`make nixie` pass, as do `make typecheck` (8 s) and `make test` (1714 s, four
+cargo lanes at 998/998/998/1050 passing, 1178 pytest tests, 5 skipped and 66
+snapshots), with logs in `/tmp/gates-issue-440-20261115T1130Z/`. `make lint`
+fails, but only in its Whitaker Dylint lane and not because of this branch: the
+locally staged Whitaker suite was restaged upstream at 06:29 and now reports 14
+`bumpy-road-function` errors, and the flagged files are byte-identical to
+`origin/main` except the two workers, which differ only outside the flagged
+`drain_pending` bodies. GitHub Actions shows the same drift: this branch's
+`Lint` step passed at 03:20 on `ba042d3`, and the same step now fails on two
+unrelated branches in the same way. Making the gate green needs either a suite
+pin or a repository-wide migration of those 14 functions, neither of which
+belongs in this change.
