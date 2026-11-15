@@ -38,6 +38,34 @@ impl TimedFileRotationStrategy<SystemClock> {
     }
 }
 
+/// The state one rotation carries between its steps.
+///
+/// A rotation replaces the handler's writer with a temporary one so the active
+/// file can be renamed. Every later step needs the same four pieces to finish
+/// or to put the handler back as it was, so they travel together rather than as
+/// a parameter list each step has to unpack.
+struct RotationParts<'a> {
+    /// The handler's writer, rebuilt from the original file if a step fails.
+    writer: &'a mut BufWriter<File>,
+    /// Buffer capacity used when the writer is rebuilt.
+    capacity: usize,
+    /// The file the writer held before the temporary swap, until it is restored
+    /// or deliberately dropped.
+    original_file: Option<File>,
+    /// Timestamped destination the active file is renamed onto.
+    rotated_path: PathBuf,
+}
+
+impl RotationParts<'_> {
+    /// Put the original file back, so the handler keeps working after a failed
+    /// rotation step.
+    fn restore_writer(&mut self) {
+        if let Some(file) = self.original_file.take() {
+            *self.writer = BufWriter::with_capacity(self.capacity, file);
+        }
+    }
+}
+
 impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
@@ -96,47 +124,41 @@ where
         writer.flush()?;
         let capacity = writer.capacity();
         let original_file = self.swap_writer_with_temp(writer, capacity)?;
-        let rotated_path = self.rotated_path(rollover_at);
-        let original_file =
-            self.stage_rotated_file(writer, capacity, original_file, &rotated_path)?;
-        self.install_fresh_writer(writer, capacity, original_file, &rotated_path, now)
+        let mut rotation = RotationParts {
+            writer,
+            capacity,
+            original_file: Some(original_file),
+            rotated_path: self.rotated_path(rollover_at),
+        };
+        self.stage_rotated_file(&mut rotation)?;
+        self.install_fresh_writer(rotation, now)
     }
 
     /// Clear the previous rotation target and rename the active file onto it.
     ///
-    /// Any failure restores `original_file` as the active writer, so the caller
-    /// observes a handler that is still usable and unchanged on disk.
-    fn stage_rotated_file(
-        &self,
-        writer: &mut BufWriter<File>,
-        capacity: usize,
-        original_file: File,
-        rotated_path: &Path,
-    ) -> io::Result<File> {
-        if let Err(err) = Self::remove_file_if_exists(rotated_path) {
-            *writer = BufWriter::with_capacity(capacity, original_file);
+    /// Any failure restores the original file as the active writer, so the
+    /// caller observes a handler that is still usable and unchanged on disk.
+    fn stage_rotated_file(&self, rotation: &mut RotationParts<'_>) -> io::Result<()> {
+        if let Err(err) = Self::remove_file_if_exists(&rotation.rotated_path) {
+            rotation.restore_writer();
             return Err(err);
         }
-        if let Err(err) = fs::rename(&self.path, rotated_path) {
-            *writer = BufWriter::with_capacity(capacity, original_file);
+        if let Err(err) = fs::rename(&self.path, &rotation.rotated_path) {
+            rotation.restore_writer();
             return Err(err);
         }
-        Ok(original_file)
+        Ok(())
     }
 
     /// Open the replacement writer, undoing the rename if that fails.
     fn install_fresh_writer(
         &mut self,
-        writer: &mut BufWriter<File>,
-        capacity: usize,
-        original_file: File,
-        rotated_path: &Path,
+        mut rotation: RotationParts<'_>,
         now: DateTime<Utc>,
     ) -> io::Result<()> {
-        match Self::open_fresh_writer(&self.path, capacity) {
+        match Self::open_fresh_writer(&self.path, rotation.capacity) {
             Ok(fresh_writer) => {
-                let _ = original_file;
-                *writer = fresh_writer;
+                *rotation.writer = fresh_writer;
                 // Advance the rollover deadline before pruning so a prune failure
                 // does not cause repeated rollovers on the next write.
                 self.next_rollover_at = self.schedule.next_rollover(now);
@@ -145,8 +167,8 @@ where
             Err(err) => {
                 // Restore the writer before filesystem rollback so the handler
                 // remains usable even if the rename also fails.
-                *writer = BufWriter::with_capacity(capacity, original_file);
-                rollback_rotation(&self.path, rotated_path, err)
+                rotation.restore_writer();
+                rollback_rotation(&self.path, &rotation.rotated_path, err)
             }
         }
     }

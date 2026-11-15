@@ -35,6 +35,37 @@ pub(super) fn get_or_create_filter_record<'py>(
         .clone())
 }
 
+/// The Python-side halves of one serialized record.
+///
+/// `record_to_dict` produces all three together and each is only meaningful
+/// beside the others, so they travel as one value from the serialized record to
+/// the payload stdlib logging consumes.
+struct SerializedRecordView<'py> {
+    /// The whole record dict, source of the optional exception and stack payloads.
+    record: Bound<'py, PyDict>,
+    /// The record's provenance metadata.
+    metadata: Bound<'py, PyDict>,
+    /// User enrichments copied onto the payload as extra attributes.
+    extra: Bound<'py, PyDict>,
+}
+
+impl<'py> SerializedRecordView<'py> {
+    /// Split a serialized record into the dicts the payload needs.
+    ///
+    /// `record_to_dict` builds every one of them, so a missing key is a
+    /// programming error rather than a user error, and the runtime error names
+    /// which one is absent.
+    fn from_record_dict(record: &Bound<'py, PyDict>) -> PyResult<Self> {
+        let metadata = require_dict_item(record, "metadata")?;
+        let extra = require_dict_item(&metadata, "key_values")?;
+        Ok(Self {
+            record: record.clone(),
+            metadata,
+            extra,
+        })
+    }
+}
+
 /// Converts the Rust record and its metadata into a stdlib-compatible record.
 fn create_filter_record<'py>(
     py: Python<'py>,
@@ -42,22 +73,10 @@ fn create_filter_record<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let record_dict_obj = record_to_dict(py, record)?;
     let record_dict = record_dict_obj.bind(py).cast::<PyDict>()?;
-    let (metadata, extra) = extract_enrichment_dicts(record_dict)?;
-    let payload = build_log_record_payload(py, record, record_dict, &metadata, &extra)?;
+    let view = SerializedRecordView::from_record_dict(record_dict)?;
+    let payload = build_log_record_payload(py, record, &view)?;
     py.import("logging")?
         .call_method1("makeLogRecord", (payload,))
-}
-
-/// Pull the metadata dict and its enrichment mapping out of a serialized record.
-///
-/// `record_to_dict` builds both, so a missing key is a programming error rather
-/// than a user error, and the runtime error names which one is absent.
-fn extract_enrichment_dicts<'py>(
-    record_dict: &Bound<'py, PyDict>,
-) -> PyResult<(Bound<'py, PyDict>, Bound<'py, PyDict>)> {
-    let metadata = require_dict_item(record_dict, "metadata")?;
-    let extra = require_dict_item(&metadata, "key_values")?;
-    Ok((metadata, extra))
 }
 
 /// Read a dict entry that must be a nested dict.
@@ -72,16 +91,14 @@ fn require_dict_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Boun
 fn build_log_record_payload<'py>(
     py: Python<'py>,
     record: &FemtoLogRecord,
-    record_dict: &Bound<'py, PyDict>,
-    metadata: &Bound<'py, PyDict>,
-    extra: &Bound<'py, PyDict>,
+    view: &SerializedRecordView<'py>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let payload = PyDict::new(py);
     set_record_identity_items(&payload, record)?;
-    payload.set_item("metadata", metadata)?;
+    payload.set_item("metadata", &view.metadata)?;
     payload.set_item("args", PyList::empty(py))?;
-    copy_optional_payloads(&payload, record_dict)?;
-    copy_enrichments(&payload, extra)?;
+    copy_optional_payloads(&payload, &view.record)?;
+    copy_enrichments(&payload, &view.extra)?;
     Ok(payload)
 }
 
