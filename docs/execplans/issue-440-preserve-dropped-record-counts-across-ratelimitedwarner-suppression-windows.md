@@ -1180,3 +1180,11 @@ locally staged Whitaker suite was restaged upstream at 06:29 and now reports 14
 unrelated branches in the same way. Making the gate green needs either a suite
 pin or a repository-wide migration of those 14 functions, neither of which
 belongs in this change.
+
+2026-11-15, final review state: a third `coderabbit review --agent` pass against
+`origin/main` on `696ed01` returned no findings, and the CodeScene check on
+that head reports success, so the three rules the refactors answered no longer
+appear. The only red check is the CI `Lint` job, whose Whitaker lane fails on
+`origin/main`'s own code for the reason recorded above. PR #613 is left as a
+draft with that evidence in its gate section; a suite pin or a repository-wide
+`bumpy_road_function` migration is a separate decision.
