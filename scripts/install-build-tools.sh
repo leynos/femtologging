@@ -62,21 +62,24 @@ install_mold_command() {
   fi
 }
 
+# Status 1 means the command could not be attempted without privilege; any
+# failure of the command itself is reported as 2, because a package manager
+# that ran and failed is not an unavailable installation.
 run_package_install() {
   local command=$1
   if [ "$(id -u)" -eq 0 ]; then
     # shellcheck disable=SC2086  # the command is a deliberately simple word list
-    $command
+    $command || return 2
   elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
     # shellcheck disable=SC2086  # as above
-    sudo -n $command
+    sudo -n $command || return 2
   else
     return 1
   fi
 }
 
 install_mold() {
-  local command
+  local command status
   if [ "$(host_os)" != Linux ]; then
     note "mold is Linux-only; skipping on $(host_os), the platform linker is used"
     return 0
@@ -87,8 +90,14 @@ install_mold() {
   fi
   command=$(install_mold_command)
   note "installing mold: ${command}"
-  if ! run_package_install "$command"; then
+  status=0
+  run_package_install "$command" || status=$?
+  if [ "$status" -eq 1 ]; then
     note 'automatic installation is unavailable; run this command as an administrator:'
+    note "  ${command}"
+    return 1
+  elif [ "$status" -ne 0 ]; then
+    note 'package installation failed; run this command as an administrator:'
     note "  ${command}"
     return 1
   fi

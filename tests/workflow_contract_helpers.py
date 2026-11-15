@@ -9,12 +9,11 @@ Makefile and the workflow documents, without hard-coding today's job names.
 
 from __future__ import annotations
 
-import re
+import itertools
 import shlex
 import typing as typ
 
-from tests.make_contract_helpers import prerequisite_map
-from tests.workflow_document_helpers import is_linux_job
+from tests.workflow_runner_helpers import is_linux_job
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -22,7 +21,7 @@ if typ.TYPE_CHECKING:
     from tests.workflow_document_helpers import Job
 
 PREFLIGHT: typ.Final[str] = "check-build-tools"
-SUITE_CARGO: typ.Final[re.Pattern[str]] = re.compile(r"\bcargo\s+(?:test|nextest)\b")
+CARGO_SUITE_COMMANDS: typ.Final[frozenset[str]] = frozenset({"test", "nextest"})
 CONTROL_OPERATORS: typ.Final[frozenset[str]] = frozenset({
     "&&",
     "||",
@@ -100,6 +99,15 @@ def _segment_goals(tokens: list[str]) -> list[str]:
     return [token for token in _arguments_after_make(tokens) if _is_goal(token)]
 
 
+def _goals(tokens: list[str]) -> list[str]:
+    """Return the Make goals of one line's shell `tokens`, in order."""
+    return [
+        goal
+        for segment in _command_segments(tokens)
+        for goal in _segment_goals(segment)
+    ]
+
+
 def make_goals(line: str) -> list[str]:
     """Return every Make goal named by the shell `line`, in order.
 
@@ -122,12 +130,15 @@ def make_goals(line: str) -> list[str]:
     >>> make_goals("make -C . check-fmt && make test")
     ['check-fmt', 'test']
     """
-    tokens = _line_tokens(line)
-    return [
-        goal
-        for segment in _command_segments(tokens)
-        for goal in _segment_goals(segment)
-    ]
+    return _goals(_line_tokens(line))
+
+
+def _runs_cargo_suite(tokens: list[str]) -> bool:
+    """Report whether `tokens` invoke Cargo's test runner."""
+    return any(
+        word == "cargo" and following in CARGO_SUITE_COMMANDS
+        for word, following in itertools.pairwise(tokens)
+    )
 
 
 def _reaches_preflight(
@@ -162,23 +173,23 @@ def _reaches_preflight(
 
 
 def depends_on_preflight(
-    prerequisites: cabc.Mapping[str, cabc.Sequence[str]] | None = None,
+    prerequisites: cabc.Mapping[str, cabc.Sequence[str]],
 ) -> cabc.Callable[[str], bool]:
     """Return a predicate for Make targets that compile through the preflight.
 
     Parameters
     ----------
     prerequisites
-        A parsed prerequisite map to query instead of the repository's
-        Makefile. Tests inject a synthetic map; production callers omit it and
-        the Makefile is parsed on this call.
+        A parsed prerequisite map, such as ``prerequisite_map()`` or a
+        deliberately synthetic one. Requiring it keeps Makeutil execution at
+        the caller's explicit boundary instead of inside this query.
 
     Returns
     -------
     collections.abc.Callable[[str], bool]
         A predicate over Make target names.
     """
-    parsed = prerequisite_map() if prerequisites is None else prerequisites
+    parsed = prerequisites
 
     def depends(target: str) -> bool:
         """Report whether `target` compiles through the preflight."""
@@ -206,9 +217,10 @@ def _run_suite_reason(run: str, depends: cabc.Callable[[str], bool]) -> str | No
         The first qualifying line, stripped, or ``None``.
     """
     for line in run.splitlines():
-        if SUITE_CARGO.search(line):
+        tokens = _line_tokens(line)
+        if _runs_cargo_suite(tokens):
             return line.strip()
-        if any(depends(goal) for goal in make_goals(line)):
+        if any(depends(goal) for goal in _goals(tokens)):
             return line.strip()
     return None
 

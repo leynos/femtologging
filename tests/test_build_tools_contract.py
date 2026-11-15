@@ -23,8 +23,6 @@ from tests.make_contract_helpers import (
     objects,
     prerequisite_map,
     recipe_tokens,
-    sole_recipe_rule,
-    text_sequence,
 )
 from tests.workflow_contract_helpers import depends_on_preflight
 
@@ -57,31 +55,18 @@ COMPILE_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
 )
 
 
-def _prerequisites(target: str) -> tuple[str, ...]:
-    """Return the parsed prerequisites of a Makefile target.
-
-    Parameters
-    ----------
-    target
-        Name of the Makefile target.
-
-    Returns
-    -------
-    tuple[str, ...]
-        The prerequisite names in declaration order.
-    """
-    rule = sole_recipe_rule(target, require_recipes=False)
-    return text_sequence(rule.get("prerequisites"), subject=f"{target} prerequisites")
-
-
 @pytest.mark.parametrize("target", RUST_BUILDING_TARGETS)
 def test_each_rust_building_target_reaches_the_preflight(target: str) -> None:
-    """Every target that compiles Rust depends on ``check-build-tools``.
+    """Every target that compiles Rust reaches ``check-build-tools``.
+
+    The same reachability detector proves the mutation case below, so a
+    direct-dependency check cannot drift from the mutation's verdict.
 
     A missing linker otherwise surfaces as an opaque failure deep inside Cargo
     instead of the installation command the preflight prints.
     """
-    assert "check-build-tools" in _prerequisites(target), (
+    depends = depends_on_preflight(prerequisite_map())
+    assert depends(target) is True, (
         f"{target} must depend on check-build-tools before it compiles"
     )
 
@@ -107,7 +92,7 @@ def test_the_preflight_detector_notices_a_removed_dependency(
         Scratch directory that holds the mutated Makefile.
     """
     original = (ROOT / "Makefile").read_text("utf-8")
-    assert depends_on_preflight()("build") is True, (
+    assert depends_on_preflight(prerequisite_map())("build") is True, (
         "the repository Makefile must reach the preflight from build"
     )
     mutated = original.replace("build: check-build-tools", "build:", 1)
