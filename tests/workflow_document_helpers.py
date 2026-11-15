@@ -91,6 +91,12 @@ def load_workflow(path: Path) -> dict[str, typ.Any]:
     -------
     dict[str, typing.Any]
         The parsed document. The loader rejects a duplicate mapping key.
+
+    Notes
+    -----
+    Reading and parsing happen here, so an unreadable file, invalid YAML or a
+    repeated mapping key fails at this boundary instead of returning a
+    partial workflow. A document whose root is not a mapping is rejected.
     """
     # The loader is a SafeLoader subclass that rejects duplicate keys.
     document = yaml.load(
@@ -101,109 +107,36 @@ def load_workflow(path: Path) -> dict[str, typ.Any]:
     return typ.cast("dict[str, typ.Any]", document)
 
 
-def _flatten(value: object) -> list[str]:
-    """Return every scalar in a YAML value as text.
+def _job_documents(name: str, document: dict[str, typ.Any]) -> list[tuple[str, Job]]:
+    """Return the job mappings declared by one parsed workflow `document`.
 
     Parameters
     ----------
-    value
-        A scalar, sequence or mapping from a workflow document.
-
-    Returns
-    -------
-    list[str]
-        The scalar values in document order.
-    """
-    match value:
-        case str():
-            return [value]
-        case list() | tuple():
-            return [text for item in value for text in _flatten(item)]
-        case dict():
-            return [text for item in value.values() for text in _flatten(item)]
-        case _:
-            return []
-
-
-def _matrix_runner_values(matrix: dict[str, typ.Any]) -> list[str]:
-    """Return the runner labels a job matrix names.
-
-    Parameters
-    ----------
-    matrix
-        The job's ``strategy.matrix`` mapping.
-
-    Returns
-    -------
-    list[str]
-        Labels from ``include`` entries and from a direct ``os`` key.
-    """
-    included = matrix.get("include")
-    entries = included if isinstance(included, list) else []
-    from_include = [
-        str(entry["os"])
-        for entry in entries
-        if isinstance(entry, dict) and "os" in entry
-    ]
-    return from_include + _flatten(matrix.get("os"))
-
-
-def runner_values(job: Job) -> list[str]:
-    """Return the runner labels and matrix operating systems of `job`."""
-    values = _flatten(job.get("runs-on"))
-    matrix = job.get("strategy", {}).get("matrix", {})
-    if isinstance(matrix, dict):
-        values.extend(_matrix_runner_values(matrix))
-    return values
-
-
-def is_linux_job(job: Job) -> bool:
-    """Report whether `job` runs on Linux runners.
-
-    A runner expression that no concrete label resolves (such as
-    ``${{ matrix.os }}``) is left to the matrix values; an expression with no
-    matrix detail is treated as Linux, because the repository's hosted suites
-    run there. Non-Linux jobs are a legitimate exception: their platform
-    linker replaces ``mold``.
-
-    Returns
-    -------
-    bool
-        Whether the job's concrete runners are Linux.
-    """
-    concrete = [value for value in runner_values(job) if "${{" not in value]
-    if not concrete:
-        return True
-    joined = " ".join(concrete).lower()
-    if any(word in joined for word in ("ubuntu", "linux", "ubicloud")):
-        return True
-    return not any(word in joined for word in ("windows", "macos"))
-
-
-def _job_documents(path: Path) -> list[tuple[str, Job]]:
-    """Return the job mappings declared by one workflow file.
-
-    Parameters
-    ----------
-    path
-        A workflow document.
+    name
+        The workflow file name, used in failure messages.
+    document
+        A parsed workflow document.
 
     Returns
     -------
     list[tuple[str, Job]]
-        The job id and document, in file order.
+        The job id and document, in file order. A missing jobs mapping or a
+        non-mapping job is rejected rather than skipped.
     """
-    document = load_workflow(path)
     job_map = document.get("jobs")
-    require(isinstance(job_map, dict), f"{path.name} must declare a jobs mapping")
+    require(isinstance(job_map, dict), f"{name} must declare a jobs mapping")
     jobs: list[tuple[str, Job]] = []
     for job_id, job in typ.cast("dict[str, object]", job_map).items():
-        require(isinstance(job, dict), f"{path.name} job {job_id!r} must be a mapping")
+        require(isinstance(job, dict), f"{name} job {job_id!r} must be a mapping")
         jobs.append((str(job_id), typ.cast("Job", job)))
     return jobs
 
 
-def _check_reusable_calls(path: Path, jobs: list[tuple[str, Job]]) -> None:
+def _check_reusable_calls(
+    name: str,
+    jobs: list[tuple[str, Job]],
+    reusable_exists: cabc.Callable[[str], bool],
+) -> None:
     """Check that every locally called reusable workflow exists.
 
     A remote reusable workflow's jobs are not in this repository; its own
@@ -211,36 +144,41 @@ def _check_reusable_calls(path: Path, jobs: list[tuple[str, Job]]) -> None:
 
     Parameters
     ----------
-    path
-        The calling workflow.
+    name
+        The calling workflow's file name, used in failure messages.
     jobs
         The workflow's jobs.
+    reusable_exists
+        Reports whether a repository-relative workflow path exists. The caller
+        supplies it so this module assumes no repository root of its own. A
+        missing local reusable workflow is rejected.
     """
     for job_id, job in jobs:
         reusable = job.get("uses")
         if isinstance(reusable, str) and reusable.startswith("./"):
             require(
-                (ROOT / reusable).is_file(),
-                f"{path.name} job {job_id!r} calls a missing workflow: {reusable}",
+                reusable_exists(reusable),
+                f"{name} job {job_id!r} calls a missing workflow: {reusable}",
             )
 
 
 def _concrete_step_jobs(
-    path: Path, jobs: list[tuple[str, Job]]
+    name: str, jobs: list[tuple[str, Job]]
 ) -> list[tuple[str, Job]]:
     """Return the jobs that declare steps of their own.
 
     Parameters
     ----------
-    path
-        The workflow file, named in failure messages.
+    name
+        The workflow file name, used in failure messages.
     jobs
         The workflow's jobs.
 
     Returns
     -------
     list[tuple[str, Job]]
-        Jobs with a step list; reusable-workflow calls are omitted.
+        Jobs with a step list; reusable-workflow calls are omitted. A
+        concrete job without a step list is rejected.
     """
     concrete = []
     for job_id, job in jobs:
@@ -249,7 +187,7 @@ def _concrete_step_jobs(
         steps = job.get("steps")
         require(
             isinstance(steps, list),
-            f"{path.name} job {job_id!r} must declare a step list",
+            f"{name} job {job_id!r} must declare a step list",
         )
         concrete.append((job_id, job))
     return concrete
@@ -261,7 +199,9 @@ def workflow_documents() -> list[Path]:
     Returns
     -------
     list[Path]
-        The ``*.yml`` and ``*.yaml`` workflow files, without duplicates.
+        The ``*.yml`` and ``*.yaml`` workflow files, without duplicates. A
+        repository that publishes none is rejected rather than silently
+        inspected as empty.
     """
     documents = sorted(
         {
@@ -275,30 +215,65 @@ def workflow_documents() -> list[Path]:
     return documents
 
 
-def workflow_jobs(
-    paths: cabc.Iterable[Path] | None = None,
-) -> list[tuple[str, str, Job]]:
-    """Return every concrete job of every repository workflow.
+def repository_workflows() -> list[tuple[str, dict[str, typ.Any]]]:
+    """Load every repository workflow through the documented boundaries.
+
+    Returns
+    -------
+    list[tuple[str, dict[str, typing.Any]]]
+        The file name and parsed document, in file-name order. Reading and
+        parsing stay in `workflow_documents` and `load_workflow`, so each
+        failure is raised at its own boundary.
+    """
+    return [(path.name, load_workflow(path)) for path in workflow_documents()]
+
+
+def repository_workflow_exists(reference: str) -> bool:
+    """Report whether a repository-relative reusable workflow exists.
 
     Parameters
     ----------
-    paths
-        Workflow documents to inspect. When omitted, every document found by
-        `workflow_documents` is read.
+    reference
+        The ``uses`` value of a job calling a local reusable workflow.
+
+    Returns
+    -------
+    bool
+        Whether the referenced file exists in this repository.
+    """
+    return (ROOT / reference).is_file()
+
+
+def workflow_jobs(
+    documents: cabc.Iterable[tuple[str, dict[str, typ.Any]]],
+    *,
+    reusable_exists: cabc.Callable[[str], bool],
+) -> list[tuple[str, str, Job]]:
+    """Return every concrete job of the supplied workflow `documents`.
+
+    Parameters
+    ----------
+    documents
+        File name and parsed document for each workflow to inspect, such as
+        ``repository_workflows()``. Parsing stays at that caller's boundary,
+        so a malformed document fails where it is read.
+    reusable_exists
+        Reports whether a repository-relative reusable workflow exists; the
+        caller owns that lookup so no global repository root is assumed.
 
     Returns
     -------
     list[tuple[str, str, Job]]
-        The workflow file name, job id and job document, in file order.
+        The workflow file name, job id and job document, in order. A
+        document, job or step list of an unexpected shape, and a missing
+        local reusable workflow, are rejected rather than skipped.
     """
-    documents = workflow_documents() if paths is None else list(paths)
     jobs: list[tuple[str, str, Job]] = []
-    for path in documents:
-        entries = _job_documents(path)
-        _check_reusable_calls(path, entries)
+    for name, document in documents:
+        entries = _job_documents(name, document)
+        _check_reusable_calls(name, entries, reusable_exists)
         jobs.extend(
-            (path.name, job_id, job)
-            for job_id, job in _concrete_step_jobs(path, entries)
+            (name, job_id, job) for job_id, job in _concrete_step_jobs(name, entries)
         )
     return jobs
 
