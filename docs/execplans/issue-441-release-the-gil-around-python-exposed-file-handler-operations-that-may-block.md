@@ -1722,6 +1722,78 @@ observation that establishes the send is waiting before `close()` starts.
 The focused run of the matrix passed seven cases in 18.02 s on the
 `--no-default-features --features tracing-compat` lane.
 
+## Eighth review follow-up after `051576bc`
+
+CodeRabbit reviewed `051576bc` and asked for two documentation corrections,
+both of which described main's #555 flush semantics rather than this branch's
+pre-rebase behaviour:
+
+- `docs/users-guide.md` said a handler's `flush` result is read as a boolean.
+  `call_python_flush` treats `None` as success and reads every other result for
+  its truthiness, so `0` and an empty container fail the call.
+- Both user-facing guides said a raised exception is printed to standard
+  error. The flush path logs a fixed, bounded warning that omits the exception
+  text — it never runs `PyErr::print` or `PyErr::display` — and then reports
+  failure.
+
+The same review raised one failed pre-merge warning, Testing (Property/Proof),
+which asked for generated coverage of the classification and aggregation rules
+rather than more named examples.
+
+`976002bf` corrects the three documents and adds two Hypothesis properties to
+`tests/test_custom_handler_flush.py`:
+
+- `test_flush_result_classification_follows_python_truthiness` draws arbitrary
+  return values, including `None`, `0`, empty containers and an object whose
+  `__bool__` raises, and asserts that `flush_handlers()` reports exactly what
+  the documented rule predicts.
+- `test_flush_handlers_aggregates_generated_handler_outcomes` draws lists of
+  one to eight per-handler outcomes and asserts the call succeeds exactly when
+  every handler does, and that every handler was flushed once.
+
+Each logger is created under a unique name, because handlers accumulate on a
+named logger and a shared name would make one generated case flush the cases
+before it. The named cases remain as readable specification.
+
+## Second hosted lint outage from the rolling Whitaker suite
+
+`976002bf` passed every gate this branch owns but failed `make lint` here and
+at the hosted `Lint` step of all four `build-test` jobs (run 43699353457). The
+failure is the Whitaker Dylint suite, not consumer code:
+
+```text
+error: Multiple clusters of nested conditional logic in `create_filter_record`.
+note: Detected 2 complexity bumps above the threshold 2.5.
+= note: `-D bumpy-road-function` implied by `-D warnings`
+error: could not compile `femtologging_rs` (lib) due to 14 previous errors
+Error: Error: Compilation failed with toolchain `nightly-2026-05-28`
+```
+
+The fourteen `bumpy-road-function` findings are in `filters/python_callback/`,
+`formatter/python.rs`, both handler builders, `timed_rotating/`, both handler
+workers, `frame_filter_py.rs`, `python_module.rs` and `lib.rs`. None of those
+files appears in `git diff --name-only origin/main...HEAD`; they are
+byte-identical to `main`, so the finding is introduced by the tool, not by this
+candidate.
+
+The cause is the same class of fault recorded in the first hosted lint outage:
+`install-whitaker` refuses a suite pin by design, so every consumer takes the
+rolling archive from Whitaker's default-branch tip. The host's installed suite
+was replaced at 09:36 CET on 2026-11-15 from tip `880939d1`, *Implement the
+macro-aware cognitive complexity rule*, which reworked
+`crates/bumpy_road_function/src/driver/segment_builder/` and added authored
+condition-guard UI contracts. The earlier suite, installed on 4 August, did not
+report these functions; the gate passed on this host before the replacement.
+
+Whitaker issue 622, *Charge generated logical operands nothing in complexity
+conditions*, was opened upstream the previous day against the same rule. Until
+the archive is reissued with that correction, the local and hosted lint gates
+fail identically for every branch in this repository, including `main`. The
+candidate is unchanged: there is no repo-local remedy that does not mean
+refactoring fourteen unrelated functions or raising the rule's threshold, both
+of which are separate work with their own review. The failed `build-test` jobs
+need a rerun once the archive changes.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
