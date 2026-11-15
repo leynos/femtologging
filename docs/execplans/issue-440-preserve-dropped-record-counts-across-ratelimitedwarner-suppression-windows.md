@@ -1014,3 +1014,19 @@ accepted and fixed:
 
 The tip must pass the deterministic gates again before the next review round,
 because this review changed code after the `da4f859` gate run.
+
+2026-11-15: the re-run on the review-fixed tip (`7f6bc41`) passed every
+deterministic gate. The first attempt failed at the Whitaker dylint stage
+because the new inline `mod tests` in `stream_handler.rs` lacked its inner doc
+comment; adding it and amending the commit fixed the only finding. After that,
+`make lint` (609 s), `make typecheck` (80 s) and `make test` (781 s) all
+exited zero, with `make check-fmt`, `make markdownlint` and `make nixie`
+passing alongside. The whole-suite pytest step reported 856 passed and 5
+skipped, and the four cargo lanes (no-default-features, `python`, `log-compat`,
+`tracing-compat`) all passed. Logs are
+`/tmp/gates-issue-440-20261115T002500Z.out` and its `.status` file, which holds
+`ALL_GATES_PASS`.
+
+The earlier 2026-11-02 attempt is retained as history: it failed only on the
+dylint doc-comment rule, and the host was saturated by other agents' builds, so
+its `make test` stage never completed before the session ended.
