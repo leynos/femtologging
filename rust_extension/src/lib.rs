@@ -288,25 +288,35 @@ use py_api::{get_logger, reset_manager_py};
 /// ```
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_core_classes(m)?;
-    register_core_functions(m)?;
+    register_core_bindings(m)?;
     #[cfg(feature = "python")]
-    register_feature_bindings(m)?;
+    register_optional_bindings(m)?;
     Ok(())
 }
 
-/// Register the classes and module constants the extension always exposes.
+/// Register the classes and functions every build exposes.
+fn register_core_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_core_classes(m)?;
+    register_core_functions(m)
+}
+
+/// Register the logger, handler, and error types every build exposes.
 fn register_core_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_core_types(m)?;
+    register_core_errors(m)
+}
+
+/// Register the logger and handler classes.
+fn register_core_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
-    register_core_constants(m)?;
     Ok(())
 }
 
-/// Register the exception types and schema constant Python code imports.
-fn register_core_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register the module exceptions and the schema version constant.
+fn register_core_errors(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),
@@ -316,7 +326,7 @@ fn register_core_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Register the module-level functions the extension always exposes.
+/// Register the module-level functions every build exposes.
 fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
@@ -326,26 +336,16 @@ fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Register the classes, functions and compat shims each feature adds.
-///
-/// Every binding here is Python-facing, so the function only exists when the
-/// `python` feature is on; compiling it otherwise would leave `m` unused.
+/// Register the bindings that feature-gated Python modules contribute.
 #[cfg(feature = "python")]
-fn register_feature_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Python-only classes, builders, and functions
-    #[cfg(feature = "python")]
-    {
-        python_module::register_python_classes(m)?;
-        python_module::add_python_bindings(m)?;
-        python_module::register_python_functions(m)?;
-    }
-
-    // Log-compat functions (requires both python and log-compat features)
-    #[cfg(all(feature = "python", feature = "log-compat"))]
+fn register_optional_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    python_module::register_python_classes(m)?;
+    python_module::add_python_bindings(m)?;
+    python_module::register_python_functions(m)?;
+    #[cfg(feature = "log-compat")]
     python_module::register_log_compat_functions(m)?;
-    #[cfg(all(feature = "python", feature = "tracing-compat"))]
+    #[cfg(feature = "tracing-compat")]
     python_module::register_tracing_compat_functions(m)?;
-
     Ok(())
 }
 

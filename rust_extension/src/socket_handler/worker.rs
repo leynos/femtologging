@@ -14,7 +14,7 @@ use log::warn;
 
 use crate::{
     handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
-    shutdown_ack::acknowledge_shutdowns, shutdown_signal::ShutdownSignal,
+    shutdown_signal::ShutdownSignal,
 };
 
 use super::{
@@ -24,6 +24,11 @@ use super::{
     serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
 };
+
+#[path = "worker_drain.rs"]
+mod drain;
+
+use drain::{discard_rest, warn_discarded};
 
 /// Commands processed by the worker thread.
 #[derive(Debug)]
@@ -249,28 +254,46 @@ impl Worker {
 
     /// Drain once per record; discard the queue when the shutdown deadline expires.
     fn drain_pending(&mut self, rx: &Receiver<SocketCommand>, shutdown_ack: Option<Sender<()>>) {
-        let mut discarded = 0_u64;
-        let mut shutdown_acks = Vec::new();
-        loop {
-            if self.signal.is_aborted() {
-                discarded += discard_rest(rx, &mut shutdown_acks);
-                break;
-            }
-            match rx.try_recv() {
-                Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack, pending_drops)) => {
-                    self.handle_flush_command(ack, pending_drops);
-                }
-                Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
-        }
+        let (discarded, shutdown_acks) = self.discard_queued_commands(rx);
         warn_discarded(discarded);
         self.warner.flush(|count| {
             warn!("FemtoSocketHandler dropped {count} records during shutdown");
         });
         self.flush_silently();
-        acknowledge_shutdowns(shutdown_acks, shutdown_ack);
+        // Keep every shutdown acknowledgement behind the last request and
+        // cleanup. The final send is the worker's final action.
+        crate::shutdown_ack::acknowledge_shutdowns(shutdown_acks, shutdown_ack);
+    }
+
+    /// Attempt each queued command once, stopping at abort or on an empty queue.
+    fn discard_queued_commands(&mut self, rx: &Receiver<SocketCommand>) -> (u64, Vec<Sender<()>>) {
+        let mut discarded = 0_u64;
+        let mut shutdown_acks = Vec::new();
+        while !self.signal.is_aborted() {
+            match rx.try_recv() {
+                Ok(command) => self.apply_drained_command(command, &mut shutdown_acks),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => {
+                    return (discarded, shutdown_acks);
+                }
+            }
+        }
+        discarded += discard_rest(rx, &mut shutdown_acks);
+        (discarded, shutdown_acks)
+    }
+
+    /// Apply one command that was still queued when the shutdown started.
+    fn apply_drained_command(
+        &mut self,
+        command: SocketCommand,
+        shutdown_acks: &mut Vec<Sender<()>>,
+    ) {
+        match command {
+            SocketCommand::Record(record) => self.handle_record_command(record),
+            SocketCommand::Flush(ack, pending_drops) => {
+                self.handle_flush_command(ack, pending_drops);
+            }
+            SocketCommand::Shutdown(ack) => shutdown_acks.push(ack),
+        }
     }
 
     /// Consume commands; shutdown starts a bounded drain before its acknowledgement.
@@ -302,40 +325,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// Throw away everything left in the queue, without touching the network.
-///
-/// Returns how many records were discarded. Flush senders receive their
-/// acknowledgement immediately; shutdown senders are saved for the worker's
-/// final action, after it has finished all remaining cleanup.
-fn discard_rest(rx: &Receiver<SocketCommand>, shutdown_acks: &mut Vec<Sender<()>>) -> u64 {
-    let mut discarded = 0_u64;
-    loop {
-        match rx.try_recv() {
-            Ok(SocketCommand::Record(_)) => discarded += 1,
-            Ok(SocketCommand::Flush(ack, pending_drops)) => {
-                let _ = ack.send(());
-                if let Some(count) = pending_drops {
-                    warn!("FemtoSocketHandler dropped {count} records in the last interval");
-                }
-            }
-            Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
-            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,
-        }
-    }
-}
-
-/// Say how many records the shutdown deadline cost, once.
-///
-/// Deliberately not rate-limited through the warner: this fires at most once
-/// per handler, and a count of the records a shutdown abandoned is the kind of
-/// thing a caller needs to see whether or not a warning interval has elapsed.
-fn warn_discarded(discarded: u64) {
-    if discarded == 0 {
-        return;
-    }
-    warn!("FemtoSocketHandler discarded {discarded} queued records at its shutdown deadline");
 }
 
 /// Build a framed record; payloads within `max_frame_size` are writable.

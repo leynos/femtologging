@@ -28,17 +28,26 @@ fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult
     }
 }
 
-/// The configuration keys `BackoffConfig` accepts.
-const BACKOFF_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
-
-/// Reject configuration keys that `BackoffConfig` does not understand.
+/// Build [`BackoffOverrides`] from a Python mapping.
 ///
-/// Failing fast on a typo is the point: a misspelt key would otherwise be
-/// ignored and leave the caller's intended override silently unapplied.
-fn validate_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
+/// Unknown keys fail fast so a misspelled timing option cannot be silently
+/// ignored and leave the handler on its defaults.
+fn backoff_overrides_from_dict(config: &Bound<'_, PyDict>) -> PyResult<BackoffOverrides> {
+    reject_unknown_backoff_keys(config)?;
+    Ok(BackoffOverrides::from_options(
+        extract_optional_u64(config, "base_ms")?,
+        extract_optional_u64(config, "cap_ms")?,
+        extract_optional_u64(config, "reset_after_ms")?,
+        extract_optional_u64(config, "deadline_ms")?,
+    ))
+}
+
+/// Reject any key that is not a recognised backoff option.
+fn reject_unknown_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
+    const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
     for (key, _) in config.iter() {
         let key: &str = key.extract()?;
-        if !BACKOFF_KEYS.contains(&key) {
+        if !ALLOWED_KEYS.contains(&key) {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "unknown BackoffConfig key {key:?}",
             )));
@@ -64,23 +73,10 @@ impl BackoffOverrides {
     #[new]
     #[pyo3(signature = (config=None))]
     fn py_new<'py>(config: Option<Bound<'py, PyDict>>) -> PyResult<Self> {
-        let Some(config) = config else {
-            return Ok(Self::default());
-        };
-
-        validate_backoff_keys(&config)?;
-
-        let base_ms = extract_optional_u64(&config, "base_ms")?;
-        let cap_ms = extract_optional_u64(&config, "cap_ms")?;
-        let reset_after_ms = extract_optional_u64(&config, "reset_after_ms")?;
-        let deadline_ms = extract_optional_u64(&config, "deadline_ms")?;
-
-        Ok(Self::from_options(
-            base_ms,
-            cap_ms,
-            reset_after_ms,
-            deadline_ms,
-        ))
+        match config {
+            Some(dict) => backoff_overrides_from_dict(&dict),
+            None => Ok(Self::default()),
+        }
     }
 }
 

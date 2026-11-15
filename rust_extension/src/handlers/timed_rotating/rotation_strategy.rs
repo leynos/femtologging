@@ -97,17 +97,42 @@ where
         let capacity = writer.capacity();
         let original_file = self.swap_writer_with_temp(writer, capacity)?;
         let rotated_path = self.rotated_path(rollover_at);
+        let original_file =
+            self.stage_rotated_file(writer, capacity, original_file, &rotated_path)?;
+        self.install_fresh_writer(writer, capacity, original_file, &rotated_path, now)
+    }
 
-        if let Err(err) = Self::remove_file_if_exists(&rotated_path) {
+    /// Clear the previous rotation target and rename the active file onto it.
+    ///
+    /// Any failure restores `original_file` as the active writer, so the caller
+    /// observes a handler that is still usable and unchanged on disk.
+    fn stage_rotated_file(
+        &self,
+        writer: &mut BufWriter<File>,
+        capacity: usize,
+        original_file: File,
+        rotated_path: &Path,
+    ) -> io::Result<File> {
+        if let Err(err) = Self::remove_file_if_exists(rotated_path) {
             *writer = BufWriter::with_capacity(capacity, original_file);
             return Err(err);
         }
-
-        if let Err(err) = fs::rename(&self.path, &rotated_path) {
+        if let Err(err) = fs::rename(&self.path, rotated_path) {
             *writer = BufWriter::with_capacity(capacity, original_file);
             return Err(err);
         }
+        Ok(original_file)
+    }
 
+    /// Open the replacement writer, undoing the rename if that fails.
+    fn install_fresh_writer(
+        &mut self,
+        writer: &mut BufWriter<File>,
+        capacity: usize,
+        original_file: File,
+        rotated_path: &Path,
+        now: DateTime<Utc>,
+    ) -> io::Result<()> {
         match Self::open_fresh_writer(&self.path, capacity) {
             Ok(fresh_writer) => {
                 let _ = original_file;
@@ -115,22 +140,13 @@ where
                 // Advance the rollover deadline before pruning so a prune failure
                 // does not cause repeated rollovers on the next write.
                 self.next_rollover_at = self.schedule.next_rollover(now);
-                self.prune_backups()?;
-                Ok(())
+                self.prune_backups()
             }
             Err(err) => {
                 // Restore the writer before filesystem rollback so the handler
                 // remains usable even if the rename also fails.
                 *writer = BufWriter::with_capacity(capacity, original_file);
-                if let Err(rollback_err) = fs::rename(&rotated_path, &self.path) {
-                    return Err(io::Error::new(
-                        err.kind(),
-                        format!(
-                            "failed to open fresh writer: {err}; rollback rename also failed: {rollback_err}"
-                        ),
-                    ));
-                }
-                Err(err)
+                rollback_rotation(&self.path, rotated_path, err)
             }
         }
     }
@@ -255,6 +271,22 @@ where
         self.rotate(writer, rollover_at, now)?;
         Ok(true)
     }
+}
+
+/// Undo a rotation rename, reporting both failures when the undo also fails.
+///
+/// The open error stays the cause so callers see why rotation started, while
+/// the message names the rollback failure that left the handler degraded.
+fn rollback_rotation(active: &Path, rotated: &Path, cause: io::Error) -> io::Result<()> {
+    if let Err(rollback_err) = fs::rename(rotated, active) {
+        return Err(io::Error::new(
+            cause.kind(),
+            format!(
+                "failed to open fresh writer: {cause}; rollback rename also failed: {rollback_err}"
+            ),
+        ));
+    }
+    Err(cause)
 }
 
 /// Compares encoded path prefixes without requiring UTF-8 conversion.

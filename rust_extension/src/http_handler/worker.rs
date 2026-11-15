@@ -305,27 +305,41 @@ impl Worker {
     /// sent, because a queue that outlasts its deadline is a queue nobody is
     /// still waiting for.
     fn drain_pending(&mut self, rx: &Receiver<HTTPCommand>, shutdown_ack: Option<Sender<()>>) {
-        let mut discarded = 0_u64;
-        let mut shutdown_acks = Vec::new();
-        loop {
-            if self.signal.is_aborted() {
-                discarded += discard_rest(rx, &mut shutdown_acks);
-                break;
-            }
-            match rx.try_recv() {
-                Ok(HTTPCommand::Record(record)) => self.handle_record_command(record),
-                Ok(HTTPCommand::Flush(ack, pending_drops)) => {
-                    self.handle_flush_command(ack, pending_drops);
-                }
-                Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
-        }
+        let (discarded, shutdown_acks) = self.discard_queued_commands(rx);
         warn_discarded(discarded);
         self.warner.flush(|count| {
             warn!("FemtoHTTPHandler dropped {count} records during shutdown");
         });
+        // Keep every shutdown acknowledgement behind the last request and
+        // cleanup. The final send is the worker's final action.
         acknowledge_shutdowns(shutdown_acks, shutdown_ack);
+    }
+
+    /// Attempt each queued command once, stopping at abort or on an empty queue.
+    fn discard_queued_commands(&mut self, rx: &Receiver<HTTPCommand>) -> (u64, Vec<Sender<()>>) {
+        let mut discarded = 0_u64;
+        let mut shutdown_acks = Vec::new();
+        while !self.signal.is_aborted() {
+            match rx.try_recv() {
+                Ok(command) => self.apply_drained_command(command, &mut shutdown_acks),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => {
+                    return (discarded, shutdown_acks);
+                }
+            }
+        }
+        discarded += discard_rest(rx, &mut shutdown_acks);
+        (discarded, shutdown_acks)
+    }
+
+    /// Apply one command that was still queued when the shutdown started.
+    fn apply_drained_command(&mut self, command: HTTPCommand, shutdown_acks: &mut Vec<Sender<()>>) {
+        match command {
+            HTTPCommand::Record(record) => self.handle_record_command(record),
+            HTTPCommand::Flush(ack, pending_drops) => {
+                self.handle_flush_command(ack, pending_drops);
+            }
+            HTTPCommand::Shutdown(ack) => shutdown_acks.push(ack),
+        }
     }
 
     /// Consume commands; shutdown starts draining before its acknowledgement.

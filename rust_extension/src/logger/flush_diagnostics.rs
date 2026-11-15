@@ -241,30 +241,36 @@ impl FlushDiagnosticsSnapshot {
         let mut metrics = BTreeMap::new();
         metrics.insert("flush_handlers_attempts".to_owned(), self.attempts);
         metrics.insert("flush_handlers_confirmed".to_owned(), self.confirmed);
-        for stage in FlushFailureStage::ALL {
-            metrics.insert(
-                format!("flush_handlers_failure_{}", stage.metric_suffix()),
-                self.failures[stage as usize],
-            );
-        }
-        // Each name states the whole disjoint range it counts, so a consumer
-        // cannot mistake these for Prometheus-style cumulative buckets.
-        for (bucket, suffix) in [
-            "le_10_ms",
-            "gt_10_le_100_ms",
-            "gt_100_le_500_ms",
-            "gt_500_le_2000_ms",
-            "gt_2000_ms",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            metrics.insert(
-                format!("flush_handlers_elapsed_{suffix}"),
-                self.elapsed_buckets[bucket],
-            );
-        }
+        insert_failure_metrics(&mut metrics, &self.failures);
+        insert_elapsed_metrics(&mut metrics, &self.elapsed_buckets);
         metrics
+    }
+}
+
+/// Add one counter per failure stage.
+fn insert_failure_metrics(metrics: &mut BTreeMap<String, u64>, failures: &[u64]) {
+    for stage in FlushFailureStage::ALL {
+        metrics.insert(
+            format!("flush_handlers_failure_{}", stage.metric_suffix()),
+            failures[stage as usize],
+        );
+    }
+}
+
+/// Add one counter per elapsed-time bucket.
+///
+/// Each name states the whole disjoint range it counts, so a consumer cannot
+/// mistake these for Prometheus-style cumulative buckets.
+fn insert_elapsed_metrics(metrics: &mut BTreeMap<String, u64>, buckets: &[u64; 5]) {
+    const SUFFIXES: [&str; 5] = [
+        "le_10_ms",
+        "gt_10_le_100_ms",
+        "gt_100_le_500_ms",
+        "gt_500_le_2000_ms",
+        "gt_2000_ms",
+    ];
+    for (bucket, suffix) in SUFFIXES.into_iter().enumerate() {
+        metrics.insert(format!("flush_handlers_elapsed_{suffix}"), buckets[bucket]);
     }
 }
 
