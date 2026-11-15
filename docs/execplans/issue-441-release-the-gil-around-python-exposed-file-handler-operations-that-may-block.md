@@ -1794,6 +1794,32 @@ refactoring fourteen unrelated functions or raising the rule's threshold, both
 of which are separate work with their own review. The failed `build-test` jobs
 need a rerun once the archive changes.
 
+## Ninth review follow-up after `ed199b9c`
+
+CodeRabbit's review 5911855055 raised one inline finding, 4579338942, against
+`docs/developers-guide.md`: it claimed every flush warning carries
+`handler_kind`, and that the tracing span carries a failure category. Both
+claims are false. `native_handler.rs` logs
+`handler_kind=<type>, category=flush_failed`; `flush.rs` logs
+`handler_kind=<type|custom>, category=interpreter_unavailable`; and `calls.rs`
+logs a fixed message whose only structured datum is the category
+(`flush_lookup_failed`, `flush_call_failed` or `flush_result_false`), with no
+`handler_kind`. `flush_registered_handler` records `handler_kind` and
+`flush_outcome` and no category. `5cdb1053` rewrites the paragraph to describe
+each shape from the code that emits it and to say why the difference is
+deliberate. The same review's LanguageTool nit disappears with the sentence it
+annotated.
+
+The follow-up reply in that thread produced a second finding, which was also
+valid: `docs/rust-multithreaded-logging-framework-for-python-design.md`
+repeated the blanket "handler-kind and failure-category" claim. That sentence
+now gives the category unconditionally, the handler kind except for a
+user-defined handler's own flush failure, and never the exception text.
+
+Both documents are docs-only changes; `make check-fmt`, `make markdownlint` and
+`make nixie` pass, and the Whitaker regression above is unaffected by either,
+since neither file is compiled.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core

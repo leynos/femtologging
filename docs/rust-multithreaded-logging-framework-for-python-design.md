@@ -590,8 +590,9 @@ lets a buffering handler persist its records. Every handler is flushed even
 when an earlier one fails, and the results are combined. A missing or
 non-callable `flush` counts as success, a `None` return counts as success, any
 other return value is read for its truthiness, and a raised exception is
-reported as failure. The structured log records only bounded handler-kind and
-failure-category fields, never the exception text.
+reported as failure. The warning gives a bounded failure category and, except
+for a user-defined handler's own flush failure, whose fixed message already
+identifies it as custom, the handler kind; the exception text is never recorded.
 
 ## 4. Leveraging Rust's Strengths
 
