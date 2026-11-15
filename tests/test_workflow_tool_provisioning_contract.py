@@ -23,11 +23,12 @@ from tests.workflow_contract_helpers import (
 )
 from tests.workflow_document_helpers import (
     Job,
-    is_linux_job,
     load_workflow,
-    runner_values,
+    repository_workflow_exists,
+    repository_workflows,
     workflow_jobs,
 )
+from tests.workflow_runner_helpers import is_linux_job, runner_values
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -36,21 +37,30 @@ SETUP_RUST: typ.Final[str] = (
     "leynos/shared-actions/.github/actions/setup-rust@"
     "ff1dd759dfffc0db3459e30e833f52437ee62b57"
 )
+PREFLIGHT: typ.Final[str] = "check-build-tools"
+# Synthetic prerequisites keep these cases independent of the repository's
+# Makefile; only `test` has to reach the preflight for the suite to be gated.
+SYNTHETIC_PREREQUISITES: typ.Final[dict[str, tuple[str, ...]]] = {
+    "test": (PREFLIGHT,),
+}
 
 
 def _suite_jobs() -> list[tuple[str, str, Job]]:
     """Return every workflow job that runs a preflight-gated suite."""
-    depends = depends_on_preflight()
+    depends = depends_on_preflight(prerequisite_map())
+    jobs = workflow_jobs(
+        repository_workflows(), reusable_exists=repository_workflow_exists
+    )
     return [
         (workflow, job_id, job)
-        for workflow, job_id, job in workflow_jobs()
+        for workflow, job_id, job in jobs
         if suite_steps(job, depends)
     ]
 
 
 def test_every_hosted_suite_job_provisions_the_build_tools() -> None:
     """Each Linux job running the suite installs the tools before it starts."""
-    depends = depends_on_preflight()
+    depends = depends_on_preflight(prerequisite_map())
     suite_jobs = _suite_jobs()
     found = {(workflow, job_id) for workflow, job_id, _ in suite_jobs}
     assert {("ci.yml", "build-test"), ("heavy-tests.yml", "heavy")} <= found, (
@@ -113,7 +123,7 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
     job: Job, *, expected: bool
 ) -> None:
     """Every mutation that loses or delays the install is detected."""
-    problems = provisioning_problems(job, depends_on_preflight())
+    problems = provisioning_problems(job, depends_on_preflight(SYNTHETIC_PREREQUISITES))
     assert bool(problems) is expected, problems
 
 
@@ -141,7 +151,7 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
 def test_the_reader_recognises_each_make_goal_form(run: str, *, expected: bool) -> None:
     """Every goal spelling is read, while a commented-out `make` is ignored."""
     job = _job({"name": "Test", "run": run})
-    problems = provisioning_problems(job, depends_on_preflight())
+    problems = provisioning_problems(job, depends_on_preflight(SYNTHETIC_PREREQUISITES))
     assert bool(problems) is expected, (run, problems)
 
 

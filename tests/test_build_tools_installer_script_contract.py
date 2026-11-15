@@ -29,6 +29,13 @@ TOOLCHAIN_CONFIG: typ.Final[Path] = ROOT / "rust-toolchain.toml"
 # The installer reads the pin with sed and resolves its own directory with
 # dirname; the stubs need nothing else beyond the shell builtins.
 SYSTEM_TOOLS: typ.Final[tuple[str, ...]] = ("sed", "dirname")
+# Reaching the installer through Make adds the recipe shell's shebang path:
+# /usr/bin/env is absolute, but env resolves bash through this PATH.
+MAKE_ROUTE_TOOLS: typ.Final[tuple[str, ...]] = ("bash", "env")
+# Every case runs through both entry points, so the Make recipe is exercised
+# rather than merely inspected.
+ROUTES: typ.Final[tuple[bool, ...]] = (False, True)
+ROUTE_IDS: typ.Final[tuple[str, ...]] = ("script", "make")
 
 
 def _channel() -> str:
@@ -39,7 +46,9 @@ def _channel() -> str:
     return match.group(1)
 
 
-def _bin_dir(tmp_path: Path, *, needs_chmod: bool = False) -> Path:
+def _bin_dir(
+    tmp_path: Path, *, needs_chmod: bool = False, via_make: bool = False
+) -> Path:
     """Create the directory that becomes the installer's whole PATH.
 
     Parameters
@@ -48,6 +57,8 @@ def _bin_dir(tmp_path: Path, *, needs_chmod: bool = False) -> Path:
         Per-test scratch directory.
     needs_chmod
         Add ``chmod`` for stubs that create an executable.
+    via_make
+        Add the tools Make needs to run the recipe's script.
 
     Returns
     -------
@@ -56,7 +67,9 @@ def _bin_dir(tmp_path: Path, *, needs_chmod: bool = False) -> Path:
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    tools = SYSTEM_TOOLS + (("chmod",) if needs_chmod else ())
+    tools = SYSTEM_TOOLS
+    tools += ("chmod",) if needs_chmod else ()
+    tools += MAKE_ROUTE_TOOLS if via_make else ()
     for tool in tools:
         resolved = shutil.which(tool)
         assert resolved is not None, f"{tool} must be available to run the probe"
@@ -69,13 +82,36 @@ def _environment(bin_dir: Path, *, host_os: str = "Linux") -> dict[str, str]:
     return {"PATH": str(bin_dir), "BUILD_TOOLS_OS": host_os}
 
 
-def _run(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Run the installer with ``environment`` and capture its report."""
-    bash = shutil.which("bash")
-    assert bash is not None, "bash must be available to run the installer"
+def _run(
+    environment: dict[str, str], *, via_make: bool
+) -> subprocess.CompletedProcess[str]:
+    """Run the installer with ``environment`` and capture its report.
+
+    Parameters
+    ----------
+    environment
+        The complete environment, whose PATH resolves only stub tools.
+    via_make
+        Reach the script through ``make install-build-tools`` instead of
+        invoking it directly.
+
+    Returns
+    -------
+    subprocess.CompletedProcess[str]
+        The completed run, with its captured output and exit status.
+    """
+    if via_make:
+        make = shutil.which("make")
+        assert make is not None, "make must be available to run the target"
+        argv = [make, "--no-print-directory", "install-build-tools"]
+    else:
+        bash = shutil.which("bash")
+        assert bash is not None, "bash must be available to run the installer"
+        argv = [bash, str(SCRIPT)]
     # ruff: ignore[subprocess-without-shell-equals-true] fixed argv, no shell
     return subprocess.run(
-        [bash, str(SCRIPT)],
+        argv,
+        cwd=ROOT,
         env=environment,
         capture_output=True,
         text=True,
@@ -158,12 +194,13 @@ MANAGER_CASES: typ.Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
 MANAGER_IDS: typ.Final[tuple[str, ...]] = tuple(manager for manager, _ in MANAGER_CASES)
 
 
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
 @pytest.mark.parametrize(("manager", "arguments"), MANAGER_CASES, ids=MANAGER_IDS)
 def test_linux_root_install_records_the_channel_and_package(
-    manager: str, arguments: tuple[str, ...], tmp_path: Path
+    manager: str, arguments: tuple[str, ...], tmp_path: Path, *, via_make: bool
 ) -> None:
     """A root host gets the pinned toolchain and the selected mold package."""
-    bin_dir = _bin_dir(tmp_path, needs_chmod=True)
+    bin_dir = _bin_dir(tmp_path, needs_chmod=True, via_make=via_make)
     rustup_log = tmp_path / "rustup.log"
     package_log = tmp_path / "package.log"
     _stub_rustup(bin_dir, rustup_log)
@@ -172,7 +209,7 @@ def test_linux_root_install_records_the_channel_and_package(
         bin_dir, _PackageStub(name=manager, log=package_log, creates_mold=True)
     )
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     expected_rustup = (
         "toolchain",
@@ -198,31 +235,33 @@ def test_linux_root_install_records_the_channel_and_package(
     assert "mold installed" in result.stderr, result.stderr
 
 
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
 def test_existing_mold_is_reported_without_installing_a_package(
-    tmp_path: Path,
+    tmp_path: Path, *, via_make: bool
 ) -> None:
     """A usable mold skips package installation entirely."""
-    bin_dir = _bin_dir(tmp_path)
+    bin_dir = _bin_dir(tmp_path, via_make=via_make)
     package_log = tmp_path / "package.log"
     _stub_rustup(bin_dir, tmp_path / "rustup.log")
     fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
     _stub_tripwire(bin_dir, "dnf", package_log)
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     assert result.returncode == 0, result.stderr
     assert "mold already installed" in result.stderr, result.stderr
     assert not _recorded(package_log), "no package manager may run"
 
 
-def test_non_linux_host_skips_mold(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_non_linux_host_skips_mold(tmp_path: Path, *, via_make: bool) -> None:
     """A non-Linux host installs no mold and reports the skip."""
-    bin_dir = _bin_dir(tmp_path)
+    bin_dir = _bin_dir(tmp_path, via_make=via_make)
     package_log = tmp_path / "package.log"
     _stub_rustup(bin_dir, tmp_path / "rustup.log")
     _stub_tripwire(bin_dir, "dnf", package_log)
 
-    result = _run(_environment(bin_dir, host_os="Darwin"))
+    result = _run(_environment(bin_dir, host_os="Darwin"), via_make=via_make)
 
     assert result.returncode == 0, result.stderr
     assert "Linux-only" in result.stderr, result.stderr
@@ -230,24 +269,30 @@ def test_non_linux_host_skips_mold(tmp_path: Path) -> None:
     assert not _recorded(package_log), "no package manager may run on Darwin"
 
 
-def test_missing_rustup_fails_with_the_install_hint(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_missing_rustup_fails_with_the_install_hint(
+    tmp_path: Path, *, via_make: bool
+) -> None:
     """No rustup on PATH stops the installer with the rustup.rs hint."""
-    bin_dir = _bin_dir(tmp_path)
+    bin_dir = _bin_dir(tmp_path, via_make=via_make)
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     assert result.returncode != 0, "a missing rustup must fail the installer"
     assert "rustup not found" in result.stderr, result.stderr
     assert "rustup.rs" in result.stderr, result.stderr
 
 
-def test_failed_toolchain_install_stops_the_installer(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_failed_toolchain_install_stops_the_installer(
+    tmp_path: Path, *, via_make: bool
+) -> None:
     """A rustup failure is reported as a failed toolchain installation."""
-    bin_dir = _bin_dir(tmp_path)
+    bin_dir = _bin_dir(tmp_path, via_make=via_make)
     rustup_log = tmp_path / "rustup.log"
     _stub_rustup(bin_dir, rustup_log, exit_status=1)
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     assert result.returncode != 0, "a failed rustup must fail the installer"
     assert "failed to install toolchain" in result.stderr, result.stderr
@@ -256,15 +301,18 @@ def test_failed_toolchain_install_stops_the_installer(tmp_path: Path) -> None:
     )
 
 
-def test_unavailable_package_install_prints_the_command(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_unavailable_package_install_prints_the_command(
+    tmp_path: Path, *, via_make: bool
+) -> None:
     """Without root or passwordless sudo the administrator command is shown."""
-    bin_dir = _bin_dir(tmp_path)
+    bin_dir = _bin_dir(tmp_path, via_make=via_make)
     package_log = tmp_path / "package.log"
     _stub_rustup(bin_dir, tmp_path / "rustup.log")
     _stub_id(bin_dir, 1000)
     _stub_tripwire(bin_dir, "dnf", package_log)
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     assert result.returncode != 0, "an unavailable package install must fail"
     assert "automatic installation is unavailable" in result.stderr, result.stderr
@@ -272,24 +320,57 @@ def test_unavailable_package_install_prints_the_command(tmp_path: Path) -> None:
     assert not _recorded(package_log), "the manager must not run without privilege"
 
 
-def test_package_install_without_a_working_mold_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_package_install_without_a_working_mold_fails(
+    tmp_path: Path, *, via_make: bool
+) -> None:
     """A successful package command that leaves mold unusable is an error."""
-    bin_dir = _bin_dir(tmp_path)
+    bin_dir = _bin_dir(tmp_path, via_make=via_make)
     _stub_rustup(bin_dir, tmp_path / "rustup.log")
     _stub_id(bin_dir, 0)
     _stub_package_manager(
         bin_dir, _PackageStub(name="dnf", log=tmp_path / "package.log")
     )
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     assert result.returncode != 0, "an unusable mold must fail the installer"
     assert "still unavailable after installation" in result.stderr, result.stderr
 
 
-def test_passwordless_sudo_installs_mold(tmp_path: Path) -> None:
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_a_failing_package_manager_fails_the_install(
+    tmp_path: Path, *, via_make: bool
+) -> None:
+    """A package command that fails is reported as a failed installation.
+
+    The stub leaves a usable mold behind before failing, so only the exit
+    status can decide the outcome; reporting the failure as an unavailable
+    installation would be wrong because the command did run.
+    """
+    bin_dir = _bin_dir(tmp_path, needs_chmod=True, via_make=via_make)
+    package_log = tmp_path / "package.log"
+    _stub_rustup(bin_dir, tmp_path / "rustup.log")
+    _stub_id(bin_dir, 0)
+    _stub_package_manager(
+        bin_dir,
+        _PackageStub(name="dnf", log=package_log, creates_mold=True, exit_status=1),
+    )
+
+    result = _run(_environment(bin_dir), via_make=via_make)
+
+    assert result.returncode != 0, "a failed package command must fail the installer"
+    assert "package installation failed" in result.stderr, result.stderr
+    assert "dnf install -y mold" in result.stderr, result.stderr
+    assert _recorded(package_log) == ("install", "-y", "mold"), (
+        "the failing package manager must still have been invoked"
+    )
+
+
+@pytest.mark.parametrize("via_make", ROUTES, ids=ROUTE_IDS)
+def test_passwordless_sudo_installs_mold(tmp_path: Path, *, via_make: bool) -> None:
     """Passwordless sudo runs the package command and installs mold."""
-    bin_dir = _bin_dir(tmp_path, needs_chmod=True)
+    bin_dir = _bin_dir(tmp_path, needs_chmod=True, via_make=via_make)
     sudo_log = tmp_path / "sudo.log"
     package_log = tmp_path / "package.log"
     _stub_rustup(bin_dir, tmp_path / "rustup.log")
@@ -297,7 +378,7 @@ def test_passwordless_sudo_installs_mold(tmp_path: Path) -> None:
     _stub_tripwire(bin_dir, "dnf", package_log)
     _stub_sudo(bin_dir, sudo_log)
 
-    result = _run(_environment(bin_dir))
+    result = _run(_environment(bin_dir), via_make=via_make)
 
     assert result.returncode == 0, result.stderr
     assert _recorded(sudo_log) == ("-n", "dnf", "install", "-y", "mold"), (
