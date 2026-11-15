@@ -20,7 +20,6 @@ that moving to a later pre-release, which may bring further changes, is a
 deliberate choice:
 
 <!-- tested-example: migration-install -->
-
 ```bash
 python -m pip install "femtologging==0.2.0b1"
 ```
@@ -67,7 +66,6 @@ Use stable component names, and move identifiers to structured fields.
 ### Before: one logger per request
 
 <!-- tested-example: migration-logger-names-before -->
-
 ```python
 from femtologging import get_logger
 
@@ -79,7 +77,6 @@ assert logger.info("handled") == "requests.42 [INFO] handled"
 ### After: a fixed name and a field
 
 <!-- tested-example: migration-logger-names-after -->
-
 ```python
 from femtologging import get_logger
 
@@ -100,7 +97,6 @@ attribute fails where you assign it, instead of silently creating an attribute
 that `basicConfig()` never reads. Keep any other state in your own structure.
 
 <!-- tested-example: migration-basic-config-slots -->
-
 ```python
 from femtologging import BasicConfig
 
@@ -125,7 +121,6 @@ stray declaration can no longer hold a file or worker thread open for the life
 of the process. Attach each definition in the same transaction, or leave it out.
 
 <!-- tested-example: migration-runtime-unreferenced -->
-
 ```python
 from femtologging import (
     LoggerMutationBuilder,
@@ -188,7 +183,6 @@ reaches ancestor handlers through propagation. This setting defaults to on in
 ### Before: an omitted logger still reached `root`
 
 <!-- tested-example: migration-disable-existing-before -->
-
 ```python
 from femtologging import dictConfig, get_logger
 
@@ -209,7 +203,6 @@ assert noisy.get_disabled_drops() == 1
 ### After: name the logger, or leave existing loggers alone
 
 <!-- tested-example: migration-disable-existing-after -->
-
 ```python
 from femtologging import dictConfig, get_logger
 
@@ -250,7 +243,6 @@ handler that read worker-thread state through a `ContextVar` now sees the
 caller's value:
 
 <!-- tested-example: migration-handler-contextvars -->
-
 ```python
 import contextvars
 
@@ -296,7 +288,6 @@ error and carried on, expecting the valid parts to have applied, apply a
 corrected configuration instead.
 
 <!-- tested-example: migration-config-transaction -->
-
 ```python
 from femtologging import (
     ConfigBuilder,
@@ -352,7 +343,6 @@ If your shutdown relied on `close()` waiting until every record was delivered,
 call `flush()` first and check its result:
 
 <!-- tested-example: migration-network-shutdown -->
-
 ```python
 from femtologging import HTTPHandlerBuilder
 
@@ -399,7 +389,6 @@ handler. The accepted decision is recorded in
 ### Before: a filter on each logger
 
 <!-- tested-example: migration-handler-filter-before -->
-
 ```python
 import logging
 
@@ -430,7 +419,6 @@ assert get_logger("shop.api").info("accepted") is not None
 ### After: one filter on the shared handler
 
 <!-- tested-example: migration-handler-filter-after -->
-
 ```python
 import logging
 
@@ -502,7 +490,6 @@ Everything in this section is additive, so existing logging calls keep working.
   slow network shutdown froze every other Python thread.
 
 <!-- tested-example: migration-extra -->
-
 ```python
 from femtologging import get_logger, log_context
 

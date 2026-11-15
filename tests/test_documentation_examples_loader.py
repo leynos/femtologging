@@ -15,14 +15,14 @@ from tests.documentation_examples import (
 def test_examples_keep_their_order_and_exact_text() -> None:
     """Each marked fence, either fence style, yields its exact body."""
     text = (
-        "<!-- tested-example: first -->\n\n```python\nassert 1\n```\n"
+        "<!-- tested-example: first -->\n```python\nassert 1\n```\n"
         "Prose between examples.\n"
         "<!-- tested-example: second -->\n~~~text\nshown\n~~~\n"
     )
     examples = parse_document("doc.md", text)
     assert [(example.id, example.line) for example in examples] == [
-        ("first", 3),
-        ("second", 8),
+        ("first", 2),
+        ("second", 7),
     ], "examples must keep their order and opening line"
     assert [(example.language, example.body) for example in examples] == [
         ("python", "assert 1\n"),
@@ -76,6 +76,11 @@ def test_prose_without_fences_yields_nothing() -> None:
             "<!-- tested-example: gap -->\nProse.\n```python\nassert 1\n```\n",
             "doc.md:1: marker is not followed by a fence",
             id="marker-separated-by-text",
+        ),
+        pytest.param(
+            "<!-- tested-example: gap -->\n\n```python\nassert 1\n```\n",
+            "doc.md:1: marker is not followed by a fence",
+            id="marker-separated-by-blank-line",
         ),
         pytest.param(
             "Intro.\n<!-- tested-example: orphan -->\n",

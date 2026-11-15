@@ -37,7 +37,6 @@ Femtologging needs Python 3.12 or newer. Version 0.2.0-beta1 is a pre-release,
 and installers skip pre-releases unless asked, so request it explicitly:
 
 <!-- tested-example: guide-install-pip -->
-
 ```bash
 python -m pip install "femtologging>=0.2.0b1"
 ```
@@ -45,7 +44,6 @@ python -m pip install "femtologging>=0.2.0b1"
 Or add it to a [uv](https://docs.astral.sh/uv/) project:
 
 <!-- tested-example: guide-install-uv -->
-
 ```bash
 uv add "femtologging>=0.2.0b1"
 ```
@@ -58,7 +56,6 @@ and `cargo` from the [Rust toolchain](https://www.rust-lang.org/tools/install)
 on your `PATH`. You can also build a checkout of the repository directly:
 
 <!-- tested-example: guide-install-source -->
-
 ```bash
 git clone https://github.com/leynos/femtologging.git
 cd femtologging
@@ -68,7 +65,6 @@ python -m pip install .
 ### Write your first log message
 
 <!-- tested-example: guide-first-message -->
-
 ```python
 from femtologging import FemtoStreamHandler, get_logger
 
@@ -88,7 +84,6 @@ handler.close()
 Running it prints:
 
 <!-- tested-example: guide-first-message-output -->
-
 ```text
 demo.app [INFO] hello from femtologging
 ```
@@ -116,7 +111,6 @@ handler has its own queue and worker thread as well. A log call does a little
 work on your thread, then hands the record over:
 
 <!-- tested-example: guide-record-flow-diagram -->
-
 ```mermaid
 flowchart LR
     caller["Your thread: logger.info()"] -->|"level and filter checks"| lq["Shard queue"]
@@ -150,7 +144,6 @@ Dotted names form a hierarchy. Each logger's parent is the name before its last
 dot, and the top of every chain is the logger named `root`:
 
 <!-- tested-example: guide-logger-names -->
-
 ```python
 import femtologging
 from femtologging import get_logger
@@ -177,7 +170,6 @@ logger per request, tenant, or user would grow for the life of the process. Put
 those identifiers in [structured fields](#add-context-to-records) instead:
 
 <!-- tested-example: guide-logger-name-limits -->
-
 ```python
 from femtologging import get_logger
 
@@ -209,7 +201,6 @@ Each logger has a method per level, and `log()` takes the level as its first
 argument:
 
 <!-- tested-example: guide-emit-records -->
-
 ```python
 from femtologging import get_logger
 
@@ -247,7 +238,6 @@ the `level` property, and ask `isEnabledFor()` before building an expensive
 message:
 
 <!-- tested-example: guide-levels -->
-
 ```python
 from femtologging import get_logger
 
@@ -278,7 +268,6 @@ how a single handler on `root` can serve a whole application. Call
 `set_propagate(False)` to stop a logger passing records upwards:
 
 <!-- tested-example: guide-propagation -->
-
 ```python
 from femtologging import FemtoFileHandler, get_logger
 
@@ -306,7 +295,6 @@ and its traceback, or call `exception()`, which does that for you at `ERROR`
 level. Pass `stack_info=True` to attach the current call stack:
 
 <!-- tested-example: guide-exceptions -->
-
 ```python
 from femtologging import get_logger
 
@@ -342,7 +330,6 @@ attaches structured key-value fields to records in two ways: per call, with
 `log()` and the level methods accept a keyword-only `extra` mapping:
 
 <!-- tested-example: guide-extra -->
-
 ```python
 from femtologging import get_logger
 
@@ -374,7 +361,6 @@ It is built on `contextvars`, so it is safe to hold across `await`: each
 child task inherits the fields that were active when it was created.
 
 <!-- tested-example: guide-log-context -->
-
 ```python
 import asyncio
 
@@ -455,7 +441,6 @@ matching stream. To change the queue capacity, the flush timeout, or the
 formatter, use `StreamHandlerBuilder`:
 
 <!-- tested-example: guide-stream-builder -->
-
 ```python
 from femtologging import StreamHandlerBuilder, get_logger
 
@@ -482,7 +467,6 @@ milliseconds.
 ### Write to a file
 
 <!-- tested-example: guide-file-handler -->
-
 ```python
 from femtologging import FemtoFileHandler, get_logger
 
@@ -520,7 +504,6 @@ and `with_formatter()`.
 `backup_count`, and the oldest is removed:
 
 <!-- tested-example: guide-rotating-handler -->
-
 ```python
 import os
 
@@ -554,7 +537,6 @@ and `with_backup_count()`.
 library's `TimedRotatingFileHandler`:
 
 <!-- tested-example: guide-timed-rotating-handler -->
-
 ```python
 import datetime as dt
 
@@ -597,7 +579,6 @@ a TCP or Unix-domain socket. Choose a transport with `with_tcp()` or
 `with_unix_path()`; building without one raises `HandlerConfigError`.
 
 <!-- tested-example: guide-socket-handler -->
-
 ```python
 from femtologging import BackoffConfig, FemtoSocketHandler, SocketHandlerBuilder
 
@@ -651,7 +632,6 @@ handler.close()
 request from its worker thread:
 
 <!-- tested-example: guide-http-handler -->
-
 ```python
 from femtologging import FemtoHTTPHandler, HTTPHandlerBuilder
 
@@ -695,7 +675,6 @@ handler. Define `handle_record(record)` as well to receive the whole record as
 a dictionary, including its structured fields:
 
 <!-- tested-example: guide-python-handler -->
-
 ```python
 import threading
 
@@ -757,7 +736,6 @@ has no effect, so finish configuring a handler before you attach it. Checking
 once keeps attribute lookups off the per-record path.
 
 <!-- tested-example: guide-handler-capability-diagram -->
-
 ```mermaid
 sequenceDiagram
     actor User
@@ -796,7 +774,6 @@ The standard library ships handlers that femtologging does not, such as
 filters:
 
 <!-- tested-example: guide-stdlib-adapter -->
-
 ```python
 import io
 import logging
@@ -837,7 +814,6 @@ dispatched at all, and the adapter then compares it with the wrapped handler's
 own `level`:
 
 <!-- tested-example: guide-stdlib-adapter-levels -->
-
 ```python
 import io
 import logging
@@ -878,7 +854,6 @@ returns a string, or an object with a `format(record)` method.
 `FormatterBuilder` takes a standard library-style `%` format string:
 
 <!-- tested-example: guide-percent-formatter -->
-
 ```python
 from femtologging import FileHandlerBuilder, FormatterBuilder, get_logger
 
@@ -907,7 +882,6 @@ with open("percent.log", encoding="utf-8") as log_file:
 For anything a format string cannot express, pass a callable:
 
 <!-- tested-example: guide-formatter -->
-
 ```python
 import json
 
@@ -972,7 +946,6 @@ value accepts the record, and any new attributes it sets become structured
 fields, which makes filters a natural place to attach request metadata:
 
 <!-- tested-example: guide-callback-filter -->
-
 ```python
 import contextvars
 import logging
@@ -1032,7 +1005,6 @@ handler with `with_filters()` instead. It then runs, still on your thread, for
 every record routed to that handler, including propagated ones:
 
 <!-- tested-example: guide-handler-filter -->
-
 ```python
 import contextvars
 import logging
@@ -1089,7 +1061,6 @@ reach another.
 Your original payload is left unchanged:
 
 <!-- tested-example: guide-filter-frames -->
-
 ```python
 from femtologging import filter_frames
 
@@ -1153,7 +1124,6 @@ The first two are the most capable; the compatibility layers translate into
 ### Start with basicConfig
 
 <!-- tested-example: guide-basic-config -->
-
 ```python
 from femtologging import BasicConfig, basicConfig, get_logger
 
@@ -1184,7 +1154,6 @@ assert root.flush_handlers()
 from each logger:
 
 <!-- tested-example: guide-config-builder -->
-
 ```python
 from femtologging import (
     ConfigBuilder,
@@ -1242,7 +1211,6 @@ assert audit.flush_handlers()
 disables every logger created earlier that the new configuration does not name:
 
 <!-- tested-example: guide-disable-existing-loggers -->
-
 ```python
 from femtologging import ConfigBuilder, LoggerConfigBuilder, get_logger
 
@@ -1289,7 +1257,6 @@ changes, such as swapping handlers on a running service, `RuntimeConfigBuilder`
 applies a batch of mutations in one step:
 
 <!-- tested-example: guide-runtime-config -->
-
 ```python
 from femtologging import (
     LoggerMutationBuilder,
@@ -1341,7 +1308,6 @@ what femtologging supports, and applies it through `ConfigBuilder`, so a failed
 call leaves the current configuration intact:
 
 <!-- tested-example: guide-dict-config -->
-
 ```python
 from femtologging import dictConfig, get_logger
 
@@ -1398,7 +1364,6 @@ else:
   whose entries take `%`-style `format` and `datefmt` values:
 
 <!-- tested-example: guide-dict-config-formatter -->
-
 ```python
 from femtologging import dictConfig, get_logger
 
@@ -1435,7 +1400,6 @@ Not supported, and raising `ValueError`: incremental configuration and handler
 from the file's `[DEFAULT]` section and the `defaults` mapping:
 
 <!-- tested-example: guide-file-config -->
-
 ```python
 from pathlib import Path
 
@@ -1482,13 +1446,15 @@ ______________________________________________________________________
 Records are written by background threads, and nothing flushes them for you
 when the interpreter exits. Before your process ends:
 
-1. Call `flush_handlers()` on each logger that owns handlers. It waits up to
-   two seconds for that logger's queued records to be dispatched, then flushes
-   each handler, and returns `True` when all of that succeeded.
-2. Call `close()` on each handler you created.
+1. Stop the threads that log, and wait for them to finish. A flush covers the
+   records queued when it starts, so a record logged afterwards can still be
+   queued when the handler closes.
+2. Call `flush_handlers()` on each logger that owns handlers, and check that it
+   returns `True`. Records propagate, so include the ancestors that receive
+   them, such as `root`.
+3. Call `close()` on each handler you created.
 
 <!-- tested-example: guide-shutdown -->
-
 ```python
 import atexit
 
@@ -1511,6 +1477,35 @@ get_logger("service").info("started")
 shut_down_logging()
 with open("service.log", encoding="utf-8") as log_file:
     assert log_file.read() == "service [INFO] started\n"
+```
+
+`flush_handlers()` waits up to two seconds for the logger's queued records to
+reach its handlers, then flushes each handler in turn, so one failure does not
+stop the others being flushed. It returns `True` only when every step
+succeeded. The GIL is released throughout, so Python handlers and formatters
+can run while it waits. A built-in handler flushes its own output, so records
+reach the file even though the handler is still open:
+
+<!-- tested-example: flush-handlers-usage -->
+```python
+import femtologging
+
+logger = femtologging.get_logger("service")
+# A large flush interval keeps the record buffered until an explicit flush.
+handler = femtologging.FemtoFileHandler("service.log", flush_interval=10_000)
+logger.add_handler(handler)
+
+try:
+    logger.info("shutting down")
+    assert logger.flush_handlers(), "logger handlers did not flush"
+
+    # The handler is still open, so the record on disk proves that
+    # flush_handlers() wrote it, not close().
+    with open("service.log", encoding="utf-8") as log_file:
+        assert "shutting down" in log_file.read()
+finally:
+    logger.remove_handler(handler)
+    handler.close()
 ```
 
 Socket and HTTP handlers put a deadline on shutdown: `close()` returns within
@@ -1570,7 +1565,6 @@ are discarded unless you ask for them. Call `setup_rust_logging()` once at
 start-up, and warnings from femtologging itself are printed to standard error:
 
 <!-- tested-example: guide-internal-warnings -->
-
 ```python
 import logging
 
@@ -1605,7 +1599,6 @@ assert get_logger("api").info("request served") == "api [INFO] request served"
 It prints:
 
 <!-- tested-example: guide-internal-warnings-output -->
-
 ```text
 Python filter callback 'function' ignored enrichment: enrichment key 'payload' has unsupported Python type dict
 ```
@@ -1705,34 +1698,56 @@ so their shape can evolve without silent breakage.
 In Rust, `validate_version()` returns `SchemaVersionError::VersionTooNew` or
 `SchemaVersionError::VersionTooOld`, so each case can be handled explicitly:
 
-<!-- tested-example: guide-schema-validation -->
-
+<!-- tested-example: process-payload-schema-versioning -->
 ```rust
-use _femtologging_rs::{ExceptionPayload, SchemaVersionError, SchemaVersioned};
+use _femtologging_rs::{
+    ExceptionPayload, SchemaVersionError, SchemaVersioned,
+};
 
-fn check_payload(json: &str) -> Result<ExceptionPayload, String> {
-    let payload: ExceptionPayload =
-        serde_json::from_str(json).map_err(|error| error.to_string())?;
+/// Parse a payload and reject schema versions outside the supported range.
+fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let payload: ExceptionPayload = serde_json::from_str(json)?;
     match payload.validate_version() {
-        Ok(()) => Ok(payload),
-        Err(SchemaVersionError::VersionTooNew { found, max_supported }) => Err(format!(
-            "payload schema {found} is newer than supported {max_supported}"
-        )),
-        Err(SchemaVersionError::VersionTooOld { found, min_supported }) => Err(format!(
-            "payload schema {found} is older than minimum {min_supported}"
-        )),
+        Ok(()) => {
+            // Normal processing path.
+            Ok(())
+        }
+        Err(SchemaVersionError::VersionTooNew {
+            found,
+            max_supported,
+        }) => {
+            // Reject too-new payloads explicitly.
+            eprintln!(
+                "payload schema {} is newer than supported {}",
+                found, max_supported
+            );
+            Err(SchemaVersionError::VersionTooNew {
+                found,
+                max_supported,
+            }
+            .into())
+        }
+        Err(SchemaVersionError::VersionTooOld {
+            found,
+            min_supported,
+        }) => {
+            // Reject unsupported historical payloads explicitly.
+            eprintln!(
+                "payload schema {} is older than minimum {}",
+                found, min_supported
+            );
+            Err(SchemaVersionError::VersionTooOld {
+                found,
+                min_supported,
+            }
+            .into())
+        }
     }
 }
-
-let current = r#"{"schema_version": 1, "type_name": "ValueError", "message": "bad"}"#;
-assert!(check_payload(current).is_ok());
-
-let future = r#"{"schema_version": 999, "type_name": "ValueError", "message": "bad"}"#;
-assert_eq!(
-    check_payload(future).unwrap_err(),
-    "payload schema 999 is newer than supported 1"
-);
 ```
+
+Malformed JSON comes back as a `serde_json::Error` inside the boxed error, and
+the version is checked only after the payload has parsed.
 
 In Python, compare `payload["schema_version"]` with
 `femtologging.EXCEPTION_SCHEMA_VERSION` and apply the same policy: reject

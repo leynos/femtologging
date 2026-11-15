@@ -11,7 +11,7 @@ Examples
 --------
 >>> examples = parse_document(
 ...     "doc.md",
-...     "<!-- tested-example: hello -->\n\n```python\nassert True\n```\n",
+...     "<!-- tested-example: hello -->\n```python\nassert True\n```\n",
 ... )
 >>> [(example.id, example.language, example.body) for example in examples]
 [('hello', 'python', 'assert True\n')]
@@ -103,22 +103,23 @@ def _read_marker(source: str, lines: list[str], index: int) -> str | None:
 
 
 def _next_fence(source: str, lines: list[str], index: int) -> tuple[int, _Fence]:
-    """Return the fence opened after the marker at ``index``."""
-    # Only blank lines may separate a marker from its fence.
-    for candidate in range(index + 1, len(lines)):
-        if not lines[candidate].strip():
-            continue
-        fence = _Fence.parse(lines[candidate])
-        if fence is None:
-            raise DocumentationExampleError(
-                _located(source, index, "marker is not followed by a fence")
-            )
-        if not fence.info:
-            raise DocumentationExampleError(
-                _located(source, candidate, "fence should declare a language")
-            )
-        return candidate, fence
-    raise DocumentationExampleError(_located(source, index, "marker has no fence"))
+    """Return the fence opened on the line after the marker at ``index``."""
+    # The style guide places each marker immediately above its fence, and the
+    # Rust loader in build.rs enforces the same rule, so even a blank line
+    # between them is a breach rather than a layout choice.
+    candidate = index + 1
+    if candidate >= len(lines):
+        raise DocumentationExampleError(_located(source, index, "marker has no fence"))
+    fence = _Fence.parse(lines[candidate])
+    if fence is None:
+        raise DocumentationExampleError(
+            _located(source, index, "marker is not followed by a fence")
+        )
+    if not fence.info:
+        raise DocumentationExampleError(
+            _located(source, candidate, "fence should declare a language")
+        )
+    return candidate, fence
 
 
 def _read_body(

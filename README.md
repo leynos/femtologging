@@ -51,7 +51,6 @@ beta. Installers skip pre-releases unless asked, so request the beta explicitly
 with pip:
 
 <!-- tested-example: readme-install-pip -->
-
 ```bash
 python -m pip install "femtologging>=0.2.0b1"
 ```
@@ -59,7 +58,6 @@ python -m pip install "femtologging>=0.2.0b1"
 Or add it to a [uv](https://docs.astral.sh/uv/) project:
 
 <!-- tested-example: readme-install-uv -->
-
 ```bash
 uv add "femtologging>=0.2.0b1"
 ```
@@ -72,7 +70,6 @@ source, which needs the
 ### Quick taste
 
 <!-- tested-example: readme-quick-start -->
-
 ```python
 from femtologging import FemtoStreamHandler, get_logger
 
@@ -90,7 +87,6 @@ handler.close()
 It prints:
 
 <!-- tested-example: readme-quick-start-output -->
-
 ```text
 demo [INFO] hello from femtologging
 ```
