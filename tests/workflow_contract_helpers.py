@@ -9,10 +9,14 @@ Makefile and the workflow documents, without hard-coding today's job names.
 
 from __future__ import annotations
 
-import itertools
-import shlex
 import typing as typ
 
+from tests.workflow_command_helpers import (
+    _goals,
+    _line_tokens,
+    _logical_lines,
+    _runs_cargo_suite,
+)
 from tests.workflow_runner_helpers import is_linux_job
 
 if typ.TYPE_CHECKING:
@@ -21,124 +25,6 @@ if typ.TYPE_CHECKING:
     from tests.workflow_document_helpers import Job
 
 PREFLIGHT: typ.Final[str] = "check-build-tools"
-CARGO_SUITE_COMMANDS: typ.Final[frozenset[str]] = frozenset({"test", "nextest"})
-CONTROL_OPERATORS: typ.Final[frozenset[str]] = frozenset({
-    "&&",
-    "||",
-    ";",
-    "|",
-    "&",
-    "(",
-    ")",
-})
-# Options whose following token is a value rather than a goal. Long forms are
-# usually written with `=`, which the goal filter drops on its own.
-VALUE_OPTIONS: typ.Final[frozenset[str]] = frozenset({
-    "-C",
-    "-f",
-    "-I",
-    "-o",
-    "-W",
-    "--directory",
-    "--file",
-    "--makefile",
-    "--include-dir",
-    "--old-file",
-    "--assume-old",
-    "--new-file",
-    "--assume-new",
-    "--eval",
-})
-
-
-def _line_tokens(line: str) -> list[str]:
-    """Return shell-like tokens for `line`, with comments removed."""
-    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
-    lexer.commenters = "#"
-    try:
-        return list(lexer)
-    except ValueError:
-        return []
-
-
-def _command_segments(tokens: list[str]) -> list[list[str]]:
-    """Split `tokens` into commands at shell control operators."""
-    segments: list[list[str]] = []
-    current: list[str] = []
-    for token in tokens:
-        if token in CONTROL_OPERATORS:
-            segments.append(current)
-            current = []
-        else:
-            current.append(token)
-    segments.append(current)
-    return segments
-
-
-def _is_goal(token: str) -> bool:
-    """Report whether `token` names a Make goal rather than an option."""
-    return not token.startswith("-") and "=" not in token and not token.isdigit()
-
-
-def _arguments_after_make(tokens: list[str]) -> cabc.Iterator[str]:
-    """Yield Make's argument tokens, dropping an option's separate value."""
-    index = tokens.index("make") + 1
-    while index < len(tokens):
-        if tokens[index] in VALUE_OPTIONS:
-            index += 2
-            continue
-        yield tokens[index]
-        index += 1
-
-
-def _segment_goals(tokens: list[str]) -> list[str]:
-    """Return the goals of one command's tokens, or none without a `make`."""
-    if "make" not in tokens:
-        return []
-    return [token for token in _arguments_after_make(tokens) if _is_goal(token)]
-
-
-def _goals(tokens: list[str]) -> list[str]:
-    """Return the Make goals of one line's shell `tokens`, in order."""
-    return [
-        goal
-        for segment in _command_segments(tokens)
-        for goal in _segment_goals(segment)
-    ]
-
-
-def make_goals(line: str) -> list[str]:
-    """Return every Make goal named by the shell `line`, in order.
-
-    A step may run several commands on one line, so the token stream is split
-    at shell control operators and each command is read separately. Options,
-    option values, variable assignments and bare job counts are not goals.
-
-    Parameters
-    ----------
-    line
-        One line of a workflow step's ``run`` body.
-
-    Returns
-    -------
-    list[str]
-        The goals of every `make` invocation, concatenated in order.
-
-    Examples
-    --------
-    >>> make_goals("make -C . check-fmt && make test")
-    ['check-fmt', 'test']
-    """
-    return _goals(_line_tokens(line))
-
-
-def _runs_cargo_suite(tokens: list[str]) -> bool:
-    """Report whether `tokens` invoke Cargo's test runner."""
-    return any(
-        word == "cargo" and following in CARGO_SUITE_COMMANDS
-        for word, following in itertools.pairwise(tokens)
-    )
 
 
 def _reaches_preflight(
@@ -216,7 +102,7 @@ def _run_suite_reason(run: str, depends: cabc.Callable[[str], bool]) -> str | No
     str | None
         The first qualifying line, stripped, or ``None``.
     """
-    for line in run.splitlines():
+    for line in _logical_lines(run):
         tokens = _line_tokens(line)
         if _runs_cargo_suite(tokens):
             return line.strip()
