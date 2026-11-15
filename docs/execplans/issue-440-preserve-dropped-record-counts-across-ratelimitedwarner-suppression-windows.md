@@ -1065,3 +1065,44 @@ Markdown formatter; `1c04c61` reflowed exactly that paragraph, and check-fmt,
 markdownlint and nixie were re-run on the resulting tip. The code gated after
 that commit is unchanged, since `1c04c61` and the entry below touch only this
 document.
+
+2026-11-15, rebase onto current main: the branch was twenty commits behind
+`origin/main` (`d36cd74`), whose own work had already fixed part of the issue
+while restructuring the same modules. Main's `warn_if_due` now keeps suppressed
+counts, `stream_handler` is split into `config`, `deadline`, `waiter`,
+`shutdown` and `worker`, and the logger's flush machinery moved out of
+`producer.rs` into `logger/flush.rs` (with `DrainOutcome`) and
+`logger/producer/context_capture.rs`. A conflicting branch is not a
+deliverable, so the rebase was taken commit by commit; the pre-rebase tip is
+kept as `backup/issue-440-pre-rebase`.
+
+The conflicts were resolved in favour of main's structure, with this branch's
+semantics re-applied to the new homes:
+
+- `flush_drop_warners` lives in `logger/flush.rs` and is now called at the end
+  of `flush_handlers_inner`, after the drain and the handler flushes, so a
+  record refused mid-drain is in the same report. The `drain_hook` moved with
+  it, into `wait_for_dispatch_to_drain`.
+- The HTTP worker's drop helpers live in `http_handler/queue.rs` beside main's
+  `warn_drops`, so both the handler and the worker report through one
+  `flush_drops`; the duplicate copies the branch had split across `handler.rs`
+  and `worker.rs` are gone. The socket handler keeps one
+  `warn_drops`/`flush_drops` pair that its worker imports.
+- The stream handler's flush stayed in `take_shutdown`, and the worker's
+  drain-lock ordering problem is already solved on main by
+  `run_worker_guarded`: the writer and formatter are captured inside a guard
+  that fires completion only after they are dropped. The branch's own worker
+  split (`5d8cdbc`) was therefore skipped as redundant, and its drop-order test
+  was ported to main's `ShutdownCompletion` API.
+- The fork-safe `ForkSafeDrainLock` rebased without semantic change; only main's
+  `SystemClock` rename touched the same file.
+
+The rebased `stream_handler.rs` came out at 423 lines, over the repository's
+400-line limit. `bcfa1b6` moves the shared `warn_dropped` helper and this
+branch's shutdown regression test to `stream_handler/warning.rs`, leaving the
+handler at 384 lines; neither the helper nor the test changed meaning.
+
+The library unit tests (772 passed) and the stream-handler, handler and logger
+integration tests pass on the rebased tip. The full deterministic gates must
+run again before the next review round, because the rebase changed the tree
+under every gate.
