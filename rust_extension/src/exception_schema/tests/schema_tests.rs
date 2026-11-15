@@ -1,6 +1,7 @@
 //! Tests for exception schema type definitions and serialization.
 
 use crate::exception_schema::*;
+use crate::test_utils::json_round_trip::assert_json_round_trip;
 use rmp_serde::Serializer;
 use rstest::rstest;
 use serde::Serialize;
@@ -38,9 +39,7 @@ fn stack_frame_json_round_trip() {
         locals: Some(locals),
     };
 
-    let json = serde_json::to_string(&frame).expect("serialize frame");
-    let decoded: StackFrame = serde_json::from_str(&json).expect("deserialize frame");
-    assert_eq!(frame, decoded);
+    assert_json_round_trip(&frame);
 }
 
 #[rstest]
@@ -66,9 +65,7 @@ fn stack_trace_payload_json_round_trip() {
     ];
     let payload = StackTracePayload::new(frames);
 
-    let json = serde_json::to_string(&payload).expect("serialize");
-    let decoded: StackTracePayload = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(payload, decoded);
+    assert_json_round_trip(&payload);
 }
 
 #[rstest]
@@ -118,9 +115,7 @@ fn exception_payload_json_round_trip() {
         exceptions: vec![],
     };
 
-    let json = serde_json::to_string(&payload).expect("serialize");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(payload, decoded);
+    assert_json_round_trip(&payload);
 }
 
 #[rstest]
@@ -171,9 +166,9 @@ fn exception_group_with_nested_exceptions() {
         ..Default::default()
     };
 
-    let json = serde_json::to_string(&group).expect("serialize");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(decoded.exceptions.len(), 2);
+    // Full equality is stronger than the former length-only check: it also
+    // pins the nested payload contents the group was built from.
+    assert_json_round_trip(&group);
 }
 
 #[rstest]
