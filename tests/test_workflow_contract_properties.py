@@ -15,10 +15,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests.make_contract_helpers import prerequisite_map
+from tests.workflow_command_helpers import make_goals
 from tests.workflow_contract_helpers import (
     PREFLIGHT,
     depends_on_preflight,
-    make_goals,
     provisioning_problems,
 )
 

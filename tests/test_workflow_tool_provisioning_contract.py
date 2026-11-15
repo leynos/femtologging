@@ -15,9 +15,9 @@ import pytest
 import yaml.constructor
 
 from tests.make_contract_helpers import prerequisite_map
+from tests.workflow_command_helpers import make_goals
 from tests.workflow_contract_helpers import (
     depends_on_preflight,
-    make_goals,
     provisioning_problems,
     suite_steps,
 )
@@ -136,6 +136,10 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
         ("make check-fmt test", True),
         ("make check-fmt && make test", True),
         ("make lint; make test", True),
+        ("cargo --locked test --manifest-path rust_extension/Cargo.toml", True),
+        ("cargo --manifest-path rust_extension/Cargo.toml test", True),
+        ("cargo build --locked", False),
+        ("make \\\n  test", True),
         ("# make test", False),
     ],
     ids=[
@@ -145,6 +149,10 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
         "two-goals",
         "two-invocations-and",
         "two-invocations-semicolon",
+        "cargo-leading-option",
+        "cargo-option-with-value",
+        "cargo-not-the-suite",
+        "continued-line",
         "shell-comment",
     ],
 )
