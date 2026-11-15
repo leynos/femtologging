@@ -484,7 +484,12 @@ a sibling logger could rely on what it read.
 
 Python handler call plumbing — method lookup, the call itself, and the bounded
 flush-failure categories — is in
-`rust_extension/src/logger/py_handler/calls.rs`.
+`rust_extension/src/logger/py_handler/calls.rs`. The boundary around it is
+split in two: `rust_extension/src/logger/py_handler/flush.rs` attaches to the
+interpreter, runs the flush inside the `flush_registered_handler` span and
+reports the outcome, while
+`rust_extension/src/logger/py_handler/native_handler.rs` unwraps a built-in
+handler and runs its flush with the GIL detached.
 
 ### Dependabot grouping for the extension build
 
@@ -1170,20 +1175,29 @@ itself.
 
 Every handler is flushed even when an earlier one fails, and the results are
 combined afterwards; one handler's failure must not leave the records buffered
-in the handlers after it. A missing or non-callable `flush` method counts as
-success. A `flush` that returns `None` also succeeds, because Python's flush
-protocol reports failure by raising; any other falsy return value, `False` and
-`0` included, reports failure, and so does a `flush` that raises. A failed
-flush reports only a bounded category; the handler's exception text is never
-printed or logged, for the reason given under
-[Flush observability](#flush-observability). An interpreter that cannot be
-attached, which happens only while the process is shutting down, leaves the
-handler unflushed and reports `interpreter_unavailable`. In every one of these
-messages `handler_kind` names the handler an operator has to look at: the
-built-in handler type (`stream`, `file`, `rotating-file`, `timed-rotating-file`,
-`socket`, or `http`), or `custom` for a user-defined handler. Under the
-`tracing-compat` feature each of these flushes also runs inside an `info_span!`
-named `flush_registered_handler`, carrying the same `handler_kind` and
+in the handlers after it. `flush_configured_handlers` snapshots the attached
+handlers under the handler read guard and drops the guard before it calls any
+of them. That ordering is the invariant, not an implementation detail: a Python
+`flush` may call back into the logger, and a guard held across the callback
+would leave a writer waiting for a lock the callback cannot release. A missing
+or non-callable `flush` method counts as success. A `flush` that returns `None`
+also succeeds, because Python's flush protocol reports failure by raising; any
+other falsy return value, `False` and `0` included, reports failure, and so
+does a `flush` that raises. A failed flush reports only a bounded category; the
+handler's exception text is never printed or logged, for the reason given under
+[Flush observability](#flush-observability).
+The one path outside that rule is not a flush failure at all: when an attached
+handler cannot be unwrapped into its built-in type, the extraction error takes
+the ordinary handler-error path and is printed with its traceback, because it
+reports a registration mistake rather than a `flush` that ran and failed. An
+interpreter that cannot be attached, which happens only while the process is
+shutting down, leaves the handler unflushed and reports
+`interpreter_unavailable`. In every one of these messages `handler_kind` names
+the handler an operator has to look at: the built-in handler type (`stream`,
+`file`, `rotating-file`, `timed-rotating-file`, `socket`, or `http`), or
+`custom` for a user-defined handler. Under the `tracing-compat` feature each of
+these flushes also runs inside an `info_span!` named
+`flush_registered_handler`, carrying the same `handler_kind` and
 `flush_outcome`, so the queue-crossing wait appears as a timed span rather than
 only as an event emitted after it returns. `tests/test_custom_handler_flush.py`
 pins the reported results and delivery, `tests/test_flush_releases_gil.py` pins
