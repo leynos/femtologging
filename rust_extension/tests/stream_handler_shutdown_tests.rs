@@ -295,4 +295,3 @@ fn stream_handler_close_is_bounded_by_flush_timeout_when_thread_local_drop_block
         .recv_timeout(Duration::from_secs(5))
         .expect("worker should finish thread-local teardown");
 }
-
