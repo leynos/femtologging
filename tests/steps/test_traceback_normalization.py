@@ -192,6 +192,36 @@ _NORMALIZATION_CASES = (
     pytest.param(
         (
             "Stack (most recent call last):\n"
+            '  File "/workspace/python3.12/app/runpy.py", line 7, in run_module\n'
+            "    dispatch()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in run_module\n'
+            "    dispatch()\n"
+        ),
+        "keep an application runpy frame beneath a directory named for an interpreter",
+        id="keeps_runpy_beneath_interpreter_named_directory",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "C:/Python313/Lib/runpy.py", line 88, in _run_code\n'
+            "    exec(code, run_globals)\n"
+            '  File "/tmp/pytest.py", line 25, in console_main\n'
+            "    code = main()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "drop launcher frames from the Windows standard-library layout",
+        id="drops_windows_layout_launcher_frame",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
             '  File "/tmp/app.py", line 11, in main\n'
             "    process_request()\n"
         ),

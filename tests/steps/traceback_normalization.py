@@ -161,6 +161,12 @@ def _is_runpy_launcher_path(frame_file: str) -> bool:
     standard-library directory (``.../python3.15/`` or ``.../Python313/Lib``)
     is treated as launcher code.
 
+    The standard-library directory must be the file's own directory, or the
+    ``Lib`` directory one level above it for the Windows layout. A directory
+    named after an interpreter anywhere higher in the path is not enough: a
+    checkout such as ``/workspace/python3.12/app/runpy.py`` is application
+    code that happens to sit beneath such a name.
+
     Returns
     -------
     bool
@@ -171,7 +177,11 @@ def _is_runpy_launcher_path(frame_file: str) -> bool:
     path = PurePath(frame_file)
     if path.name != "runpy.py":
         return False
-    return any(_STDLIB_DIRECTORY_PATTERN.match(part) for part in path.parent.parts)
+    if _STDLIB_DIRECTORY_PATTERN.match(path.parent.name):
+        return True
+    return path.parent.name.lower() == "lib" and bool(
+        _STDLIB_DIRECTORY_PATTERN.match(path.parent.parent.name)
+    )
 
 
 def _should_drop_launcher_frame(
