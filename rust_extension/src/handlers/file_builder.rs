@@ -53,7 +53,7 @@ impl FileHandlerBuilder {
 
     /// Set the overflow policy for the handler.
     #[must_use]
-    pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
+    pub const fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.common.set_overflow_policy(policy);
         self
     }
