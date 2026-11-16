@@ -66,38 +66,58 @@ fn femto_file_handler_worker_thread_failure() {
     barrier.wait();
 }
 
+/// Writer double that counts explicit and shutdown-triggered flushes and
+/// records its own destruction.
+struct CountingWriter {
+    /// Shared count of calls to `flush`.
+    flushed: Arc<AtomicU32>,
+    /// Shared count of writer drops, used to check close idempotency.
+    closed: Arc<AtomicU32>,
+}
+
+impl Write for CountingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flushed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+impl_unsupported_seek!(CountingWriter);
+
+impl Drop for CountingWriter {
+    fn drop(&mut self) {
+        self.closed.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Assert the writer saw `expected_flushes` flushes and `expected_closes` drops.
+fn assert_counts(
+    flushed: &AtomicU32,
+    closed: &AtomicU32,
+    expected_flushes: u32,
+    expected_closes: u32,
+) {
+    assert_eq!(
+        flushed.load(Ordering::Relaxed),
+        expected_flushes,
+        "unexpected flush count"
+    );
+    assert_eq!(
+        closed.load(Ordering::Relaxed),
+        expected_closes,
+        "unexpected writer drop count"
+    );
+}
+
 #[test]
 fn femto_file_handler_flush_and_close_idempotency() {
-    /// Counts explicit and shutdown-triggered flushes and writer destruction.
-    struct TestWriter {
-        /// Shared count of calls to `flush`.
-        flushed: Arc<AtomicU32>,
-        /// Shared count of writer drops, used to check close idempotency.
-        closed: Arc<AtomicU32>,
-    }
-
-    impl Write for TestWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.flushed.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }
-    }
-
-    impl_unsupported_seek!(TestWriter);
-
-    impl Drop for TestWriter {
-        fn drop(&mut self) {
-            self.closed.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
     let flushed = Arc::new(AtomicU32::new(0));
     let closed = Arc::new(AtomicU32::new(0));
-    let writer = TestWriter {
+    let writer = CountingWriter {
         flushed: Arc::clone(&flushed),
         closed: Arc::clone(&closed),
     };
@@ -112,36 +132,35 @@ fn femto_file_handler_flush_and_close_idempotency() {
         writer,
         DefaultFormatter,
         handler_cfg,
-        BuilderOptions::<TestWriter>::default(),
+        BuilderOptions::<CountingWriter>::default(),
     );
 
-    assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::Relaxed), 1);
+    assert!(handler.flush(), "first explicit flush should succeed");
+    assert_counts(&flushed, &closed, 1, 0);
 
-    assert!(handler.flush());
-    assert_eq!(flushed.load(Ordering::Relaxed), 2);
-
-    handler.close();
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-    // Expect two manual flushes plus one triggered during shutdown
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert!(handler.flush(), "second explicit flush should succeed");
+    assert_counts(&flushed, &closed, 2, 0);
 
     handler.close();
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    // Two manual flushes plus one triggered during shutdown.
+    assert_counts(&flushed, &closed, 3, 1);
+
+    handler.close();
+    assert_counts(&flushed, &closed, 3, 1);
 
     assert!(
         !handler.flush(),
         "flush after close should be a no-op and report failure"
     );
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
+    assert_counts(&flushed, &closed, 3, 1);
 
-    assert!(!handler.flush());
-    // Ensure counters remain unchanged after the no-op flush
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert!(
+        !handler.flush(),
+        "a second no-op flush must also report failure"
+    );
+    // Ensure counters remain unchanged after the no-op flushes.
+    assert_counts(&flushed, &closed, 3, 1);
 
     drop(handler);
-    assert_eq!(flushed.load(Ordering::Relaxed), 3);
-    assert_eq!(closed.load(Ordering::Relaxed), 1);
+    assert_counts(&flushed, &closed, 3, 1);
 }

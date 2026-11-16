@@ -56,9 +56,9 @@ fn a_later_closer_reports_a_panic_after_an_earlier_timeout() {
     let (taken_tx, taken_rx) = mpsc::channel();
     let (outcome_tx, outcome_rx) = mpsc::channel();
     let first_closer = {
-        let handler = Arc::clone(&handler);
+        let closer_handler = Arc::clone(&handler);
         thread::spawn(move || {
-            let shutdown = handler.take_shutdown();
+            let shutdown = closer_handler.take_shutdown();
             taken_tx
                 .send(())
                 .expect("taken signal receiver must stay open");
