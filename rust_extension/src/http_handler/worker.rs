@@ -24,6 +24,7 @@ use ureq::{Agent, AgentBuilder};
 use crate::{
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
+    shutdown_ack::acknowledge_shutdowns,
     shutdown_signal::{ShutdownSignal, WaitOutcome},
     socket_handler::backoff::BackoffState,
 };
@@ -350,14 +351,7 @@ impl Worker {
         self.warner.flush(|count| {
             warn!("FemtoHTTPHandler dropped {count} records during shutdown");
         });
-        // Keep every shutdown acknowledgement behind the last request and
-        // cleanup. The final send is the worker's final action.
-        for ack in shutdown_acks {
-            let _ = ack.send(());
-        }
-        if let Some(ack) = shutdown_ack {
-            let _ = ack.send(());
-        }
+        acknowledge_shutdowns(shutdown_acks, shutdown_ack);
     }
 
     /// Consume commands; shutdown starts draining before its acknowledgement.

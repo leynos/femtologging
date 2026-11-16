@@ -18,6 +18,7 @@ mod log_context;
 mod log_record;
 mod logger;
 mod monotonic_clock;
+mod shutdown_ack;
 mod shutdown_signal;
 mod socket_handler;
 mod stream_handler;
@@ -279,25 +280,50 @@ use py_api::{get_logger, reset_manager_py};
 /// ```
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Core classes (always registered)
+    register_core_classes(m)?;
+    register_core_functions(m)?;
+    #[cfg(feature = "python")]
+    register_feature_bindings(m)?;
+    Ok(())
+}
+
+/// Register the classes and module constants the extension always exposes.
+fn register_core_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FemtoLogger>()?;
     m.add_class::<FemtoHandler>()?;
     m.add_class::<FemtoStreamHandler>()?;
     m.add_class::<FemtoFileHandler>()?;
+    register_core_constants(m)?;
+    Ok(())
+}
+
+/// Register the exception types and schema constant Python code imports.
+fn register_core_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "HandlerConfigError",
         m.py().get_type::<HandlerConfigError>(),
     )?;
     m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
     m.add("EXCEPTION_SCHEMA_VERSION", EXCEPTION_SCHEMA_VERSION)?;
+    Ok(())
+}
 
-    // Core functions (always registered)
+/// Register the module-level functions the extension always exposes.
+fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
     #[cfg(feature = "python")]
     m.add_function(wrap_pyfunction!(runtime_attachment_state_for_test, m)?)?;
+    Ok(())
+}
 
+/// Register the classes, functions and compat shims each feature adds.
+///
+/// Every binding here is Python-facing, so the function only exists when the
+/// `python` feature is on; compiling it otherwise would leave `m` unused.
+#[cfg(feature = "python")]
+fn register_feature_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Python-only classes, builders, and functions
     #[cfg(feature = "python")]
     {

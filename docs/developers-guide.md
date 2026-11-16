@@ -407,6 +407,38 @@ that read the clock itself would make the sequence of budgets depend on how
 long the previous call took, which is untestable and is the defect the seam
 exists to prevent.
 
+### Shared shutdown acknowledgement
+
+`shutdown_ack::acknowledge_shutdowns` (`rust_extension/src/shutdown_ack.rs`) is
+the acknowledgement step both network workers run as they stop. Its call sites
+are `rust_extension/src/http_handler/worker.rs` and
+`rust_extension/src/socket_handler/worker.rs`. Each worker holds two kinds of
+shutdown sender: those queued on its command channel, and its own, which
+`close()` sends and the worker holds for the final handshake. The helper drains
+the queued senders first, then sends the worker's own acknowledgement if it
+still has one, so a caller waiting on either acknowledgement cannot observe the
+worker exit before the queued requesters have been answered.
+
+A failed send means that the requester has already gone away, so the helper
+ignores it and carries on. Nothing is reported back: a worker's exit path has
+no recovery for a vanished sender, and stopping at the first failure would
+leave later requesters waiting for an acknowledgement that never comes.
+
+The helper lives in its own module because the two workers' stop paths are
+otherwise separate, and this ordering is a shared contract rather than an
+incidental similarity; the protocol concerns crossbeam channels, not either
+transport. A change to the helper affects both handlers.
+
+### Timed-rotation module boundary
+
+`FemtoTimedRotatingFileHandler` lives in
+`rust_extension/src/handlers/timed_rotating/handler.rs` and `mod.rs` re-exports
+it, so the `timed_rotating::FemtoTimedRotatingFileHandler` path is unchanged;
+code that reached it through `timed_rotating::core` must follow it. `core.rs`
+keeps the rotation mechanics and `TimedRotationConfig`, which `mod.rs`
+re-exports for the crate, and no longer defines the handler. Both files stay
+under the 400-line module cap.
+
 ### Flush clock and observer seam
 
 `rust_extension/src/logger/flush.rs` measures every flush through

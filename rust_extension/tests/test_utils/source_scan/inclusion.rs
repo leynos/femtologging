@@ -18,7 +18,7 @@
 
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use proc_macro2::TokenStream;
-use syn::{Expr, ExprLit, Lit, LitStr, Meta, Token, punctuated::Punctuated};
+use syn::{Expr, ExprLit, Lit, LitStr, Meta, MetaList, Token, punctuated::Punctuated};
 
 use super::SOURCE_EXTENSION;
 use super::discovery::is_walkable;
@@ -119,30 +119,52 @@ pub(super) fn foreign_inclusion(tokens: &TokenStream, including: &Utf8Path) -> O
 pub(super) fn foreign_module_path(meta: &Meta, referring: &Utf8Path) -> Option<String> {
     match meta {
         Meta::NameValue(pair) if render_path(&pair.path) == "path" => {
-            let Expr::Lit(ExprLit {
-                lit: Lit::Str(target),
-                ..
-            }) = &pair.value
-            else {
-                return None;
-            };
-            let reason = unreadable_target(&target.value(), referring)?;
-            Some(format!(
-                "#[path] in {referring}: {reason}; the module's source is \
-                 compiled into this crate and never scanned"
-            ))
+            let target = string_literal(&pair.value)?;
+            let reason = unreadable_target(&target, referring)?;
+            Some(module_path_finding(referring, &reason))
         }
         Meta::List(list) if render_path(&list.path) == "cfg_attr" => {
-            let nested = list
-                .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-                .ok()?;
-            nested
-                .iter()
-                .skip(1)
-                .find_map(|inner| foreign_module_path(inner, referring))
+            cfg_attr_module_path(list, referring)
         }
         _ => None,
     }
+}
+
+/// Return the string a `#[path = ...]` value holds, if it holds one.
+///
+/// Any other expression is not a literal path this scan can resolve, so it
+/// yields nothing rather than a guessed target.
+fn string_literal(value: &Expr) -> Option<String> {
+    let Expr::Lit(ExprLit {
+        lit: Lit::Str(target),
+        ..
+    }) = value
+    else {
+        return None;
+    };
+    Some(target.value())
+}
+
+/// Format the finding for a `#[path]` that names undocumented source.
+fn module_path_finding(referring: &Utf8Path, reason: &str) -> String {
+    format!(
+        "#[path] in {referring}: {reason}; the module's source is \
+         compiled into this crate and never scanned"
+    )
+}
+
+/// Judge the `path` attributes nested inside a `cfg_attr` list.
+///
+/// The first element is the condition, which the contract follows whatever it
+/// says; only the attributes after it can name a module source.
+fn cfg_attr_module_path(list: &MetaList, referring: &Utf8Path) -> Option<String> {
+    let nested = list
+        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        .ok()?;
+    nested
+        .iter()
+        .skip(1)
+        .find_map(|inner| foreign_module_path(inner, referring))
 }
 
 /// Resolve `target` against the directory holding `including`, lexically.

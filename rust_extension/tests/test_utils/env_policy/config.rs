@@ -5,7 +5,7 @@
 //! test reads the filesystem to find them.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use toml::Value;
@@ -208,6 +208,12 @@ fn host_path() -> Fallible<OsString> {
 pub(crate) fn probe_violations() -> Fallible<Vec<Violation>> {
     let fixture = crate_dir().join("tests/fixtures/env_policy_probe.rs");
     let out_dir = tempfile::tempdir()?;
+    let rendered = run_clippy_probe(&fixture, out_dir.path())?;
+    Ok(collect_violations(&rendered))
+}
+
+/// Run the policy probe over `fixture`, returning the diagnostics it rendered.
+fn run_clippy_probe(fixture: &Path, out_dir: &Path) -> Fallible<String> {
     // Build the child's environment rather than inheriting one. A probe for
     // the environment-access policy that reads host state would be testing
     // this machine as much as the policy: an inherited CLIPPY_CONF_DIR would
@@ -225,13 +231,17 @@ pub(crate) fn probe_violations() -> Fallible<Vec<Violation>> {
         .arg("--emit=metadata")
         .arg("--error-format=json")
         .arg("--out-dir")
-        .arg(out_dir.path())
+        .arg(out_dir)
         .arg("-D")
         .arg(DISALLOWED_METHODS_LINT)
-        .arg(&fixture)
+        .arg(fixture)
         .output()
         .map_err(|error| format!("run clippy-driver on {}: {error}", fixture.display()))?;
-    let rendered = String::from_utf8(output.stderr)?;
+    Ok(String::from_utf8(output.stderr)?)
+}
+
+/// Collect every policy violation from the rendered Clippy diagnostics.
+fn collect_violations(rendered: &str) -> Vec<Violation> {
     let mut found = Vec::new();
     for line in rendered.lines() {
         let Ok(diagnostic) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -239,18 +249,44 @@ pub(crate) fn probe_violations() -> Fallible<Vec<Violation>> {
         };
         found.extend(policy_violation(&diagnostic));
     }
-    Ok(found)
+    found
 }
 
 /// Return one diagnostic as a violation, if it is one.
 fn policy_violation(diagnostic: &serde_json::Value) -> Option<Violation> {
-    let code = diagnostic.get("code")?.get("code")?.as_str()?;
-    if code != DISALLOWED_METHODS_LINT {
+    let message = policy_message(diagnostic)?;
+    let method = quoted_method(message)?;
+    Some(Violation {
+        method,
+        notes: violation_notes(diagnostic),
+    })
+}
+
+/// Return a diagnostic's message, if it reports this policy's lint.
+fn policy_message(diagnostic: &serde_json::Value) -> Option<&str> {
+    if !reports_policy_lint(diagnostic) {
         return None;
     }
-    let message = diagnostic.get("message")?.as_str()?;
-    let method = message.split('`').nth(1)?.to_owned();
-    let notes = diagnostic
+    diagnostic.get("message")?.as_str()
+}
+
+/// Report whether a diagnostic's code names this policy's lint.
+fn reports_policy_lint(diagnostic: &serde_json::Value) -> bool {
+    diagnostic
+        .get("code")
+        .and_then(|code| code.get("code"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|code| code == DISALLOWED_METHODS_LINT)
+}
+
+/// Return the backticked method name a lint message carries, if any.
+fn quoted_method(message: &str) -> Option<String> {
+    message.split('`').nth(1).map(str::to_owned)
+}
+
+/// Return the notes attached to one Clippy diagnostic.
+fn violation_notes(diagnostic: &serde_json::Value) -> Vec<String> {
+    diagnostic
         .get("children")
         .and_then(serde_json::Value::as_array)
         .map(|children| {
@@ -260,6 +296,5 @@ fn policy_violation(diagnostic: &serde_json::Value) -> Option<Violation> {
                 .map(str::to_owned)
                 .collect()
         })
-        .unwrap_or_default();
-    Some(Violation { method, notes })
+        .unwrap_or_default()
 }

@@ -90,6 +90,15 @@ impl Serialize for HttpSerializableRecord<'_> {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(self.count_fields()))?;
+        self.serialize_core_fields(&mut map)?;
+        self.serialize_optional_fields(&mut map)?;
+        map.end()
+    }
+}
+
+impl HttpSerializableRecord<'_> {
+    /// Serialize the fields every HTTP record payload carries.
+    fn serialize_core_fields<M: SerializeMap>(&self, map: &mut M) -> Result<(), M::Error> {
         map.serialize_entry("name", self.name)?;
         map.serialize_entry("levelname", self.levelname)?;
         map.serialize_entry("msg", self.msg)?;
@@ -97,7 +106,11 @@ impl Serialize for HttpSerializableRecord<'_> {
         map.serialize_entry("filename", self.filename)?;
         map.serialize_entry("lineno", &self.lineno)?;
         map.serialize_entry("module", self.module)?;
-        map.serialize_entry("thread", &format_args!("{:?}", self.thread_id))?;
+        map.serialize_entry("thread", &format_args!("{:?}", self.thread_id))
+    }
+
+    /// Serialize the attributes and payloads a record may or may not carry.
+    fn serialize_optional_fields<M: SerializeMap>(&self, map: &mut M) -> Result<(), M::Error> {
         if let Some(name) = self.thread_name {
             map.serialize_entry("threadName", name)?;
         }
@@ -110,6 +123,6 @@ impl Serialize for HttpSerializableRecord<'_> {
         if let Some(stack) = self.stack_info {
             map.serialize_entry("stack_info", stack)?;
         }
-        map.end()
+        Ok(())
     }
 }

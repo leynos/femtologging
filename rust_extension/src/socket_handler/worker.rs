@@ -19,7 +19,7 @@ use log::warn;
 
 use crate::{
     handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
-    shutdown_signal::ShutdownSignal,
+    shutdown_ack::acknowledge_shutdowns, shutdown_signal::ShutdownSignal,
 };
 
 use super::{
@@ -266,14 +266,7 @@ impl Worker {
             warn!("FemtoSocketHandler dropped {count} records during shutdown");
         });
         self.flush_silently();
-        // Keep every shutdown acknowledgement behind the last request and
-        // cleanup. The final send is the worker's final action.
-        for ack in shutdown_acks {
-            let _ = ack.send(());
-        }
-        if let Some(ack) = shutdown_ack {
-            let _ = ack.send(());
-        }
+        acknowledge_shutdowns(shutdown_acks, shutdown_ack);
     }
 
     /// Consume commands; shutdown starts a bounded drain before its acknowledgement.

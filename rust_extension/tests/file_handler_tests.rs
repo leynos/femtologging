@@ -175,9 +175,20 @@ fn file_handler_concurrent_usage() {
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     let handler = Arc::new(FemtoFileHandler::new(&path).expect("Failed to create file handler"));
-    let mut handles = vec![];
-    for i in 0..10 {
-        let h = Arc::clone(&handler);
+    spawn_concurrent_writers(&handler, 10).expect("writer threads must finish cleanly");
+    drop(handler);
+    let output = fs::read_to_string(&path).expect("failed to read log output");
+    assert_every_message_written(&output, 10);
+}
+
+/// Write one record from each of `count` threads sharing `handler`.
+///
+/// Fallible rather than panicking because it is a fixture, not a test: a
+/// failed join is reported to the test body, which owns the verdict.
+fn spawn_concurrent_writers(handler: &Arc<FemtoFileHandler>, count: usize) -> Result<(), String> {
+    let mut handles = Vec::with_capacity(count);
+    for i in 0..count {
+        let h = Arc::clone(handler);
         handles.push(thread::spawn(move || {
             h.expect_handle(FemtoLogRecord::new(
                 "core",
@@ -187,11 +198,14 @@ fn file_handler_concurrent_usage() {
         }));
     }
     for h in handles {
-        h.join().expect("Thread panicked");
+        h.join().map_err(|_| "writer thread panicked".to_string())?;
     }
-    drop(handler);
-    let output = fs::read_to_string(&path).expect("failed to read log output");
-    for i in 0..10 {
+    Ok(())
+}
+
+/// Assert the log holds a line for each of `count` concurrent messages.
+fn assert_every_message_written(output: &str, count: usize) {
+    for i in 0..count {
         assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }
 }

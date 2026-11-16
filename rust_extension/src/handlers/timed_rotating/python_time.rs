@@ -34,44 +34,92 @@ pub(crate) fn extract_naive_time_from_py_time(
     allow_none: bool,
 ) -> PyResult<Option<NaiveTime>> {
     if value.is_none() {
-        if allow_none {
-            return Ok(None);
-        }
-
-        return Err(PyTypeError::new_err(format!(
-            "{arg_name} must be datetime.time or None"
-        )));
+        return none_or_error(arg_name, allow_none);
     }
 
+    require_time_instance(value, arg_name)?;
+    let fields = TimeFields::extract(value)?;
+    require_naive_timezone(value, arg_name)?;
+    fields.into_naive_time(value, arg_name)
+}
+
+/// The clock fields read from a Python `datetime.time`.
+struct TimeFields {
+    /// Hour of day, 0–23.
+    hour: u32,
+    /// Minute of hour, 0–59.
+    minute: u32,
+    /// Second of minute, 0–59.
+    second: u32,
+    /// Microsecond of second, 0–999_999.
+    microsecond: u32,
+}
+
+impl TimeFields {
+    /// Read the four clock attributes from `value`.
+    ///
+    /// Attributes are read before the timezone is inspected so a malformed
+    /// value reports its field error first, as it always has.
+    fn extract(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            hour: value.getattr("hour")?.extract()?,
+            minute: value.getattr("minute")?.extract()?,
+            second: value.getattr("second")?.extract()?,
+            microsecond: value.getattr("microsecond")?.extract()?,
+        })
+    }
+
+    /// Build the [`NaiveTime`], rejecting out-of-range field combinations.
+    fn into_naive_time(
+        self,
+        value: &Bound<'_, PyAny>,
+        arg_name: &str,
+    ) -> PyResult<Option<NaiveTime>> {
+        NaiveTime::from_hms_micro_opt(self.hour, self.minute, self.second, self.microsecond)
+            .ok_or_else(|| {
+                PyTypeError::new_err(format!(
+                    "invalid {arg_name} value of type {}",
+                    fq_py_type(value)
+                ))
+            })
+            .map(Some)
+    }
+}
+
+/// Return `Ok(None)` for an allowed `None`, otherwise report the wrong type.
+fn none_or_error(arg_name: &str, allow_none: bool) -> PyResult<Option<NaiveTime>> {
+    if allow_none {
+        return Ok(None);
+    }
+
+    Err(PyTypeError::new_err(format!(
+        "{arg_name} must be datetime.time or None"
+    )))
+}
+
+/// Reject objects that are not a `datetime.time`.
+fn require_time_instance(value: &Bound<'_, PyAny>, arg_name: &str) -> PyResult<()> {
     let py = value.py();
     let time_type = py.import("datetime")?.getattr("time")?;
-    if !value.is_instance(&time_type)? {
-        return Err(PyTypeError::new_err(format!(
-            "{arg_name} must be datetime.time, got {}",
-            fq_py_type(value),
-        )));
+    if value.is_instance(&time_type)? {
+        return Ok(());
     }
 
-    let hour: u32 = value.getattr("hour")?.extract()?;
-    let minute: u32 = value.getattr("minute")?.extract()?;
-    let second: u32 = value.getattr("second")?.extract()?;
-    let microsecond: u32 = value.getattr("microsecond")?.extract()?;
-    let tzinfo = value.getattr("tzinfo")?;
+    Err(PyTypeError::new_err(format!(
+        "{arg_name} must be datetime.time, got {}",
+        fq_py_type(value),
+    )))
+}
 
-    if !tzinfo.is_none() {
-        return Err(PyValueError::new_err(format!(
-            "{arg_name} must be timezone-naive"
-        )));
+/// Reject timezone-aware times, which a `NaiveTime` cannot represent.
+fn require_naive_timezone(value: &Bound<'_, PyAny>, arg_name: &str) -> PyResult<()> {
+    if value.getattr("tzinfo")?.is_none() {
+        return Ok(());
     }
 
-    NaiveTime::from_hms_micro_opt(hour, minute, second, microsecond)
-        .ok_or_else(|| {
-            PyTypeError::new_err(format!(
-                "invalid {arg_name} value of type {}",
-                fq_py_type(value)
-            ))
-        })
-        .map(Some)
+    Err(PyValueError::new_err(format!(
+        "{arg_name} must be timezone-naive"
+    )))
 }
 
 /// Converts a Python datetime.time value using the common validation helper.

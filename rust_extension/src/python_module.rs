@@ -111,31 +111,51 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
     m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
     m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
-    #[cfg(feature = "test-util")]
-    {
-        use crate::handlers::timed_rotating::{
-            clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
-        };
-        use crate::logger::flush_test::{
-            cancel_flush_wait_for_test, drain_flush_signals_for_test, wait_for_flush_entry_for_test,
-        };
-        m.add_function(wrap_pyfunction!(wait_for_flush_entry_for_test, m)?)?;
-        m.add_function(wrap_pyfunction!(cancel_flush_wait_for_test, m)?)?;
-        m.add_function(wrap_pyfunction!(drain_flush_signals_for_test, m)?)?;
-        m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
-        m.add_function(wrap_pyfunction!(
-            clear_timed_rotation_test_times_for_test,
-            m
-        )?)?;
-        m.add_function(wrap_pyfunction!(stream_waiter_count_for_test, m)?)?;
-    }
+    register_test_util_functions(m)?;
+    register_frame_filter_functions(m)?;
+    register_convenience_functions(m)?;
+    Ok(())
+}
+
+/// Register the test-only hooks that the `test-util` feature adds.
+#[cfg(feature = "test-util")]
+fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::handlers::timed_rotating::{
+        clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+    };
+    use crate::logger::flush_test::{
+        cancel_flush_wait_for_test, drain_flush_signals_for_test, wait_for_flush_entry_for_test,
+    };
+    m.add_function(wrap_pyfunction!(wait_for_flush_entry_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(cancel_flush_wait_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(drain_flush_signals_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        clear_timed_rotation_test_times_for_test,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(stream_waiter_count_for_test, m)?)?;
+    Ok(())
+}
+
+/// Without `test-util` there are no test hooks to register.
+#[cfg(not(feature = "test-util"))]
+fn register_test_util_functions(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+    Ok(())
+}
+
+/// Register the frame-filtering helpers.
+fn register_frame_filter_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::frame_filter_py::get_logging_infrastructure_patterns,
         m
     )?)?;
+    Ok(())
+}
 
-    // Module-level convenience logging functions
+/// Register the module-level convenience logging functions.
+fn register_convenience_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_debug, m)?)?;
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_info, m)?)?;
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_warn, m)?)?;
@@ -144,7 +164,6 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
         crate::convenience_functions::py_validate_log_context,
         m
     )?)?;
-
     Ok(())
 }
 

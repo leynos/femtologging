@@ -24,6 +24,37 @@ fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
     }
 }
 
+/// Clone `builder` with the authentication selected by the given credentials.
+///
+/// Bearer-token and basic-auth settings are mutually exclusive, and basic auth
+/// requires both a username and a password, so a mixed or partial mapping is
+/// rejected before either setting is applied.
+fn authenticated_builder(
+    builder: &HTTPHandlerBuilder,
+    token: Option<Bound<'_, PyAny>>,
+    username: Option<Bound<'_, PyAny>>,
+    password: Option<Bound<'_, PyAny>>,
+) -> PyResult<HTTPHandlerBuilder> {
+    if let Some(token) = token {
+        if username.is_some() || password.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "with_auth config must not mix 'token' with 'username'/'password'",
+            ));
+        }
+        return Ok(builder
+            .clone()
+            .with_bearer_token(token.extract::<String>()?));
+    }
+    let (Some(username), Some(password)) = (username, password) else {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "with_auth config must specify either 'token' or both 'username' and 'password'",
+        ));
+    };
+    let username: String = username.extract()?;
+    let password: String = password.extract()?;
+    Ok(builder.clone().with_basic_auth(username, password))
+}
+
 #[pymethods]
 impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
@@ -82,24 +113,7 @@ impl HTTPHandlerBuilder {
         let token = config.get_item("token")?;
         let username = config.get_item("username")?;
         let password = config.get_item("password")?;
-        let updated = if let Some(token) = token {
-            if username.is_some() || password.is_some() {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "with_auth config must not mix 'token' with 'username'/'password'",
-                ));
-            }
-            slf.clone().with_bearer_token(token.extract::<String>()?)
-        } else {
-            let (Some(username), Some(password)) = (username, password) else {
-                return Err(pyo3::exceptions::PyValueError::new_err(
-                    "with_auth config must specify either 'token' or both 'username' and 'password'",
-                ));
-            };
-            let username: String = username.extract()?;
-            let password: String = password.extract()?;
-            slf.clone().with_basic_auth(username, password)
-        };
-        *slf = updated;
+        *slf = authenticated_builder(&slf, token, username, password)?;
         Ok(slf)
     }
 

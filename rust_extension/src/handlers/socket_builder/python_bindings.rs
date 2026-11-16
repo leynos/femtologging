@@ -28,6 +28,25 @@ fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult
     }
 }
 
+/// The configuration keys `BackoffConfig` accepts.
+const BACKOFF_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
+
+/// Reject configuration keys that `BackoffConfig` does not understand.
+///
+/// Failing fast on a typo is the point: a misspelt key would otherwise be
+/// ignored and leave the caller's intended override silently unapplied.
+fn validate_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
+    for (key, _) in config.iter() {
+        let key: &str = key.extract()?;
+        if !BACKOFF_KEYS.contains(&key) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown BackoffConfig key {key:?}",
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl BackoffOverrides {
     /// Construct `BackoffOverrides` from an optional configuration dictionary.
@@ -45,21 +64,11 @@ impl BackoffOverrides {
     #[new]
     #[pyo3(signature = (config=None))]
     fn py_new<'py>(config: Option<Bound<'py, PyDict>>) -> PyResult<Self> {
-        let config = match config {
-            Some(dict) => dict,
-            None => return Ok(Self::default()),
+        let Some(config) = config else {
+            return Ok(Self::default());
         };
 
-        // Fail fast on typos / unsupported keys.
-        const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
-        for (key, _) in config.iter() {
-            let key: &str = key.extract()?;
-            if !ALLOWED_KEYS.contains(&key) {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown BackoffConfig key {key:?}",
-                )));
-            }
-        }
+        validate_backoff_keys(&config)?;
 
         let base_ms = extract_optional_u64(&config, "base_ms")?;
         let cap_ms = extract_optional_u64(&config, "cap_ms")?;

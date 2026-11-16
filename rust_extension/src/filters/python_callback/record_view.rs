@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use log::warn;
 use pyo3::basic::CompareOp;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -42,44 +43,72 @@ fn create_filter_record<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let record_dict_obj = record_to_dict(py, record)?;
     let record_dict = record_dict_obj.bind(py).cast::<PyDict>()?;
+    let payload = log_record_payload(py, record, record_dict)?;
+    let logging = py.import("logging")?;
+    logging.call_method1("makeLogRecord", (payload,))
+}
+
+/// Return the record's metadata dict and the enrichment dict nested inside it.
+fn record_enrichment_dicts<'py>(
+    record_dict: &Bound<'py, PyDict>,
+) -> PyResult<(Bound<'py, PyDict>, Bound<'py, PyDict>)> {
     let metadata = record_dict
         .get_item("metadata")?
-        .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("record dict missing metadata"))?;
-    let metadata = metadata.cast::<PyDict>()?;
-    let extra_binding = metadata.get_item("key_values")?.ok_or_else(|| {
-        pyo3::exceptions::PyRuntimeError::new_err("record dict missing key_values")
-    })?;
-    let extra = extra_binding.cast::<PyDict>()?;
+        .ok_or_else(|| PyRuntimeError::new_err("record dict missing metadata"))?
+        .cast_into::<PyDict>()?;
+    let extra = metadata
+        .get_item("key_values")?
+        .ok_or_else(|| PyRuntimeError::new_err("record dict missing key_values"))?
+        .cast_into::<PyDict>()?;
+    Ok((metadata, extra))
+}
 
-    let log_record_payload = PyDict::new(py);
-    log_record_payload.set_item("name", record.logger())?;
-    log_record_payload.set_item("msg", record.message())?;
-    log_record_payload.set_item("levelname", record.level_str())?;
-    log_record_payload.set_item("levelno", u8::from(record.level()))?;
-    log_record_payload.set_item("pathname", &record.metadata().filename)?;
-    log_record_payload.set_item("filename", &record.metadata().filename)?;
-    log_record_payload.set_item("module", &record.metadata().module_path)?;
-    log_record_payload.set_item("lineno", record.metadata().line_number)?;
-    log_record_payload.set_item("logger", record.logger())?;
-    log_record_payload.set_item("level", record.level_str())?;
-    log_record_payload.set_item("message", record.message())?;
-    log_record_payload.set_item("metadata", metadata)?;
-    log_record_payload.set_item("args", PyList::empty(py))?;
+/// Build the mapping passed to `logging.makeLogRecord`.
+fn log_record_payload<'py>(
+    py: Python<'py>,
+    record: &FemtoLogRecord,
+    record_dict: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (metadata, extra) = record_enrichment_dicts(record_dict)?;
+    let payload = PyDict::new(py);
+    payload.set_item("name", record.logger())?;
+    payload.set_item("msg", record.message())?;
+    payload.set_item("levelname", record.level_str())?;
+    payload.set_item("levelno", u8::from(record.level()))?;
+    payload.set_item("pathname", &record.metadata().filename)?;
+    payload.set_item("filename", &record.metadata().filename)?;
+    payload.set_item("module", &record.metadata().module_path)?;
+    payload.set_item("lineno", record.metadata().line_number)?;
+    payload.set_item("logger", record.logger())?;
+    payload.set_item("level", record.level_str())?;
+    payload.set_item("message", record.message())?;
+    payload.set_item("metadata", metadata)?;
+    copy_payload_items(py, &payload, record_dict, &extra)?;
+    Ok(payload)
+}
+
+/// Copy the optional payloads and the non-reserved enrichment keys across.
+fn copy_payload_items<'py>(
+    py: Python<'py>,
+    payload: &Bound<'py, PyDict>,
+    record_dict: &Bound<'py, PyDict>,
+    extra: &Bound<'py, PyDict>,
+) -> PyResult<()> {
+    payload.set_item("args", PyList::empty(py))?;
     if let Some(exc_info) = record_dict.get_item("exc_info")? {
-        log_record_payload.set_item("exc_info", exc_info)?;
+        payload.set_item("exc_info", exc_info)?;
     }
     if let Some(stack_info) = record_dict.get_item("stack_info")? {
-        log_record_payload.set_item("stack_info", stack_info)?;
+        payload.set_item("stack_info", stack_info)?;
     }
     for (key, value) in extra.iter() {
         let key = key.extract::<String>()?;
         if is_reserved_enrichment_key(&key) {
             continue;
         }
-        log_record_payload.set_item(key, value)?;
+        payload.set_item(key, value)?;
     }
-    let logging = py.import("logging")?;
-    logging.call_method1("makeLogRecord", (log_record_payload,))
+    Ok(())
 }
 
 /// Copies current record attributes so rejected callback changes can be discarded.
