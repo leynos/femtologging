@@ -143,7 +143,9 @@ def _condition_problems(condition: str) -> list[str]:
     it is meant to be, but it also fires after a successful scheduled run and
     after a failed manual one, so substring presence alone cannot accept it.
     Each conjunct is matched whole, so an inverted comparison such as
-    ``github.event_name != 'schedule'`` is rejected too.
+    ``github.event_name != 'schedule'`` is rejected too. So is any extra
+    conjunct, because ``... && false`` keeps both required terms visible while
+    preventing the job from ever running.
 
     Returns
     -------
@@ -159,7 +161,21 @@ def _condition_problems(condition: str) -> list[str]:
         problems.append("the notification job must run only after a failure")
     if not any(_SCHEDULE_CONDITION_PATTERN.match(term) for term in terms):
         problems.append("the notification job must run only for scheduled runs")
+    unexpected = [term for term in terms if not _is_required_condition_term(term)]
+    if unexpected:
+        problems.append(
+            "the notification condition must hold only failure() and the "
+            f"scheduled-run comparison, found {unexpected!r}"
+        )
     return problems
+
+
+def _is_required_condition_term(term: str) -> bool:
+    """Return whether a condition term is one of the two required conjuncts."""
+    return bool(
+        _FAILURE_CONDITION_PATTERN.match(term)
+        or _SCHEDULE_CONDITION_PATTERN.match(term)
+    )
 
 
 def _strip_expression_wrapper(condition: str) -> str:

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.steps import stack_frames
 from tests.steps.stack_frames import strip_external_stack_frames
 
 _STDLIB_ROOT = Path("/opt/python/lib/python3.12")
@@ -140,6 +141,37 @@ class TestStripExternalStackFrames:
             strip_external_stack_frames(stripped, external_roots=_EXTERNAL_ROOTS)
             == stripped
         ), "strip_external_stack_frames should be idempotent"
+
+    @staticmethod
+    def test_the_default_roots_come_from_sysconfig(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Drop frames beneath the interpreter's roots and skip an empty entry."""
+        app_file = Path.cwd() / "femtologging" / "app.py"
+        scheme = {
+            "stdlib": str(_STDLIB_ROOT),
+            "platstdlib": str(_STDLIB_ROOT),
+            "purelib": str(_SITE_PACKAGES_ROOT),
+            "platlib": str(_SITE_PACKAGES_ROOT),
+            "scripts": "",
+        }
+        monkeypatch.setattr(stack_frames.sysconfig, "get_paths", lambda: scheme)
+        output = (
+            _STACK_HEADING
+            + '  File "/opt/python/lib/python3.12/runpy.py", line 9, in _run\n'
+            + "    return _run_code()\n"
+            + '  File "/workspace/.venv/lib/python3.12/site-packages/pluggy/'
+            '_callers.py", line 3, in _multicall\n'
+            + "    res = hook_impl.function(*args)\n"
+            + f'  File "{app_file}", line 7, in emit\n'
+            + "    logger.log(level, message)\n"
+        )
+        stripped = strip_external_stack_frames(output)
+        assert stripped == (
+            _STACK_HEADING
+            + f'  File "{app_file}", line 7, in emit\n'
+            + "    logger.log(level, message)\n"
+        ), "the default roots must come from sysconfig and skip an empty entry"
 
     @staticmethod
     def test_a_none_output_becomes_an_empty_string() -> None:
