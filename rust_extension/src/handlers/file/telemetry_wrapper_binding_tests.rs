@@ -19,7 +19,7 @@ use tempfile::TempDir;
 use tracing_subscriber::prelude::*;
 
 use super::scripted_writer::ScriptedWriter;
-use super::telemetry_event_tests::EventCollector;
+use super::telemetry_event_tests::{CapturedEvent, EventCollector};
 use super::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig};
 use crate::formatter::DefaultFormatter;
 use crate::handlers::rotating::{FemtoRotatingFileHandler, PyRotatingFileHandler, RotationConfig};
@@ -156,7 +156,21 @@ fn each_wrapper_labels_its_own_waits(
     #[case] make_wrapper: fn(Python<'_>, &Path) -> Py<PyAny>,
     #[case] expected_kind: &'static str,
 ) {
-    let directory = TempDir::new().expect("a temporary directory");
+    let (diagnostics, events) = drive_wrapper(make_wrapper);
+
+    assert_wait_counts(&diagnostics);
+    assert_wait_events(&events, expected_kind);
+}
+
+/// Drive one wrapper through handle, flush and close.
+///
+/// The returned diagnostics are read while the scoped subscriber is still
+/// installed, and the events are read from the collector after it has seen
+/// every wait the three calls cause.
+fn drive_wrapper(
+    make_wrapper: fn(Python<'_>, &Path) -> Py<PyAny>,
+) -> (BTreeMap<String, u64>, Vec<CapturedEvent>) {
+    let directory = TempDir::new().unwrap_or_else(|err| panic!("a temporary directory: {err}"));
     let path = directory.path().join("wrapper.log");
 
     let collector = EventCollector::default();
@@ -166,20 +180,25 @@ fn each_wrapper_labels_its_own_waits(
             let handler = make_wrapper(py, &path);
             handler
                 .call_method1(py, "handle", ("core", "INFO", "hello"))
-                .expect("the first record must be accepted");
+                .unwrap_or_else(|err| panic!("the first record must be accepted: {err}"));
             let flushed: bool = handler
                 .call_method0(py, "flush")
-                .expect("flush must not raise")
+                .unwrap_or_else(|err| panic!("flush must not raise: {err}"))
                 .extract(py)
-                .expect("flush must return a bool");
+                .unwrap_or_else(|err| panic!("flush must return a bool: {err}"));
             assert!(flushed, "an idle worker must acknowledge the flush");
             handler
                 .call_method0(py, "close")
-                .expect("close must not raise");
+                .unwrap_or_else(|err| panic!("close must not raise: {err}"));
             diagnostics_map(py, &handler)
         })
     });
 
+    (diagnostics, collector.captured())
+}
+
+/// Check that the wrapper counted its own accepted record, flush and close.
+fn assert_wait_counts(diagnostics: &BTreeMap<String, u64>) {
     assert_eq!(
         diagnostics.get("handle_accepted").copied(),
         Some(1),
@@ -195,8 +214,11 @@ fn each_wrapper_labels_its_own_waits(
         Some(1),
         "the wrapper must count its shutdown: {diagnostics:?}",
     );
+}
 
-    let events = collector.captured();
+/// Check that every wait carried the wrapper's own kind, that one wait emitted
+/// one event, and that each event records the outcome the operation observed.
+fn assert_wait_events(events: &[CapturedEvent], expected_kind: &str) {
     let kinds: Vec<_> = events
         .iter()
         .map(|event| event.fields.get("handler_kind").map(String::as_str))
