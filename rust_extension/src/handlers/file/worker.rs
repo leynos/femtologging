@@ -82,7 +82,7 @@ pub enum BatchConfigError {
 
 impl BatchConfig {
     /// Create a batch configuration with a non-zero drain capacity.
-    pub fn new(capacity: usize) -> Result<Self, BatchConfigError> {
+    pub const fn new(capacity: usize) -> Result<Self, BatchConfigError> {
         if capacity == 0 {
             return Err(BatchConfigError::ZeroCapacity);
         }
@@ -150,7 +150,7 @@ enum RecvBatchError {
     ZeroCapacity,
 }
 
-/// Receives one command and drains at most batch_capacity - 1 additional
+/// Receives one command and drains at most `batch_capacity - 1` additional
 /// commands without blocking.
 fn recv_batch(
     rx: &Receiver<FileCommand>,
@@ -183,7 +183,7 @@ pub(crate) struct FlushTracker {
 
 impl FlushTracker {
     /// Starts a write counter with the configured periodic-flush interval.
-    pub(crate) fn new(flush_interval: usize) -> Self {
+    pub(crate) const fn new(flush_interval: usize) -> Self {
         Self {
             writes: 0,
             flush_interval,
@@ -205,7 +205,7 @@ impl FlushTracker {
     }
 
     /// Restarts periodic-flush counting after a successful flush.
-    pub(crate) fn reset(&mut self) {
+    pub(crate) const fn reset(&mut self) {
         self.writes = 0;
     }
 
@@ -213,7 +213,7 @@ impl FlushTracker {
     ///
     /// A flush is due when the interval is positive, at least one write has
     /// occurred, and the write count is a multiple of the interval.
-    fn should_flush(&self) -> bool {
+    const fn should_flush(&self) -> bool {
         self.flush_interval != 0
             && self.writes > 0
             && self.writes.is_multiple_of(self.flush_interval)
@@ -245,7 +245,7 @@ where
     R: RotationStrategy<W>,
 {
     /// Creates worker-owned state and starts a fresh flush-counting epoch.
-    fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
+    const fn new(writer: W, rotation: R, flush_interval: usize) -> Self {
         Self {
             writer,
             rotation,
@@ -255,11 +255,11 @@ where
 
     /// Formats and writes a record on the worker thread; rotation failures are
     /// logged and do not prevent the record write from being attempted.
-    fn handle_record<F>(&mut self, formatter: &F, record: FemtoLogRecord)
+    fn handle_record<F>(&mut self, formatter: &F, record: &FemtoLogRecord)
     where
         F: FemtoFormatter,
     {
-        let message = formatter.format(&record);
+        let message = formatter.format(record);
         if let Err(err) = self.rotation.before_write(&mut self.writer, &message) {
             error!("FemtoFileHandler rotation error; writing record without rotating: {err}");
         }
@@ -272,7 +272,7 @@ where
 
     /// Flushes buffered output, resets the write counter on success, and sends
     /// the result to the waiting caller.
-    fn handle_flush(&mut self, ack_tx: Sender<io::Result<()>>) {
+    fn handle_flush(&mut self, ack_tx: &Sender<io::Result<()>>) {
         let flush_result = self.writer.flush();
         if let Err(err) = &flush_result {
             warn!("FemtoFileHandler flush error: {err}");
@@ -299,8 +299,8 @@ where
     {
         for command in commands {
             match command {
-                FileCommand::Record(record) => self.handle_record(formatter, *record),
-                FileCommand::Flush(ack_tx) => self.handle_flush(ack_tx),
+                FileCommand::Record(record) => self.handle_record(formatter, &record),
+                FileCommand::Flush(ack_tx) => self.handle_flush(&ack_tx),
             }
         }
     }
@@ -363,9 +363,10 @@ where
         // still visible, so a closer without the join handle can report it.
         let _signal = CompleteOnDrop::with_terminal(worker_completion, worker_terminal);
         // Captured variables drop after this body's locals, so `rx` and
-        // `formatter` would outlive `_signal`. Rebinding makes them drop first,
-        // so every resource the worker owns is released before closers wake.
-        let (rx, formatter) = (rx, formatter);
+        // `formatter` would outlive `_signal`. Rebinding under distinct names
+        // makes them drop first, so every resource the worker owns is released
+        // before closers wake.
+        let (worker_rx, worker_formatter) = (rx, formatter);
         if let Some(b) = start_barrier {
             b.wait();
         }
@@ -373,8 +374,8 @@ where
         // Keep receive, record, flush, and terminal-shutdown work on the same
         // worker-owned writer so their I/O stays in channel order.
         loop {
-            match recv_batch(&rx, batch.capacity()) {
-                Ok(commands) => state.process_batch(&formatter, commands),
+            match recv_batch(&worker_rx, batch.capacity()) {
+                Ok(commands) => state.process_batch(&worker_formatter, commands),
                 Err(RecvBatchError::Disconnected) => break,
                 Err(RecvBatchError::ZeroCapacity) => {
                     error!("FemtoFileHandler batch capacity must be greater than zero");
