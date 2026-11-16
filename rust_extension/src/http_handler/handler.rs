@@ -338,12 +338,9 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
             });
             return Err(HandlerError::Closed);
         };
-        // Intentional suppression, not delivery: this record was produced by
-        // HTTP transport work, so queueing it here is what would make a
-        // successful delivery manufacture its own next delivery. It is not a
-        // drop either. The record reached a live handler and was deliberately
-        // discarded, and counting it would report a disconnected worker that
-        // does not exist. Other handler kinds still receive these records.
+        // Intentional suppression, not a drop: queueing this transport record
+        // would let a delivery manufacture the next one, and counting it would
+        // misreport a connected worker. Other sinks still receive it.
         if record.origin() == RecordOrigin::HttpTransport {
             return Ok(());
         }

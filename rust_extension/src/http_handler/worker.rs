@@ -27,7 +27,6 @@
 
 use std::{io, sync::Arc, time::Instant};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
 use ureq::{Agent, AgentBuilder};
@@ -42,8 +41,9 @@ use crate::{
 };
 
 use super::{
-    config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
+    request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
 };
@@ -229,8 +229,8 @@ impl Worker {
             format!("{}?{}", self.config.url, payload)
         };
         let mut req = agent.get(&url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
+        req = apply_auth(&self.config, req);
+        req = apply_headers(&self.config, req);
         req.call().map_err(Box::new)
     }
 
@@ -241,8 +241,8 @@ impl Worker {
         agent: &Agent,
     ) -> Result<ureq::Response, Box<ureq::Error>> {
         let mut req = agent.post(&self.config.url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
+        req = apply_auth(&self.config, req);
+        req = apply_headers(&self.config, req);
 
         let content_type = match self.config.format {
             SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
@@ -250,27 +250,6 @@ impl Worker {
         };
         req = req.set("Content-Type", content_type);
         req.send_string(payload).map_err(Box::new)
-    }
-
-    /// Add authentication; bearer configuration sets an `Authorization` header.
-    fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
-        match &self.config.auth {
-            AuthConfig::None => req,
-            AuthConfig::Basic { username, password } => {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64_encode(credentials.as_bytes());
-                req.set("Authorization", &format!("Basic {}", encoded))
-            }
-            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {}", token)),
-        }
-    }
-
-    /// Apply every configured custom header to the request.
-    fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
-        for (key, value) in &self.config.headers {
-            req = req.set(key, value);
-        }
-        req
     }
 
     /// Logs a retryable failure, then says whether this record gets another
@@ -400,11 +379,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// Base64-encode a byte slice for Basic auth.
-fn base64_encode(input: &[u8]) -> String {
-    BASE64_STANDARD.encode(input)
 }
 
 #[cfg(test)]
