@@ -165,5 +165,5 @@ pub(crate) fn recv_timeout<T>(
 }
 
 #[cfg(test)]
-#[path = "sync_tests.rs"]
+#[path = "../sync_tests.rs"]
 mod sync_tests;
