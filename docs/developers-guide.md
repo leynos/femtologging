@@ -102,9 +102,9 @@ The Python loader reads `README.md`, `docs/users-guide.md`, and
   `DocumentationExampleError` for a malformed marker or identifier, a marker
   with anything but a fence on the next line (a blank line included), a marked
   fence without a language, an unterminated fence, or a repeated identifier.
-- Only a bare run of the fence character closes a fence. A fence line that
-  carries an info string, such as a `python` tag, stays in the body, as
-  CommonMark specifies.
+- Only a bare run of the fence character, indented by at most three spaces,
+  closes a fence. A fence line that carries an info string, such as a `python`
+  tag, stays in the body, as CommonMark specifies.
 - A fence without a marker is not an error to the loader. `unmarked_fences()`
   reports each one with its location, so a test can require every fence in a
   document to be marked once that document has been brought up to the
