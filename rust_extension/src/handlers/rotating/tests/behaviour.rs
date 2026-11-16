@@ -14,11 +14,17 @@ use tempfile::tempdir;
 
 /// Inputs and expectation for one size-based rotation predicate case.
 struct RotationCase {
+    /// Seed content already on disk when the predicate is evaluated.
     initial: &'static str,
+    /// Bytes written to the writer's buffer but not yet flushed to disk.
     buffered: &'static str,
+    /// Incoming record whose encoded length is offered to the predicate.
     message: &'static str,
+    /// Size limit, in bytes, configured for the rotation policy.
     max_bytes: u64,
+    /// Whether the predicate is expected to request rotation.
     should_rotate: bool,
+    /// Rotated backups the strategy retains once rotation runs.
     backup_count: usize,
 }
 
