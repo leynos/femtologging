@@ -178,9 +178,10 @@ impl TimedHandlerOptions {
     ))]
     #[expect(
         clippy::too_many_arguments,
-        reason = "PyO3 macro-generated wrapper keeps all eight Python options visible"
+        reason = "PyO3's generated wrapper exposes eight Python options plus the GIL token"
     )]
     fn new(
+        _py: Python<'_>,
         capacity: usize,
         flush_interval: isize,
         policy: String,
