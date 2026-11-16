@@ -113,15 +113,33 @@ fn is_registered_as(py: Python<'_>, name: &str, expected: &Py<crate::FemtoLogger
     manager::get_logger(py, name).is_ok_and(|logger| logger.is(expected))
 }
 
+/// Everything the post-saturation assertion needs to inspect.
+///
+/// The inputs are grouped so the assertion takes one argument and its panic
+/// location still points at the test line.
+struct SaturatedState<'py> {
+    /// Interpreter handle used for every logger lookup.
+    py: Python<'py>,
+    /// The root logger that must receive the overflow.
+    root: &'py Py<crate::FemtoLogger>,
+    /// The first bounded logger, whose identity must survive saturation.
+    first: &'py Py<crate::FemtoLogger>,
+    /// Handler collecting the records root received.
+    handler: &'py CollectingHandler,
+    /// Worker count observed before saturation, which must not change.
+    initial_worker_count: usize,
+}
+
 /// Assert that root received the overflow and the registry stayed bounded.
 #[track_caller]
-fn assert_saturated_state(
-    py: Python<'_>,
-    root: &Py<crate::FemtoLogger>,
-    first: &Py<crate::FemtoLogger>,
-    handler: &CollectingHandler,
-    initial_worker_count: usize,
-) {
+fn assert_saturated_state(state: SaturatedState<'_>) {
+    let SaturatedState {
+        py,
+        root,
+        first,
+        handler,
+        initial_worker_count,
+    } = state;
     assert!(
         root.borrow(py).flush_handlers(),
         "root should drain its queue",
@@ -175,6 +193,12 @@ fn tracing_target_saturation_child() {
     });
     dispatch_overflow_targets(&dispatch);
     Python::attach(|py| {
-        assert_saturated_state(py, &root, &first, &handler, initial_worker_count);
+        assert_saturated_state(SaturatedState {
+            py,
+            root: &root,
+            first: &first,
+            handler: &handler,
+            initial_worker_count,
+        });
     });
 }
