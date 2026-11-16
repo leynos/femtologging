@@ -49,7 +49,7 @@ fn add_collecting_handler(
     Ok(handler)
 }
 
-fn log_overflow_targets(py: Python<'_>, root: &Py<crate::FemtoLogger>) {
+fn log_overflow_targets(py: Python<'_>, root: &Py<crate::FemtoLogger>) -> Option<()> {
     for index in 0..3 {
         let target = format!("log-bridge-overflow-{index}");
         log_target_record(
@@ -58,11 +58,14 @@ fn log_overflow_targets(py: Python<'_>, root: &Py<crate::FemtoLogger>) {
             format_args!("overflow record {index}"),
         );
 
-        let (resolved_name, resolved) =
-            resolve_logger(py, &target).expect("a refused valid target should resolve to root");
-        assert_eq!(resolved_name, "root");
+        let (resolved_name, resolved) = resolve_logger(py, &target)?;
+        assert_eq!(
+            resolved_name, "root",
+            "a refused valid target must resolve to root"
+        );
         assert!(resolved.is(root), "fallback must preserve root identity");
     }
+    Some(())
 }
 
 fn assert_root_received_overflow(
@@ -96,8 +99,16 @@ fn assert_logger_identity(py: Python<'_>, name: &str, expected: &Py<crate::Femto
 }
 
 fn assert_bounded_registry_and_workers(initial_worker_count: usize) {
-    assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
-    assert_eq!(worker_count_for_test(), initial_worker_count);
+    assert_eq!(
+        named_logger_count_for_test(),
+        MAX_LOGGERS,
+        "the named logger registry must stay at its cap",
+    );
+    assert_eq!(
+        worker_count_for_test(),
+        initial_worker_count,
+        "the dispatch worker count must not track target cardinality",
+    );
 }
 
 #[test]
@@ -134,7 +145,7 @@ fn log_bridge_saturation_child() {
         let first = manager::get_logger(py, "log-bridge-0").expect("first logger remains");
         let handler =
             add_collecting_handler(py, &root).expect("native collecting handler should register");
-        log_overflow_targets(py, &root);
+        log_overflow_targets(py, &root).expect("a refused valid target should resolve to root");
         assert_root_received_overflow(py, &root, &handler);
         assert_logger_identity(py, "log-bridge-0", &first);
         assert_logger_identity(py, "root", &root);

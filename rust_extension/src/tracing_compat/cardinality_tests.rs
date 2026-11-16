@@ -24,9 +24,10 @@ impl Callsite for DynamicTargetCallsite {
     fn set_interest(&self, _interest: tracing::subscriber::Interest) {}
 
     fn metadata(&self) -> &Metadata<'_> {
-        self.metadata
-            .get()
-            .expect("callsite metadata should be initialized before dispatch")
+        let Some(metadata) = self.metadata.get() else {
+            panic!("callsite metadata should be initialized before dispatch");
+        };
+        metadata
     }
 }
 
@@ -35,14 +36,14 @@ fn metadata_for_target(target: String) -> &'static Metadata<'static> {
     // Tracing metadata is static by contract. This helper runs in a short-lived
     // child process, so leaking one target and callsite per event is bounded by
     // this test process and reclaimed when it exits.
-    let target = Box::leak(target.into_boxed_str());
+    let target_name = Box::leak(target.into_boxed_str());
     let callsite = Box::leak(Box::new(DynamicTargetCallsite {
         metadata: OnceLock::new(),
     }));
     let fields = FieldSet::new(&[], Identifier(callsite));
     let metadata = Box::leak(Box::new(Metadata::new(
         "cardinality_event",
-        target,
+        target_name,
         Level::INFO,
         None,
         None,
@@ -57,34 +58,38 @@ fn metadata_for_target(target: String) -> &'static Metadata<'static> {
     metadata
 }
 
-fn emit_target(dispatch: &Dispatch, target: &str, disable_propagation: bool) {
+fn emit_target(dispatch: &Dispatch, target: &str, disable_propagation: bool) -> PyResult<()> {
     let metadata = metadata_for_target(target.to_owned());
-    assert!(
-        dispatch.enabled(metadata),
-        "the subscriber should enable target {target:?}",
-    );
+    if !dispatch.enabled(metadata) {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "the subscriber should enable target {target:?}"
+        )));
+    }
     if disable_propagation {
-        Python::attach(|py| {
-            manager::get_logger(py, target)
-                .expect("the enabled path should create the logger")
+        Python::attach(|py| -> PyResult<()> {
+            manager::get_logger(py, target)?
                 .borrow(py)
                 .set_propagate(false);
-        });
+            Ok(())
+        })?;
     }
     let values = metadata.fields().value_set_all(&[]);
     dispatch.event(&Event::new(metadata, &values));
+    Ok(())
 }
 
-fn dispatch_valid_targets(dispatch: &Dispatch) {
+fn dispatch_valid_targets(dispatch: &Dispatch) -> PyResult<()> {
     for index in 0..MAX_LOGGERS {
-        emit_target(dispatch, &format!("tracing-bridge-{index}"), true);
+        emit_target(dispatch, &format!("tracing-bridge-{index}"), true)?;
     }
+    Ok(())
 }
 
-fn dispatch_overflow_targets(dispatch: &Dispatch) {
+fn dispatch_overflow_targets(dispatch: &Dispatch) -> PyResult<()> {
     for index in 0..3 {
-        emit_target(dispatch, &format!("tracing-bridge-overflow-{index}"), false);
+        emit_target(dispatch, &format!("tracing-bridge-overflow-{index}"), false)?;
     }
+    Ok(())
 }
 
 fn create_root_logger() -> PyResult<(Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize)> {
@@ -94,7 +99,11 @@ fn create_root_logger() -> PyResult<(Py<crate::FemtoLogger>, Arc<CollectingHandl
         root.borrow(py)
             .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)?;
         let initial_worker_count = worker_count_for_test();
-        assert!(initial_worker_count > 0, "resolving root starts the pool");
+        if initial_worker_count == 0 {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "resolving root starts the pool",
+            ));
+        }
         Ok((root, handler, initial_worker_count))
     })
 }
@@ -132,14 +141,14 @@ struct SaturatedState<'py> {
 
 /// Assert that root received the overflow and the registry stayed bounded.
 #[track_caller]
-fn assert_saturated_state(state: SaturatedState<'_>) {
+fn assert_saturated_state(state: &SaturatedState<'_>) {
     let SaturatedState {
         py,
         root,
         first,
         handler,
         initial_worker_count,
-    } = state;
+    } = *state;
     assert!(
         root.borrow(py).flush_handlers(),
         "root should drain its queue",
@@ -157,8 +166,16 @@ fn assert_saturated_state(state: SaturatedState<'_>) {
         is_registered_as(py, "root", root),
         "root identity must survive saturation",
     );
-    assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
-    assert_eq!(worker_count_for_test(), initial_worker_count);
+    assert_eq!(
+        named_logger_count_for_test(),
+        MAX_LOGGERS,
+        "the named logger registry must stay at its cap",
+    );
+    assert_eq!(
+        worker_count_for_test(),
+        initial_worker_count,
+        "the dispatch worker count must not track target cardinality",
+    );
 }
 
 #[test]
@@ -175,7 +192,7 @@ fn tracing_target_saturation_child() {
     let (root, handler, initial_worker_count) =
         create_root_logger().expect("root logger setup should succeed");
 
-    dispatch_valid_targets(&dispatch);
+    dispatch_valid_targets(&dispatch).expect("valid tracing targets should dispatch");
 
     assert_eq!(
         named_logger_count_for_test(),
@@ -191,9 +208,9 @@ fn tracing_target_saturation_child() {
     let first = Python::attach(|py| {
         manager::get_logger(py, "tracing-bridge-0").expect("first logger remains")
     });
-    dispatch_overflow_targets(&dispatch);
+    dispatch_overflow_targets(&dispatch).expect("overflow tracing targets should dispatch");
     Python::attach(|py| {
-        assert_saturated_state(SaturatedState {
+        assert_saturated_state(&SaturatedState {
             py,
             root: &root,
             first: &first,
