@@ -282,6 +282,7 @@ use py_api::{get_logger, reset_manager_py};
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_core_classes(m)?;
     register_core_functions(m)?;
+    #[cfg(feature = "python")]
     register_feature_bindings(m)?;
     Ok(())
 }
@@ -318,6 +319,10 @@ fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 /// Register the classes, functions and compat shims each feature adds.
+///
+/// Every binding here is Python-facing, so the function only exists when the
+/// `python` feature is on; compiling it otherwise would leave `m` unused.
+#[cfg(feature = "python")]
 fn register_feature_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Python-only classes, builders, and functions
     #[cfg(feature = "python")]
