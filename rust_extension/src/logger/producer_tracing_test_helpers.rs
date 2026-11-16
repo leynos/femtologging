@@ -44,68 +44,9 @@ pub(super) struct ExpectedEvent {
     pub(super) count: usize,
 }
 
-pub(super) const EXPECTED_EVENTS: [ExpectedEvent; 8] = [
-    ExpectedEvent {
-        operation: "producer_context_capture",
-        handler_kind: "python",
-        outcome_field: "capture_outcome",
-        outcome: "captured",
-        count: 2,
-    },
-    ExpectedEvent {
-        operation: "producer_queue_dispatch",
-        handler_kind: "python",
-        outcome_field: "dispatch_outcome",
-        outcome: "queued",
-        count: 2,
-    },
-    ExpectedEvent {
-        operation: "producer_context_capture",
-        handler_kind: "python",
-        outcome_field: "capture_outcome",
-        outcome: "failed",
-        count: 1,
-    },
-    ExpectedEvent {
-        operation: "producer_context_capture",
-        handler_kind: "native",
-        outcome_field: "capture_outcome",
-        outcome: "not_required",
-        count: 3,
-    },
-    ExpectedEvent {
-        operation: "producer_queue_dispatch",
-        handler_kind: "native",
-        outcome_field: "dispatch_outcome",
-        outcome: "rejected",
-        count: 1,
-    },
-    ExpectedEvent {
-        operation: "producer_queue_dispatch",
-        handler_kind: "native",
-        outcome_field: "dispatch_outcome",
-        outcome: "queued",
-        count: 2,
-    },
-    ExpectedEvent {
-        operation: "worker_handler_dispatch",
-        handler_kind: "python",
-        outcome_field: "dispatch_outcome",
-        outcome: "success",
-        count: 1,
-    },
-    ExpectedEvent {
-        operation: "worker_handler_dispatch",
-        handler_kind: "python",
-        outcome_field: "dispatch_outcome",
-        outcome: "failed",
-        count: 1,
-    },
-];
-
-/// Expected per-chain counts for the accepted, rejected, and failed outcomes.
-pub(super) const EXPECTED_FILTER_OUTCOMES: [(&str, usize); 3] =
-    [("accepted", 3), ("rejected", 3), ("callback_failed", 1)];
+// The expected event tables live in a sibling data file. `include!` keeps the
+// compile-time array types the tracing tests and helpers below rely on.
+include!("producer_tracing_expected_tables.rs");
 
 /// Tracing visitor that stores each recorded field's rendered value.
 #[derive(Default)]
