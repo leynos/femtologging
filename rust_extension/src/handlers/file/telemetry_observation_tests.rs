@@ -21,8 +21,8 @@ use tracing_subscriber::prelude::*;
 /// command that was queued is counted whether or not the worker has picked it
 /// up yet.
 fn queued_commands(py: Python<'_>, handler: &Py<FemtoFileHandler>) -> usize {
-    let handler = handler.borrow(py);
-    handler
+    let borrowed_handler = handler.borrow(py);
+    borrowed_handler
         .tx
         .lock()
         .as_ref()
@@ -46,11 +46,12 @@ fn the_python_diagnostics_read_is_an_observation() {
 
     let collector = EventCollector::default();
     let subscriber = tracing_subscriber::registry().with(collector.clone());
-    let (handler, accepted, (queued_after_reads, queued_by_control), events_while_observing) =
+    let (py_handler, accepted, (queued_after_reads, queued_by_control), events_while_observing) =
         tracing::subscriber::with_default(subscriber, || {
             Python::attach(|py| {
-                let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
-                handler
+                let bound_handler =
+                    Py::new(py, handler).expect("the handler must be a valid pyclass");
+                bound_handler
                     .call_method1(py, "handle", ("core", "INFO", "one"))
                     .expect("the seeded record must be accepted");
                 // The worker takes the command before it enters `write`, so a
@@ -58,20 +59,20 @@ fn the_python_diagnostics_read_is_an_observation() {
                 // can fill it.
                 expect_stage(&entered_rx, Stage::Write);
 
-                let first: BTreeMap<String, u64> = handler
+                let first: BTreeMap<String, u64> = bound_handler
                     .call_method0(py, "wait_diagnostics")
                     .expect("wait_diagnostics must not raise")
                     .extract(py)
                     .expect("wait_diagnostics must return a counter map");
                 for _ in 0..3 {
-                    let repeated: BTreeMap<String, u64> = handler
+                    let repeated: BTreeMap<String, u64> = bound_handler
                         .call_method0(py, "wait_diagnostics")
                         .expect("a repeated read must not raise")
                         .extract(py)
                         .expect("wait_diagnostics must return a counter map");
                     assert_eq!(repeated, first, "a read must not move a counter");
                 }
-                let queued_after_reads = queued_commands(py, &handler);
+                let queued_after_reads = queued_commands(py, &bound_handler);
                 let accepted = diagnostics.snapshot().count(WaitOutcome::HandleAccepted);
                 let events = collector.captured().len();
 
@@ -80,12 +81,12 @@ fn the_python_diagnostics_read_is_an_observation() {
                 // probe that can never see anything. The worker is still
                 // parked, so the control command cannot be taken before it is
                 // counted.
-                handler
+                bound_handler
                     .call_method1(py, "handle", ("core", "INFO", "two"))
                     .expect("the control record must be accepted");
-                let queued_by_control = queued_commands(py, &handler);
+                let queued_by_control = queued_commands(py, &bound_handler);
                 (
-                    handler,
+                    bound_handler,
                     accepted,
                     (queued_after_reads, queued_by_control),
                     events,
@@ -112,7 +113,7 @@ fn the_python_diagnostics_read_is_an_observation() {
 
     writer.release();
     Python::attach(|py| {
-        handler
+        py_handler
             .call_method0(py, "close")
             .expect("close must not raise");
     });
