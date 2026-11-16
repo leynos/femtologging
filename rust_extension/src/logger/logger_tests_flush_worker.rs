@@ -203,6 +203,11 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
         let second_logger = &logger;
         let second = scope.spawn(move || second_logger.flush_handlers());
         wait_for_queued_jobs(shard, 1);
+        // The second caller's marker is queued, but that caller may still hold
+        // its waiter until it returns from admission. Waiting for the count to
+        // fall to zero means the next non-zero reading can only belong to the
+        // third caller, rather than to a waiter that has not been dropped yet.
+        wait_for_marker_waiters(shard, 0);
 
         let third_logger = &logger;
         let third = scope.spawn(move || third_logger.flush_handlers());
@@ -228,6 +233,14 @@ fn a_full_marker_queue_does_not_hold_the_handler_registry_lock() {
         remover
             .join()
             .expect("handler removal should finish while marker insertion waits");
+        // Removal finished while the third caller is still waiting for room,
+        // which is the property under test: the handler-list read lock is not
+        // held across the marker insertion.
+        assert_eq!(
+            shard.marker_waiters_for_test(),
+            1,
+            "handler removal must not release the third caller's admission wait"
+        );
 
         assert!(
             all_flush_callers_finished(&[&first, &second, &third]),

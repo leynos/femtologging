@@ -330,8 +330,10 @@ join their logger-owned workers. The logger creates no helper threads or
 detached flush tasks, and concurrent markers remain bounded by the existing
 queue capacity. A built-in handler is flushed through its native
 implementation. A user-defined Python handler is called back into Python, and
-only its own `flush` returning `None` or a truthy value confirms it, so a
-handler that buffers must drain that buffer there.
+its own `flush` confirms it when it returns `None` or a truthy value. A handler
+with no callable `flush` opts out and is treated as successfully flushed, as a
+handler with nothing to flush; any other falsy return reports failure. A
+handler that buffers must drain that buffer in `flush`.
 
 ### 3.3 `FemtoLogRecord` Structure
 

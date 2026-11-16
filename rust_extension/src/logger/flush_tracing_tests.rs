@@ -130,10 +130,12 @@ pub(super) fn assert_unconfirmed_flush_trace(collector: &InternalEventCollector)
         ],
     );
 
-    // The caller's event is emitted after the worker's, inside the same span,
-    // and reports the outcome the caller finally returned. The collector may
-    // already hold caller events from earlier flushes in this test, so take
-    // the most recent one.
+    // The caller's event reports the outcome the caller finally returned. It
+    // is emitted inside the same span as the worker's but not necessarily
+    // after it: on an acknowledgement timeout the caller can give up and trace
+    // its own verdict while the worker is still inside the callback. The
+    // collector may already hold caller events from earlier flushes in this
+    // test, so take the most recent one.
     let caller_event = events
         .iter()
         .rev()

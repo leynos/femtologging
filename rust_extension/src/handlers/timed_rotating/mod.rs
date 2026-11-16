@@ -9,6 +9,8 @@ mod core;
 mod core_tests;
 mod handler;
 mod rotation_strategy;
+#[cfg(test)]
+mod rotation_strategy_retention_tests;
 mod schedule;
 #[cfg(test)]
 mod schedule_tests;

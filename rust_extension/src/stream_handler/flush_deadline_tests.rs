@@ -1,10 +1,13 @@
 //! Flush-deadline tests for the stream handler.
 //!
-//! Both tests stall the worker inside the writer, so nothing can answer the
+//! Most tests stall the worker inside the writer, so nothing can answer the
 //! handler's flush marker until the test releases the writer. That makes two
 //! budget properties deterministic: an acknowledgement whose budget was
 //! already spent by admission returns without waiting, and a marker that never
-//! enters a full queue hands its deferred drop count back to the warner.
+//! enters a full queue hands its deferred drop count back to the warner. One
+//! test uses a writer that never blocks, so the worker really answers, and
+//! shows that an answer the caller only observes after the deadline is refused
+//! rather than counted as confirmed.
 
 use std::io::{self, Write};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
@@ -221,7 +224,12 @@ fn a_caller_deadline_shorter_than_the_handler_timeout_bounds_the_flush() {
 
 /// A flush whose marker never enters a saturated queue must keep its due drop
 /// count for the next warning, rather than swallowing it with the failed flush.
+///
+/// The installed test logger is process-wide, so this test must not overlap a
+/// sibling — in this module or another handler's — that reads or replaces the
+/// same buffer.
 #[test]
+#[serial_test::serial]
 fn failed_flush_enqueue_reports_its_drops_on_the_next_warning() {
     install_test_logger();
     let clock = Arc::new(WarningClock::default());
@@ -281,5 +289,44 @@ fn failed_flush_enqueue_reports_its_drops_on_the_next_warning() {
     );
 
     writer.release_all();
+    handler.close();
+}
+
+/// An answer the caller only observes after the deadline must not confirm the
+/// flush, even though the worker sent it and the receive took it.
+///
+/// The writer is a plain buffer, so the worker's flush completes at once and
+/// the acknowledgement is genuinely ready when the caller's receive begins.
+#[test]
+fn a_ready_acknowledgement_observed_after_the_deadline_does_not_confirm() {
+    let handler = FemtoStreamHandler::with_capacity_timeout(
+        Vec::new(),
+        DefaultFormatter,
+        2,
+        Duration::from_secs(1),
+    );
+
+    // The first three samples sit at the start: the marker is admitted, the
+    // answer is really received, and the handler's one-second budget is still
+    // whole for both waits. Only the lateness sample sees the deadline passed.
+    let mut clock = ScriptedClock::new(&[0, 0, 0, 31_000]);
+    let deadline = clock.deadline();
+    let began = Instant::now();
+    let confirmed = handler.flush_by_at(deadline, &mut || clock.now());
+
+    assert!(
+        !confirmed,
+        "an answer observed after the deadline must not confirm the flush"
+    );
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "the refusal must not wait out the handler's timeout"
+    );
+    assert_eq!(
+        clock.samples(),
+        4,
+        "the cap, queue admission, acknowledgement and lateness check must each sample the clock"
+    );
+
     handler.close();
 }

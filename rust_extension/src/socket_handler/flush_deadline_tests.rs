@@ -1,10 +1,12 @@
 //! Flush-deadline tests for the socket handler.
 //!
-//! The worker channel is built by the test and never read, so the worker
-//! cannot answer a marker. Each test therefore asserts a property of the
-//! caller's budget rather than of the network: an acknowledgement whose
-//! budget was spent on admission returns at once, and a marker refused by a
-//! full queue hands its deferred drop count back to the warner.
+//! The worker channel is built by the test. Most tests leave it unread, so the
+//! worker cannot answer a marker, and each asserts a property of the caller's
+//! budget rather than of the network: an acknowledgement whose budget was spent
+//! on admission returns at once, and a marker refused by a full queue hands its
+//! deferred drop count back to the warner. One test supplies a worker that does
+//! answer, and shows that an answer the caller only observes after the deadline
+//! is refused rather than counted as confirmed.
 
 use std::sync::Arc;
 use std::thread;
@@ -59,6 +61,61 @@ fn handler_with_unread_queue(
         warner,
     );
     (handler, tx, rx)
+}
+
+/// Build a handler whose worker answers every flush marker at once.
+///
+/// The answer is therefore genuinely ready when the caller's receive begins,
+/// which is what separates the lateness rule from an ordinary timeout: the
+/// caller really receives an acknowledgement and still has to refuse it.
+fn handler_with_answering_worker(capacity: usize, flush_timeout: Duration) -> FemtoSocketHandler {
+    let (tx, rx) = bounded(capacity);
+    let worker = thread::spawn(move || {
+        // Any other command, such as the shutdown request, ends the loop; the
+        // handler treats the closed channel as a worker that has already left.
+        while let Ok(SocketCommand::Flush(ack, _pending_drops)) = rx.recv() {
+            let _ = ack.send(());
+        }
+    });
+    let signal = Arc::new(ShutdownSignal::new());
+    FemtoSocketHandler::with_worker_for_test(
+        tx,
+        TestWorker::new(signal, worker),
+        flush_timeout,
+        RateLimitedWarner::new(Duration::from_secs(1)),
+    )
+}
+
+/// An answer the caller only observes after the deadline must not confirm the
+/// flush, even though the worker sent it and the receive took it.
+#[test]
+fn a_ready_acknowledgement_observed_after_the_deadline_does_not_confirm() {
+    let handler = handler_with_answering_worker(2, Duration::from_secs(1));
+
+    // The first three samples sit at the start: the marker is admitted, the
+    // answer is really received, and the handler's one-second budget is still
+    // whole for both waits. Only the lateness sample sees the deadline passed.
+    let mut clock = ScriptedClock::new(&[0, 0, 0, 31_000]);
+    let deadline = clock.deadline();
+    let began = Instant::now();
+    let confirmed = handler.flush_by_at(deadline, &mut || clock.now());
+
+    assert!(
+        !confirmed,
+        "an answer observed after the deadline must not confirm the flush"
+    );
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "the refusal must not wait out the handler's timeout"
+    );
+    assert_eq!(
+        clock.samples(),
+        4,
+        "the cap, queue admission, acknowledgement and lateness check must each sample the clock"
+    );
+
+    let mut handler = handler;
+    handler.close();
 }
 
 /// A budget already spent on admission leaves the acknowledgement only the
@@ -148,7 +205,12 @@ fn a_caller_deadline_shorter_than_the_handler_timeout_bounds_the_flush() {
 
 /// A flush whose marker never enters a saturated queue must keep its due drop
 /// count for the next warning, rather than swallowing it with the failed flush.
+///
+/// The installed test logger is process-wide, so this test must not overlap a
+/// sibling — in this module or another handler's — that reads or replaces the
+/// same buffer.
 #[test]
+#[serial_test::serial]
 fn failed_flush_enqueue_reports_its_drops_on_the_next_warning() {
     install_test_logger();
     let clock = Arc::new(WarningClock::default());
