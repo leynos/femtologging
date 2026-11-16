@@ -1212,8 +1212,11 @@ their bindings give the interpreter lock back for the duration of those waits.
 The `flush()` and `close()` boundary is described in
 [Python-facing `flush()` and `close()` waits](#python-facing-flush-and-close-waits);
 this section covers `handle()`, whose wait is the unbounded one, and the
-mechanics all three operations share. `FemtoFileHandler`'s `#[pymethods]`
-block, and the rotating and timed-rotating wrappers that delegate to it, take a
+mechanics all three operations share. `FemtoFileHandler::py_handle` takes no
+interpreter token: it attaches with `Python::attach(...)` and detaches around
+the enqueue inside the method, which keeps its Rust parameter count inside the
+lint's argument budget. Its `close()` boundary, and the rotating and
+timed-rotating wrappers that delegate to `handle()`, still take a
 `py: Python<'_>` token and use `py.detach(...)` around the operation.
 `handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
 (`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
