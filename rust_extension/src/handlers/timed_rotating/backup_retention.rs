@@ -60,8 +60,10 @@ impl BackupRetention {
             .map(|name| directory.join(name))
             .collect();
         backups.sort();
-        while backups.len() > self.backup_count {
-            let oldest = backups.remove(0);
+        // Oldest first: the excess is the prefix of the chronological order,
+        // so draining it leaves the newest `backup_count` behind.
+        let excess = backups.len().saturating_sub(self.backup_count);
+        for oldest in backups.drain(..excess) {
             store.remove_file_if_exists(&oldest)?;
         }
         Ok(())
