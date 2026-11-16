@@ -22,18 +22,18 @@ use super::super::{SocketHandlerBuilder, TransportConfig};
 impl SocketHandlerBuilder {
     /// Serialize configured transport, retry, and filter options for Python inspection.
     pub(super) fn extend_dict(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        self.extend_dict_with_scalars(d)?;
+        self.extend_dict_with_transport(d)?;
+        self.extend_dict_with_backoff(d)?;
+        self.extend_dict_with_filters(d)
+    }
+
+    /// Serialize the optional scalar builder fields into the dict.
+    fn extend_dict_with_scalars(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         dict_set!(d, "capacity", self.capacity);
         dict_set!(d, "connect_timeout_ms", self.connect_timeout_ms);
         dict_set!(d, "write_timeout_ms", self.write_timeout_ms);
         dict_set!(d, "max_frame_size", self.max_frame_size);
-        self.extend_dict_with_transport(d)?;
-        dict_set!(d, "backoff_base_ms", self.backoff.base_ms);
-        dict_set!(d, "backoff_cap_ms", self.backoff.cap_ms);
-        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after_ms);
-        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline_ms);
-        if !self.filters.is_empty() {
-            d.set_item("filters", self.filters.clone())?;
-        }
         Ok(())
     }
 
@@ -64,6 +64,23 @@ impl SocketHandlerBuilder {
             d.set_item("tls_domain", domain)?;
         }
         d.set_item("tls_insecure", tls_cfg.insecure)
+    }
+
+    /// Serialize the configured backoff overrides into the dict.
+    fn extend_dict_with_backoff(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        dict_set!(d, "backoff_base_ms", self.backoff.base_delay);
+        dict_set!(d, "backoff_cap_ms", self.backoff.max_delay);
+        dict_set!(d, "backoff_reset_after_ms", self.backoff.reset_after);
+        dict_set!(d, "backoff_deadline_ms", self.backoff.deadline);
+        Ok(())
+    }
+
+    /// Serialize the configured filter identifiers into the dict.
+    fn extend_dict_with_filters(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
+        if !self.filters.is_empty() {
+            d.set_item("filters", self.filters.clone())?;
+        }
+        Ok(())
     }
 }
 

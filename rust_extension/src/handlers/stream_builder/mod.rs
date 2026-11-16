@@ -7,7 +7,7 @@
 
 use std::{
     io::{self, Write},
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroUsize},
     time::Duration,
 };
 
@@ -44,6 +44,7 @@ pub struct StreamHandlerBuilder {
 
 impl StreamHandlerBuilder {
     /// Create a builder targeting `stdout`.
+    #[must_use]
     pub fn stdout() -> Self {
         Self {
             target: StreamTarget::Stdout,
@@ -52,6 +53,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Create a builder targeting `stderr`.
+    #[must_use]
     pub fn stderr() -> Self {
         Self {
             target: StreamTarget::Stderr,
@@ -60,6 +62,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Attach a formatter instance or identifier.
+    #[must_use]
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -69,6 +72,7 @@ impl StreamHandlerBuilder {
     }
 
     /// Attach filters by identifier.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -103,7 +107,7 @@ impl StreamHandlerBuilder {
 
     /// Resolves the configured capacity, defaulting to the stream queue size.
     fn resolved_capacity(&self) -> usize {
-        self.common.capacity.map(|c| c.get()).unwrap_or(1024)
+        self.common.capacity.map_or(1024, NonZeroUsize::get)
     }
 
     /// Resolves the non-zero flush threshold used by the worker.
@@ -111,8 +115,7 @@ impl StreamHandlerBuilder {
         Duration::from_millis(
             self.common
                 .flush_after_ms
-                .map(NonZeroU64::get)
-                .unwrap_or(CommonBuilder::DEFAULT_FLUSH_AFTER_MS),
+                .map_or(CommonBuilder::DEFAULT_FLUSH_AFTER_MS, NonZeroU64::get),
         )
     }
 
@@ -161,10 +164,10 @@ builder_methods! {
                 py_fn: py_with_flush_after_ms,
                 py_name: "with_flush_after_ms",
                 py_text_signature: "(self, flush_ms)",
-                rust_args: (flush_ms: NonZeroU64),
+                rust_args: (flush_after: NonZeroU64),
                 py_args: (flush_ms: u64),
                 py_prelude: {
-                    let flush_ms = NonZeroU64::new(flush_ms).ok_or_else(|| {
+                    let flush_after = NonZeroU64::new(flush_ms).ok_or_else(|| {
                         pyo3::exceptions::PyValueError::new_err(
                             "flush_after_ms must be greater than zero",
                         )
@@ -172,7 +175,7 @@ builder_methods! {
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.flush_after_ms = Some(flush_ms);
+                    builder.common.flush_after_ms = Some(flush_after);
                 }
             }
         }
@@ -205,18 +208,18 @@ builder_methods! {
             #[pyo3(text_signature = "(self, formatter)")]
             fn py_with_formatter<'py>(
                 mut slf: PyRefMut<'py, Self>,
-                formatter: Bound<'py, PyAny>,
+                formatter: &Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_formatter_from_py(&formatter)?;
+                slf.common.set_formatter_from_py(formatter)?;
                 Ok(slf)
             }
 
             /// Store filter IDs for resolution by the configuration builder.
             #[pyo3(name = "with_filters")]
-            fn py_with_filters<'py>(
-                mut slf: PyRefMut<'py, Self>,
+            fn py_with_filters(
+                mut slf: PyRefMut<'_, Self>,
                 filter_ids: Vec<String>,
-            ) -> PyRefMut<'py, Self> {
+            ) -> PyRefMut<'_, Self> {
                 slf.common.set_filter_ids(filter_ids);
                 slf
             }
