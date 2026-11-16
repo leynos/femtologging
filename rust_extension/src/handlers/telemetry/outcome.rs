@@ -74,7 +74,7 @@ impl WaitOutcome {
     ///
     /// The operation prefix is part of the key so a single flat dictionary
     /// cannot confuse a `handle()` outcome with a `flush()` outcome.
-    pub(crate) fn key(self) -> &'static str {
+    pub(crate) const fn key(self) -> &'static str {
         match self {
             Self::HandleAccepted => "handle_accepted",
             Self::HandleQueueFull => "handle_queue_full",
@@ -96,7 +96,7 @@ impl WaitOutcome {
     }
 
     /// Position of the outcome in the counter array.
-    pub(super) fn index(self) -> usize {
+    pub(super) const fn index(self) -> usize {
         self as usize
     }
 }
