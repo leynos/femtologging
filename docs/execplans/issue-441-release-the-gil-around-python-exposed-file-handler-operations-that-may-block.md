@@ -1953,6 +1953,60 @@ with fourteen `Multiple clusters of nested conditional logic` errors, the same
 (`git diff --stat origin/main...HEAD` for those paths is empty), so the red is
 entirely upstream. The wheel jobs pass.
 
+### The measurement now starts inside the call, not before it
+
+Both replies were rejected on the same point, and the objection is sound. The
+switch interval narrows the pre-call window but does not remove it: a thread
+that entered `COND_TIMED_WAIT` under the old interval can ask for a handover
+after `time.sleep(0)` returns, and a long enough pause there makes the elapsed
+and tick assertions pass while the call never waited on the blocked worker. The
+elapsed guard cannot tell "the call took half a second" from "half a second
+passed before the call".
+
+The measurement is now keyed to the call itself. Both tests run the call
+through a one-statement helper, `_invoke`/`invoke_call`, and a second thread
+waits until `sys._current_frames()` reports that frame on the calling thread.
+The interpreter reports it while the C call runs with its thread state
+detached, so the observation can only happen once the call has been entered and
+has not returned. Two consequences follow:
+
+- The tick baseline is read at that observation, so ticks counted before the
+  call can never be counted as the call's. A wait that holds the GIL never
+  shows its frame and is reported as such.
+- In the flush test, releasing the formatter is gated on that same observation,
+  so the release cannot land before the call. A GIL-holding flush hides its
+  frame, the release never happens, the formatter times out, and the flush
+  returns `False`.
+
+This removes the switch interval from both files, and with it the CPython
+timing argument. It also answers the request for a signal at entry to the
+native wait: the signal comes from the interpreter's own frame table, so no
+production path carries test instrumentation.
+
+Evidence, `/tmp/gil-exp/handover-experiment.py`, which patches the shipped
+script in memory and injects a pause between reading the clock and calling:
+
+| Build                   | Injected pause | `dispatched` | `direct` |
+| ----------------------- | -------------- | ------------ | -------- |
+| unmutated               | none           | pass         | pass     |
+| unmutated               | 0.05 s         | pass         | pass     |
+| unmutated               | 0.6 s          | pass         | pass     |
+| `flush_native` GIL-held | none           | fail         | fail     |
+| `flush_native` GIL-held | 0.05 s         | fail         | fail     |
+| `flush_native` GIL-held | 0.6 s          | fail         | fail     |
+
+The 0.6 s case is the schedule the review named: the formatter would have been
+released before the call under the old script, and the mutated build would have
+passed. It now fails with `flush_handlers() stalled behind the GIL`, because
+the release never happens without the call being seen.
+
+The network tests carry the same change. A second mutation, removing
+`py.detach` from `FemtoSocketHandler::py_flush`, `py_close` and
+`FemtoHTTPHandler::py_close`, fails all three cases with
+`another thread ran only 0 times during 0.300s`, so the tick count taken from
+the in-call baseline reports the GIL-holding wait directly. With the handlers
+restored, the two files passed 14 tests in five consecutive runs.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core

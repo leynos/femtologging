@@ -97,14 +97,13 @@ handler.close()
 """
 
 # The handler's worker formats the record in Python and waits for a release
-# only another Python thread can give. The release thread is started once the
-# formatter is already blocked, and gives way after a delay far longer than
-# the flush needs to reach the handler, so the release can only happen while
-# the flush is waiting on that handler. A flush that held the GIL through the
-# wait would block the release and the ticker thread below, and the formatter
-# would time out. The ticker counts the interpreter time the flush lets other
-# Python code have, which fails a GIL-holding flush even if the formatter
-# somehow escaped.
+# only another Python thread can give. A second thread releases the formatter
+# but only once it can see the flush running on this thread's stack, which the
+# interpreter reports while the C call is detached. So the release cannot land
+# before the call: if the flush holds the GIL, the release thread never sees
+# the call, the formatter times out, and the flush fails. The ticker counts the
+# interpreter time the flush lets other Python code have, measured from the
+# moment the call was seen running, so time before the call cannot be counted.
 FLUSH_FORMATTER_SCRIPT = """
 import pathlib
 import sys
@@ -124,12 +123,14 @@ release_formatter = threading.Event()
 ticker_started = threading.Event()
 is_finished = threading.Event()
 ticks = [0]
+ticks_at_call = [None]
 
 TICK_SECONDS = 0.005
+# Long enough that the ticker must get the GIL many times if the flush really
+# waits, and far below the formatter's own timeout.
 RELEASE_DELAY_SECONDS = 0.5
 FORMATTER_TIMEOUT_SECONDS = 5.0
-DEFAULT_SWITCH_SECONDS = sys.getswitchinterval()
-UNPREEMPTED_SWITCH_SECONDS = 60.0
+CALL_TIMEOUT_SECONDS = 10.0
 
 
 def pause_formatter(record):
@@ -137,11 +138,6 @@ def pause_formatter(record):
     if not release_formatter.wait(timeout=FORMATTER_TIMEOUT_SECONDS):
         raise TimeoutError("no other thread could release the formatter")
     return f"formatted {record['message']}"
-
-
-def release_after_delay():
-    time.sleep(RELEASE_DELAY_SECONDS)
-    release_formatter.set()
 
 
 def count_ticks():
@@ -156,6 +152,31 @@ logger = get_logger("gil.flush.formatter")
 logger.add_handler(handler)
 call = logger.flush_handlers
 call_name = "flush_handlers()"
+caller_ident = threading.get_ident()
+
+
+def invoke_call():
+    # The only statement is the call, so this frame is on the caller's stack
+    # exactly while the flush runs and has not returned.
+    return call()
+
+
+def release_once_the_call_is_running():
+    # Wait for the interpreter to report the flush frame on the calling thread.
+    # That can only happen while the call holds the interpreter detached, so a
+    # release can never land before the call starts.
+    deadline = time.monotonic() + CALL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        frame = sys._current_frames().get(caller_ident)
+        if frame is not None and frame.f_code is invoke_call.__code__:
+            ticks_at_call[0] = ticks[0]
+            # Keep the formatter blocked a while longer, so the call has a
+            # window in which only a released GIL lets the ticker run.
+            time.sleep(RELEASE_DELAY_SECONDS)
+            release_formatter.set()
+            return
+        time.sleep(TICK_SECONDS)
+
 
 ticker = threading.Thread(target=count_ticks, daemon=True)
 ticker.start()
@@ -167,34 +188,26 @@ else:
     logger.info("paused")
 assert formatter_entered.wait(timeout=5), "the handler's worker never formatted"
 
-# Start the release only now, so its delay is measured from a point at which
-# the flush is the next thing to run. Set before the delay, a release could
-# fire before the flush reached the handler and would prove nothing.
-release = threading.Thread(target=release_after_delay, daemon=True)
+release = threading.Thread(target=release_once_the_call_is_running, daemon=True)
 release.start()
-
-# The interpreter hands the GIL to a waiting thread on request, so this thread
-# could be preempted between reading the clock and entering the call; that pause
-# would count as flush time and could let a flush that held the GIL pass.
-# Raising the switch interval and giving the GIL up once drains any handover
-# already requested and restarts the interval, so the call is entered without
-# interruption. After that, only a voluntary release inside the call can let
-# another thread run, which is what the tick count proves.
-sys.setswitchinterval(UNPREEMPTED_SWITCH_SECONDS)
-time.sleep(0)
-ticks_before = ticks[0]
 started = time.monotonic()
-assert call(), f"{call_name} stalled behind the GIL"
+flushed = invoke_call()
 elapsed = time.monotonic() - started
-sys.setswitchinterval(DEFAULT_SWITCH_SECONDS)
+# Read the count while the GIL is still held, so no tick after the call can be
+# mistaken for one the call let through.
+baseline = ticks_at_call[0]
+observed = 0 if baseline is None else ticks[0] - baseline
 is_finished.set()
 ticker.join()
 
+assert flushed, f"{call_name} stalled behind the GIL"
+assert baseline is not None, (
+    f"no other thread ever saw {call_name} running, so the wait held the GIL"
+)
 assert elapsed >= 0.2, (
     f"{call_name} returned after {elapsed:.3f}s, so the blocked formatter "
     "was not what the flush waited for and this test proved nothing"
 )
-observed = ticks[0] - ticks_before
 assert observed >= 10, (
     f"another Python thread ran only {observed} times during {elapsed:.3f}s of "
     f"{call_name}, so the wait held the GIL"
@@ -281,15 +294,17 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
 
     The handler is registered from Python, so ``flush_handlers()`` reaches it
     through ``PyHandler::flush()``. Its worker is parked in a Python formatter
-    that only another Python thread can release. The release is requested once
-    the formatter is already blocked and takes effect half a second later, so
-    it can only land while the flush waits on that handler: a flush that kept
-    the GIL would block the release, time the formatter out, and leave the
-    ticker thread silent. The ticker counts how often another Python thread
-    ran during the call, and the file is read before ``close()``, so the
-    record can be there only because the flush waited for the handler. A fresh
-    interpreter keeps the logger's dispatch shard idle, so the record is
-    admitted rather than refused behind earlier tests' work.
+    that only another Python thread can release. That thread releases it only
+    once the interpreter reports the flush frame on the calling thread's stack,
+    which it does while the call is detached, so the release cannot land before
+    the call: a flush that kept the GIL would hide its own frame, block the
+    release, time the formatter out, and leave the ticker silent. The ticker
+    counts the time another Python thread got during the call, measured from
+    the moment the call was seen running, so a pause before the call cannot be
+    counted. The file is read before ``close()``, so the record can be there
+    only because the flush waited for the handler. A fresh interpreter keeps
+    the logger's dispatch shard idle, so the record is admitted rather than
+    refused behind earlier tests' work.
 
     This call also drains the dispatch shard, and that drain waits detached
     too, so it can release the GIL before the native wait starts. The isolated

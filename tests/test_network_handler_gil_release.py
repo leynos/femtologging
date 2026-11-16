@@ -38,11 +38,6 @@ WRITE_TIMEOUT_MS = 300
 MINIMUM_WAIT_SECONDS = 0.15
 MINIMUM_TICKS = 5
 TICK_SECONDS = 0.005
-# The interpreter's own GIL switch interval, captured so a measured call can
-# put it back. ``UNPREEMPTED_SWITCH_SECONDS`` is long enough that no thread can
-# ask for the GIL inside a measured call; see ``_ticks_during``.
-DEFAULT_SWITCH_SECONDS = sys.getswitchinterval()
-UNPREEMPTED_SWITCH_SECONDS = 60.0
 # Enough data to overflow loopback TCP buffers, so the socket worker blocks in
 # its write rather than finishing before the wait under test begins.
 LARGE_MESSAGE = "x" * (256 * 1024)
@@ -84,58 +79,136 @@ def silent_server() -> cabc.Iterator[_SilentServer]:
         connection.close()
 
 
+class _WaitMeasurement(typ.NamedTuple):
+    """What other threads observed while a measured wait was running."""
+
+    ticks: int
+    """Ticks counted from the moment another thread saw the call running."""
+
+    saw_call: bool
+    """Whether any other thread ever saw the call on the calling thread."""
+
+    elapsed: float
+    """How long the measured call took, in seconds."""
+
+
+def _invoke(call: cabc.Callable[[], object]) -> object:
+    """Run ``call`` from a frame the observer thread can recognise.
+
+    The only statement is the call itself, so this frame sits on the calling
+    thread's stack exactly while the call runs. The interpreter still reports
+    it while the call waits with its thread state detached, which is what lets
+    another thread prove the call has started.
+
+    Returns
+    -------
+    Whatever ``call`` returns.
+    """
+    return call()
+
+
+class _Ticker:
+    """Count how often its thread gets to run."""
+
+    def __init__(self) -> None:
+        """Start with nothing counted and a thread that is not yet running."""
+        self.ticks = 0
+        self._is_finished = threading.Event()
+        self._has_ticked = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        """Start counting, and wait until the counter has moved once."""
+        self._thread.start()
+        assert self._has_ticked.wait(timeout=5), "the ticker thread never started"
+
+    def stop(self) -> None:
+        """Stop counting once the thread has finished."""
+        self._is_finished.set()
+        self._thread.join()
+
+    def _run(self) -> None:
+        """Increment the count, giving the GIL up between increments."""
+        while not self._is_finished.is_set():
+            self.ticks += 1
+            self._has_ticked.set()
+            time.sleep(TICK_SECONDS)
+
+
+class _CallObserver:
+    """Record the tick count as soon as the measured call is seen running."""
+
+    def __init__(
+        self,
+        caller: int,
+        ticker: _Ticker,
+        is_call_finished: threading.Event,
+    ) -> None:
+        """Watch ``caller``'s stack and report ``ticker``'s count on entry."""
+        self.baseline: int | None = None
+        self._caller = caller
+        self._ticker = ticker
+        self._is_call_finished = is_call_finished
+
+    def watch_until_finished(self) -> None:
+        """Take the baseline when ``_invoke`` is on the caller's stack."""
+        while not self._is_call_finished.is_set():
+            frame = sys._current_frames().get(self._caller)
+            if frame is not None and frame.f_code is _invoke.__code__:
+                self.baseline = self._ticker.ticks
+                return
+            time.sleep(TICK_SECONDS)
+
+
 def _ticks_during(
     prepare: cabc.Callable[[], cabc.Callable[[], object]],
-) -> tuple[int, float]:
+) -> _WaitMeasurement:
     """Measure another thread's progress during the wait ``prepare`` sets up.
 
     ``prepare`` builds the handler and queues its work once the ticker is
     already running, and hands back the wait to measure. Setting up inside the
     timed region would let the setup hide the very stall under test.
 
+    The count starts when an observer thread first sees ``_invoke`` on this
+    thread's stack, not before the call. A pause before the call therefore
+    cannot be counted as call time, and a call that holds the GIL never shows
+    its frame at all, so neither a slow schedule nor a GIL-holding wait can
+    produce a false pass.
+
     Returns
     -------
-    The number of ticks another thread completed during the measured call, and
-    the call's duration in seconds.
+    The ticks another thread completed while the call was seen running, whether
+    it was ever seen, and how long the call took.
     """
-    ticks = [0]
-    has_ticked = threading.Event()
-    is_finished = threading.Event()
-
-    def tick() -> None:
-        """Count how often this thread gets to run."""
-        while not is_finished.is_set():
-            ticks[0] += 1
-            has_ticked.set()
-            time.sleep(TICK_SECONDS)
-
-    ticker = threading.Thread(target=tick, daemon=True)
+    ticker = _Ticker()
+    is_call_finished = threading.Event()
+    observer = _CallObserver(threading.get_ident(), ticker, is_call_finished)
     ticker.start()
-    assert has_ticked.wait(timeout=5), "the ticker thread never started"
     try:
         call = prepare()
-        # The interpreter hands the GIL to a waiting thread on request, so the
-        # caller can be preempted between reading the clock and entering the
-        # call. A pause there counts as call time, which would let a wait that
-        # held the GIL pass, and can also shrink a correct wait below the
-        # minimum. Raising the switch interval and giving the GIL up once
-        # drains any handover already requested and restarts the interval, so
-        # the caller reaches the call uninterrupted. Only a voluntary release
-        # inside the call can then let the ticker run, which is what the count
-        # proves.
-        sys.setswitchinterval(UNPREEMPTED_SWITCH_SECONDS)
-        time.sleep(0)
-        ticks_before = ticks[0]
+        watcher = threading.Thread(
+            target=observer.watch_until_finished,
+            daemon=True,
+        )
+        watcher.start()
         started = time.monotonic()
         try:
-            call()
+            _invoke(call)
         finally:
             elapsed = time.monotonic() - started
-            sys.setswitchinterval(DEFAULT_SWITCH_SECONDS)
-        return ticks[0] - ticks_before, elapsed
+            # Read the count before releasing the GIL, so no tick after the
+            # call can be mistaken for one the call let through.
+            baseline = observer.baseline
+            counted = None if baseline is None else ticker.ticks - baseline
+            is_call_finished.set()
+            watcher.join(timeout=5)
+        return _WaitMeasurement(
+            0 if counted is None else counted,
+            counted is not None,
+            elapsed,
+        )
     finally:
-        is_finished.set()
-        ticker.join()
+        ticker.stop()
 
 
 def _stalled_socket_handler(server: _SilentServer) -> _NetworkHandler:
@@ -192,15 +265,18 @@ def test_wait_on_a_stalled_worker_lets_python_threads_run(
         return getattr(handler, method)
 
     try:
-        ticks, elapsed = _ticks_during(prepare)
+        measurement = _ticks_during(prepare)
     finally:
         for handler in built:
             handler.close()
-    assert elapsed >= MINIMUM_WAIT_SECONDS, (
-        f"{method}() returned after {elapsed:.3f}s, so the worker never stalled "
-        "and this test proved nothing"
+    assert measurement.elapsed >= MINIMUM_WAIT_SECONDS, (
+        f"{method}() returned after {measurement.elapsed:.3f}s, so the worker "
+        "never stalled and this test proved nothing"
     )
-    assert ticks >= MINIMUM_TICKS, (
-        f"another thread ran only {ticks} times during {elapsed:.3f}s of "
-        f"{method}(), so the wait held the GIL"
+    assert measurement.saw_call, (
+        f"no other thread ever saw {method}() running, so the wait held the GIL"
+    )
+    assert measurement.ticks >= MINIMUM_TICKS, (
+        f"another thread ran only {measurement.ticks} times during "
+        f"{measurement.elapsed:.3f}s of {method}(), so the wait held the GIL"
     )
