@@ -8,8 +8,6 @@
 //! concurrency cases (`logger_filters_levels`, `add_handler_is_thread_safe`,
 //! `logging_during_level_change`); `handler_removal` covers detachment.
 
-use std::collections::BTreeSet;
-
 use _femtologging_rs::FemtoLogger;
 use _femtologging_rs::{
     DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoStreamHandler, HandlerError,
@@ -20,6 +18,8 @@ use rstest::{fixture, rstest};
 mod fixtures;
 #[path = "logger_tests/handler_removal.rs"]
 mod handler_removal;
+#[path = "logger_tests/level_race.rs"]
+mod level_race;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
 use fixtures::{handler_tuple, stream_handler_for};
@@ -322,84 +322,5 @@ fn set_level_is_thread_safe() {
     assert!(
         ALL_LEVELS.contains(&final_level),
         "Final level should be a valid FemtoLevel variant"
-    );
-}
-
-const RACE_RECORD_COUNT: usize = 1000;
-
-#[rstest]
-fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    use std::sync::Barrier;
-    use std::thread;
-
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
-    let logger = Arc::new(
-        FemtoLogger::new("race".to_string()).expect("test logger should be constructible"),
-    );
-    attach_native_handler(&logger, Arc::clone(&handler))
-        .expect("native test handler should register");
-    let barrier = Arc::new(Barrier::new(2));
-
-    let (lg, b) = (Arc::clone(&logger), Arc::clone(&barrier));
-    let producer = thread::spawn(move || {
-        b.wait();
-        (0..RACE_RECORD_COUNT)
-            .filter_map(|index| {
-                let message = format!("msg{index}");
-                lg.log(FemtoLevel::Info, &message)
-                    .is_some()
-                    .then_some(message)
-            })
-            .collect::<BTreeSet<_>>()
-    });
-    barrier.wait();
-    for lvl in ALL_LEVELS.iter().cycle().take(RACE_RECORD_COUNT) {
-        logger.set_level(*lvl);
-    }
-
-    let accepted_messages = producer.join().expect("producer thread panicked");
-    assert!(
-        accepted_messages.len() <= RACE_RECORD_COUNT,
-        "accepted record count ({}) must not exceed {RACE_RECORD_COUNT}",
-        accepted_messages.len(),
-    );
-    let expected_final = ALL_LEVELS[(RACE_RECORD_COUNT - 1) % ALL_LEVELS.len()];
-    assert_eq!(
-        logger.get_level(),
-        expected_final,
-        "the final set_level must be observable after the race",
-    );
-    logger.set_level(FemtoLevel::Trace);
-    assert!(
-        logger.log(FemtoLevel::Info, "after").is_some(),
-        "logger should remain usable after the race",
-    );
-    logger.set_level(FemtoLevel::Critical);
-    assert!(
-        logger.log(FemtoLevel::Info, "suppressed").is_none(),
-        "logger should still suppress records below its level after the race",
-    );
-
-    drop((logger, handler));
-
-    let actual_messages = read_output(&buffer)
-        .lines()
-        .map(|line| {
-            line.strip_prefix("race [INFO] ")
-                .expect("race handler output should use the default formatter")
-                .to_owned()
-        })
-        .collect::<Vec<_>>();
-    let actual_set = actual_messages.iter().cloned().collect::<BTreeSet<_>>();
-    let mut expected_messages = accepted_messages;
-    expected_messages.insert("after".to_owned());
-    assert_eq!(
-        actual_messages.len(),
-        actual_set.len(),
-        "handler output should not duplicate identities: {actual_messages:?}",
-    );
-    assert_eq!(
-        actual_set, expected_messages,
-        "output identities should match accepted records"
     );
 }
