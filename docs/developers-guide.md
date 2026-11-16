@@ -110,10 +110,13 @@ The Python loader reads `README.md`, `docs/users-guide.md`, and
   document to be marked once that document has been brought up to the
   [documentation style guide](documentation-style-guide.md).
 
-`tests/test_documentation_examples_loader.py` pins these rules, and
-`tests/test_documented_examples.py` runs the users' guide's
-`flush-handlers-usage` example and checks that the record it logs reached the
-file it flushes.
+`tests/test_documentation_examples_loader.py` pins these rules with named and
+parameterized cases, and `tests/test_documentation_examples_loader_property.py`
+states the closing-fence length and indentation rules and body preservation as
+Hypothesis properties, so the rules hold across fence lengths and body text
+rather than only at the cases written down. `tests/test_documented_examples.py`
+runs the users' guide's `flush-handlers-usage` example and checks that the
+record it logs reached the file it flushes.
 
 ## Typos spelling checker
 
