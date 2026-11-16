@@ -10,7 +10,7 @@ use pyo3::{
 };
 
 use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
-use crate::log_record::FemtoLogRecord;
+use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::python::fq_py_type;
 
 use super::{FemtoFormatter, SharedFormatter};
@@ -85,39 +85,81 @@ pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<Py<Py
     dict.set_item("level", record.level_str())?;
     dict.set_item("message", record.message())?;
     dict.set_item("levelno", u8::from(record.level()))?;
+    dict.set_item("metadata", metadata_to_py(py, record.metadata())?)?;
+    set_optional_payload_items(py, &dict, record)?;
+    Ok(dict.into())
+}
 
-    let rec_metadata = record.metadata();
+/// Build the record metadata dict, including structured key/value enrichment.
+fn metadata_to_py<'py>(
+    py: Python<'py>,
+    rec_metadata: &RecordMetadata,
+) -> PyResult<Bound<'py, PyDict>> {
     let metadata = PyDict::new(py);
+    set_metadata_identity_items(&metadata, rec_metadata)?;
+    set_metadata_time_items(py, &metadata, rec_metadata)?;
+    Ok(metadata)
+}
+
+/// Set where the record was logged from and which thread logged it.
+fn set_metadata_identity_items(
+    metadata: &Bound<'_, PyDict>,
+    rec_metadata: &RecordMetadata,
+) -> PyResult<()> {
     metadata.set_item("module_path", &rec_metadata.module_path)?;
     metadata.set_item("filename", &rec_metadata.filename)?;
     metadata.set_item("line_number", rec_metadata.line_number)?;
     metadata.set_item("thread_name", &rec_metadata.thread_name)?;
     metadata.set_item("thread_id", format!("{:?}", rec_metadata.thread_id))?;
-    let timestamp = rec_metadata
+    Ok(())
+}
+
+/// Set when the record was created and the enrichment attached to it.
+fn set_metadata_time_items(
+    py: Python<'_>,
+    metadata: &Bound<'_, PyDict>,
+    rec_metadata: &RecordMetadata,
+) -> PyResult<()> {
+    metadata.set_item("timestamp", timestamp_seconds(rec_metadata))?;
+    metadata.set_item("key_values", key_values_to_py(py, rec_metadata)?)?;
+    Ok(())
+}
+
+/// Seconds since the Unix epoch; pre-epoch timestamps clamp to zero rather
+/// than panicking inside the logging pipeline.
+fn timestamp_seconds(rec_metadata: &RecordMetadata) -> f64 {
+    rec_metadata
         .timestamp
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
-        .unwrap_or_default();
-    metadata.set_item("timestamp", timestamp)?;
+        .unwrap_or_default()
+}
 
+/// Copy the record's structured key/value enrichment into a new dict.
+fn key_values_to_py<'py>(
+    py: Python<'py>,
+    rec_metadata: &RecordMetadata,
+) -> PyResult<Bound<'py, PyDict>> {
     let kv = PyDict::new(py);
     for (key, value) in &rec_metadata.key_values {
         kv.set_item(key, value)?;
     }
-    metadata.set_item("key_values", kv)?;
-    dict.set_item("metadata", metadata)?;
+    Ok(kv)
+}
 
-    // Add exception payload if present
+/// Add the exception and stack payloads when the record carries them.
+fn set_optional_payload_items(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    record: &FemtoLogRecord,
+) -> PyResult<()> {
     if let Some(exc) = record.exception_payload() {
         dict.set_item("exc_info", exception_payload_to_py(py, exc)?)?;
     }
-
-    // Add stack payload if present
     if let Some(stack) = record.stack_payload() {
         dict.set_item("stack_info", stack_payload_to_py(py, stack)?)?;
     }
-
-    Ok(dict.into())
+    Ok(())
 }
 
 /// Convert a `StackFrame` to a Python dict.
@@ -192,43 +234,94 @@ fn exceptions_to_pylist(py: Python<'_>, exceptions: &[ExceptionPayload]) -> PyRe
 }
 
 /// Set optional fields on the exception payload dict.
+///
+/// Each field is written only when the payload carries it, so the dict echoes
+/// the exception exactly as Python raised it.
 fn set_optional_exception_items(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
     payload: &ExceptionPayload,
 ) -> PyResult<()> {
-    if let Some(ref module) = payload.module {
-        dict.set_item("module", module)?;
-    }
+    set_optional_exception_item(dict, "module", payload.module.as_deref())?;
+    set_string_list_item(py, dict, "args_repr", &payload.args_repr)?;
+    set_string_list_item(py, dict, "notes", &payload.notes)?;
+    set_frame_list_item(py, dict, &payload.frames)?;
+    set_chained_exception_item(py, dict, "cause", payload.cause.as_deref())?;
+    set_chained_exception_item(py, dict, "context", payload.context.as_deref())?;
+    set_suppress_context_item(dict, payload.suppress_context)?;
+    // Written last so the payload dict keeps the key order it has always had;
+    // callers would otherwise observe `exceptions` before the chained fields.
+    set_exception_member_item(py, dict, &payload.exceptions)?;
+    Ok(())
+}
 
-    if !payload.args_repr.is_empty() {
-        dict.set_item("args_repr", string_vec_to_pylist(py, &payload.args_repr)?)?;
+/// Set `key` when the exception carries a string value for it.
+fn set_optional_exception_item(
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    value: Option<&str>,
+) -> PyResult<()> {
+    if let Some(value) = value {
+        dict.set_item(key, value)?;
     }
+    Ok(())
+}
 
-    if !payload.notes.is_empty() {
-        dict.set_item("notes", string_vec_to_pylist(py, &payload.notes)?)?;
+/// Set `key` to a Python list of `values`, unless the list is empty.
+fn set_string_list_item(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    values: &[String],
+) -> PyResult<()> {
+    if !values.is_empty() {
+        dict.set_item(key, string_vec_to_pylist(py, values)?)?;
     }
+    Ok(())
+}
 
-    if !payload.frames.is_empty() {
-        dict.set_item("frames", frames_to_pylist(py, &payload.frames)?)?;
+/// Set the `frames` list, unless the exception carries no frames.
+fn set_frame_list_item(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    frames: &[StackFrame],
+) -> PyResult<()> {
+    if !frames.is_empty() {
+        dict.set_item("frames", frames_to_pylist(py, frames)?)?;
     }
+    Ok(())
+}
 
-    if let Some(ref cause) = payload.cause {
-        dict.set_item("cause", exception_payload_to_py(py, cause)?)?;
+/// Set the `exceptions` list, unless the exception group has no members.
+fn set_exception_member_item(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    exceptions: &[ExceptionPayload],
+) -> PyResult<()> {
+    if !exceptions.is_empty() {
+        dict.set_item("exceptions", exceptions_to_pylist(py, exceptions)?)?;
     }
+    Ok(())
+}
 
-    if let Some(ref context) = payload.context {
-        dict.set_item("context", exception_payload_to_py(py, context)?)?;
+/// Set the chained `cause` or `context` payload, when the exception has one.
+fn set_chained_exception_item(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    chained: Option<&ExceptionPayload>,
+) -> PyResult<()> {
+    if let Some(chained) = chained {
+        dict.set_item(key, exception_payload_to_py(py, chained)?)?;
     }
+    Ok(())
+}
 
-    if payload.suppress_context {
+/// Record that the exception suppresses implicit context.
+fn set_suppress_context_item(dict: &Bound<'_, PyDict>, suppress_context: bool) -> PyResult<()> {
+    if suppress_context {
         dict.set_item("suppress_context", true)?;
     }
-
-    if !payload.exceptions.is_empty() {
-        dict.set_item("exceptions", exceptions_to_pylist(py, &payload.exceptions)?)?;
-    }
-
     Ok(())
 }
 

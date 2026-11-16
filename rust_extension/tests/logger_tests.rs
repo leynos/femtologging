@@ -230,32 +230,41 @@ fn add_handler_is_thread_safe() {
         .map(|_| Arc::new(stream_handler_for(&buffer)) as Arc<dyn FemtoHandlerTrait>)
         .collect();
 
-    let start = Arc::new(std::sync::Barrier::new(new_handlers.len() + 1));
-    let worker_threads: Vec<_> = new_handlers
+    attach_handlers_concurrently(&logger, &new_handlers).expect("handler threads must attach");
+
+    logger.log(FemtoLevel::Info, "hello");
+    drop(logger);
+    drop(new_handlers);
+    let output = read_output(&buffer);
+    assert_eq!(output.lines().count(), 4);
+}
+
+/// Attach every handler to `logger` from its own thread, released together.
+///
+/// Fallible rather than panicking because it is a fixture: a failed join is
+/// reported to the test body, which owns the verdict.
+fn attach_handlers_concurrently(
+    logger: &Arc<FemtoLogger>,
+    handlers: &[Arc<dyn FemtoHandlerTrait>],
+) -> Result<(), String> {
+    let start = Arc::new(std::sync::Barrier::new(handlers.len() + 1));
+    let worker_threads: Vec<_> = handlers
         .iter()
         .cloned()
-        .map(|h| {
-            let log_clone = Arc::clone(&logger);
+        .map(|handler| {
+            let log_clone = Arc::clone(logger);
             let barrier = Arc::clone(&start);
             std::thread::spawn(move || {
                 barrier.wait();
-                attach_native_handler(&log_clone, h);
+                attach_native_handler(&log_clone, handler);
             })
         })
         .collect();
 
     start.wait();
-    for t in worker_threads {
-        t.join().expect("thread panicked");
-    }
-
-    logger.log(FemtoLevel::Info, "hello");
-    drop(logger);
-    for h in new_handlers {
-        drop(h);
-    }
-    let output = read_output(&buffer);
-    assert_eq!(output.lines().count(), 4);
+    worker_threads
+        .into_iter()
+        .try_for_each(|worker| worker.join().map_err(|_| "thread panicked".to_string()))
 }
 
 #[test]

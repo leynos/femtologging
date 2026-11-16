@@ -63,41 +63,57 @@ where
     }
 }
 
+/// Extract a required field from a frame dict, reporting a missing key clearly.
+fn required_field<'py, T>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<T>
+where
+    T: for<'a> pyo3::FromPyObject<'a, 'py, Error = PyErr>,
+{
+    dict.get_item(key)?
+        .ok_or_else(|| PyTypeError::new_err(format!("frame dict missing '{key}' key")))?
+        .extract()
+}
+
+/// The optional fields a frame dict may carry.
+struct OptionalFrameFields {
+    /// Last source line covered by the frame.
+    end_lineno: Option<u32>,
+    /// First source column covered by the frame.
+    colno: Option<u32>,
+    /// Last source column covered by the frame.
+    end_colno: Option<u32>,
+    /// The source line the frame refers to.
+    source_line: Option<String>,
+    /// Locals captured for the frame.
+    locals: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// Extract the optional fields of a frame dict, rejecting wrong types.
+fn optional_frame_fields(dict: &Bound<'_, PyDict>) -> PyResult<OptionalFrameFields> {
+    Ok(OptionalFrameFields {
+        end_lineno: extract_optional(dict, "end_lineno")?,
+        colno: extract_optional(dict, "colno")?,
+        end_colno: extract_optional(dict, "end_colno")?,
+        source_line: extract_optional(dict, "source_line")?,
+        locals: extract_optional(dict, "locals")?,
+    })
+}
+
 /// Extract a StackFrame from a Python dict.
 fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
-    let filename: String = dict
-        .get_item("filename")?
-        .ok_or_else(|| PyTypeError::new_err("frame dict missing 'filename' key"))?
-        .extract()?;
-
-    let lineno: u32 = dict
-        .get_item("lineno")?
-        .ok_or_else(|| PyTypeError::new_err("frame dict missing 'lineno' key"))?
-        .extract()?;
-
-    let function: String = dict
-        .get_item("function")?
-        .ok_or_else(|| PyTypeError::new_err("frame dict missing 'function' key"))?
-        .extract()?;
-
-    let end_lineno: Option<u32> = extract_optional(dict, "end_lineno")?;
-    let colno: Option<u32> = extract_optional(dict, "colno")?;
-    let end_colno: Option<u32> = extract_optional(dict, "end_colno")?;
-    let source_line: Option<String> = extract_optional(dict, "source_line")?;
-
-    // Extract locals if present
-    let locals: Option<std::collections::BTreeMap<String, String>> =
-        extract_optional(dict, "locals")?;
+    let filename: String = required_field(dict, "filename")?;
+    let lineno: u32 = required_field(dict, "lineno")?;
+    let function: String = required_field(dict, "function")?;
+    let optional = optional_frame_fields(dict)?;
 
     Ok(StackFrame {
         filename,
         lineno,
-        end_lineno,
-        colno,
-        end_colno,
+        end_lineno: optional.end_lineno,
+        colno: optional.colno,
+        end_colno: optional.end_colno,
         function,
-        source_line,
-        locals,
+        source_line: optional.source_line,
+        locals: optional.locals,
     })
 }
 

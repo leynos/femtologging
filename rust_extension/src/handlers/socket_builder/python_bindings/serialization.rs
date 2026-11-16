@@ -1,5 +1,7 @@
 //! Python dictionary serialization for the socket handler builder.
 
+use std::path::Path;
+
 use pyo3::{
     Bound, PyResult,
     types::{PyDict, PyDictMethods},
@@ -31,17 +33,30 @@ impl SocketHandlerBuilder {
     fn extend_dict_with_transport(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         match &self.transport {
             Some(TransportConfig::Tcp { host, port }) => {
-                d.set_item("transport", "tcp")?;
-                d.set_item("host", host)?;
-                d.set_item("port", *port)?;
-                self.extend_dict_with_tls(d)
+                self.extend_dict_with_tcp_transport(d, host, *port)
             }
-            Some(TransportConfig::Unix { path }) => {
-                d.set_item("transport", "unix")?;
-                d.set_item("path", path.display().to_string())
-            }
+            Some(TransportConfig::Unix { path }) => Self::extend_dict_with_unix_transport(d, path),
             None => Ok(()),
         }
+    }
+
+    /// Serialize a TCP transport, whose TLS options are configured separately.
+    fn extend_dict_with_tcp_transport(
+        &self,
+        d: &Bound<'_, PyDict>,
+        host: &str,
+        port: u16,
+    ) -> PyResult<()> {
+        d.set_item("transport", "tcp")?;
+        d.set_item("host", host)?;
+        d.set_item("port", port)?;
+        self.extend_dict_with_tls(d)
+    }
+
+    /// Serialize a Unix-domain transport, whose path can be displayed lossily.
+    fn extend_dict_with_unix_transport(d: &Bound<'_, PyDict>, path: &Path) -> PyResult<()> {
+        d.set_item("transport", "unix")?;
+        d.set_item("path", path.display().to_string())
     }
 
     /// Serialize the TLS options for a TCP transport into the dict.
