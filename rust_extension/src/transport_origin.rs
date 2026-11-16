@@ -22,6 +22,7 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+#[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
 use crate::log_record::RecordOrigin;
 
 thread_local! {
@@ -29,7 +30,10 @@ thread_local! {
     static HTTP_TRANSPORT_ACTIVE: Cell<bool> = const { Cell::new(false) };
 }
 
+// The bridge-only API is absent when neither bridge is compiled, so a plain
+// `--no-default-features` library build has no dead code under `-D warnings`.
 /// Return whether the current thread is inside HTTP transport work.
+#[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
 pub(crate) fn is_http_transport_active() -> bool {
     HTTP_TRANSPORT_ACTIVE.with(Cell::get)
 }
@@ -39,6 +43,7 @@ pub(crate) fn is_http_transport_active() -> bool {
 /// The bridge captures this before suspending the scope, so a record produced
 /// by transport code keeps the marker while records produced by anything the
 /// bridge calls do not.
+#[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
 pub(crate) fn capture_record_origin() -> RecordOrigin {
     if is_http_transport_active() {
         RecordOrigin::HttpTransport
@@ -77,6 +82,7 @@ pub(crate) fn enter_http_transport() -> TransportScope {
 /// For example, a bridge suspends the scope after capturing the origin so a
 /// Python formatter or handler invoked later in the same call does not emit
 /// records that inherit the transport marker.
+#[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
 pub(crate) fn suspend_http_transport() -> TransportScope {
     set_transport_state(false)
 }
