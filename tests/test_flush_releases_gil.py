@@ -123,6 +123,8 @@ ticks = [0]
 TICK_SECONDS = 0.005
 RELEASE_DELAY_SECONDS = 0.5
 FORMATTER_TIMEOUT_SECONDS = 5.0
+DEFAULT_SWITCH_SECONDS = sys.getswitchinterval()
+UNPREEMPTED_SWITCH_SECONDS = 60.0
 
 
 def pause_formatter(record):
@@ -161,10 +163,20 @@ assert formatter_entered.wait(timeout=5), "the handler's worker never formatted"
 release = threading.Thread(target=release_after_delay, daemon=True)
 release.start()
 
+# The interpreter hands the GIL to a waiting thread on request, so this thread
+# could be preempted between reading the clock and entering the call; that pause
+# would count as flush time and could let a flush that held the GIL pass.
+# Raising the switch interval and giving the GIL up once drains any handover
+# already requested and restarts the interval, so the call is entered without
+# interruption. After that, only a voluntary release inside the call can let
+# another thread run, which is what the tick count proves.
+sys.setswitchinterval(UNPREEMPTED_SWITCH_SECONDS)
+time.sleep(0)
 ticks_before = ticks[0]
 started = time.monotonic()
 assert logger.flush_handlers(), "flush_handlers stalled behind the GIL"
 elapsed = time.monotonic() - started
+sys.setswitchinterval(DEFAULT_SWITCH_SECONDS)
 is_finished.set()
 ticker.join()
 

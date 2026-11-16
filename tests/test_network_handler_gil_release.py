@@ -8,6 +8,7 @@ release the GIL, or every other Python thread stops for that whole period.
 from __future__ import annotations
 
 import socket
+import sys
 import threading
 import time
 import typing as typ
@@ -37,6 +38,11 @@ WRITE_TIMEOUT_MS = 300
 MINIMUM_WAIT_SECONDS = 0.15
 MINIMUM_TICKS = 5
 TICK_SECONDS = 0.005
+# The interpreter's own GIL switch interval, captured so a measured call can
+# put it back. ``UNPREEMPTED_SWITCH_SECONDS`` is long enough that no thread can
+# ask for the GIL inside a measured call; see ``_ticks_during``.
+DEFAULT_SWITCH_SECONDS = sys.getswitchinterval()
+UNPREEMPTED_SWITCH_SECONDS = 60.0
 # Enough data to overflow loopback TCP buffers, so the socket worker blocks in
 # its write rather than finishing before the wait under test begins.
 LARGE_MESSAGE = "x" * (256 * 1024)
@@ -108,10 +114,24 @@ def _ticks_during(
     assert has_ticked.wait(timeout=5), "the ticker thread never started"
     try:
         call = prepare()
+        # The interpreter hands the GIL to a waiting thread on request, so the
+        # caller can be preempted between reading the clock and entering the
+        # call. A pause there counts as call time, which would let a wait that
+        # held the GIL pass, and can also shrink a correct wait below the
+        # minimum. Raising the switch interval and giving the GIL up once
+        # drains any handover already requested and restarts the interval, so
+        # the caller reaches the call uninterrupted. Only a voluntary release
+        # inside the call can then let the ticker run, which is what the count
+        # proves.
+        sys.setswitchinterval(UNPREEMPTED_SWITCH_SECONDS)
+        time.sleep(0)
         ticks_before = ticks[0]
         started = time.monotonic()
-        call()
-        elapsed = time.monotonic() - started
+        try:
+            call()
+        finally:
+            elapsed = time.monotonic() - started
+            sys.setswitchinterval(DEFAULT_SWITCH_SECONDS)
         return ticks[0] - ticks_before, elapsed
     finally:
         is_finished.set()

@@ -1871,6 +1871,42 @@ contention (`build-limits-status` reported `healthy` throughout). Logs are
 The hosted `build-test` jobs still show the old suite's regression until their
 next run; that is a hosted-environment fact, not a candidate defect.
 
+### Neither GIL test can be fooled by a pre-call handover
+
+Two findings from the `051576bc` review had been left without a disposition:
+one on `tests/test_flush_releases_gil.py`, one on
+`tests/test_network_handler_gil_release.py`. Both said the same thing — the
+measurement starts before the call under test, so a thread switch in between
+counts as call time. On the flush test the objection holds: `started` is read
+before `flush_handlers()` is entered, and CPython may hand the GIL to a waiting
+thread between those two bytecodes. A 0.2-second handover there satisfies the
+`elapsed >= 0.2` guard, and the ticker ticks in the same window, so a flush
+that held the GIL could pass. The flush test had that hole; the network test
+did not, because a delay past its 300 ms write timeout shrinks `elapsed` below
+`MINIMUM_WAIT_SECONDS` and fails loudly.
+
+Both scripts now close it at the source instead of relying on that guard. They
+raise the GIL switch interval to 60 seconds and call `time.sleep(0)`, which
+gives the GIL up once and so drains any handover already requested while
+restarting the interval. The calling thread then reaches the call
+uninterrupted, and the interval is restored in a `finally`. With no thread able
+to request the GIL during the call, a tick can only come from a voluntary
+release inside it, which is exactly what the count asserts. This is test-only:
+the production wait paths carry no instrumentation, and no release build
+changes.
+
+The mutation was repeated against this version. Removing `py.detach` from
+`flush_native` so the native flush holds the GIL still fails
+`test_flush_handlers_releases_the_gil_for_a_python_formatter` with
+`AssertionError: flush_handlers stalled behind the GIL`
+(`/tmp/pytest-falsify2-femtologging.out`). Restoring it and rebuilding gave 13
+passed in five consecutive runs of the two files.
+
+`.github/workflows/ci.yml` installs Whitaker from the rolling archive and the
+run fetched `whitaker-lints-880939d`, so hosted `build-test` still fails the
+`Lint` step on the same fourteen `bumpy-road-function` findings in files
+byte-identical to `main`. Nothing in this branch can change that.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
