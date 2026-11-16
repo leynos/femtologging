@@ -176,12 +176,11 @@ impl TimedHandlerOptions {
         utc = false,
         at_time = None,
     ))]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "PyO3's generated wrapper exposes eight Python options plus the GIL token"
-    )]
+    // One Rust parameter per Python option is what PyO3 requires, so the eight
+    // options cannot be grouped without changing the Python signature. The
+    // target argument budget of four therefore cannot be met here at source;
+    // the conflict is recorded for `harden-lint-config` rather than suppressed.
     fn new(
-        _py: Python<'_>,
         capacity: usize,
         flush_interval: isize,
         policy: String,
