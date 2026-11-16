@@ -2007,6 +2007,28 @@ The network tests carry the same change. A second mutation, removing
 the in-call baseline reports the GIL-holding wait directly. With the handlers
 restored, the two files passed 14 tests in five consecutive runs.
 
+### Head `3043c775`, published
+
+The redesign is committed as `3043c775` and force-pushed with a lease over
+`b6a731c8`. The remote head matches the local head and the branch tracks
+`origin/release-gil-socket-http-waits`.
+
+`make fmt`, `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+`make markdownlint` and `make nixie` all exit 0 on it. Lint reports Ruff clean,
+interrogate at 100 %, Pylint at 10.00/10, the df12 plugin set and Skylos clean,
+the Rust lanes and Whitaker clean. `make test` ran all four cargo lanes with
+11/11 trybuild fixtures in each, and pytest reported 1203 passed / 5 skipped
+(`/tmp/gates-round4-femtologging-release-gil-socket-http-waits-reduced.log`).
+
+Replies were posted to both review threads through the manual-comment route and
+a pool identity, each presenting the frame-table mechanism, the handover table
+and the mutation results: `discussion_r4582597632` on the flush thread and
+`discussion_r4582598566` on the network thread. The network thread was the only
+one still open.
+
+Queue request `45e1ae9b` for `@coderabbitai review` was still pending at this
+point, so the review of this head is not yet complete.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
