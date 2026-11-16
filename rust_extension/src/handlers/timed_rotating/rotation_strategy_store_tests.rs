@@ -22,7 +22,7 @@ use super::{
     backup_retention::BackupRetention,
     clock::SequenceClock,
     rotation_store::double::{ScriptedFileStore, StoreStep},
-    rotation_strategy::TimedFileRotationStrategy,
+    rotation_strategy::{RotationSeams, TimedFileRotationStrategy},
     schedule::{TimedRotationSchedule, TimedRotationWhen},
     test_helpers::utc_datetime,
 };
@@ -76,8 +76,12 @@ fn a_refused_rename_leaves_the_original_writer_in_place() {
         .expect("seconds schedule must validate");
     let start = utc_datetime!("2026-03-12T00:00:00Z");
     let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
-    let mut strategy =
-        TimedFileRotationStrategy::with_store(path.clone(), schedule, 1, clock, store.clone());
+    let mut strategy = TimedFileRotationStrategy::with_seams(
+        path.clone(),
+        schedule,
+        1,
+        RotationSeams::new(clock, store.clone()),
+    );
     let mut writer = BufWriter::new(
         OpenOptions::new()
             .create(true)
@@ -113,8 +117,12 @@ fn a_refused_fresh_open_restores_the_writer_then_rolls_back_the_rename() {
         .expect("seconds schedule must validate");
     let start = utc_datetime!("2026-03-12T00:00:00Z");
     let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
-    let mut strategy =
-        TimedFileRotationStrategy::with_store(path.clone(), schedule, 1, clock, store.clone());
+    let mut strategy = TimedFileRotationStrategy::with_seams(
+        path.clone(),
+        schedule,
+        1,
+        RotationSeams::new(clock, store.clone()),
+    );
     let mut writer = BufWriter::new(
         OpenOptions::new()
             .create(true)

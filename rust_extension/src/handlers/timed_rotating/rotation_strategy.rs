@@ -51,11 +51,35 @@ use super::{
     schedule::TimedRotationSchedule,
 };
 
+/// The two collaborators a rotation strategy reads its world through.
+///
+/// They travel together because neither is usable without the other: the clock
+/// decides when a rollover is due and the store performs it, and a test that
+/// replaces one almost always replaces both. Production pairs [`SystemClock`]
+/// with [`StdFileStore`]; a test pairs a deterministic clock with a store that
+/// can fail a named step.
+pub(crate) struct RotationSeams<C, S> {
+    /// Samples the instants the schedule compares against.
+    pub(super) clock: C,
+    /// Performs every filesystem step of a rotation.
+    pub(super) store: S,
+}
+
+impl<C, S> RotationSeams<C, S> {
+    /// Pair a clock with the store that performs the rotations it schedules.
+    ///
+    /// Example: `RotationSeams::new(SystemClock, StdFileStore)` is the
+    /// production pairing.
+    pub(super) fn new(clock: C, store: S) -> Self {
+        Self { clock, store }
+    }
+}
+
 /// Rotation strategy for time-based file rollover.
 ///
-/// The clock and the file store are the two injected seams; production uses
-/// [`SystemClock`] and [`StdFileStore`], while tests substitute a deterministic
-/// clock and a store that can fail a named step.
+/// The clock and the file store are the two injected seams, supplied together as
+/// [`RotationSeams`]; production uses [`SystemClock`] and [`StdFileStore`] while
+/// tests substitute a deterministic clock and a store that can fail a named step.
 pub(crate) struct TimedFileRotationStrategy<C = SystemClock, S = StdFileStore> {
     /// Active log path renamed when a scheduled rollover occurs.
     path: PathBuf,
@@ -85,7 +109,12 @@ where
         backup_count: usize,
         clock: C,
     ) -> Self {
-        Self::with_store(path, schedule, backup_count, clock, StdFileStore)
+        Self::with_seams(
+            path,
+            schedule,
+            backup_count,
+            RotationSeams::new(clock, StdFileStore),
+        )
     }
 }
 
@@ -94,17 +123,17 @@ where
     C: RotationClock,
     S: RotationFileStore,
 {
-    /// Creates a strategy over an explicit clock and file store.
+    /// Creates a strategy over explicit seams.
     ///
     /// The store is the seam tests replace; production reaches it through the
     /// two constructors above.
-    pub(super) fn with_store(
+    pub(super) fn with_seams(
         path: PathBuf,
         schedule: TimedRotationSchedule,
         backup_count: usize,
-        clock: C,
-        store: S,
+        seams: RotationSeams<C, S>,
     ) -> Self {
+        let RotationSeams { clock, store } = seams;
         let retention = BackupRetention::new(path.clone(), backup_count);
         Self {
             path,
