@@ -1820,6 +1820,57 @@ Both documents are docs-only changes; `make check-fmt`, `make markdownlint` and
 `make nixie` pass, and the Whitaker regression above is unaffected by either,
 since neither file is compiled.
 
+### The buffered-delivery regression is now deterministic
+
+The earlier walkthrough asked for a buffered-delivery regression that proved
+delegation without relying on a clock. `tests/test_flush_releases_gil.py` gains
+`test_flush_handlers_delivers_a_buffered_native_record`, which builds a file
+handler with `with_flush_after_records(3)`, logs one record, and asserts the
+file is still empty — the precondition that proves the record was buffered —
+before calling `flush_handlers()`, which must report success and leave the
+record on disk. No thread, delay or scheduler participates: only the flush can
+write that file.
+
+The requested mutation check was run against the built extension. Replacing the
+delegation in `flush_registered_handler` with an unconditional success:
+
+```rust
+let flushed = self.report_flush(|| Python::try_attach(|_py| true));
+```
+
+made both `test_flush_handlers_delivers_a_buffered_native_record` and the
+existing `test_flush_handlers_releases_the_gil_for_a_python_formatter` fail,
+with the first reporting
+`flush_handlers() returned without flushing the buffered record`. Restoring the
+implementation made the file pass again (10 passed, and 21 passed with
+`tests/test_custom_handler_flush.py` included).
+
+### The full gate set is green again
+
+The installed Whitaker suite was replaced once more on 2026-11-15 at 22:27 CET,
+and the tip-`880939d1` build is kept beside it as
+`libwhitaker_suite@nightly-2026-05-28.so.tip-880939d1-backup`. The
+`bumpy-road-function` findings that caused the second hosted lint outage no
+longer reproduce: `whitaker --all` compiles and exits 0 with no diagnostics.
+
+With the working-tree change above, every gate this branch owns passed in one
+sequential run: `make check-fmt` (255 Python files, `cargo fmt` clean, 74
+Markdown files unchanged), `make typecheck` ("All checks passed!"), `make test`
+(four cargo lanes at 4008 passed, 0 failed, 253 ignored; 44 of 44 trybuild UI
+fixtures; pytest 1202 passed, 5 skipped, 66 snapshots) and `make lint` (Ruff,
+interrogate 100.0%, Pylint 10.00/10, df12-pylint 10.00/10, ambrleaks, Skylos,
+the Rust lanes and the Whitaker suite), followed by `make markdownlint` and
+`make nixie`. The test gate's first three invocations were stopped by the
+runner's background ceiling mid-`trybuild`; each reported no failure before it
+was cut off, and the fourth completed in 1h49m33s during heavy compile-slot
+contention (`build-limits-status` reported `healthy` throughout). Logs are
+`/tmp/CHECK-FMT-`, `/tmp/TYPECHECK-`, `/tmp/TEST-final-`, `/tmp/LINT-`,
+`/tmp/MARKDOWNLINT-` and
+`/tmp/NIXIE-femtologging-release-gil-socket-http-waits-reduced.out`.
+
+The hosted `build-test` jobs still show the old suite's regression until their
+next run; that is a hosted-environment fact, not a candidate defect.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core

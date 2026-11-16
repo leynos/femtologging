@@ -66,6 +66,36 @@ assert path.read_text(encoding="utf-8") == "gil.flush [INFO] delivered\\n", (
 handler.close()
 """
 
+# The worker is told to flush only every third record, so the one record logged
+# here stays in its buffer. That makes delivery proof of delegation rather than
+# of timing: no thread, clock, or scheduler can write the file, so a
+# `PyHandler::flush()` that reported success without asking the handler to
+# flush would leave the file empty. The empty read before the call is the
+# precondition that proves the record really was still buffered.
+BUFFERED_RECORDS_SCRIPT = """
+import pathlib
+import sys
+
+from femtologging import FileHandlerBuilder, get_logger
+
+path = pathlib.Path(sys.argv[1])
+handler = FileHandlerBuilder(str(path)).with_flush_after_records(3).build()
+logger = get_logger("gil.flush.buffered")
+logger.add_handler(handler)
+
+logger.info("held")
+assert path.read_text(encoding="utf-8") == "", (
+    "the record reached the file before flush_handlers(), so this test cannot "
+    "show that the flush is what delivered it"
+)
+assert logger.flush_handlers(), "flush_handlers did not report the flush"
+assert logger.get_dropped() == 0, "the record was refused before dispatch"
+assert path.read_text(encoding="utf-8") == "gil.flush.buffered [INFO] held\\n", (
+    "flush_handlers() returned without flushing the buffered record"
+)
+handler.close()
+"""
+
 # The handler's worker formats the record in Python and waits for a release
 # only another Python thread can give. The release thread is started once the
 # formatter is already blocked, and gives way after a delay far longer than
@@ -240,6 +270,26 @@ def test_flush_handlers_succeeds_straight_after_logging(tmp_path: Path) -> None:
     """
     result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
         [sys.executable, "-c", FLUSH_HANDLERS_SCRIPT, str(tmp_path / "app.log")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_flush_handlers_delivers_a_buffered_native_record(tmp_path: Path) -> None:
+    """``flush_handlers()`` flushes a record the worker was still buffering.
+
+    The handler is registered from Python, so the call reaches it through
+    ``PyHandler::flush()``. Its flush threshold is three records and only one
+    was logged, so nothing but that flush can put the record on disk. This
+    pins the delegation itself, without relying on a blocked formatter or a
+    delay: a wrapper that reported success without asking the handler to flush
+    would leave the file empty.
+    """
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
+        [sys.executable, "-c", BUFFERED_RECORDS_SCRIPT, str(tmp_path / "app.log")],
         capture_output=True,
         text=True,
         timeout=30,
