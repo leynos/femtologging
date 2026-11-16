@@ -9,12 +9,11 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoLogger
-
-from .conftest import (
-    _TRACEBACK_FRAME_PATTERN,
-    normalize_traceback_output,
+from tests.steps.stack_frames import (
+    parse_frames,
     strip_external_stack_frames,
 )
+from tests.steps.traceback_normalization import normalize_traceback_output
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
@@ -155,11 +154,7 @@ def raw_output_contains_log_with_stack_info_frame(logger_fixture: LoggerState) -
     output = logger_fixture["output"]
     assert output is not None, "Expected stack output but got None"
     expected_file = Path(__file__).resolve()
-    frames = [
-        (Path(match["file"]).resolve(), match["func"].strip())
-        for line in output.splitlines()
-        if (match := _TRACEBACK_FRAME_PATTERN.match(line)) is not None
-    ]
+    frames = parse_frames(output)
     assert (expected_file, "log_with_stack_info") in frames, (
         "raw stack output must name the log_with_stack_info frame in "
         f"{expected_file}, found {frames!r}"

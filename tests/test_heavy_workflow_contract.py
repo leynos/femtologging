@@ -103,6 +103,11 @@ def _notification_or_condition(document: Document) -> None:
     job(document, NOTIFY_JOB)["if"] = "failure() || github.event_name == 'schedule'"
 
 
+def _notification_inverted_condition(document: Document) -> None:
+    """Fail on every event except a scheduled one."""
+    job(document, NOTIFY_JOB)["if"] = "failure() && github.event_name != 'schedule'"
+
+
 def _notification_without_issue_write(document: Document) -> None:
     """Withhold the permission the notification job needs."""
     job(document, NOTIFY_JOB)["permissions"] = {"contents": "read"}
@@ -159,6 +164,10 @@ _MUTATIONS = (
     pytest.param(_notification_without_needs, id="notification-without-needs"),
     pytest.param(_notification_always, id="notification-always"),
     pytest.param(_notification_or_condition, id="notification-or-condition"),
+    pytest.param(
+        _notification_inverted_condition,
+        id="notification-inverted-condition",
+    ),
     pytest.param(_notification_without_issue_write, id="notification-read-only"),
     pytest.param(_notification_without_actions_read, id="notification-no-actions"),
     pytest.param(

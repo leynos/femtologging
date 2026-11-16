@@ -9,6 +9,7 @@ well as the real file.
 
 from __future__ import annotations
 
+import re
 import typing as typ
 from pathlib import Path
 
@@ -35,6 +36,10 @@ _REQUIRED_COMMANDS: typ.Final[tuple[tuple[str, str], ...]] = (
     ("gh issue list", "the job must search for an existing tracking issue"),
     ("gh issue comment", "the job must comment on an existing tracking issue"),
     ("gh issue create", "the job must create the tracking issue when absent"),
+)
+_FAILURE_CONDITION_PATTERN: re.Pattern[str] = re.compile(r"^failure\(\)$")
+_SCHEDULE_CONDITION_PATTERN: re.Pattern[str] = re.compile(
+    r"""^github\.event_name\s*==\s*['"]schedule['"]$"""
 )
 
 type Document = dict[str, typ.Any]
@@ -253,21 +258,32 @@ def _condition_problems(condition: str) -> list[str]:
     github.event_name == 'schedule'`` contains the same text as the conjunction
     it is meant to be, but it also fires after a successful scheduled run and
     after a failed manual one, so substring presence alone cannot accept it.
+    Each conjunct is matched whole, so an inverted comparison such as
+    ``github.event_name != 'schedule'`` is rejected too.
 
     Returns
     -------
     list[str]
         One complaint per requirement the expression fails to impose.
     """
+    condition = _strip_expression_wrapper(condition)
     terms = [_peel_parens(term) for term in condition.split("&&")]
     problems: list[str] = []
     if "||" in condition:
         problems.append("the notification condition must join its terms with &&")
-    if not any(term == "failure()" for term in terms):
+    if not any(_FAILURE_CONDITION_PATTERN.match(term) for term in terms):
         problems.append("the notification job must run only after a failure")
-    if not any(_names_schedule_event(term) for term in terms):
+    if not any(_SCHEDULE_CONDITION_PATTERN.match(term) for term in terms):
         problems.append("the notification job must run only for scheduled runs")
     return problems
+
+
+def _strip_expression_wrapper(condition: str) -> str:
+    """Return the condition without a ``${{ ... }}`` wrapper, if it has one."""
+    condition = condition.strip()
+    if condition.startswith("${{") and condition.endswith("}}"):
+        return condition[3:-2].strip()
+    return condition
 
 
 def _peel_parens(term: str) -> str:
@@ -276,11 +292,6 @@ def _peel_parens(term: str) -> str:
     while term.startswith("(") and term.endswith(")"):
         term = term[1:-1].strip()
     return term
-
-
-def _names_schedule_event(term: str) -> bool:
-    """Return whether a condition term compares the event name to schedule."""
-    return "github.event_name" in term and "schedule" in term
 
 
 def _permission_problems(found: Job) -> list[str]:

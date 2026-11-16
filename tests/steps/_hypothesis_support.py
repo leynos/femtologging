@@ -9,7 +9,7 @@ import typing as typ
 
 import pytest
 
-from tests.steps.conftest import _SYSTEM_EXIT_PYTEST_LINES
+from tests.steps.traceback_normalization import SYSTEM_EXIT_PYTEST_LINES
 
 type _PropertyDecorator = cabc.Callable[
     [cabc.Callable[..., object]], cabc.Callable[..., object]
@@ -66,7 +66,7 @@ def _entrypoint_property_cases() -> _PropertyDecorator:
             max_size=120,
         ),
         line_no=strategies.integers(min_value=1, max_value=999_999),
-        entrypoint_line=strategies.sampled_from(sorted(_SYSTEM_EXIT_PYTEST_LINES)),
+        entrypoint_line=strategies.sampled_from(sorted(SYSTEM_EXIT_PYTEST_LINES)),
     )
 
 

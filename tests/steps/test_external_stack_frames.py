@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.steps.conftest import strip_external_stack_frames
+from tests.steps.stack_frames import strip_external_stack_frames
 
 _STDLIB_ROOT = Path("/opt/python/lib/python3.12")
 _SITE_PACKAGES_ROOT = Path("/workspace/.venv/lib/python3.12/site-packages")
@@ -105,6 +105,21 @@ _EXTERNAL_FRAME_CASES = (
         "keep relative and unrecognized filenames",
         id="keeps_relative_and_unrecognized_filenames",
     ),
+    pytest.param(
+        _STACK_HEADING + '  File "/workspace/.venv/lib/python3.12/site-packages/pluggy/'
+        '_callers.py", line 3, in _multicall\n'
+        + "    return hook_impl.function(\n"
+        + "        hook_name,\n"
+        + "        hook_impl,\n"
+        + "    )\n"
+        + '  File "/workspace/femtologging/app.py", line 7, in emit\n'
+        + "    logger.log(level, message)\n",
+        _STACK_HEADING
+        + '  File "/workspace/femtologging/app.py", line 7, in emit\n'
+        + "    logger.log(level, message)\n",
+        "remove every line of a wrapped call in an external frame",
+        id="removes_wrapped_external_frame",
+    ),
 )
 
 
@@ -162,3 +177,33 @@ class TestStripExternalStackFrames:
             + "    logger.log(level, message)\n"
             + traceback
         ), "the exception traceback must be preserved byte for byte"
+
+    @staticmethod
+    def test_a_stack_after_a_traceback_is_trimmed() -> None:
+        """Resume trimming when a stack section follows a traceback."""
+        traceback = (
+            "Traceback (most recent call last):\n"
+            '  File "/workspace/.venv/lib/python3.12/site-packages/pluggy/'
+            '_callers.py", line 3, in _multicall\n'
+            "    res = hook_impl.function(*args)\n"
+            '  File "/workspace/femtologging/app.py", line 9, in work\n'
+            "    raise ValueError('boom')\n"
+            "ValueError: boom\n"
+        )
+        stack = (
+            _STACK_HEADING
+            + '  File "/workspace/.venv/lib/python3.12/site-packages/pytest/'
+            '_pytest/runner.py", line 5, in runtest\n'
+            + "    item.runtest()\n"
+            + '  File "/workspace/femtologging/app.py", line 7, in emit\n'
+            + "    logger.log(level, message)\n"
+        )
+        stripped = strip_external_stack_frames(
+            traceback + stack, external_roots=_EXTERNAL_ROOTS
+        )
+        assert stripped == (
+            traceback
+            + _STACK_HEADING
+            + '  File "/workspace/femtologging/app.py", line 7, in emit\n'
+            + "    logger.log(level, message)\n"
+        ), "the stack after a traceback must be trimmed, not preserved"

@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from tests.steps._hypothesis_support import _ENTRYPOINT_PROPERTY_CASES
-from tests.steps.conftest import normalize_traceback_output
+from tests.steps.traceback_normalization import normalize_traceback_output
 
 _STABLE_ENTRYPOINT = (
     "Stack (most recent call last):\n"

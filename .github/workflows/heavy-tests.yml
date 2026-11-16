@@ -10,6 +10,11 @@ on:
         required: false
         default: ''
 
+# The heavy job only checks the repository out, so it runs with a read-only
+# token. `notify-failure` declares its own wider block.
+permissions:
+  contents: read
+
 jobs:
   heavy:
     runs-on: ubuntu-latest
