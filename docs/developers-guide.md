@@ -1707,14 +1707,23 @@ has exactly two variants, `Enqueue` and `Acknowledgement`, which separate a
 queue that never accepted the command from a worker that never answered it.
 
 `flush_handler_until` wraps that sequence for a handler with drops to report
-and a channel of its own type. It forms the cap, calls `prepare` to obtain the
-queue, then runs `flush_command_until`. `prepare` runs after the cap
-deliberately: the stream handler's sender sits behind a mutex, and sampling the
-clock while holding it would make one flush wait on another thread's flush. The
-stream, socket and HTTP handlers call `flush_handler_until`; the file handler
-composes `flush_command_until` directly because its budget is fixed. Production
-passes `Instant::now` as the clock, while tests pass a scripted source so the
-budget handed to each wait can be shown to shrink deterministically.
+and a channel of its own type. It takes the handler's cap, a `prepare` closure
+that yields the queue, and a `PendingDrops` pairing the count's destructive
+`take` with the `restore` that hands it back. It forms nothing else of its own:
+it reads the cap, calls `prepare`, and runs `flush_command_until`. `prepare`
+runs after the cap deliberately: the stream handler's sender sits behind a
+mutex, and sampling the clock while holding it would make one flush wait on
+another thread's flush. The stream, socket and HTTP handlers call
+`flush_handler_until`; the file handler composes `flush_command_until` directly
+because its budget is fixed and it has no drops to carry. Production passes
+`Instant::now` as the clock, while tests pass a scripted source so the budget
+handed to each wait can be shown to shrink deterministically.
+
+`PendingDrops` groups the two halves of the drop hand-off for the same reason
+the rotation strategy groups its clock and store: they describe one thing — a
+count that must not be lost — and a handler that passes them as separate
+arguments spends two of the four parameter slots the house style allows on data
+that always travels together.
 
 ### Worker hand-off
 
@@ -1747,13 +1756,13 @@ caller that cannot deliver its count must hand it back.
 
 The transport is `handler::flush_command::flush_handler_until`, which puts the
 pending count on the flush marker so the worker, not the flush caller, invokes
-the logging callback. The count arrives as a thunk and is called only after a
-queue was found, because taking it is destructive: a handler whose worker has
-gone must leave the drops pending for the next flush. If the marker never
-entered the queue, `flush_handler_until` hands the count back through the
-restore closure. `warn_if_due` keeps suppressed drops pending until the
-interval expires, and `RateLimitedWarner::flush` reports any restored count, so
-neither path loses a drop.
+the logging callback. The count is taken only after a queue was found, because
+taking it is destructive: a handler whose worker has gone must leave the drops
+pending for the next flush. If the marker never entered the queue,
+`flush_handler_until` hands the count back through the `PendingDrops` restore
+half. `warn_if_due` keeps suppressed drops pending until the interval expires,
+and `RateLimitedWarner::flush` reports any restored count, so neither path
+loses a drop.
 
 The warner's `Clock` trait reports milliseconds since the warner was
 constructed, an opaque counter used only to decide whether an interval has
