@@ -10,8 +10,8 @@ use super::HTTPHandlerBuilder;
 #[test]
 fn builder_requires_url() {
     Python::attach(|py| {
-        let builder = pyo3::Py::new(py, HTTPHandlerBuilder::new())
-            .expect("Py::new should succeed in test");
+        let builder =
+            pyo3::Py::new(py, HTTPHandlerBuilder::new()).expect("Py::new should succeed in test");
         let builder_ref = builder.borrow(py);
         let err = builder_ref
             .build_inner()
@@ -92,8 +92,8 @@ fn builder_with_basic_auth() {
 #[test]
 fn with_auth_rejects_mixed_modes() {
     Python::attach(|py| {
-        let builder = pyo3::Py::new(py, HTTPHandlerBuilder::new())
-            .expect("Py::new should succeed in test");
+        let builder =
+            pyo3::Py::new(py, HTTPHandlerBuilder::new()).expect("Py::new should succeed in test");
         let config = PyDict::new(py);
         config
             .set_item("token", "abc-123")
@@ -118,8 +118,8 @@ fn with_auth_rejects_mixed_modes() {
 #[test]
 fn with_auth_rejects_incomplete_basic_auth() {
     Python::attach(|py| {
-        let builder = pyo3::Py::new(py, HTTPHandlerBuilder::new())
-            .expect("Py::new should succeed in test");
+        let builder =
+            pyo3::Py::new(py, HTTPHandlerBuilder::new()).expect("Py::new should succeed in test");
         let config = PyDict::new(py);
         config
             .set_item("username", "user")
