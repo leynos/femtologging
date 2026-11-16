@@ -12,11 +12,15 @@ import enum
 import re
 from pathlib import PurePath
 
-from tests.steps.stack_frames import parse_frame
+from tests.steps.stack_frames import frame_block_end, parse_frame
 
 _PYTEST_RUNTEST_HOOK_LINE_PATTERN: re.Pattern[str] = re.compile(
     r"^(?P<indent>\s*)(?P<prefix>(?:lambda:\s*)?runtest_hook)\(.*\),.*$",
     flags=re.MULTILINE,
+)
+_STDLIB_DIRECTORY_PATTERN: re.Pattern[str] = re.compile(
+    r"^python\d+(?:\.\d+)?[a-z]?$",
+    flags=re.IGNORECASE,
 )
 
 
@@ -98,14 +102,17 @@ def _normalize_launcher_frames(output: str) -> str:
             index += 1
             continue
 
-        index = frame.next_index
         if _should_drop_launcher_frame(
             frame.frame_file,
             frame.frame_func,
             frame.code_line,
         ):
+            # A wrapped launcher call prints further source lines after the
+            # first, so skip the whole block rather than leaving an orphan.
+            index = frame_block_end(lines, frame)
             continue
 
+        index = frame.next_index
         normalized_lines.append(
             _normalize_frame_line(frame.frame_line, frame.frame_func, frame.code_line)
         )
@@ -147,10 +154,24 @@ def _is_pytest_command_main_frame(frame_func: str, code_line: str) -> bool:
 
 
 def _is_runpy_launcher_path(frame_file: str) -> bool:
-    """Return whether a traceback frame comes from runpy launcher internals."""
+    """Return whether a traceback frame comes from runpy launcher internals.
+
+    The basename alone is not enough: a project may ship its own ``runpy.py``
+    with a ``run_module`` function. Only a ``runpy.py`` in an interpreter
+    standard-library directory (``.../python3.15/`` or ``.../Python313/Lib``)
+    is treated as launcher code.
+
+    Returns
+    -------
+    bool
+        Whether the frame belongs to interpreter launcher code.
+    """
     if frame_file == "<frozen runpy>":
         return True
-    return PurePath(frame_file).name == "runpy.py"
+    path = PurePath(frame_file)
+    if path.name != "runpy.py":
+        return False
+    return any(_STDLIB_DIRECTORY_PATTERN.match(part) for part in path.parent.parts)
 
 
 def _should_drop_launcher_frame(

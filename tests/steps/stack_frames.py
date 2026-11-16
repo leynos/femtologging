@@ -234,7 +234,7 @@ def _keep_or_drop_frame(
     if frame is None:
         kept.append(lines[index])
         return index + 1
-    block_end = _frame_block_end(lines, frame)
+    block_end = frame_block_end(lines, frame)
     if not _is_external_frame_file(frame.frame_file, roots):
         kept.extend(lines[index:block_end])
     return block_end
@@ -259,14 +259,20 @@ def _is_external_frame_file(frame_file: str, roots: cabc.Sequence[Path]) -> bool
     return any(resolved.is_relative_to(root) for root in roots)
 
 
-def _frame_block_end(lines: list[str], frame: FrameInfo) -> int:
+def frame_block_end(lines: list[str], frame: FrameInfo) -> int:
     """Return the index just past a frame's header and all its source lines.
 
     Python 3.11 and later print every line of a multi-line statement, followed
     by caret lines under the failing expression. A frame's block is therefore
     more than the single source line :func:`parse_frame` records; stopping at
-    the first source line would leave the rest of an external frame's body in
-    the snapshot.
+    the first source line would leave the rest of a removed frame's body behind.
+
+    Parameters
+    ----------
+    lines : list[str]
+        The output split into lines, without line terminators.
+    frame : FrameInfo
+        The parsed frame whose block is measured.
 
     Returns
     -------
