@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs fixed make and shell argv
 import typing as typ
@@ -225,6 +226,22 @@ def _stubbed_build_environment(uv: Path, log: Path) -> dict[str, str]:
     return environment
 
 
+def _recorded_uv_commands(log: Path) -> list[list[str]]:
+    """Return the argv of every ``uv`` invocation the stub recorded.
+
+    Parameters
+    ----------
+    log
+        File the recording ``uv`` stub appended its command lines to.
+
+    Returns
+    -------
+    list[list[str]]
+        One token list per invocation, in the order the recipe ran them.
+    """
+    return [shlex.split(line) for line in log.read_text("utf-8").splitlines()]
+
+
 def test_a_refused_preflight_stops_the_build_before_uv_runs(
     tmp_path: Path,
 ) -> None:
@@ -278,7 +295,9 @@ def test_a_permitted_preflight_reaches_the_build_recipe(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert log.exists(), "the build recipe never invoked the uv stub"
-    recorded = log.read_text("utf-8")
-    assert "venv" in recorded, recorded
-    assert "sync" in recorded, recorded
-    assert "maturin develop" in recorded, recorded
+    commands = _recorded_uv_commands(log)
+    assert ["venv"] in commands, commands
+    assert any(command[:2] == ["sync", "--group"] for command in commands), commands
+    assert any(command[:3] == ["run", "maturin", "develop"] for command in commands), (
+        commands
+    )
