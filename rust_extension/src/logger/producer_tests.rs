@@ -46,13 +46,21 @@ fn enrichment_pair(key: &str, value: &str) -> BTreeMap<String, String> {
 
 /// The handler-filter snapshot keeps the transport marker on the record.
 ///
-/// Filters may enrich a record, but the attachment snapshot they produce must
-/// not strip the origin: the selected handlers receive a clone of this record,
-/// and the HTTP handler rejects it by that marker.
+/// A filtered attachment makes the producer capture a one-shot clone of the
+/// record for its worker. That clone is what the HTTP handler eventually sees,
+/// so it must keep the marker even though the filter may enrich it.
 #[rstest]
 fn handler_filter_snapshot_preserves_the_transport_origin() {
     let handler = Arc::new(CollectingHandler::default());
-    let attachment = HandlerAttachment::new(handler as Arc<dyn FemtoHandlerTrait>);
+    let filter = Arc::new(TestFilter {
+        accepted: true,
+        enrichment: BTreeMap::new(),
+        calls: Arc::new(AtomicUsize::new(0)),
+    });
+    let attachment = HandlerAttachment {
+        handler: handler.clone() as Arc<dyn FemtoHandlerTrait>,
+        filters: vec![filter as Arc<dyn FemtoFilter>],
+    };
     let mut record = FemtoLogRecord::new(
         "origin.filter.snapshot",
         FemtoLevel::Info,
@@ -61,13 +69,26 @@ fn handler_filter_snapshot_preserves_the_transport_origin() {
     .with_origin(RecordOrigin::HttpTransport);
 
     let selected = FemtoLogger::filter_handlers_for_test(&mut record, vec![attachment]);
-
     assert_eq!(
         selected.len(),
         1,
-        "the unfiltered handler should be selected"
+        "the accepting handler should be selected"
     );
-    assert_eq!(record.origin(), RecordOrigin::HttpTransport);
+
+    // The selected attachment is the snapshot wrapper. Its `handle` consumes
+    // the saved clone instead of the unmarked fallback passed here.
+    let fallback = FemtoLogRecord::new("origin.filter.fallback", FemtoLevel::Info, "fallback");
+    selected[0]
+        .handle(fallback)
+        .expect("snapshot handler should accept the record");
+
+    let collected = handler.collected();
+    assert_eq!(collected.len(), 1);
+    assert_eq!(
+        collected[0].origin(),
+        RecordOrigin::HttpTransport,
+        "the snapshot clone must keep the transport marker"
+    );
 }
 
 #[rstest]
