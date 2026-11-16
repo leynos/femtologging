@@ -12,9 +12,6 @@ own environment. Collecting it here would fail on the import alone, so it is
 excluded for the same reason `[tool.ty.src]` excludes it. ``run_loom_models.py``
 is the same kind of script; ``make loom-runner-test`` runs it and its examples
 with ``LOOM_RUNNER_TEST`` set, and only then is it collected here.
-
-The remaining helpers import each other as top-level modules; the
-``pythonpath`` setting in ``[tool.pytest.ini_options]`` is what lets them.
 """
 
 from __future__ import annotations
