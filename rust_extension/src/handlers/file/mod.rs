@@ -106,6 +106,11 @@ impl FemtoFileHandler {
     }
 
     /// Create a handler writing to `path` with default settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error from opening `path`, for example when its parent
+    /// directory does not exist or the file cannot be created.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
     }
@@ -113,6 +118,11 @@ impl FemtoFileHandler {
     /// Create a handler with a custom queue `capacity` and default drop policy.
     ///
     /// The handler flushes the file after every record (`flush_interval = 1`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when `capacity` is zero, and
+    /// otherwise the I/O error from opening `path`.
     pub fn with_capacity<P, F>(path: P, formatter: F, capacity: usize) -> io::Result<Self>
     where
         P: AsRef<Path>,
@@ -130,6 +140,12 @@ impl FemtoFileHandler {
     ///
     /// This allows callers to override the queue capacity (> 0), flush interval
     /// (> 0), and overflow policy in a single place.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when `config.capacity` or
+    /// `config.flush_interval` is zero, and otherwise the I/O error from
+    /// opening `path`.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -178,12 +194,9 @@ impl FemtoFileHandler {
     /// timed-out flush from a flush of an already-closed handler, which the
     /// public `bool` cannot express.
     pub(crate) fn flush_outcome(&self) -> FlushOutcome {
-        // Bind first: a guard in the `match` scrutinee lives through the send.
-        let tx = self.tx.lock().clone();
-        match tx {
-            Some(tx) => self.perform_flush(&tx),
-            None => FlushOutcome::Closed,
-        }
+        // Bind first: a guard in the `map_or` scrutinee lives through the send.
+        let sender = self.tx.lock().clone();
+        sender.map_or(FlushOutcome::Closed, |tx| Self::perform_flush(&tx))
     }
 
     /// Waits for the worker's flush acknowledgement without taking ownership of
@@ -192,7 +205,7 @@ impl FemtoFileHandler {
     /// The enqueue and the acknowledgement share one deadline but are reported
     /// separately: a request that never reached the worker and a request the
     /// worker never answered point at different faults.
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> FlushOutcome {
+    fn perform_flush(tx: &Sender<FileCommand>) -> FlushOutcome {
         let deadline = Instant::now() + Duration::from_secs(1);
         let (ack_tx, ack_rx) = bounded(1);
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -201,12 +214,11 @@ impl FemtoFileHandler {
             Err(SendTimeoutError::Disconnected(_)) => return FlushOutcome::Disconnected,
             Err(SendTimeoutError::Timeout(_)) => return FlushOutcome::EnqueueTimedOut,
         }
-        self.wait_for_flush_completion(&ack_rx, deadline)
+        Self::wait_for_flush_completion(&ack_rx, deadline)
     }
 
     /// Classifies the worker's answer to a flush request.
     fn wait_for_flush_completion(
-        &self,
         ack_rx: &Receiver<io::Result<()>>,
         deadline: Instant,
     ) -> FlushOutcome {
@@ -222,7 +234,7 @@ impl FemtoFileHandler {
     }
 
     /// Return the bounded overflow-policy bucket for telemetry.
-    pub(crate) fn policy_bucket(&self) -> &'static str {
+    pub(crate) const fn policy_bucket(&self) -> &'static str {
         match self.overflow_policy {
             OverflowPolicy::Drop => "drop",
             OverflowPolicy::Block => "block",
@@ -231,7 +243,7 @@ impl FemtoFileHandler {
     }
 
     /// Return the shared wait diagnostics for this handler.
-    pub(crate) fn diagnostics(&self) -> &Arc<WaitDiagnostics> {
+    pub(crate) const fn diagnostics(&self) -> &Arc<WaitDiagnostics> {
         &self.diagnostics
     }
 
