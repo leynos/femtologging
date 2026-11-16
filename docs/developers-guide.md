@@ -669,14 +669,14 @@ chronological because each suffix leads with its timestamp, and a backup count
 of zero disables pruning.
 
 The extraction is structural.
-`rust_extension/src/handlers/timed_rotating/handler.rs` keeps the public handler
-wrapper: the writer the worker owns, its lifecycle, and the seeding decisions
-that need the active file. `core.rs` keeps only the `TimedRotationConfig` the
-constructor takes. Rotation orchestration, the deadline, the filesystem steps,
-the store and retention each have one reason to change and each live in their
-own module, which also keeps every module inside the repository's 400-line cap.
-`rotation_strategy.rs` remains the only place that knows the order the steps
-take and which handler state each one updates.
+`rust_extension/src/handlers/timed_rotating/handler.rs` keeps the public
+handler wrapper: the writer the worker owns, its lifecycle, and the seeding
+decisions that need the active file. `core.rs` keeps only the
+`TimedRotationConfig` the constructor takes. Rotation orchestration, the
+deadline, the filesystem steps, the store and retention each have one reason to
+change and each live in their own module, which also keeps every module inside
+the repository's 400-line cap. `rotation_strategy.rs` remains the only place
+that knows the order the steps take and which handler state each one updates.
 
 ### Flush clock and observer seam
 

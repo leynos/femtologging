@@ -724,18 +724,19 @@ options.
 #### Timed rotation boundary
 
 `FemtoTimedRotatingFileHandler` keeps only the handler in
-`rust_extension/src/handlers/timed_rotating/core.rs`: the writer the worker
+`rust_extension/src/handlers/timed_rotating/handler.rs`: the writer the worker
 owns, the handler's lifecycle, and the seeding decisions that need the active
 file. About 258 lines of rotation logic moved out of that module into
 `rotation_strategy.rs`, with `rollover_schedule.rs` (the injectable
 `RotationClock` and the single deadline), `schedule.rs` (the cadence rules),
 `rotation_steps.rs` (rename, writer swap and unwinding), `rotation_store.rs`
 (the filesystem seam) and `backup_retention.rs` (pruning) alongside it.
-`core.rs` is now 165 lines, well inside the repository's 400-line per-module
-cap, so the extraction is structural rather than cosmetic: each module has one
-reason to change, and a rotation can be driven at a chosen instant through a
-scripted clock and file store instead of by arranging a directory that fails a
-rename at the right moment.
+`core.rs` keeps only the `TimedRotationConfig` the handler constructor takes,
+so every module is well inside the repository's 400-line per-module cap. The
+extraction is structural rather than cosmetic: each module has one reason to
+change, and a rotation can be driven at a chosen instant through a scripted
+clock and file store instead of by arranging a directory that fails a rename at
+the right moment.
 
 ### 3.5 Handler flush at the Python boundary
 
