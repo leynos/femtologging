@@ -24,23 +24,25 @@ for the complete five-tier lint pipeline.
 
 ## Python test toolchain
 
-The local development group in `pyproject.toml` and the scheduled
-`.github/workflows/heavy-tests.yml` job define the same test toolchain. The
-heavy job repeats the install explicitly because it builds its own virtualenv
-outside `uv sync --group dev`. Keep both sources aligned when changing a
-dependency or its version policy:
+The local development group in `pyproject.toml` is the single source of the
+test toolchain, and the scheduled `.github/workflows/heavy-tests.yml` job
+installs that group from `uv.lock` with `uv sync --frozen --group dev` rather
+than repeating the pins. The sync reads `.github/uv-test-util.toml` through
+`UV_CONFIG_FILE`, so the project build receives the `test-util` hooks, and the
+job then runs `maturin develop` against the synced environment. A dependency or
+version-policy change therefore belongs in the development group only:
 
-- `maturin[patchelf]` is pinned to `1.13.3` in both sources for the editable
-  Rust extension build.
-- `pytest` is pinned to `9.1.1` in both sources.
-- `pytest-bdd` is pinned to `8.1.0` in both sources.
-- `pytest-timeout`, `pytest-xdist`, and `syrupy` are currently unpinned in
-  both sources; they follow the resolver's latest compatible releases.
-- `hypothesis` is bounded to `>=6.135,<7` in both sources, so
-  property-based and generated-input coverage only shifts with a deliberate
-  compatible-version change.
-- `pyyaml` is bounded to `>=6.0.3,<7` in both sources because the lint
-  contract tests parse the CI workflow files.
+- `maturin[patchelf]` is pinned to `1.13.3` for the editable Rust extension
+  build, matching the build-system lower bound.
+- `pytest` is pinned to `9.1.1`.
+- `pytest-bdd` is pinned to `9.0.0`.
+- `pytest-timeout`, `pytest-xdist`, and `syrupy` are currently unpinned; they
+  follow the resolver's latest compatible releases, which the lock records.
+- `hypothesis` is bounded to `>=6.135,<7`, so property-based and
+  generated-input coverage only shifts with a deliberate compatible-version
+  change.
+- `pyyaml` is bounded to `>=6.0.3,<7` because the lint contract tests parse
+  the CI workflow files.
 
 ### Docstring examples
 
@@ -197,10 +199,10 @@ When updating either dependency, change the pin in the source manifest, update
 the matching CI install step where applicable, and run the maturin/PyO3
 compatibility checks through the normal `make test` gate. The synchronization
 test in `tests/test_maturin_build.py` verifies that the maturin pins stay
-aligned across `pyproject.toml`, `.github/workflows/heavy-tests.yml`, and
-`.github/workflows/build-wheels.yml`. The isolated sdist builders read the same
-pin from `.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`;
-update that file alongside the other pins.
+aligned across `pyproject.toml` and `.github/workflows/build-wheels.yml`. The
+isolated sdist builders read the same pin from
+`.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`; update
+that file alongside the other pins.
 `tests/test_ci_build_wheels_sdist_cardinality.py::test_sdist_builds_share_the_pinned_maturin_constraint`
 verifies the sdist constraint.
 
@@ -498,8 +500,8 @@ that key on an entry that joins a group), puts the available updates for the
 pair into one pull request. When both have one, a single CI run builds them
 together; a bump is not held back when only one of the two has an update, and a
 group cannot choose compatible versions or rewrite a pinned literal, so the
-maturin pin in `.github/workflows/heavy-tests.yml` is still kept aligned by
-`tests/test_maturin_build.py`.
+maturin pins in the development group and the build workflows are still kept
+aligned by `tests/test_maturin_build.py`.
 
 An entry that joins a group runs only that group, over the dependencies its
 `patterns` take: its own groups, ignore rules and every other dependency are
@@ -828,7 +830,9 @@ The checker fails the step unless every model named in `loom-models.txt` is
 reported as passed and nothing else is. `cargo test` alone passes with zero
 tests when `--cfg loom` is dropped, when the filter matches nothing, when
 `--ignored` replaces `--include-ignored`, and when `--no-run` is restored; the
-checker fails each. `make loom-runner-test` tests it.
+checker fails each. `make loom-runner-test` tests it. A scheduled failure is
+not left silent: the workflow's `notify-failure` job comments on, or opens, the
+`heavy-tests nightly failure` issue with the run URL, commit and run date.
 
 Both steps build into `target/loom` under their own cache key, which names the
 toolchain, the lockfile, the feature selection and the flags, apart from the
