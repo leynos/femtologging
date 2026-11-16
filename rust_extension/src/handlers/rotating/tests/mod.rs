@@ -2,3 +2,4 @@
 
 mod behaviour;
 mod concurrency;
+mod fresh_failure;
