@@ -22,6 +22,7 @@ _STDLIB_DIRECTORY_PATTERN: re.Pattern[str] = re.compile(
     r"^python\d+(?:\.\d+)?[a-z]?$",
     flags=re.IGNORECASE,
 )
+_LIBRARY_DIRECTORY_NAMES: frozenset[str] = frozenset({"lib", "lib64"})
 
 
 class LauncherFrameFunc(enum.StrEnum):
@@ -158,14 +159,15 @@ def _is_runpy_launcher_path(frame_file: str) -> bool:
 
     The basename alone is not enough: a project may ship its own ``runpy.py``
     with a ``run_module`` function. Only a ``runpy.py`` in an interpreter
-    standard-library directory (``.../python3.15/`` or ``.../Python313/Lib``)
-    is treated as launcher code.
+    standard-library directory is treated as launcher code.
 
-    The standard-library directory must be the file's own directory, or the
-    ``Lib`` directory one level above it for the Windows layout. A directory
-    named after an interpreter anywhere higher in the path is not enough: a
-    checkout such as ``/workspace/python3.12/app/runpy.py`` is application
-    code that happens to sit beneath such a name.
+    The standard-library directory must be the file's own directory inside a
+    library directory (``.../lib/python3.12/runpy.py`` or the ``lib64``
+    equivalent), or the ``Lib`` directory one level above an interpreter
+    directory for the Windows layout. A directory named after an interpreter
+    on its own is not enough: ``/workspace/python3.12/runpy.py`` and
+    ``/workspace/python3.12/app/runpy.py`` are application code that happens to
+    sit beneath, or be named like, an interpreter directory.
 
     Returns
     -------
@@ -177,10 +179,11 @@ def _is_runpy_launcher_path(frame_file: str) -> bool:
     path = PurePath(frame_file)
     if path.name != "runpy.py":
         return False
+    grandparent = path.parent.parent.name
     if _STDLIB_DIRECTORY_PATTERN.match(path.parent.name):
-        return True
+        return grandparent in _LIBRARY_DIRECTORY_NAMES
     return path.parent.name.lower() == "lib" and bool(
-        _STDLIB_DIRECTORY_PATTERN.match(path.parent.parent.name)
+        _STDLIB_DIRECTORY_PATTERN.match(grandparent)
     )
 
 
