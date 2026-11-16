@@ -114,6 +114,11 @@ import time
 from femtologging import FileHandlerBuilder, get_logger
 
 path = pathlib.Path(sys.argv[1])
+# "dispatched" queues the record through the logger, so ``flush_handlers()``
+# drains the dispatch shard before it flushes. "direct" queues it on the handler
+# itself, leaving the shard empty, so the drain returns at once and the only
+# wait left is the native one.
+mode = sys.argv[2]
 formatter_entered = threading.Event()
 release_formatter = threading.Event()
 ticker_started = threading.Event()
@@ -149,12 +154,17 @@ def count_ticks():
 handler = FileHandlerBuilder(str(path)).with_formatter(pause_formatter).build()
 logger = get_logger("gil.flush.formatter")
 logger.add_handler(handler)
+call = logger.flush_handlers
+call_name = "flush_handlers()"
 
 ticker = threading.Thread(target=count_ticks, daemon=True)
 ticker.start()
 assert ticker_started.wait(timeout=5), "the ticker thread never started"
 
-logger.info("paused")
+if mode == "direct":
+    handler.handle("gil.flush.formatter", "INFO", "paused")
+else:
+    logger.info("paused")
 assert formatter_entered.wait(timeout=5), "the handler's worker never formatted"
 
 # Start the release only now, so its delay is measured from a point at which
@@ -174,27 +184,27 @@ sys.setswitchinterval(UNPREEMPTED_SWITCH_SECONDS)
 time.sleep(0)
 ticks_before = ticks[0]
 started = time.monotonic()
-assert logger.flush_handlers(), "flush_handlers stalled behind the GIL"
+assert call(), f"{call_name} stalled behind the GIL"
 elapsed = time.monotonic() - started
 sys.setswitchinterval(DEFAULT_SWITCH_SECONDS)
 is_finished.set()
 ticker.join()
 
 assert elapsed >= 0.2, (
-    f"flush_handlers() returned after {elapsed:.3f}s, so the blocked formatter "
+    f"{call_name} returned after {elapsed:.3f}s, so the blocked formatter "
     "was not what the flush waited for and this test proved nothing"
 )
 observed = ticks[0] - ticks_before
 assert observed >= 10, (
     f"another Python thread ran only {observed} times during {elapsed:.3f}s of "
-    "flush_handlers(), so the wait held the GIL"
+    f"{call_name}, so the wait held the GIL"
 )
 # Read before close(): the record must be on disk because the flush waited for
 # the handler, not because close() later drained the worker. If PyHandler's
 # flush returned without delegating, the formatter would still be blocked here
 # and this read would find an empty file.
 assert path.read_text(encoding="utf-8") == "formatted paused\\n", (
-    "flush_handlers() returned before the record reached the file"
+    f"{call_name} returned before the record reached the file"
 )
 handler.close()
 """
@@ -246,6 +256,24 @@ def test_stream_flush_succeeds_with_a_python_formatter() -> None:
         handler.close()
 
 
+def _run_flush_formatter_script(tmp_path: Path, mode: str) -> None:
+    """Run the blocked-formatter script in a fresh interpreter."""
+    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
+        [
+            sys.executable,
+            "-c",
+            FLUSH_FORMATTER_SCRIPT,
+            str(tmp_path / "app.log"),
+            mode,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     tmp_path: Path,
 ) -> None:
@@ -262,15 +290,27 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     record can be there only because the flush waited for the handler. A fresh
     interpreter keeps the logger's dispatch shard idle, so the record is
     admitted rather than refused behind earlier tests' work.
+
+    This call also drains the dispatch shard, and that drain waits detached
+    too, so it can release the GIL before the native wait starts. The isolated
+    case below measures the native wait on its own.
     """
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed script
-        [sys.executable, "-c", FLUSH_FORMATTER_SCRIPT, str(tmp_path / "app.log")],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
+    _run_flush_formatter_script(tmp_path, "dispatched")
+
+
+def test_flush_handlers_native_wait_releases_the_gil(
+    tmp_path: Path,
+) -> None:
+    """The native wait releases the GIL with no dispatch drain in front of it.
+
+    ``flush_handlers()`` drains the logger's dispatch shard first, and that
+    drain waits detached too, so it could release the GIL and hide a native
+    wait that held it. Queuing the record on the handler directly leaves the
+    logger's shard with nothing in flight, so the drain returns at once and the
+    only wait left is the one that reaches the handler: if that wait held the
+    GIL, the release could not land and the assertions would fail.
+    """
+    _run_flush_formatter_script(tmp_path, "direct")
 
 
 def test_flush_handlers_succeeds_straight_after_logging(tmp_path: Path) -> None:

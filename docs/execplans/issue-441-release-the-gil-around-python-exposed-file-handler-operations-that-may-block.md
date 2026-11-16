@@ -1902,6 +1902,28 @@ The mutation was repeated against this version. Removing `py.detach` from
 (`/tmp/pytest-falsify2-femtologging.out`). Restoring it and rebuilding gave 13
 passed in five consecutive runs of the two files.
 
+The same review then named a schedule the switch interval cannot close:
+`flush_handlers()` drains the dispatch shard before it flushes, and
+`wait_for_dispatch_to_drain` waits detached whenever its budget has work in
+flight (`rust_extension/src/logger/flush.rs`). A record whose dispatch permit
+is still held while its formatter blocks therefore releases the GIL on the way
+into the native wait, and every assertion passes even if that wait holds it.
+
+`FLUSH_FORMATTER_SCRIPT` now takes a mode. `dispatched` queues the record
+through the logger and is the original end-to-end case; `direct` queues it with
+`handler.handle`, so the logger's shard has nothing in flight, the drain
+returns immediately, and the only wait left is the one that reaches the
+handler. A second test, `test_flush_handlers_native_wait_releases_the_gil`,
+drives that mode.
+
+The first attempt at the isolated case called the handler's own `flush()`, and
+the mutation still passed: that method is its own `#[pymethods]` shim which
+detaches itself, so it never reaches `PyHandler::flush` or `flush_native`. The
+direct-queue form keeps `flush_handlers()` as the entry point and goes through
+the same native wait the drain sits in front of. With the `py.detach` removal
+in place both flush tests now fail (`/tmp/pytest-falsify4-femtologging.out`);
+with it restored, 14 passed in five consecutive runs of the two files.
+
 `.github/workflows/ci.yml` installs Whitaker from the rolling archive and the
 run fetched `whitaker-lints-880939d`, so hosted `build-test` still fails the
 `Lint` step on the same fourteen `bumpy-road-function` findings in files
