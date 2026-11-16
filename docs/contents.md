@@ -3,17 +3,23 @@
 This directory holds design notes for `femtologging` and references to relevant
 libraries. Use the links below to explore each topic.
 
+## Start here
+
+- [users-guide.md](./users-guide.md)
+  - Teaches femtologging from a first log message to production
+    configuration and Rust integration.
+- [CHANGELOG.md](../CHANGELOG.md)
+  - Lists the consumer-facing changes in each release.
+- [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
+  - Upgrades an application from femtologging 0.1 to 0.2.0, breaking changes
+    first.
+
 ## Setup and Workflow
 
 - [dev-workflow.md](./dev-workflow.md)
   - Describes Makefile commands for building, linting, formatting and tests.
 - [developers-guide.md](./developers-guide.md)
   - Records developer toolchain ownership and validation boundaries.
-- [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes structured logging additions, the bounded logger and shared
-    dispatch changes, the bounded handler `close()` contract, and the
-    production-wheel packaging change that omits the timed-rotation test
-    hooks in v0.2.0.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)
@@ -27,10 +33,8 @@ libraries. Use the links below to explore each topic.
   - Records the v0.1.0 renames from British to Oxford spelling across the
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
-  - Describes the `BasicConfig` slots, bounded logger names and registry,
-    shared dispatch, bounded handler `close()`, and the move to production
-    wheels that omit the timed-rotation test hooks, with migration guidance for
-    v0.2.0.
+  - Sorts every 0.2.0 change by what it asks of an existing application, with
+    the exact errors and their fixes.
 
 ## Architecture decision records
 

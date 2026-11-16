@@ -260,5 +260,5 @@ femtologging logger's own level, and the stdlib handler's level set with
 `logging.Handler.setLevel()`.  Records below the wrapped handler's level are
 discarded before reaching it, matching stdlib `Logger.callHandlers()`.
 
-See the [users guide](users-guide.md#using-stdlib-logginghandler-subclasses)
-for details and limitations.
+See the [users guide](users-guide.md#reuse-standard-library-handlers) for
+details and limitations.
