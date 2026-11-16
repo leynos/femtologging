@@ -75,8 +75,13 @@ fn recv_batch_collects_up_to_capacity() {
 
     let batch = recv_batch(&rx, 2).expect("batch should be received");
     assert_eq!(batch.len(), 2);
-    assert!(matches!(batch[0], FileCommand::Record(_)));
-    assert!(matches!(batch[1], FileCommand::Record(_)));
+    assert!(
+        matches!(
+            batch.as_slice(),
+            [FileCommand::Record(_), FileCommand::Record(_)]
+        ),
+        "the drained batch must hold the two queued records",
+    );
 
     let remainder = recv_batch(&rx, 2).expect("remaining record should be received");
     assert_eq!(remainder.len(), 1);
