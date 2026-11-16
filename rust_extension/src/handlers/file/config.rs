@@ -69,7 +69,7 @@ pub struct TestConfig<W, F> {
 impl<W, F> TestConfig<W, F> {
     /// Create a configuration with the default queue capacity, a flush after every write, the
     /// drop policy and no start barrier.
-    pub fn new(writer: W, formatter: F) -> Self {
+    pub const fn new(writer: W, formatter: F) -> Self {
         Self {
             writer,
             formatter,

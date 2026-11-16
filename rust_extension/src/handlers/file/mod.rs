@@ -107,6 +107,11 @@ impl FemtoFileHandler {
     }
 
     /// Create a handler writing to `path` with default settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error from opening `path`, for example when its parent
+    /// directory does not exist or the file cannot be created.
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::with_capacity(path, DefaultFormatter, DEFAULT_CHANNEL_CAPACITY)
     }
@@ -114,6 +119,11 @@ impl FemtoFileHandler {
     /// Create a handler with a custom queue `capacity` and default drop policy.
     ///
     /// The handler flushes the file after every record (`flush_interval = 1`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when `capacity` is zero, and
+    /// otherwise the I/O error from opening `path`.
     pub fn with_capacity<P, F>(path: P, formatter: F, capacity: usize) -> io::Result<Self>
     where
         P: AsRef<Path>,
@@ -131,6 +141,12 @@ impl FemtoFileHandler {
     ///
     /// This allows callers to override the queue capacity (> 0), flush interval
     /// (> 0), and overflow policy in a single place.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidInput`] when `config.capacity` or
+    /// `config.flush_interval` is zero, and otherwise the I/O error from
+    /// opening `path`.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
@@ -168,7 +184,7 @@ impl FemtoFileHandler {
     }
 
     /// Return the overflow policy as the bounded label wait diagnostics use.
-    pub(crate) fn policy_bucket(&self) -> &'static str {
+    pub(crate) const fn policy_bucket(&self) -> &'static str {
         match self.overflow_policy {
             OverflowPolicy::Drop => "drop",
             OverflowPolicy::Block => "block",
@@ -177,7 +193,7 @@ impl FemtoFileHandler {
     }
 
     /// Return the shared wait diagnostics for this handler.
-    pub(crate) fn diagnostics(&self) -> &Arc<WaitDiagnostics> {
+    pub(crate) const fn diagnostics(&self) -> &Arc<WaitDiagnostics> {
         &self.diagnostics
     }
 
