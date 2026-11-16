@@ -1,8 +1,7 @@
 //! Shared state for forcing rotating writer reopen failures during tests.
 
-use once_cell::sync::Lazy;
 use std::sync::{
-    Mutex,
+    LazyLock, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 #[cfg(test)]
@@ -112,7 +111,7 @@ impl FreshFailureState {
 }
 
 /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
-static FRESH_FAILURE_STATE: Lazy<FreshFailureState> = Lazy::new(FreshFailureState::new);
+static FRESH_FAILURE_STATE: LazyLock<FreshFailureState> = LazyLock::new(FreshFailureState::new);
 
 /// Attempts to consume one forced fresh-file-open failure.
 ///
@@ -177,11 +176,11 @@ pub(crate) fn force_fresh_failure_once_for_test(
 #[cfg(test)]
 pub(crate) struct ForcedFreshFailureGuard {
     /// Number of forced failures present before this guard was installed.
-    previous_count: usize,
-    /// Previous injected failure message, restored when the guard is dropped.
-    previous_reason: Option<String>,
-    /// Previous thread owner associated with the injected failure state.
-    previous_owner: Option<ThreadId>,
+    count: usize,
+    /// Injected failure message restored when the guard is dropped.
+    reason: Option<String>,
+    /// Thread owner restored when the guard is dropped.
+    owner: Option<ThreadId>,
 }
 
 #[cfg(test)]
@@ -213,9 +212,9 @@ impl ForcedFreshFailureGuard {
             owner_guard.replace(thread::current().id())
         };
         Self {
-            previous_count,
-            previous_reason,
-            previous_owner,
+            count: previous_count,
+            reason: previous_reason,
+            owner: previous_owner,
         }
     }
 }
@@ -226,20 +225,20 @@ impl Drop for ForcedFreshFailureGuard {
     fn drop(&mut self) {
         FRESH_FAILURE_STATE
             .remaining
-            .store(self.previous_count, Ordering::SeqCst);
+            .store(self.count, Ordering::SeqCst);
         // Recover from poisoning: see `set_forced`.
         let mut guard = FRESH_FAILURE_STATE
             .reason
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *guard = self.previous_reason.take();
+        *guard = self.reason.take();
         {
             // Recover from poisoning: see `set_forced`.
             let mut owner_guard = FRESH_FAILURE_STATE
                 .owner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *owner_guard = self.previous_owner;
+            *owner_guard = self.owner;
         }
     }
 }
