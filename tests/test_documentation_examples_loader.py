@@ -59,6 +59,8 @@ def test_a_fence_line_with_an_info_string_stays_in_the_body() -> None:
         pytest.param("```\n", id="bare"),
         pytest.param("```   \n", id="trailing-spaces"),
         pytest.param("```\t\n", id="trailing-tab"),
+        pytest.param(" ```\n", id="one-space-indent"),
+        pytest.param("   ```\n", id="three-space-indent"),
         pytest.param("```", id="end-of-file"),
     ],
 )
@@ -69,6 +71,25 @@ def test_closing_fence_allows_trailing_whitespace(closing: str) -> None:
     assert example.body == "print('one')\n", (
         f"the closing fence {closing!r} must end the example"
     )
+
+
+def test_a_closing_fence_indented_four_spaces_stays_in_the_body() -> None:
+    """Four spaces make the line content, not a closer, as CommonMark requires."""
+    text = "<!-- tested-example: indented -->\n```markdown\n    ```\n```\n"
+    [example] = parse_document("doc.md", text)
+    assert example.body == "    ```\n", (
+        "a four-space-indented fence line must stay inside the example"
+    )
+
+
+def test_unicode_separators_stay_inside_an_example_line() -> None:
+    """Only Markdown line endings split lines; NEL and LINE SEPARATOR are content."""
+    # U+0085 NEXT LINE and U+2028 LINE SEPARATOR are characters, not Markdown
+    # line endings, so splitting on them would rewrite the published example.
+    body = "first\u2028second\u0085third\n"
+    text = f"<!-- tested-example: unicode -->\n```text\n{body}```\n"
+    [example] = parse_document("doc.md", text)
+    assert example.body == body, "the example body must survive byte-for-byte"
 
 
 def test_prose_without_fences_yields_nothing() -> None:

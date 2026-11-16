@@ -45,6 +45,13 @@ MARKER_LIKE = re.compile(r"<!-- tested-example:")
 # example from marker validation.
 FENCE = re.compile(r"(?P<delimiter>`{3,}|~{3,})(?P<info>.*)")
 VALID_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+# CommonMark recognizes only CRLF, CR, and LF as line endings. ``str.splitlines``
+# also splits on U+0085 and U+2028, which are ordinary characters inside a code
+# fence and must survive into the executed example unchanged.
+MARKDOWN_LINE_ENDING = re.compile(r"\r\n|\r|\n")
+# A closing fence may carry at most three spaces of indentation before its
+# delimiter. Further indentation makes the line content, not a closer.
+MAX_CLOSING_FENCE_INDENT = 3
 
 
 class DocumentationExampleError(ValueError):
@@ -70,6 +77,46 @@ class DocumentScan:
     unmarked: tuple[str, ...]
 
 
+def _indent_columns(line: str) -> int:
+    """Return the column width of ``line``'s leading whitespace.
+
+    Tabs advance to the next multiple-of-four column stop, as CommonMark
+    specifies, so a leading tab counts as four columns of indentation.
+
+    Returns
+    -------
+    int
+        The column width of the line's leading whitespace.
+    """
+    columns = 0
+    for character in line:
+        match character:
+            case " ":
+                columns += 1
+            case "\t":
+                columns += 4 - columns % 4
+            case _:
+                break
+    return columns
+
+
+def _markdown_lines(text: str) -> list[str]:
+    """Split ``text`` on CommonMark line endings only.
+
+    ``str.splitlines()`` would also split on U+0085 and U+2028, turning a
+    separator inside an example into a line break the example never contained.
+
+    Returns
+    -------
+    list[str]
+        The document's lines, with their line endings removed.
+    """
+    lines = MARKDOWN_LINE_ENDING.split(text)
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _Fence:
     """The opening line of a fenced code block."""
@@ -91,7 +138,13 @@ class _Fence:
         # as the opening run, with nothing after it but whitespace. A line
         # such as "```python" therefore stays in the body, as CommonMark
         # requires, and a longer fence can quote a shorter one.
-        candidate = line.strip()
+        #
+        # Indentation matters too: four or more spaces make the line content,
+        # not a closer, so an intended-to-be-quoted fence line stays inside the
+        # example instead of ending it early.
+        if _indent_columns(line) > MAX_CLOSING_FENCE_INDENT:
+            return False
+        candidate = line.strip(" \t")
         return len(candidate) >= len(self.delimiter) and set(candidate) == {
             self.delimiter[0]
         }
@@ -183,7 +236,7 @@ def scan_document(source: str, text: str) -> DocumentScan:
         The examples in document order, and one located diagnostic for each
         fence that has no marker.
     """
-    lines = text.splitlines()
+    lines = _markdown_lines(text)
     examples: list[DocumentedExample] = []
     unmarked: list[str] = []
     index = 0
