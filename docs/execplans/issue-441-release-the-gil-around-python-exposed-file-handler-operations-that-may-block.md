@@ -2136,6 +2136,45 @@ pytest reported 1234 passed and 5 skipped, up from 1203 because main's #616
 added tests of the documented-example loader. The logs carry the `-rebased`
 suffix under `/tmp`.
 
+### The formatter release is delayed past a measured pre-wait bound
+
+The next review round accepted the call-instruction keying but raised a second
+window. `py_flush_handlers` wraps the entire `flush_handlers()` call in
+`py.detach`, so the GIL is free from the moment the call instruction is reached
+— before `PyHandler` reattaches and reaches `flush_native`. The observer could
+therefore take its baseline and release the formatter inside that outer
+detached window, and a native wait that held the GIL would then find the record
+already flushed.
+
+`direct` mode keeps that window small by leaving the dispatch shard empty, but
+small is not the same as measured. The script now bounds it: before the blocked
+run it performs the same call with nothing blocked and asserts the whole
+pre-wait path finishes in under a fifth of the release delay. The release is
+issued half a second after the observation, so it cannot be issued while the
+drain is still running, and any tick it gates must come from the native wait.
+The measured control is between 0.05 ms and 0.11 ms in `dispatched` mode and
+about 0.01 ms in `direct` mode, against a 100 ms bound. If a future change made
+the pre-wait path slower than the bound, the control assertion fails the test
+loudly instead of letting the release land early.
+
+The release delay stays at half a second because the file handler's flush has a
+one-second deadline of its own; an earlier attempt to double it made the
+released flush report failure at exactly the deadline.
+
+The mutation was rebuilt with `py.detach` removed from `flush_native` and the
+two flush cases still fail with `flush_handlers() stalled behind the GIL` in
+both modes. With the handler restored, the two files pass all 14 tests.
+
+Adding that control took the test module past the repository's 400-line limit
+(`C0302`, 423 lines), so the three embedded scenario scripts moved to
+`tests/flush_gil_scripts.py` and the test module imports them. The script text
+is unchanged, comments included; only its location moved, and the module
+docstring records why each script runs in a fresh interpreter.
+
+The network test needs no equivalent bound: it calls `flush()` or `close()` on
+the handler directly, so there is no outer detach and the only path in front of
+the wait is the binding's own detach, a few instructions before the block.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
