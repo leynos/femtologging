@@ -100,7 +100,10 @@ proptest! {
     ) {
         let mut levels = [DEFAULT_LOGGER_LEVEL; 4];
         for (index, level_value) in updates {
-            levels[index] = FemtoLevel::try_from(level_value)
+            let Some(slot) = levels.get_mut(index) else {
+                continue;
+            };
+            *slot = FemtoLevel::try_from(level_value)
                 .expect("generated a valid FemtoLevel");
             let maximum = conservative_max_level_from(levels.iter().copied());
             let expected = levels
@@ -123,7 +126,8 @@ proptest! {
 /// Dispatching a Rust record preserves its target and source metadata.
 #[rstest]
 #[serial]
-fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger_name: String) {
+fn adapter_dispatches_records_to_target_logger(unique_logger_name: String) {
+    log_max_level();
     let adapter = FemtoLogAdapter;
     let logger_name = unique_logger_name;
 
@@ -157,7 +161,9 @@ fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger
             .expect("handler downcast")
             .collected();
         assert_eq!(records.len(), 1);
-        let rec = &records[0];
+        let rec = records
+            .first()
+            .expect("the bridge should collect exactly one record");
         assert_eq!(rec.logger(), logger_name.as_str());
         assert_eq!(rec.level_str(), "INFO");
         assert_eq!(rec.message(), "hello");
@@ -170,7 +176,8 @@ fn adapter_dispatches_records_to_target_logger(_log_max_level: (), unique_logger
 /// Rust module targets dispatch through their normalized dotted logger name.
 #[rstest]
 #[serial]
-fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name: String) {
+fn adapter_normalizes_rust_module_targets(unique_logger_name: String) {
+    log_max_level();
     let adapter = FemtoLogAdapter;
     let logger_name = unique_logger_name;
     let target = logger_name.replace('.', "::");
@@ -198,14 +205,21 @@ fn adapter_normalizes_rust_module_targets(_log_max_level: (), unique_logger_name
             .expect("handler downcast")
             .collected();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].logger(), logger_name.as_str());
+        assert_eq!(
+            records
+                .first()
+                .expect("the bridge should collect exactly one record")
+                .logger(),
+            logger_name.as_str()
+        );
     });
 }
 
 /// Dispatch rechecks the target threshold before queuing a record.
 #[rstest]
 #[serial]
-fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String) {
+fn log_respects_logger_threshold(unique_logger_name: String) {
+    log_max_level();
     let adapter = FemtoLogAdapter;
     let logger_name = unique_logger_name;
 
@@ -243,6 +257,12 @@ fn log_respects_logger_threshold(_log_max_level: (), unique_logger_name: String)
             .expect("handler downcast")
             .collected();
         assert_eq!(records.len(), 1, "only WARN should pass threshold");
-        assert_eq!(records[0].level_str(), "WARN");
+        assert_eq!(
+            records
+                .first()
+                .expect("the bridge should collect exactly one record")
+                .level_str(),
+            "WARN"
+        );
     });
 }

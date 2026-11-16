@@ -12,6 +12,7 @@
 mod max_level;
 
 use std::borrow::Cow;
+use std::io::Write;
 use std::sync::{Arc, OnceLock, atomic::AtomicU8};
 
 use log::{Metadata, Record};
@@ -35,7 +36,7 @@ pub struct FemtoLogAdapter;
 /// Convert a `log` severity to the matching femtologging level.
 ///
 /// For example, `log::Level::Warn` becomes `FemtoLevel::Warn`.
-fn map_log_level(level: log::Level) -> FemtoLevel {
+const fn map_log_level(level: log::Level) -> FemtoLevel {
     match level {
         log::Level::Trace => FemtoLevel::Trace,
         log::Level::Debug => FemtoLevel::Debug,
@@ -49,7 +50,7 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
 ///
 /// For example, `FemtoLevel::Critical` maps to `log::Level::Error`, the
 /// strongest severity supported by `log`.
-fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
+const fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
         FemtoLevel::Debug => log::Level::Debug,
@@ -167,35 +168,15 @@ impl log::Log for FemtoLogAdapter {
             return;
         }
         if should_ignore_target(record.target()) {
-            mirror_ignored_warning(record, |message| eprintln!("{message}"));
+            // A failed diagnostic write must not take down the logging path, so
+            // the write result is discarded rather than propagated.
+            mirror_ignored_warning(record, |message| {
+                drop(writeln!(std::io::stderr(), "{message}"));
+            });
             return;
         }
 
-        Python::attach(|py| {
-            let Some((_, logger)) = resolve_logger(py, record.target()) else {
-                return;
-            };
-
-            let level = FemtoLevel::from(record.level());
-            {
-                let guarded = logger.borrow(py);
-                if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
-                    return;
-                }
-            }
-
-            let metadata = RecordMetadata {
-                module_path: record.module_path().unwrap_or_default().to_string(),
-                filename: record.file().unwrap_or_default().to_string(),
-                line_number: record.line().unwrap_or(0),
-                ..Default::default()
-            };
-
-            let _ =
-                logger
-                    .borrow(py)
-                    .log_with_metadata(level, &record.args().to_string(), metadata);
-        });
+        Python::attach(|py| dispatch_record(py, record));
     }
 
     fn flush(&self) {
@@ -203,6 +184,36 @@ impl log::Log for FemtoLogAdapter {
             manager::flush_all_handlers(py);
         });
     }
+}
+
+/// Resolve an accepted record's target and queue it on the matching logger.
+///
+/// A target that cannot be resolved, or a logger that refuses the record by
+/// level, drops the record silently; the facade's enablement decision is the
+/// only threshold the caller observes.
+fn dispatch_record(py: Python<'_>, record: &Record<'_>) {
+    let Some((_, logger)) = resolve_logger(py, record.target()) else {
+        return;
+    };
+
+    let level = FemtoLevel::from(record.level());
+    {
+        let guarded = logger.borrow(py);
+        if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
+            return;
+        }
+    }
+
+    let metadata = RecordMetadata {
+        module_path: record.module_path().unwrap_or_default().to_owned(),
+        filename: record.file().unwrap_or_default().to_owned(),
+        line_number: record.line().unwrap_or(0),
+        ..Default::default()
+    };
+
+    let _ = logger
+        .borrow(py)
+        .log_with_metadata(level, &record.args().to_string(), metadata);
 }
 
 /// Singleton adapter installed as the process-wide Rust logger.
@@ -272,10 +283,10 @@ pub(crate) fn setup_rust_logging() -> PyResult<()> {
 pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
     let mapped = map_femto_to_log_level(level);
 
-    if let Some(target) = target {
-        log::log!(target: target, mapped, "{}", message);
+    if let Some(target_name) = target {
+        log::log!(target: target_name, mapped, "{message}");
     } else {
-        log::log!(mapped, "{}", message);
+        log::log!(mapped, "{message}");
     }
 }
 
