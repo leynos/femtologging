@@ -12,6 +12,7 @@ use crate::handler::FemtoHandlerTrait;
 use crate::logger::worker_count_for_test;
 use crate::manager::{self, MAX_LOGGERS, named_logger_count_for_test};
 use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::test_utils::logging_test_helpers::run_isolated_child;
 
 /// Callsite metadata used to emit an event with a runtime-selected target.
 struct DynamicTargetCallsite {
@@ -98,58 +99,54 @@ fn create_root_logger() -> PyResult<(Py<crate::FemtoLogger>, Arc<CollectingHandl
     })
 }
 
+/// Return the logger names of every record the handler has collected.
+fn collected_logger_names(handler: &CollectingHandler) -> Vec<String> {
+    handler
+        .collected()
+        .iter()
+        .map(|record| record.logger().to_owned())
+        .collect()
+}
+
+/// Report whether `name` still resolves to the logger `expected` points at.
+fn is_registered_as(py: Python<'_>, name: &str, expected: &Py<crate::FemtoLogger>) -> bool {
+    manager::get_logger(py, name).is_ok_and(|logger| logger.is(expected))
+}
+
+/// Assert that root received the overflow and the registry stayed bounded.
+#[track_caller]
 fn assert_saturated_state(
+    py: Python<'_>,
     root: &Py<crate::FemtoLogger>,
     first: &Py<crate::FemtoLogger>,
     handler: &CollectingHandler,
     initial_worker_count: usize,
 ) {
-    Python::attach(|py| {
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root should drain its queue",
-        );
-        let collected_names = handler
-            .collected()
-            .iter()
-            .map(|record| record.logger().to_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            collected_names,
-            vec!["root"; 3],
-            "events beyond the cap must reach the existing root logger",
-        );
-        assert!(
-            manager::get_logger(py, "tracing-bridge-0")
-                .expect("existing logger still resolves")
-                .is(first),
-            "existing logger identity must survive saturation",
-        );
-        assert!(
-            manager::get_logger(py, "root")
-                .expect("root remains available")
-                .is(root),
-            "root identity must survive saturation",
-        );
-        assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
-        assert_eq!(worker_count_for_test(), initial_worker_count);
-    });
-}
-
-fn run_isolated_child(test_filter: &str) {
-    let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)
-        .expect("the isolated tracing test should start");
     assert!(
-        output.status.success(),
-        "isolated test {test_filter:?} failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
+        root.borrow(py).flush_handlers(),
+        "root should drain its queue",
     );
+    assert_eq!(
+        collected_logger_names(handler),
+        vec!["root"; 3],
+        "events beyond the cap must reach the existing root logger",
+    );
+    assert!(
+        is_registered_as(py, "tracing-bridge-0", first),
+        "existing logger identity must survive saturation",
+    );
+    assert!(
+        is_registered_as(py, "root", root),
+        "root identity must survive saturation",
+    );
+    assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
+    assert_eq!(worker_count_for_test(), initial_worker_count);
 }
 
 #[test]
 fn tracing_target_resolution_keeps_cardinality_bounded() {
-    run_isolated_child("tracing_target_saturation_child");
+    run_isolated_child("tracing_target_saturation_child")
+        .expect("the isolated tracing test should start");
 }
 
 #[test]
@@ -177,5 +174,7 @@ fn tracing_target_saturation_child() {
         manager::get_logger(py, "tracing-bridge-0").expect("first logger remains")
     });
     dispatch_overflow_targets(&dispatch);
-    assert_saturated_state(&root, &first, &handler, initial_worker_count);
+    Python::attach(|py| {
+        assert_saturated_state(py, &root, &first, &handler, initial_worker_count);
+    });
 }

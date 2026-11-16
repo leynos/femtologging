@@ -5,10 +5,11 @@ use std::fmt::Arguments;
 use std::sync::Arc;
 
 use super::{install_global_logger, resolve_logger};
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::logger::worker_count_for_test;
 use crate::manager::{self, MAX_LOGGERS, named_logger_count_for_test};
 use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::test_utils::logging_test_helpers::run_isolated_child;
 
 fn log_target_record(target: &str, level: log::Level, args: Arguments<'_>) {
     let record = log::Record::builder()
@@ -34,12 +35,18 @@ fn log_valid_targets() {
     }
 }
 
-fn add_collecting_handler(py: Python<'_>, root: &Py<crate::FemtoLogger>) -> Arc<CollectingHandler> {
+/// Attach a fresh [`CollectingHandler`] to `root`.
+///
+/// Returns the native registration error so the calling test decides whether
+/// a refused handler fails its scenario.
+fn add_collecting_handler(
+    py: Python<'_>,
+    root: &Py<crate::FemtoLogger>,
+) -> Result<Arc<CollectingHandler>, HandlerError> {
     let handler = Arc::new(CollectingHandler::default());
     root.borrow(py)
-        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-        .expect("native collecting handler should register");
-    handler
+        .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)?;
+    Ok(handler)
 }
 
 fn log_overflow_targets(py: Python<'_>, root: &Py<crate::FemtoLogger>) {
@@ -79,11 +86,11 @@ fn assert_root_received_overflow(
     );
 }
 
+/// Assert that `name` still resolves to `expected` after saturation.
+#[track_caller]
 fn assert_logger_identity(py: Python<'_>, name: &str, expected: &Py<crate::FemtoLogger>) {
     assert!(
-        manager::get_logger(py, name)
-            .expect("existing logger still resolves")
-            .is(expected),
+        manager::get_logger(py, name).is_ok_and(|logger| logger.is(expected)),
         "logger identity must survive saturation",
     );
 }
@@ -93,20 +100,10 @@ fn assert_bounded_registry_and_workers(initial_worker_count: usize) {
     assert_eq!(worker_count_for_test(), initial_worker_count);
 }
 
-fn run_isolated_child(test_filter: &str) {
-    let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)
-        .expect("the isolated bridge test should start");
-    assert!(
-        output.status.success(),
-        "isolated test {test_filter:?} failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-}
-
 #[test]
 fn the_log_bridge_keeps_valid_target_cardinality_bounded() {
-    run_isolated_child("log_bridge_saturation_child");
+    run_isolated_child("log_bridge_saturation_child")
+        .expect("the isolated bridge test should start");
 }
 
 #[test]
@@ -135,7 +132,8 @@ fn log_bridge_saturation_child() {
         );
 
         let first = manager::get_logger(py, "log-bridge-0").expect("first logger remains");
-        let handler = add_collecting_handler(py, &root);
+        let handler =
+            add_collecting_handler(py, &root).expect("native collecting handler should register");
         log_overflow_targets(py, &root);
         assert_root_received_overflow(py, &root, &handler);
         assert_logger_identity(py, "log-bridge-0", &first);
