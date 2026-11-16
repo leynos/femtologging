@@ -35,12 +35,19 @@ use super::test_helpers::utc_datetime;
 
 /// One backup-pruning scenario and the messages describing its expectations.
 struct PruningCase {
+    /// Backups the strategy retains; zero disables pruning.
     backup_count: usize,
+    /// Whether a non-timed sibling file exists before the final rotation.
     create_notes_file: bool,
+    /// Whether the oldest timed backup should survive pruning.
     expect_oldest_exists: bool,
+    /// Whether the most recent timed backup should survive pruning.
     expect_recent_exists: bool,
+    /// Message for the sibling assertion; ignored when no sibling is created.
     notes_assertion_msg: &'static str,
+    /// Message explaining the oldest-backup expectation.
     oldest_assertion_msg: &'static str,
+    /// Message explaining the recent-backup expectation.
     recent_assertion_msg: &'static str,
 }
 
