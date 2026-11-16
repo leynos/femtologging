@@ -16,7 +16,10 @@ use pyo3::Python;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after},
+    handler::{
+        FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after,
+        flush_handler_until,
+    },
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
@@ -115,7 +118,9 @@ impl FemtoSocketHandler {
             return false;
         };
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
-        let outcome = self.warner.flush_handler(
+        let outcome = flush_handler_until(
+            || self.warner.take_due(),
+            |count| self.warner.restore_drops(count),
             &mut cap,
             || Some(tx),
             |tx, pending_drops, budget| {
@@ -278,60 +283,6 @@ enum ShutdownOutcome {
     TimedOut,
 }
 
-#[cfg(feature = "python")]
-#[pymethods]
-impl FemtoSocketHandler {
-    /// Convert Python arguments to a record and enqueue it for delivery.
-    ///
-    /// Example: `handler.handle("app", "INFO", "started")` queues one record.
-    #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        self.handle(FemtoLogRecord::new(logger, parsed_level, message))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
-    }
-
-    /// Flush pending log records without shutting down the worker thread.
-    ///
-    /// The flush timeout equals the ``write_timeout`` configured on the
-    /// handler (default: 1 second).
-    ///
-    /// Returns
-    /// -------
-    /// bool
-    ///     ``True`` when the worker acknowledges the flush within the
-    ///     configured timeout.
-    ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, or the worker
-    ///     does not acknowledge before the timeout elapses.
-    ///
-    /// Examples
-    /// --------
-    /// >>> handler.flush()
-    /// True
-    /// >>> handler.close()
-    /// >>> handler.flush()
-    /// False
-    #[pyo3(name = "flush")]
-    fn py_flush(&self, py: Python<'_>) -> bool {
-        crate::py_detach::detach_for_wait(py, || self.flush())
-    }
-
-    /// Close the handler, waiting for the worker at most ``write_timeout``.
-    ///
-    /// A worker that acknowledges the shutdown within ``write_timeout`` is
-    /// joined. One that does not, typically because it is stuck writing to an
-    /// unresponsive collector, is abandoned with a warning rather than waited
-    /// for, and the records still queued are discarded rather than written.
-    ///
-    /// The wait runs with the GIL released, so a close that spends its budget
-    /// waiting does not hold the interpreter while it does.
-    #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        crate::py_detach::detach_for_wait(py, || self.close());
-    }
-}
-
 impl FemtoHandlerTrait for FemtoSocketHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
@@ -393,6 +344,10 @@ impl std::fmt::Debug for FemtoSocketHandler {
             .finish()
     }
 }
+
+#[cfg(feature = "python")]
+#[path = "handler_python.rs"]
+mod python_api;
 
 #[cfg(test)]
 #[path = "handler_test_accessors.rs"]
