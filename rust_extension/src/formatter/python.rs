@@ -1,13 +1,14 @@
 //! Convert log records to Python dictionaries, and Python callables to
 //! [`FemtoFormatter`] instances.
 //!
-//! `record_to_dict` renders a [`FemtoLogRecord`] and its optional exception and
-//! stack payloads as the mapping Python handlers consume, and
-//! `formatter_from_py` wraps a Python callable as a [`FemtoFormatter`]. The
-//! filters module builds the mapping a callback filter sees from the same
-//! `record_to_dict` (`filters::python_callback::record_view`), and the Python
-//! handler call path uses it too, so every Python-facing surface agrees on
-//! field names and enrichment keys.
+//! `record_to_dict` renders a [`FemtoLogRecord`], including the exception and
+//! stack payloads defined in [`crate::exception_schema`], as the mapping that
+//! the Python `handle_record` hook and a Python formatter callable both
+//! receive, and `formatter_from_py` wraps such a callable as a
+//! [`FemtoFormatter`]. The other Python surfaces do not share that mapping:
+//! `filters::python_callback::record_view` derives a stdlib
+//! `logging.LogRecord` from it, and the handler's legacy `handle` hook is
+//! called with the logger name, level and message instead.
 
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
