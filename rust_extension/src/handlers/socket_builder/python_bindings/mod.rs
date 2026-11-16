@@ -20,7 +20,7 @@ mod serialization;
 ///
 /// Returns `Ok(None)` if the key is missing or explicitly set to Python `None`.
 /// Propagates extraction errors (e.g. `TypeError`) for invalid value types.
-fn extract_optional_u64<'py>(config: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<u64>> {
+fn extract_optional_u64(config: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<u64>> {
     match config.get_item(key)? {
         None => Ok(None),
         Some(value) if value.is_none() => Ok(None),
@@ -44,27 +44,26 @@ impl BackoffOverrides {
     /// Returns `TypeError` if any value is not an integer or `None`.
     #[new]
     #[pyo3(signature = (config=None))]
-    fn py_new<'py>(config: Option<Bound<'py, PyDict>>) -> PyResult<Self> {
-        let config = match config {
-            Some(dict) => dict,
-            None => return Ok(Self::default()),
-        };
-
+    fn py_new(config: Option<Bound<'_, PyDict>>) -> PyResult<Self> {
         // Fail fast on typos / unsupported keys.
         const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
-        for (key, _) in config.iter() {
-            let key: &str = key.extract()?;
-            if !ALLOWED_KEYS.contains(&key) {
+        let Some(config_dict) = config else {
+            return Ok(Self::default());
+        };
+
+        for (key_obj, _) in config_dict.iter() {
+            let key_name: &str = key_obj.extract()?;
+            if !ALLOWED_KEYS.contains(&key_name) {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown BackoffConfig key {key:?}",
+                    "unknown BackoffConfig key {key_name:?}",
                 )));
             }
         }
 
-        let base_ms = extract_optional_u64(&config, "base_ms")?;
-        let cap_ms = extract_optional_u64(&config, "cap_ms")?;
-        let reset_after_ms = extract_optional_u64(&config, "reset_after_ms")?;
-        let deadline_ms = extract_optional_u64(&config, "deadline_ms")?;
+        let base_ms = extract_optional_u64(&config_dict, "base_ms")?;
+        let cap_ms = extract_optional_u64(&config_dict, "cap_ms")?;
+        let reset_after_ms = extract_optional_u64(&config_dict, "reset_after_ms")?;
+        let deadline_ms = extract_optional_u64(&config_dict, "deadline_ms")?;
 
         Ok(Self::from_options(
             base_ms,
@@ -79,18 +78,14 @@ impl BackoffOverrides {
 impl SocketHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[new]
-    fn py_new() -> PyResult<Self> {
-        Ok(Self::new())
+    fn py_new() -> Self {
+        Self::new()
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_tcp")]
     #[pyo3(signature = (host, port))]
-    fn py_with_tcp<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        host: String,
-        port: u16,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_tcp(mut slf: PyRefMut<'_, Self>, host: String, port: u16) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_tcp(host, port);
         *slf = updated;
         slf
@@ -99,7 +94,7 @@ impl SocketHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_unix_path")]
     #[pyo3(signature = (path))]
-    fn py_with_unix_path<'py>(mut slf: PyRefMut<'py, Self>, path: String) -> PyRefMut<'py, Self> {
+    fn py_with_unix_path(mut slf: PyRefMut<'_, Self>, path: String) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_unix_path(path);
         *slf = updated;
         slf
@@ -108,52 +103,43 @@ impl SocketHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_capacity")]
     #[pyo3(signature = (capacity))]
-    fn py_with_capacity<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        capacity: usize,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_capacity(mut slf: PyRefMut<'_, Self>, capacity: usize) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_capacity(capacity);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_connect_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
-    fn py_with_connect_timeout<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        timeout_ms: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_connect_timeout(mut slf: PyRefMut<'_, Self>, timeout_ms: u64) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_connect_timeout_ms(timeout_ms);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_write_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
-    fn py_with_write_timeout<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        timeout_ms: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_write_timeout(mut slf: PyRefMut<'_, Self>, timeout_ms: u64) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_write_timeout_ms(timeout_ms);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_max_frame_size")]
     #[pyo3(signature = (size))]
-    fn py_with_max_frame_size<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_max_frame_size(
+        mut slf: PyRefMut<'_, Self>,
         size: u64,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let size = usize::try_from(size).map_err(|_| {
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        let frame_size = usize::try_from(size).map_err(|_| {
             pyo3::exceptions::PyOverflowError::new_err(
                 "max_frame_size does not fit in platform usize",
             )
         })?;
-        let updated = slf.clone().with_max_frame_size(size);
+        let updated = slf.clone().with_max_frame_size(frame_size);
         *slf = updated;
         Ok(slf)
     }
@@ -161,11 +147,11 @@ impl SocketHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_tls")]
     #[pyo3(signature = (domain=None, *, insecure=false))]
-    fn py_with_tls<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_tls(
+        mut slf: PyRefMut<'_, Self>,
         domain: Option<String>,
         insecure: bool,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_tls(domain, insecure);
         *slf = updated;
         slf
@@ -173,24 +159,21 @@ impl SocketHandlerBuilder {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_backoff")]
-    fn py_with_backoff<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_backoff(
+        mut slf: PyRefMut<'_, Self>,
         config: BackoffOverrides,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    ) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_backoff(config);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     /// Attach filters to this handler by configured filter identifier.
     #[pyo3(name = "with_filters")]
-    fn py_with_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        filter_ids: Vec<String>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    fn py_with_filters(mut slf: PyRefMut<'_, Self>, filter_ids: Vec<String>) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_filters(filter_ids);
         *slf = updated;
-        Ok(slf)
+        slf
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.

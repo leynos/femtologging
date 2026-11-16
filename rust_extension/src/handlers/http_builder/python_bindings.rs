@@ -28,14 +28,14 @@ fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
 impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[new]
-    fn py_new() -> PyResult<Self> {
-        Ok(Self::new())
+    fn py_new() -> Self {
+        Self::new()
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_url")]
     #[pyo3(signature = (url))]
-    fn py_with_url<'py>(mut slf: PyRefMut<'py, Self>, url: String) -> PyRefMut<'py, Self> {
+    fn py_with_url(mut slf: PyRefMut<'_, Self>, url: String) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_url(url);
         *slf = updated;
         slf
@@ -48,8 +48,8 @@ impl HTTPHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         method: &str,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let method = parse_http_method(method)?;
-        let updated = slf.clone().with_method(method);
+        let parsed_method = parse_http_method(method)?;
+        let updated = slf.clone().with_method(parsed_method);
         *slf = updated;
         Ok(slf)
     }
@@ -57,14 +57,14 @@ impl HTTPHandlerBuilder {
     /// Configure the HTTP endpoint URL and optional request method.
     #[pyo3(name = "with_endpoint")]
     #[pyo3(signature = (url, method = None))]
-    fn py_with_endpoint<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_endpoint(
+        mut slf: PyRefMut<'_, Self>,
         url: String,
         method: Option<String>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let updated = if let Some(m) = method {
-            let method = parse_http_method(&m)?;
-            slf.clone().with_url(url).with_method(method)
+            let parsed_method = parse_http_method(&m)?;
+            slf.clone().with_url(url).with_method(parsed_method)
         } else {
             slf.clone().with_url(url)
         };
@@ -82,22 +82,24 @@ impl HTTPHandlerBuilder {
         let token = config.get_item("token")?;
         let username = config.get_item("username")?;
         let password = config.get_item("password")?;
-        let updated = if let Some(token) = token {
+        let updated = if let Some(bearer_token) = token {
             if username.is_some() || password.is_some() {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "with_auth config must not mix 'token' with 'username'/'password'",
                 ));
             }
-            slf.clone().with_bearer_token(token.extract::<String>()?)
+            slf.clone()
+                .with_bearer_token(bearer_token.extract::<String>()?)
         } else {
-            let (Some(username), Some(password)) = (username, password) else {
+            let (Some(username_obj), Some(password_obj)) = (username, password) else {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "with_auth config must specify either 'token' or both 'username' and 'password'",
                 ));
             };
-            let username: String = username.extract()?;
-            let password: String = password.extract()?;
-            slf.clone().with_basic_auth(username, password)
+            let extracted_username: String = username_obj.extract()?;
+            let extracted_password: String = password_obj.extract()?;
+            slf.clone()
+                .with_basic_auth(extracted_username, extracted_password)
         };
         *slf = updated;
         Ok(slf)
@@ -106,11 +108,11 @@ impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_basic_auth")]
     #[pyo3(signature = (username, password))]
-    fn py_with_basic_auth<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_basic_auth(
+        mut slf: PyRefMut<'_, Self>,
         username: String,
         password: String,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_basic_auth(username, password);
         *slf = updated;
         slf
@@ -119,10 +121,7 @@ impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_bearer_token")]
     #[pyo3(signature = (token))]
-    fn py_with_bearer_token<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        token: String,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_bearer_token(mut slf: PyRefMut<'_, Self>, token: String) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_bearer_token(token);
         *slf = updated;
         slf
@@ -136,9 +135,9 @@ impl HTTPHandlerBuilder {
         headers: &Bound<'py, PyDict>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let mut headers_map = std::collections::HashMap::new();
-        for (key, value) in headers.iter() {
-            let key: String = key.extract()?;
-            let value: String = value.extract()?;
+        for (key_obj, value_obj) in headers.iter() {
+            let key: String = key_obj.extract()?;
+            let value: String = value_obj.extract()?;
             headers_map.insert(key, value);
         }
         let updated = slf.clone().with_headers(headers_map);
@@ -149,7 +148,7 @@ impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_capacity")]
     #[pyo3(signature = (capacity))]
-    fn py_with_capacity<'py>(mut slf: PyRefMut<'py, Self>, capacity: usize) -> PyRefMut<'py, Self> {
+    fn py_with_capacity(mut slf: PyRefMut<'_, Self>, capacity: usize) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_capacity(capacity);
         *slf = updated;
         slf
@@ -158,10 +157,7 @@ impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_connect_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
-    fn py_with_connect_timeout<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        timeout_ms: u64,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_connect_timeout(mut slf: PyRefMut<'_, Self>, timeout_ms: u64) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_connect_timeout_ms(timeout_ms);
         *slf = updated;
         slf
@@ -170,10 +166,7 @@ impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_write_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
-    fn py_with_write_timeout<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        timeout_ms: u64,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_write_timeout(mut slf: PyRefMut<'_, Self>, timeout_ms: u64) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_write_timeout_ms(timeout_ms);
         *slf = updated;
         slf
@@ -181,10 +174,10 @@ impl HTTPHandlerBuilder {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_backoff")]
-    fn py_with_backoff<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_backoff(
+        mut slf: PyRefMut<'_, Self>,
         config: BackoffOverrides,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_backoff(config);
         *slf = updated;
         slf
@@ -192,7 +185,7 @@ impl HTTPHandlerBuilder {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_json_format")]
-    fn py_with_json_format<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
+    fn py_with_json_format(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_json_format();
         *slf = updated;
         slf
@@ -201,10 +194,10 @@ impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_record_fields")]
     #[pyo3(signature = (fields))]
-    fn py_with_record_fields<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_record_fields(
+        mut slf: PyRefMut<'_, Self>,
         fields: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_record_fields(fields);
         *slf = updated;
         slf
@@ -212,10 +205,7 @@ impl HTTPHandlerBuilder {
 
     /// Attach filters to this handler by configured filter identifier.
     #[pyo3(name = "with_filters")]
-    fn py_with_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        filter_ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_filters(mut slf: PyRefMut<'_, Self>, filter_ids: Vec<String>) -> PyRefMut<'_, Self> {
         let updated = slf.clone().with_filters(filter_ids);
         *slf = updated;
         slf

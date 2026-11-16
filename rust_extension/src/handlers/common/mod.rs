@@ -104,7 +104,7 @@ impl CommonBuilder {
     /// A zero capacity is recorded for validation but does not update the
     /// stored [`NonZeroUsize`]. Callers rely on [`is_capacity_valid`] to surface
     /// the configuration error when `build` is invoked.
-    pub(crate) fn set_capacity(&mut self, capacity: usize) {
+    pub(crate) const fn set_capacity(&mut self, capacity: usize) {
         // `NonZeroUsize::new` returns `None` for zero, which records the
         // invalid capacity for later validation without panicking.
         self.capacity = NonZeroUsize::new(capacity);
@@ -132,9 +132,9 @@ impl CommonBuilder {
             self.formatter = Some(FormatterConfig::Instance(formatter));
             return Ok(());
         }
-        if let FormatterId::Custom(id) = id {
+        if let FormatterId::Custom(custom_id) = id {
             return Err(HandlerBuildError::InvalidConfig(format!(
-                "unknown formatter id: {id}"
+                "unknown formatter id: {custom_id}"
             )));
         }
         Ok(())
@@ -279,7 +279,7 @@ impl FileLikeBuilderState {
     }
 
     /// Update the bounded channel capacity in place.
-    pub(crate) fn set_capacity(&mut self, capacity: usize) {
+    pub(crate) const fn set_capacity(&mut self, capacity: usize) {
         self.common.set_capacity(capacity);
     }
 
@@ -287,7 +287,7 @@ impl FileLikeBuilderState {
     ///
     /// Accepts a `NonZeroU64` to enforce the non-zero constraint at the type
     /// level, matching the `StreamHandlerBuilder` pattern for `flush_after_ms`.
-    pub(crate) fn set_flush_after_records(&mut self, interval: NonZeroU64) {
+    pub(crate) const fn set_flush_after_records(&mut self, interval: NonZeroU64) {
         self.flush_after_records = Some(interval);
     }
 
@@ -324,7 +324,7 @@ impl FileLikeBuilderState {
     }
 
     /// Update the overflow policy in place.
-    pub(crate) fn set_overflow_policy(&mut self, policy: OverflowPolicy) {
+    pub(crate) const fn set_overflow_policy(&mut self, policy: OverflowPolicy) {
         self.overflow_policy = policy;
     }
 
@@ -366,7 +366,7 @@ impl FileLikeBuilderState {
     }
 
     /// Expose the configured formatter identifier, if any.
-    pub(crate) fn formatter(&self) -> Option<&FormatterConfig> {
+    pub(crate) const fn formatter(&self) -> Option<&FormatterConfig> {
         self.common.formatter.as_ref()
     }
 }
