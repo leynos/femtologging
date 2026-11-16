@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 
 use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
-    log_record::FemtoLogRecord,
+    log_record::{FemtoLogRecord, RecordOrigin},
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
 };
@@ -338,6 +338,15 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
             });
             return Err(HandlerError::Closed);
         };
+        // Intentional suppression, not delivery: this record was produced by
+        // HTTP transport work, so queueing it here is what would make a
+        // successful delivery manufacture its own next delivery. It is not a
+        // drop either. The record reached a live handler and was deliberately
+        // discarded, and counting it would report a disconnected worker that
+        // does not exist. Other handler kinds still receive these records.
+        if record.origin() == RecordOrigin::HttpTransport {
+            return Ok(());
+        }
         enqueue_record(&tx, record, &self.warner)
     }
 

@@ -64,6 +64,21 @@ impl Default for RecordMetadata {
     }
 }
 
+/// Where a record was produced, for keeping transport feedback out of itself.
+///
+/// The marker is carried on the record rather than read from the dispatching
+/// thread because dispatch is asynchronous: a record accepted by an HTTP
+/// handler's queue is delivered by a different thread, and that thread is the
+/// transport worker the marker is meant to describe.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RecordOrigin {
+    /// Application code, or an ordinary bridge or logger entry point.
+    #[default]
+    Application,
+    /// A diagnostic produced while an HTTP transport worker was running.
+    HttpTransport,
+}
+
 /// A single log event: its logger, level, message, metadata, and any exception or stack payload.
 ///
 /// Loggers create records and pass them to handlers and formatters.
@@ -81,6 +96,8 @@ pub struct FemtoLogRecord {
     exception_payload: Option<ExceptionPayload>,
     /// Structured stack trace payload (when `stack_info=True`).
     stack_payload: Option<StackTracePayload>,
+    /// Origin used by HTTP handlers to reject their own transport diagnostics.
+    origin: RecordOrigin,
 }
 
 impl FemtoLogRecord {
@@ -139,6 +156,20 @@ impl FemtoLogRecord {
     pub(crate) fn set_stack_payload(&mut self, payload: StackTracePayload) {
         self.stack_payload = Some(payload);
     }
+
+    /// Returns where this record was produced.
+    #[inline]
+    pub(crate) fn origin(&self) -> RecordOrigin {
+        self.origin
+    }
+
+    /// Attach an origin, replacing the application default.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_origin(mut self, origin: RecordOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
 }
 
 impl FemtoLogRecord {
@@ -151,6 +182,7 @@ impl FemtoLogRecord {
             metadata: RecordMetadata::default(),
             exception_payload: None,
             stack_payload: None,
+            origin: RecordOrigin::Application,
         }
     }
 
@@ -177,6 +209,7 @@ impl FemtoLogRecord {
             metadata,
             exception_payload: None,
             stack_payload: None,
+            origin: RecordOrigin::Application,
         }
     }
 

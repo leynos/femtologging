@@ -315,3 +315,7 @@ mod channel_property;
 // Response classification tests (unit tests for the worker module)
 #[path = "response_classification_tests.rs"]
 mod response_classification;
+
+// Transport-origin admission tests: marked records never enter the queue.
+#[path = "origin_tests.rs"]
+mod origin;

@@ -21,6 +21,7 @@ use crate::level::FemtoLevel;
 use crate::log_record::RecordMetadata;
 use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::manager;
+use crate::transport_origin;
 
 mod diagnostics;
 use diagnostics::{mirror_ignored_warning, resolve_logger, should_ignore_target};
@@ -171,6 +172,13 @@ impl log::Log for FemtoLogAdapter {
             return;
         }
 
+        // Capture the marker before anything else runs, then suspend it for
+        // the rest of this call. `ureq`'s diagnostics arrive on the HTTP
+        // worker thread and keep the marker; a filter, formatter, or handler
+        // callback invoked during dispatch does not inherit it.
+        let origin = transport_origin::capture_record_origin();
+        let _suspended = transport_origin::suspend_http_transport();
+
         Python::attach(|py| {
             let Some((_, logger)) = resolve_logger(py, record.target()) else {
                 return;
@@ -191,10 +199,12 @@ impl log::Log for FemtoLogAdapter {
                 ..Default::default()
             };
 
-            let _ =
-                logger
-                    .borrow(py)
-                    .log_with_metadata(level, &record.args().to_string(), metadata);
+            let _ = logger.borrow(py).log_with_metadata_and_origin(
+                level,
+                &record.args().to_string(),
+                metadata,
+                origin,
+            );
         });
     }
 
@@ -349,6 +359,10 @@ mod flush_tests;
 #[cfg(test)]
 #[path = "log_compat/diagnostics_tests.rs"]
 mod diagnostics_tests;
+
+#[cfg(test)]
+#[path = "log_compat/origin_tests.rs"]
+mod origin_tests;
 
 #[cfg(all(test, not(loom), feature = "python"))]
 #[path = "log_compat/cardinality_tests.rs"]

@@ -19,6 +19,7 @@ use tracing_subscriber::registry::LookupSpan;
 use crate::level::FemtoLevel;
 use crate::log_record::RecordMetadata;
 use crate::manager;
+use crate::transport_origin;
 
 pub mod python;
 
@@ -26,6 +27,10 @@ mod visitor;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "origin_tests.rs"]
+mod origin_tests;
 
 #[cfg(all(test, not(loom), feature = "python"))]
 #[path = "cardinality_tests.rs"]
@@ -238,6 +243,12 @@ where
             return;
         }
 
+        // Capture the transport marker before field capture and logger
+        // resolution, then suspend it so user code reached during dispatch
+        // emits ordinary records rather than inheriting the transport marker.
+        let origin = transport_origin::capture_record_origin();
+        let _suspended = transport_origin::suspend_http_transport();
+
         let captured = visitor::capture_event(event);
         let message = captured
             .message
@@ -260,7 +271,7 @@ where
             let metadata = Self::build_record_metadata(event, ctx, captured.key_values);
             let _ = logger
                 .borrow(py)
-                .log_with_metadata(level, &message, metadata);
+                .log_with_metadata_and_origin(level, &message, metadata, origin);
         });
     }
 }

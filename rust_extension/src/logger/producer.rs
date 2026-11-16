@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
+use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
 use crate::manager;
 
 mod admission;
@@ -87,7 +87,23 @@ impl FemtoLogger {
         &self,
         level: FemtoLevel,
         message: &str,
+        metadata: RecordMetadata,
+    ) -> Option<String> {
+        self.log_with_metadata_and_origin(level, message, metadata, RecordOrigin::Application)
+    }
+
+    /// Log a message with metadata and an explicit origin.
+    ///
+    /// The bridge entry points use this to carry a transport-origin marker on
+    /// records produced by an HTTP worker. The origin is attached before
+    /// filtering so the marker survives every later stage of the record's
+    /// journey, including handler-filter snapshots and parent propagation.
+    pub(crate) fn log_with_metadata_and_origin(
+        &self,
+        level: FemtoLevel,
+        message: &str,
         mut metadata: RecordMetadata,
+        origin: RecordOrigin,
     ) -> Option<String> {
         if self.refuse_if_disabled() {
             return None;
@@ -107,7 +123,8 @@ impl FemtoLogger {
             return None;
         }
         metadata.key_values = merged_key_values;
-        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
+        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata)
+            .with_origin(origin);
         self.log_record(record)
     }
 

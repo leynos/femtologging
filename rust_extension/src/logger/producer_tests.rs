@@ -12,7 +12,8 @@ use super::logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_s
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
-use crate::log_record::RecordMetadata;
+use crate::log_record::{RecordMetadata, RecordOrigin};
+use crate::test_utils::collecting_handler::CollectingHandler;
 
 /// Filter with test-selected decisions, enrichment, and call counting.
 struct TestFilter {
@@ -41,6 +42,32 @@ impl FemtoFilter for TestFilter {
 
 fn enrichment_pair(key: &str, value: &str) -> BTreeMap<String, String> {
     BTreeMap::from([(key.to_owned(), value.to_owned())])
+}
+
+/// The handler-filter snapshot keeps the transport marker on the record.
+///
+/// Filters may enrich a record, but the attachment snapshot they produce must
+/// not strip the origin: the selected handlers receive a clone of this record,
+/// and the HTTP handler rejects it by that marker.
+#[rstest]
+fn handler_filter_snapshot_preserves_the_transport_origin() {
+    let handler = Arc::new(CollectingHandler::default());
+    let attachment = HandlerAttachment::new(handler as Arc<dyn FemtoHandlerTrait>);
+    let mut record = FemtoLogRecord::new(
+        "origin.filter.snapshot",
+        FemtoLevel::Info,
+        "delivery diagnostic",
+    )
+    .with_origin(RecordOrigin::HttpTransport);
+
+    let selected = FemtoLogger::filter_handlers_for_test(&mut record, vec![attachment]);
+
+    assert_eq!(
+        selected.len(),
+        1,
+        "the unfiltered handler should be selected"
+    );
+    assert_eq!(record.origin(), RecordOrigin::HttpTransport);
 }
 
 #[rstest]
