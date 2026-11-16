@@ -33,6 +33,20 @@ fn extract_positive_i128(value: i128, field: &str) -> PyResult<i128> {
     Ok(value)
 }
 
+/// Convert a positive `i128` to a builder field's narrower integer type.
+///
+/// The three numeric setters share the same contract: reject zero and negative
+/// values with a `ValueError` naming the field, then reject values the target
+/// type cannot hold with an `OverflowError` carrying the same field name.
+fn convert_positive_field<T>(value: i128, field: &str) -> PyResult<T>
+where
+    T: TryFrom<i128>,
+{
+    let positive = extract_positive_i128(value, field)?;
+    T::try_from(positive)
+        .map_err(|_| PyOverflowError::new_err(format!("{field} exceeds the allowable range")))
+}
+
 /// Extract the overflow policy from its Python wrapper object.
 fn extract_overflow_policy(policy: &Bound<'_, PyAny>) -> PyResult<OverflowPolicy> {
     let wrapper = policy.extract::<PyRef<'_, PyOverflowPolicy>>()?;
@@ -76,9 +90,7 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(signature = (capacity))]
     #[pyo3(text_signature = "(self, capacity)")]
     fn py_with_capacity(slf: PyRefMut<'_, Self>, capacity: i128) -> PyResult<PyRefMut<'_, Self>> {
-        let positive_capacity = extract_positive_i128(capacity, "capacity")?;
-        let validated_capacity = usize::try_from(positive_capacity)
-            .map_err(|_| PyOverflowError::new_err("capacity exceeds the allowable range"))?;
+        let validated_capacity = convert_positive_field::<usize>(capacity, "capacity")?;
         apply_builder_update(slf, |builder| Ok(builder.with_capacity(validated_capacity)))
     }
 
@@ -101,9 +113,7 @@ impl RotatingFileHandlerBuilder {
     #[pyo3(signature = (max_bytes))]
     #[pyo3(text_signature = "(self, max_bytes)")]
     fn py_with_max_bytes(slf: PyRefMut<'_, Self>, max_bytes: i128) -> PyResult<PyRefMut<'_, Self>> {
-        let positive_max_bytes = extract_positive_i128(max_bytes, "max_bytes")?;
-        let validated_max_bytes = u64::try_from(positive_max_bytes)
-            .map_err(|_| PyOverflowError::new_err("max_bytes exceeds the allowable range"))?;
+        let validated_max_bytes = convert_positive_field::<u64>(max_bytes, "max_bytes")?;
         apply_builder_update(slf, |builder| {
             Ok(builder.with_max_bytes(validated_max_bytes))
         })
@@ -117,9 +127,7 @@ impl RotatingFileHandlerBuilder {
         slf: PyRefMut<'_, Self>,
         backup_count: i128,
     ) -> PyResult<PyRefMut<'_, Self>> {
-        let positive_backup_count = extract_positive_i128(backup_count, "backup_count")?;
-        let validated_backup_count = usize::try_from(positive_backup_count)
-            .map_err(|_| PyOverflowError::new_err("backup_count exceeds the allowable range"))?;
+        let validated_backup_count = convert_positive_field::<usize>(backup_count, "backup_count")?;
         apply_builder_update(slf, |builder| {
             Ok(builder.with_backup_count(validated_backup_count))
         })
