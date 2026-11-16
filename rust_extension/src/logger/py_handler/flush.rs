@@ -27,6 +27,26 @@ impl PyHandler {
     /// destination, so claiming success would let `flush_handlers` return
     /// `True` over records that were never written.
     pub(super) fn flush_registered_handler(&self) -> bool {
+        self.flush_with_interpreter(|| {
+            Python::try_attach(|py| match self.native_handler {
+                Some(native_handler) => native_handler.flush(py, self.obj.bind(py)),
+                None => self.call_python_flush(py),
+            })
+        })
+    }
+
+    /// Run one flush attempt under the flush span and report its outcome.
+    ///
+    /// Every registered handler reaches [`Self::report_flush`] through this
+    /// method, so a test that drives it covers the reporting `flush_handlers`
+    /// actually performs. The attempt is injected rather than evaluated here
+    /// for the same reason `report_flush` takes one: `Python::try_attach`
+    /// returns `None` only while the interpreter is finalizing, which no test
+    /// can arrange.
+    pub(super) fn flush_with_interpreter<F>(&self, attempt: F) -> bool
+    where
+        F: FnOnce() -> Option<bool>,
+    {
         // The span covers the queue-crossing wait itself, so the interval an
         // operator sees is the one this flush spent waiting on the handler,
         // not just the instant its outcome was logged.
@@ -40,12 +60,7 @@ impl PyHandler {
         #[cfg(feature = "tracing-compat")]
         let _entered = span.enter();
 
-        let flushed = self.report_flush(|| {
-            Python::try_attach(|py| match self.native_handler {
-                Some(native_handler) => native_handler.flush(py, self.obj.bind(py)),
-                None => self.call_python_flush(py),
-            })
-        });
+        let flushed = self.report_flush(attempt);
         #[cfg(feature = "tracing-compat")]
         {
             span.record(

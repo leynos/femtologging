@@ -206,6 +206,10 @@ impl FemtoHandlerTrait for PyHandler {
 }
 
 #[cfg(all(test, feature = "python"))]
+#[path = "py_handler/flush_diagnostics_tests.rs"]
+mod flush_diagnostics_tests;
+
+#[cfg(all(test, feature = "python"))]
 #[path = "py_handler/tests.rs"]
 mod tests;
 

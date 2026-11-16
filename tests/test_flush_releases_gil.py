@@ -99,12 +99,17 @@ handler.close()
 # The handler's worker formats the record in Python and waits for a release
 # only another Python thread can give. A second thread releases the formatter
 # but only once it can see the flush running on this thread's stack, which the
-# interpreter reports while the C call is detached. So the release cannot land
-# before the call: if the flush holds the GIL, the release thread never sees
-# the call, the formatter times out, and the flush fails. The ticker counts the
+# interpreter reports while the C call is detached. Seeing the frame is not
+# enough on its own, because a thread can be switched out between entering the
+# helper and calling: the observer also requires the frame's instruction offset
+# to be the call instruction, so the release cannot land in that gap either.
+# If the flush holds the GIL, no other Python thread runs between the call being
+# entered and its timeout, so the release the formatter waits for cannot
+# arrive, the formatter times out, and the flush fails. The ticker counts the
 # interpreter time the flush lets other Python code have, measured from the
 # moment the call was seen running, so time before the call cannot be counted.
 FLUSH_FORMATTER_SCRIPT = """
+import dis
 import pathlib
 import sys
 import threading
@@ -161,14 +166,33 @@ def invoke_call():
     return call()
 
 
+# The call instruction's byte offsets. A frame reports the instruction it was
+# last executing, so accepting only these offsets keeps an observation out of
+# the window between the frame being created and the call starting.
+CALL_OFFSETS = frozenset(
+    instruction.offset
+    for instruction in dis.get_instructions(invoke_call)
+    if instruction.opname.startswith("CALL")
+)
+# The call is the helper's only statement, so its only call instruction is the
+# one under test. A second one would let the release land while the helper ran
+# something else, which is the window this guards against.
+assert len(CALL_OFFSETS) == 1, "invoke_call must make exactly one call"
+
+
 def release_once_the_call_is_running():
-    # Wait for the interpreter to report the flush frame on the calling thread.
-    # That can only happen while the call holds the interpreter detached, so a
-    # release can never land before the call starts.
+    # Wait for the interpreter to report the flush frame, running its call
+    # instruction, on the calling thread. The interpreter reports that frame
+    # while the call holds it detached, and the offset shows the call itself is
+    # in progress, so a release can never land before the call starts.
     deadline = time.monotonic() + CALL_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         frame = sys._current_frames().get(caller_ident)
-        if frame is not None and frame.f_code is invoke_call.__code__:
+        if (
+            frame is not None
+            and frame.f_code is invoke_call.__code__
+            and frame.f_lasti in CALL_OFFSETS
+        ):
             ticks_at_call[0] = ticks[0]
             # Keep the formatter blocked a while longer, so the call has a
             # window in which only a released GIL lets the ticker run.
@@ -295,16 +319,17 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     The handler is registered from Python, so ``flush_handlers()`` reaches it
     through ``PyHandler::flush()``. Its worker is parked in a Python formatter
     that only another Python thread can release. That thread releases it only
-    once the interpreter reports the flush frame on the calling thread's stack,
-    which it does while the call is detached, so the release cannot land before
-    the call: a flush that kept the GIL would hide its own frame, block the
-    release, time the formatter out, and leave the ticker silent. The ticker
-    counts the time another Python thread got during the call, measured from
-    the moment the call was seen running, so a pause before the call cannot be
-    counted. The file is read before ``close()``, so the record can be there
-    only because the flush waited for the handler. A fresh interpreter keeps
-    the logger's dispatch shard idle, so the record is admitted rather than
-    refused behind earlier tests' work.
+    once the interpreter reports the flush frame on the calling thread's stack
+    with its instruction offset on the call instruction, which it does while
+    the call is detached, so the release cannot land before or just as the call
+    starts: a flush that kept the GIL would block the release, time the
+    formatter out, and leave the ticker silent. The ticker counts the time
+    another Python thread got during the call, measured from the moment the
+    call was seen running, so a pause before the call cannot be counted. The
+    file is read before ``close()``, so the record can be there only because
+    the flush waited for the handler. A fresh interpreter keeps the logger's
+    dispatch shard idle, so the record is admitted rather than refused behind
+    earlier tests' work.
 
     This call also drains the dispatch shard, and that drain waits detached
     too, so it can release the GIL before the native wait starts. The isolated

@@ -1953,7 +1953,7 @@ with fourteen `Multiple clusters of nested conditional logic` errors, the same
 (`git diff --stat origin/main...HEAD` for those paths is empty), so the red is
 entirely upstream. The wheel jobs pass.
 
-### The measurement now starts inside the call, not before it
+### The measurement is keyed to the call instruction, not to the frame
 
 Both replies were rejected on the same point, and the objection is sound. The
 switch interval narrows the pre-call window but does not remove it: a thread
@@ -1963,28 +1963,61 @@ and tick assertions pass while the call never waited on the blocked worker. The
 elapsed guard cannot tell "the call took half a second" from "half a second
 passed before the call".
 
-The measurement is now keyed to the call itself. Both tests run the call
-through a one-statement helper, `_invoke`/`invoke_call`, and a second thread
-waits until `sys._current_frames()` reports that frame on the calling thread.
-The interpreter reports it while the C call runs with its thread state
-detached, so the observation can only happen once the call has been entered and
-has not returned. Two consequences follow:
+The first redesign keyed the measurement to the helper's frame. Both tests run
+the call through a one-statement helper, `_invoke`/`invoke_call`, and a second
+thread waits until `sys._current_frames()` reports that frame on the calling
+thread. The second review showed that this is not enough either: a thread can
+be switched out after the frame is created and before `call()` executes, so the
+observer can take its baseline and release the formatter while the call has not
+started.
 
-- The tick baseline is read at that observation, so ticks counted before the
-  call can never be counted as the call's. A wait that holds the GIL never
-  shows its frame and is reported as such.
-- In the flush test, releasing the formatter is gated on that same observation,
-  so the release cannot land before the call. A GIL-holding flush hides its
-  frame, the release never happens, the formatter times out, and the flush
-  returns `False`.
+The observation now requires the frame's instruction offset as well. `f_lasti`
+names the instruction a frame was last executing, so the observer accepts the
+frame only when that offset is the byte offset of the helper's call
+instruction, computed with `dis`:
 
-This removes the switch interval from both files, and with it the CPython
-timing argument. It also answers the request for a signal at entry to the
-native wait: the signal comes from the interpreter's own frame table, so no
-production path carries test instrumentation.
+```python
+CALL_OFFSETS = frozenset(
+    instruction.offset
+    for instruction in dis.get_instructions(_invoke)
+    if instruction.opname.startswith("CALL")
+)
+assert len(CALL_OFFSETS) == 1, "_invoke must make exactly one call"
+```
 
-Evidence, `/tmp/gil-exp/handover-experiment.py`, which patches the shipped
-script in memory and injects a pause between reading the clock and calling:
+Each helper is one statement, so its only call instruction is the one under
+test. The length check fails loudly if a later edit adds a call, rather than
+silently widening the window the guard exists to close.
+
+`/tmp/gil-exp/precall-probe.py` isolates the two predicates. Its helper yields
+in a loop before it calls, which is the schedule a frame-only observation
+accepts: the frame-only predicate accepts it on the first poll, at a loop
+offset, while the call-keyed predicate waits for the call.
+
+| CPython  | Call offset | Frame-only accepted | Call-keyed accepted |
+| -------- | ----------- | ------------------- | ------------------- |
+| 3.12.15  | 90          | +0.006 s, offset 84 | +2.105 s            |
+| 3.13.13  | 96          | +0.006 s, offset 88 | +2.063 s            |
+| 3.14.7   | 96          | +0.006 s, offset 88 | +2.124 s            |
+| 3.15.0b2 | 98          | +0.007 s, offset 90 | +1.757 s            |
+
+The guarantee is stated as narrowly as the tests can establish it, which is
+narrower than "the native wait has begun":
+
+- No observation can be taken before the caller reaches the call instruction, so
+  a pause before the call can supply neither the tick baseline nor the
+  formatter release.
+- In `direct` mode the helper's only call is `flush_handlers()`, whose dispatch
+  shard is empty, and the only GIL release on that path is the native wait
+  itself, so a tick counted after the observation can only have come from that
+  wait. The network calls have the same shape: `py_flush` and `py_close` detach
+  before they do anything else.
+- A wait that holds the GIL yields no ticks after the observation, so the tick
+  assertion fails whether or not a handover at the call boundary supplied the
+  baseline.
+
+The mutations were rebuilt into the extension, removing `py.detach` from
+`flush_native` and from the socket and HTTP shims:
 
 | Build                   | Injected pause | `dispatched` | `direct` |
 | ----------------------- | -------------- | ------------ | -------- |
@@ -1995,17 +2028,51 @@ script in memory and injects a pause between reading the clock and calling:
 | `flush_native` GIL-held | 0.05 s         | fail         | fail     |
 | `flush_native` GIL-held | 0.6 s          | fail         | fail     |
 
-The 0.6 s case is the schedule the review named: the formatter would have been
-released before the call under the old script, and the mutated build would have
-passed. It now fails with `flush_handlers() stalled behind the GIL`, because
-the release never happens without the call being seen.
+Every failing row reports `flush_handlers() stalled behind the GIL`: with the
+GIL held for the wait, the release never reaches the formatter, it times out,
+and the flush returns `False`.
 
-The network tests carry the same change. A second mutation, removing
-`py.detach` from `FemtoSocketHandler::py_flush`, `py_close` and
-`FemtoHTTPHandler::py_close`, fails all three cases with
-`another thread ran only 0 times during 0.300s`, so the tick count taken from
-the in-call baseline reports the GIL-holding wait directly. With the handlers
-restored, the two files passed 14 tests in five consecutive runs.
+The network tests carry the same change, and the same mutation fails all three
+cases with `another thread ran only 0 times during 0.300s` (`1` time for the
+socket flush), so the tick count taken from the in-call baseline reports the
+GIL-holding wait directly. With the handlers restored, the two files passed 14
+tests in five consecutive runs.
+
+### The flush diagnostics have tests that fail when a field is lost
+
+The review of `5190d77d` also failed the pre-merge check "Testing (Overall)",
+which asked for tests of the diagnostic behaviour rather than only of the
+boolean a flush returns. The new module
+`rust_extension/src/logger/py_handler/flush_diagnostics_tests.rs` holds four
+groups. It is a sibling of `tests.rs`, registered from `py_handler.rs`, because
+the additions would take `tests.rs` past the 400-line limit.
+
+- `native_flush_failure_warns_with_the_handler_kind` closes a file handler and,
+  in a second case, a socket handler, flushes each, and compares the whole
+  warning:
+  `PyHandler: flush failed: handler_kind=<kind>, category=flush_failed` at
+  `Warn` level. A label that stopped depending on the handler fails one case.
+- `native_handler_kinds_have_distinct_labels` is a table over all six
+  `NativeHandlerKind` variants.
+- `unavailable_interpreter_fails_the_registered_flush_with_a_warning` drives
+  `flush_registered_handler`'s seam. That method now delegates to
+  `flush_with_interpreter`, which owns the span and calls `report_flush`, so
+  the test reaches the reporting `flush_handlers` performs rather than only the
+  helper. It asserts a `false` result and the
+  `category=interpreter_unavailable` warning.
+- `flush_diagnostics_record_the_handler_kind_and_outcome` installs a
+  `tracing-subscriber` layer that records the `flush_registered_handler` span's
+  fields and its trace event, and asserts `handler_kind` and `flush_outcome`
+  for a success and a failure.
+
+Each test was checked against a mutated source:
+
+| Source change                                | Result                              |
+| -------------------------------------------- | ----------------------------------- |
+| every `label()` arm returns `"native"`       | 9 of 9 diagnostics tests fail       |
+| `handler_kind` dropped from the trace event  | `left: None`, `right: Some("file")` |
+| `span.record("flush_outcome", ...)` removed  | `left: [None, None]`                |
+| unattachable interpreter reported as success | the result assertion fails          |
 
 ### Head `3043c775`, published
 

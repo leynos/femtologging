@@ -7,6 +7,7 @@ release the GIL, or every other Python thread stops for that whole period.
 
 from __future__ import annotations
 
+import dis
 import socket
 import sys
 import threading
@@ -19,6 +20,7 @@ from femtologging import HTTPHandlerBuilder, SocketHandlerBuilder
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import types
 
     class _NetworkHandler(typ.Protocol):
         """The handler surface these tests drive."""
@@ -107,6 +109,27 @@ def _invoke(call: cabc.Callable[[], object]) -> object:
     return call()
 
 
+# Byte offsets of the call instructions in ``_invoke``. A frame reports the
+# instruction it was last executing, so requiring one of these offsets places
+# the observation inside the call. The frame alone would not: a thread can be
+# switched out as soon as the frame exists, before the call runs, and an
+# observer that accepted that would measure whatever pause came first.
+CALL_OFFSETS = frozenset(
+    instruction.offset
+    for instruction in dis.get_instructions(_invoke)
+    if instruction.opname.startswith("CALL")
+)
+# The call is the helper's only statement, so its only call instruction is the
+# one under test. A second one would let the observer accept the helper while it
+# ran something else, which is the window this guards against.
+assert len(CALL_OFFSETS) == 1, "_invoke must make exactly one call"
+
+
+def _is_at_call(frame: types.FrameType) -> bool:
+    """Report whether ``frame`` is running ``_invoke``'s call instruction."""
+    return frame.f_code is _invoke.__code__ and frame.f_lasti in CALL_OFFSETS
+
+
 class _Ticker:
     """Count how often its thread gets to run."""
 
@@ -151,10 +174,16 @@ class _CallObserver:
         self._is_call_finished = is_call_finished
 
     def watch_until_finished(self) -> None:
-        """Take the baseline when ``_invoke`` is on the caller's stack."""
+        """Take the baseline once the call itself is running on the caller.
+
+        Both the frame and its instruction offset have to match. The frame
+        alone proves only that ``_invoke`` was entered, which happens before
+        the call executes; the call instruction is what the caller is running
+        when the wait under test is in progress.
+        """
         while not self._is_call_finished.is_set():
             frame = sys._current_frames().get(self._caller)
-            if frame is not None and frame.f_code is _invoke.__code__:
+            if frame is not None and _is_at_call(frame):
                 self.baseline = self._ticker.ticks
                 return
             time.sleep(TICK_SECONDS)
@@ -169,11 +198,11 @@ def _ticks_during(
     already running, and hands back the wait to measure. Setting up inside the
     timed region would let the setup hide the very stall under test.
 
-    The count starts when an observer thread first sees ``_invoke`` on this
-    thread's stack, not before the call. A pause before the call therefore
-    cannot be counted as call time, and a call that holds the GIL never shows
-    its frame at all, so neither a slow schedule nor a GIL-holding wait can
-    produce a false pass.
+    The count starts when an observer thread first sees the call instruction
+    running on this thread, not before the call. Time before the call cannot
+    therefore be counted as call time, and a call that holds the GIL lets no
+    tick through after that observation, so neither a slow schedule nor a
+    GIL-holding wait can produce a false pass.
 
     Returns
     -------
