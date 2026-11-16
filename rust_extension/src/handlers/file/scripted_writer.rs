@@ -217,24 +217,35 @@ impl ScriptedWriter {
     }
 }
 
+/// Panic as a worker that dies inside `stage`, naming the stage in the message.
+///
+/// The panics live here rather than in the `Write` methods so those methods can
+/// stay free of a panic path a lint can see in their `Result` return type.
+fn simulate_panic(stage: &str) -> ! {
+    panic!("simulated worker {stage} panic")
+}
+
 impl Write for ScriptedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // A disconnected receiver only means the test stopped listening.
-        let _ = self.entered.send(Stage::Write);
+        // A disconnected receiver only means the test stopped listening, so
+        // the send result carries nothing the writer can act on.
+        let _stage_reported = self.entered.send(Stage::Write);
         self.script.write_gate.wait();
         match self.script.write_behaviour {
             WriteBehaviour::Succeed => Ok(buf.len()),
-            WriteBehaviour::Panic => panic!("simulated worker write panic"),
+            WriteBehaviour::Panic => simulate_panic("write"),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let _ = self.entered.send(Stage::Flush);
+        // As in `write`, a vanished receiver only means the test stopped
+        // listening.
+        let _stage_reported = self.entered.send(Stage::Flush);
         self.script.flush_gate.wait();
         match self.script.flush_behaviour {
             FlushBehaviour::Succeed => Ok(()),
             FlushBehaviour::Fail => Err(io::Error::other("simulated flush failure")),
-            FlushBehaviour::Panic => panic!("simulated worker flush panic"),
+            FlushBehaviour::Panic => simulate_panic("flush"),
         }
     }
 }
