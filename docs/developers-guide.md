@@ -82,25 +82,38 @@ that can.
 
 ### Documented examples
 
-User-facing documents mark each executable Python fence with
-`<!-- tested-example: <identifier> -->`. `tests/documented_examples.py` loads
-that fence from the published document, so a test executes the shipped text
-rather than a copy of it.
-`load_tested_python_example(document_path, identifier)` returns the fence body
-and raises `ValueError` when:
+User-facing documents mark each tested fence with
+`<!-- tested-example: <identifier> -->` on the line directly above it. Python
+tests load examples through one shared loader,
+`tests/documentation_examples.py`, so a test runs the shipped text rather than
+a copy of it. Rust examples in the users' guide take a separate route, because
+they must become Rust source: `rust_extension/build.rs` writes each marked Rust
+fence to `rust_extension/tests/generated/`, where an integration test
+`include!`s it.
 
-- the identifier is not lowercase kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`);
-- the marker appears zero times or more than once in the document;
-- the marker is not immediately followed by a `python`-tagged fence;
-- the closing fence carries anything but trailing whitespace, which means the
-  match reached a language-tagged opening fence rather than the end of the
-  example.
+The Python loader reads `README.md`, `docs/users-guide.md`, and
+`docs/v0-2-0-migration-guide.md`:
 
-`tests/test_documented_examples.py` pins those constraints and runs the user
-guide's `flush-handlers-usage` example with `runpy`, then checks that the
-record it logs reached the file it flushes. The policy that every executable
-fence in a user-facing document carries a marker is in the
-[documentation style guide](documentation-style-guide.md).
+- `documented_example(identifier)` returns one example, with its language,
+  exact body, document, and line. `load_documented_examples()` returns all of
+  them, and `run_example(example, cwd)` runs a Python example in a fresh
+  interpreter.
+- `scan_document(source, text)` enforces the marker contract. It raises
+  `DocumentationExampleError` for a malformed marker or identifier, a marker
+  with anything but a fence on the next line (a blank line included), a marked
+  fence without a language, an unterminated fence, or a repeated identifier.
+- Only a bare run of the fence character, indented by at most three spaces,
+  closes a fence. A fence line that carries an info string, such as a `python`
+  tag, stays in the body, as CommonMark specifies.
+- A fence without a marker is not an error to the loader. `unmarked_fences()`
+  reports each one with its location, so a test can require every fence in a
+  document to be marked once that document has been brought up to the
+  [documentation style guide](documentation-style-guide.md).
+
+`tests/test_documentation_examples_loader.py` pins these rules, and
+`tests/test_documented_examples.py` runs the users' guide's
+`flush-handlers-usage` example and checks that the record it logs reached the
+file it flushes.
 
 ## Typos spelling checker
 
