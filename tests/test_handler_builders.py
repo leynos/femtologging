@@ -10,6 +10,7 @@ import pytest
 from femtologging import (
     FileHandlerBuilder,
     HandlerConfigError,
+    HandlerIOError,
     HTTPHandlerBuilder,
     OverflowPolicy,
     RotatingFileHandlerBuilder,
@@ -199,6 +200,32 @@ def test_timed_builder_invalid_when_raises(tmp_path: Path) -> None:
     builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed.log"))
     with pytest.raises(ValueError, match="unsupported timed rotation value"):
         builder.with_when("fortnight")
+
+
+@pytest.mark.parametrize("field", ["capacity", "interval"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_timed_builder_numeric_setters_reject_non_positive(
+    tmp_path: Path, field: str, value: int
+) -> None:
+    """Zero and negative capacity or interval values name the field."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed_numeric.log"))
+    with pytest.raises(ValueError, match=f"{field} must be greater than zero"):
+        getattr(builder, f"with_{field}")(value)
+
+
+@pytest.mark.parametrize("field", ["capacity", "interval"])
+def test_timed_builder_setters_reject_overflow(tmp_path: Path, field: str) -> None:
+    """Values wider than u64 raise ``OverflowError`` naming the field."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed_overflow.log"))
+    with pytest.raises(OverflowError, match=f"{field} exceeds the allowable range"):
+        getattr(builder, f"with_{field}")(2**64)
+
+
+def test_timed_builder_build_reports_io_failure(tmp_path: Path) -> None:
+    """Building against an unopenable path raises ``HandlerIOError``."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "missing" / "timed.log"))
+    with pytest.raises(HandlerIOError, match="No such file or directory"):
+        builder.build()
 
 
 def test_timed_builder_rejects_at_time_for_hourly(tmp_path: Path) -> None:
