@@ -15,6 +15,9 @@ use _femtologging_rs::{
     ConfigBuilder, FemtoLevel, FemtoLogger, FileHandlerBuilder, HTTPHandlerBuilder, HTTPMethod,
     LoggerConfigBuilder, get_logger_for_log_compat, install_global_logger, manager,
 };
+use camino::Utf8Path;
+use cap_std::ambient_authority;
+use cap_std::fs_utf8::Dir;
 use pyo3::Python;
 
 use super::support::{RequestObservation, TestCollector};
@@ -233,9 +236,30 @@ fn flush_loggers() -> (bool, bool) {
     })
 }
 
+/// Read the collector log through a capability opened at its own directory.
+///
+/// The repository's Dylint filesystem policy disallows ambient `std::fs` even
+/// in tests, so the read goes through a `cap_std` handle confined to the
+/// directory holding the log rather than to the whole filesystem.
+fn read_collected_log(path: &std::path::Path) -> String {
+    let directory_path =
+        Utf8Path::from_path(path).expect("collector log path should be valid UTF-8");
+    let directory_root = directory_path
+        .parent()
+        .expect("collector log should have a parent directory");
+    let file_name = directory_path
+        .file_name()
+        .expect("collector log should have a file name");
+    let directory = Dir::open_ambient_dir(directory_root, ambient_authority())
+        .expect("collector log directory should open");
+    directory
+        .read_to_string(file_name)
+        .expect("collector log should be readable")
+}
+
 /// Assert the non-HTTP sink retained the independent and real diagnostics.
 fn assert_collected_non_http_records(path: &std::path::Path) {
-    let collected = std::fs::read_to_string(path).expect("collector log should be readable");
+    let collected = read_collected_log(path);
     assert!(
         collected.contains(INDEPENDENT_MARKER),
         "the independent bridge record must reach the non-HTTP sink:\n{collected}"

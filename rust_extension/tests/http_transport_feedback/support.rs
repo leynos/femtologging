@@ -297,17 +297,28 @@ fn wait_with_deadline(
     timeout: Duration,
 ) -> io::Result<(Option<ExitStatus>, bool)> {
     let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok((Some(status), false));
-        }
-        if Instant::now() >= deadline {
-            child.kill()?;
-            let status = child.wait()?;
-            return Ok((Some(status), true));
-        }
+    let status = await_exit(child, deadline)?;
+    let timed_out = status.is_none();
+    Ok((Some(adopt_terminal_status(child, status)?), timed_out))
+}
+
+/// Poll `child` until it exits, or return `None` once the deadline passes.
+fn await_exit(child: &mut Child, deadline: Instant) -> io::Result<Option<ExitStatus>> {
+    let mut status = child.try_wait()?;
+    while status.is_none() && Instant::now() < deadline {
         thread::sleep(REQUEST_POLL_INTERVAL);
+        status = child.try_wait()?;
     }
+    Ok(status)
+}
+
+/// Return the child's status, killing and reaping it when it outlived the deadline.
+fn adopt_terminal_status(child: &mut Child, status: Option<ExitStatus>) -> io::Result<ExitStatus> {
+    if let Some(status) = status {
+        return Ok(status);
+    }
+    child.kill()?;
+    child.wait()
 }
 
 /// Join a thread, giving up after `timeout`.
