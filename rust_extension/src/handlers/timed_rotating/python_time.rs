@@ -123,15 +123,18 @@ fn require_naive_timezone(value: &Bound<'_, PyAny>, arg_name: &str) -> PyResult<
 }
 
 /// Converts a Python datetime.time value using the common validation helper.
-pub(super) fn extract_naive_time(value: Bound<'_, PyAny>) -> PyResult<NaiveTime> {
+pub(super) fn extract_naive_time(value: &Bound<'_, PyAny>) -> PyResult<NaiveTime> {
     // Local convenience wrapper for the common helper; this retains the
     // existing `at_time`-specific error messages.
-    match extract_naive_time_from_py_time(&value, "at_time", false)? {
-        Some(time) => Ok(time),
-        // `allow_none` is false, so the helper rejects None before reaching
-        // this arm. A defensive error keeps the contract visible.
-        None => Err(PyTypeError::new_err(
-            "at_time must be datetime.time or None",
-        )),
-    }
+    extract_naive_time_from_py_time(value, "at_time", false)?.map_or_else(
+        || {
+            // `allow_none` is false, so the helper rejects None before
+            // reaching this branch. A defensive error keeps the contract
+            // visible.
+            Err(PyTypeError::new_err(
+                "at_time must be datetime.time or None",
+            ))
+        },
+        Ok,
+    )
 }
