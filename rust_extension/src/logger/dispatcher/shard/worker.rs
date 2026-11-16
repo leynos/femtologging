@@ -198,7 +198,24 @@ fn handle_record_job(queued: Box<QueuedRecord>, permit: Permit) {
             elapsed_us = dispatch_started.elapsed().as_micros(),
         );
     }
-    // The permit counts this record as in flight until its handlers finish. If
-    // a panic escapes a per-handler catch, unwinding drops the permit as well.
+    // Release the record's handler snapshot before publishing completion.
+    //
+    // The in-flight count is what a logger's drop consults before deciding it
+    // has nothing of its own left to wait for, so zero has to mean more than
+    // "every handle call returned": this job must no longer own a reference
+    // that keeps a handler alive. Otherwise a logger dropped while the job ran
+    // could release its attachments and let a caller drop its own handle
+    // without that handle being the last owner, so the handler's destructor —
+    // the flush and bounded worker wait a stream handler performs there — would
+    // not have run when the caller reads the handler's output.
+    //
+    // Dropping the snapshot can run a handler destructor on this worker, so the
+    // permit is held across it and a logger waiting on this record waits for
+    // that destructor too. That wait stays bounded because every handler
+    // destructor in this crate waits with a timeout.
+    drop(handlers);
+    // The permit counts this record as in flight until its handlers are done
+    // with it and released. If a panic escapes a per-handler catch, unwinding
+    // drops the locals — this snapshot included — before the permit parameter.
     drop(permit);
 }
