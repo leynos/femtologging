@@ -250,8 +250,8 @@ keeping the target space bounded.
 - Issue #432 and its folded findings `892a59c0`, `a25c11d3`, `b721c5d5` and
   `193b1941`.
 - `rust_extension/src/manager/validation.rs` — the name rules.
-- `rust_extension/src/manager/registry.rs` — the registry cap.
-- `rust_extension/src/logger/dispatcher.rs` and
+- `rust_extension/src/manager/registry/mod.rs` — the registry cap.
+- `rust_extension/src/logger/dispatcher/mod.rs` and
   `rust_extension/src/logger/dispatcher/shard/` — the shared pool.
 - `docs/users-guide.md` — the caller-facing naming guidance.
 - ADR 0004 (batching optimizations in consumer threads) — the equivalent
