@@ -77,6 +77,29 @@ fn assert_single_record(records: &[FemtoLogRecord], origin: RecordOrigin) {
     assert_eq!(records[0].origin(), origin);
 }
 
+/// One marked-probe route through the bridge.
+struct MarkedRoute<'a> {
+    /// Logger the probe is emitted to.
+    target: &'a str,
+    /// Logger whose collector must receive the probe.
+    sink: &'a str,
+    /// Logger name the collected record must retain.
+    expected_logger: &'a str,
+}
+
+/// Emit one marked probe along `route` and assert its single delivery.
+///
+/// The sink differs from the target on fallback and propagation paths, which
+/// is what lets one helper cover both without repeating the assertion block.
+fn assert_marked_route(route: MarkedRoute<'_>) {
+    let handler = attach_collector(route.sink);
+    let _scope = enter_http_transport();
+    log_info_record(route.target);
+    let records = flushed_records(route.sink, &handler);
+    assert_single_record(&records, RecordOrigin::HttpTransport);
+    assert_eq!(records[0].logger(), route.expected_logger);
+}
+
 /// Flush `logger_name` and return the records its collector received.
 fn flushed_records(logger_name: &str, handler: &CollectingHandler) -> Vec<FemtoLogRecord> {
     Python::attach(|py| {
@@ -93,13 +116,11 @@ fn adapter_marks_records_emitted_inside_transport_work(
     _log_max_level: (),
     unique_logger_name: String,
 ) {
-    let handler = attach_collector(&unique_logger_name);
-
-    let _scope = enter_http_transport();
-    log_info_record(&unique_logger_name);
-
-    let records = flushed_records(&unique_logger_name, &handler);
-    assert_single_record(&records, RecordOrigin::HttpTransport);
+    assert_marked_route(MarkedRoute {
+        target: &unique_logger_name,
+        sink: &unique_logger_name,
+        expected_logger: &unique_logger_name,
+    });
 }
 
 /// A record emitted outside transport work remains application-origin.
@@ -159,14 +180,11 @@ fn lazily_formatted_arguments_observe_a_suspended_scope(
 #[serial]
 fn an_invalid_target_falls_back_to_root_with_the_marker(_log_max_level: ()) {
     Python::attach(|_| manager::reset_manager());
-    let handler = attach_collector("root");
-
-    let _scope = enter_http_transport();
-    log_info_record("invalid..target");
-
-    let records = flushed_records("root", &handler);
-    assert_single_record(&records, RecordOrigin::HttpTransport);
-    assert_eq!(records[0].logger(), "root");
+    assert_marked_route(MarkedRoute {
+        target: "invalid..target",
+        sink: "root",
+        expected_logger: "root",
+    });
 }
 
 /// A full registry falls back to root and keeps the marker.
@@ -200,19 +218,12 @@ fn log_bridge_origin_capacity_child() {
             manager::get_logger(py, &format!("origin-capacity-{index}"))
                 .expect("saturating logger should register");
         }
-        let root = manager::get_logger(py, "root").expect("root exists");
-        let handler = Arc::new(CollectingHandler::default());
-        root.borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("collector registers on root");
+    });
 
-        let _scope = enter_http_transport();
-        log_info_record("origin-capacity-overflow");
-
-        assert!(root.borrow(py).flush_handlers(), "root should drain");
-        let records = handler.collected();
-        assert_single_record(&records, RecordOrigin::HttpTransport);
-        assert_eq!(records[0].logger(), "root");
+    assert_marked_route(MarkedRoute {
+        target: "origin-capacity-overflow",
+        sink: "root",
+        expected_logger: "root",
     });
 }
 
@@ -221,16 +232,11 @@ fn log_bridge_origin_capacity_child() {
 #[serial]
 fn parent_propagation_preserves_the_marker(_log_max_level: ()) {
     Python::attach(|_| manager::reset_manager());
-    let parent_name = "bridge.origin.propagation";
-    let child_name = "bridge.origin.propagation.child";
-    let handler = attach_collector(parent_name);
-
-    let _scope = enter_http_transport();
-    log_info_record(child_name);
-
-    let records = flushed_records(parent_name, &handler);
-    assert_single_record(&records, RecordOrigin::HttpTransport);
-    assert_eq!(records[0].logger(), child_name);
+    assert_marked_route(MarkedRoute {
+        target: "bridge.origin.propagation.child",
+        sink: "bridge.origin.propagation",
+        expected_logger: "bridge.origin.propagation.child",
+    });
 }
 
 /// Suspending is visible to the bridge's own nested call, but not outside it.
