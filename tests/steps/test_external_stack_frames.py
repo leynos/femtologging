@@ -129,7 +129,9 @@ class TestStripExternalStackFrames:
     @staticmethod
     def test_a_none_output_becomes_an_empty_string() -> None:
         """Treat a missing output as empty rather than raising."""
-        assert not strip_external_stack_frames(None, external_roots=_EXTERNAL_ROOTS)
+        assert not strip_external_stack_frames(None, external_roots=_EXTERNAL_ROOTS), (
+            "a missing output must become an empty string"
+        )
 
     @staticmethod
     def test_a_traceback_after_the_stack_is_untouched() -> None:
