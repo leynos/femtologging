@@ -1889,8 +1889,10 @@ Both scripts now close it at the source instead of relying on that guard. They
 raise the GIL switch interval to 60 seconds and call `time.sleep(0)`, which
 gives the GIL up once and so drains any handover already requested while
 restarting the interval. The calling thread then reaches the call
-uninterrupted, and the interval is restored in a `finally`. With no thread able
-to request the GIL during the call, a tick can only come from a voluntary
+uninterrupted. The interval is restored once the call returns: in a `finally`
+in the network helper, and after the call in the flush script, which is a
+standalone process that exits on any failing assertion anyway. With no thread
+able to request the GIL during the call, a tick can only come from a voluntary
 release inside it, which is exactly what the count asserts. This is test-only:
 the production wait paths carry no instrumentation, and no release build
 changes.
@@ -1928,6 +1930,28 @@ with it restored, 14 passed in five consecutive runs of the two files.
 run fetched `whitaker-lints-880939d`, so hosted `build-test` still fails the
 `Lint` step on the same fourteen `bumpy-road-function` findings in files
 byte-identical to `main`. Nothing in this branch can change that.
+
+### Head `eaa76371` and the second hosted Whitaker revision
+
+The isolation change is committed as `eaa76371` and force-pushed with a lease
+over `bbdbb424`. `make check-fmt`, `make typecheck`, `make lint`, `make test`
+(4008 cargo tests, 44/44 trybuild fixtures, pytest 1203 passed / 5 skipped),
+`make markdownlint` and `make nixie` all exit 0 on it (`/tmp/CHECK-FMT-`,
+`/tmp/TYPECHECK-`, `/tmp/LINT-`, `/tmp/TEST-`, `/tmp/MARKDOWNLINT-` and
+`/tmp/NIXIE-femtologging-release-gil-socket-http-waits-reduced.out`).
+
+Replies were posted to both open review threads, using the manual-comment route
+and a pool identity: the flush thread now records the drain isolation and the
+double mutation failure, the network thread records that the switch-interval
+change closes its pre-call handover window.
+
+CI run `43801864472` repeats the hosted pattern with a newer archive,
+`whitaker-lints-5006fc2`. All four `build-test` jobs fail in the `Lint` step
+with fourteen `Multiple clusters of nested conditional logic` errors, the same
+`bumpy-road-function` rule, in `rust_extension/src/python_module.rs` and
+`rust_extension/src/lib.rs`. Both files are byte-identical to `origin/main`
+(`git diff --stat origin/main...HEAD` for those paths is empty), so the red is
+entirely upstream. The wheel jobs pass.
 
 ## Decision log
 
