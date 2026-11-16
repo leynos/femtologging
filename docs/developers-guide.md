@@ -566,12 +566,22 @@ and TCP hostname resolution. `close()` stays bounded regardless because it
 detaches a worker that misses the deadline; worker termination itself carries
 no such promise.
 
-`discard_rest` in each worker's module is the record of what that bound costs.
-Records still queued at the deadline are dropped and counted rather than sent,
-and `warn_discarded` emits one rate-limited warning naming the count. The same
-accounting covers the write path, where a frame that runs out of budget
-mid-write reports how many of its bytes were sent, so a collector that is slow
-can be told apart from one that has stopped reading.
+`rust_extension/src/socket_handler/worker_drain.rs`, included by the worker as
+its `drain` module, owns the shutdown-drain helpers `discard_rest`,
+`warn_discarded` and `acknowledge_shutdown`. They work on the command queue
+alone and never touch the transport, so a backlog can be discarded without
+writing to a collector that stopped reading. Records still queued at the
+deadline are dropped and counted rather than sent, and `warn_discarded` emits
+one warning naming the count. The same accounting covers the write path, where
+a frame that runs out of budget mid-write reports how many of its bytes were
+sent, so a collector that is slow can be told apart from one that has stopped
+reading.
+
+`rust_extension/src/http_handler/request.rs` owns request construction: the
+URL, authentication header and custom headers are built from the handler
+configuration, apart from `worker.rs`, the loop that owns retries and timing.
+The split keeps the wire shape reviewable on its own and keeps the worker
+module within the repository's file-size limit.
 
 Detaching is not draining to completion. `abandon_worker`
 (`rust_extension/src/http_handler/handler.rs`, and the socket handler's
@@ -621,15 +631,52 @@ otherwise separate, and this ordering is a shared contract rather than an
 incidental similarity; the protocol concerns crossbeam channels, not either
 transport. A change to the helper affects both handlers.
 
-### Timed-rotation module boundary
+### Timed rotation boundary
 
-`FemtoTimedRotatingFileHandler` lives in
-`rust_extension/src/handlers/timed_rotating/handler.rs` and `mod.rs` re-exports
-it, so the `timed_rotating::FemtoTimedRotatingFileHandler` path is unchanged;
-code that reached it through `timed_rotating::core` must follow it. `core.rs`
-keeps the rotation mechanics and `TimedRotationConfig`, which `mod.rs`
-re-exports for the crate, and no longer defines the handler. Both files stay
-under the 400-line module cap.
+`TimedFileRotationStrategy`
+(`rust_extension/src/handlers/timed_rotating/rotation_strategy.rs`) is the
+`RotationStrategy` that `FemtoTimedRotatingFileHandler` installs. The handler's
+worker calls it before each write, and it answers whether the active file has
+reached the deadline the cadence set and, if so, performs one rotation.
+
+Two seams are injected. `RotationClock` in
+`rust_extension/src/handlers/timed_rotating/clock.rs` reports the current
+`DateTime<Utc>`; production uses `SystemClock`, while tests supply a scripted
+sequence so a rollover can be driven at a chosen instant without sleeping.
+`RotationFileStore` in
+`rust_extension/src/handlers/timed_rotating/rotation_store.rs` names the
+filesystem steps the rotation needs, so a test substitutes a store that fails a
+chosen step instead of arranging a real directory that refuses a rename at the
+right moment.
+
+The single rollover deadline lives in `RolloverSchedule` in
+`rust_extension/src/handlers/timed_rotating/rollover_schedule.rs`, which owns
+the clock and the next instant. It is seeded from the clock when the handler is
+built, re-seeded from an existing log file's modification time when that
+predates the construction reading, and advanced from the observation instant
+after a completed rotation.
+
+`rust_extension/src/handlers/timed_rotating/rotation_steps.rs` performs the
+rename and writer swap. A failure restores the original writer before
+attempting anything else; if the fresh open fails, the writer is restored
+before the rename is undone, so the handler stays usable even when the rollback
+rename also fails. `BackupRetention` in
+`rust_extension/src/handlers/timed_rotating/backup_retention.rs` prunes
+timestamped siblings after a completed rotation, keeping at most the configured
+count. The cadence supplies the `is_valid_suffix` predicate, so an unrelated
+file that shares the prefix is left alone; ordering is by path, which is
+chronological because each suffix leads with its timestamp, and a backup count
+of zero disables pruning.
+
+The extraction is structural.
+`rust_extension/src/handlers/timed_rotating/handler.rs` keeps the public handler
+wrapper: the writer the worker owns, its lifecycle, and the seeding decisions
+that need the active file. `core.rs` keeps only the `TimedRotationConfig` the
+constructor takes. Rotation orchestration, the deadline, the filesystem steps,
+the store and retention each have one reason to change and each live in their
+own module, which also keeps every module inside the repository's 400-line cap.
+`rotation_strategy.rs` remains the only place that knows the order the steps
+take and which handler state each one updates.
 
 ### Flush clock and observer seam
 
@@ -1610,6 +1657,22 @@ waits consume the remaining time. A handler removed after the snapshot remains
 alive until the worker releases it. Built-in handlers retain their shorter
 configured timeouts.
 
+Dispatch-state resolution has the same deadline. `Dispatcher::shared_until` in
+`rust_extension/src/logger/dispatcher.rs` serves the dispatcher-resolution
+step: it returns the process-wide dispatcher without waiting past the caller's
+deadline, and `None` once that deadline has passed.
+`Dispatcher::start_or_wait_until` in
+`rust_extension/src/logger/dispatcher/pool_start.rs` serves pool startup: it
+starts the pool or yields to the thread already starting it, but only while the
+deadline remains. `PidReservation::wait_or_clear_stale_until` in
+`rust_extension/src/logger/pid_reservation.rs` serves the process-local
+reservation wait used by pool startup and inherited-logger rebinding: it waits
+for a same-process owner only while the deadline remains, and clears a
+reservation inherited across `fork`. All three belong to the barrier's
+pre-enqueue stage: the logger must find or start the shard worker that will
+accept the flush marker before it can queue anything, and none of those steps
+may block past the barrier's absolute deadline.
+
 The default `FemtoHandlerTrait::flush_until(&FlushContext)` returns `false`
 without calling legacy synchronous `flush()`. Custom handlers must override
 this method and honour the deadline; the logger cannot pre-empt arbitrary
@@ -1627,6 +1690,31 @@ not acquire or release it, so callers that already hold the interpreter must
 release it when queued Python work needs to run. PyO3 reacquires the
 interpreter before returning to Python; that hand-off may delay the Python
 return beyond the Rust barrier deadline, in which case the result is `false`.
+
+### Flush command transport
+
+`rust_extension/src/handler/flush_command.rs` owns the shared enqueue and
+acknowledgement accounting for every queue-owning handler. `FlushCap::new`
+pairs the caller's deadline with the handler's own configured budget, and
+`effective()` samples the injected clock once and returns the earlier of the
+two, so both independent bounds apply to the same flush. `flush_command_until`
+admits a flush command and waits for its acknowledgement, charging both waits
+to that one budget: the acknowledgement receives what remains after admission,
+not a fresh copy. It samples the clock once more after the acknowledgement, so
+an answer received after the deadline is reported as
+`QueueFlushFailure::Acknowledgement` rather than success. `QueueFlushFailure`
+has exactly two variants, `Enqueue` and `Acknowledgement`, which separate a
+queue that never accepted the command from a worker that never answered it.
+
+`flush_handler_until` wraps that sequence for a handler with drops to report
+and a channel of its own type. It forms the cap, calls `prepare` to obtain the
+queue, then runs `flush_command_until`. `prepare` runs after the cap
+deliberately: the stream handler's sender sits behind a mutex, and sampling the
+clock while holding it would make one flush wait on another thread's flush. The
+stream, socket and HTTP handlers call `flush_handler_until`; the file handler
+composes `flush_command_until` directly because its budget is fixed. Production
+passes `Instant::now` as the clock, while tests pass a scripted source so the
+budget handed to each wait can be shown to shrink deterministically.
 
 ### Worker hand-off
 
@@ -1650,15 +1738,32 @@ as it cannot for a record the application emits itself.
 
 ### Deferred drop warnings
 
-Handler flush commands carry the warner's due drop count so the worker, not the
-flush caller, invokes the logging callback. `RateLimitedWarner::take_due`
-removes that count without calling anything, `flush_with_pending_drops` sends
-it with the marker, and `restore_drops` puts it back when the marker never
-entered the queue. Restoration keeps the figure attached to the next warning: a
-full or closed queue would otherwise strand the drops the failed flush was
-meant to report. `warn_if_due` keeps suppressed drops pending until the
-interval expires, and `flush` reports any restored count, so neither path loses
-a drop.
+Rate-limit policy and flush transport are separate concerns.
+`rust_extension/src/rate_limited_warner.rs` owns only the policy: which drops
+are due (`take_due`), when the next warning may fire, and the retry bookkeeping
+(`restore_drops`, and the internal `retry_drops` counter) that restarts the
+interval when a restored count is reported. `take_due` is destructive, so a
+caller that cannot deliver its count must hand it back.
+
+The transport is `handler::flush_command::flush_handler_until`, which puts the
+pending count on the flush marker so the worker, not the flush caller, invokes
+the logging callback. The count arrives as a thunk and is called only after a
+queue was found, because taking it is destructive: a handler whose worker has
+gone must leave the drops pending for the next flush. If the marker never
+entered the queue, `flush_handler_until` hands the count back through the
+restore closure. `warn_if_due` keeps suppressed drops pending until the
+interval expires, and `RateLimitedWarner::flush` reports any restored count, so
+neither path loses a drop.
+
+The warner's `Clock` trait reports milliseconds since the warner was
+constructed, an opaque counter used only to decide whether an interval has
+elapsed. `crate::monotonic_clock::MonotonicClock` reports an absolute `Instant`
+for deadline comparisons. The two answer different questions: a counter whose
+epoch belongs to one object cannot express an absolute deadline, and two
+counters started at different moments would disagree about the same `Instant`
+by the difference in their epochs. They therefore stay separate; the module
+documentation in `rate_limited_warner.rs` and `monotonic_clock.rs` states the
+same reasoning.
 
 ### Python-defined handlers
 
@@ -1679,14 +1784,16 @@ its own two-second deadline; the sweep does not share one aggregate deadline,
 so a slow logger cannot consume another's budget. The `log::Log::flush()`
 adapter keeps its unit-return contract and discards the confirmation result.
 
-Each logger records fixed-cardinality flush diagnostics: attempt and
-confirmation counts, terminal failures by stage, and five elapsed-time buckets.
-Those buckets are disjoint ranges — up to 10 ms, over 10 to 100 ms, over 100 to
-500 ms, over 500 ms to 2 s, and over 2 s — so each attempt increments exactly
-one; they are not cumulative. Recording touches only relaxed atomics, so a
-snapshot may observe concurrent updates at different instants.
-`FemtoLogger.get_flush_diagnostics()` exposes that snapshot to Python;
-exporting it through a shared metrics backend remains tracked by issue `#551`.
+Each logger records fixed-cardinality flush diagnostics through
+`FlushDiagnostics` in `rust_extension/src/logger/flush_diagnostics.rs`: attempt
+and confirmation counts, terminal failures by `FlushFailureStage`, and five
+elapsed-time buckets. Those buckets are disjoint ranges — up to 10 ms, over 10
+to 100 ms, over 100 to 500 ms, over 500 ms to 2 s, and over 2 s — so each
+attempt increments exactly one; they are not cumulative. Recording touches only
+relaxed atomics, so a snapshot may observe concurrent updates at different
+instants. `FemtoLogger.get_flush_diagnostics()` exposes that snapshot to
+Python; exporting it through a shared metrics backend remains tracked by issue
+`#551`.
 
 See the [Rust extension guide](rust-extension.md) and the
 [multithreaded logging design](rust-multithreaded-logging-framework-for-python-design.md#flush-barrier-states)

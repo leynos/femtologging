@@ -695,14 +695,14 @@ benefits of the producer-consumer model are consistently applied.
 
 **Table 1: Core CPython Handlers and** `femtologging` **Equivalents**
 
-| CPython `logging` Handler  | `femtologging` Equivalent       | Brief Description                                                                                                                                     | Key CPython Features to Replicate                                                                          |
-| -------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `StreamHandler`            | `FemtoStreamHandler`            | Logs to an I/O stream (e.g., `stdout`, `stderr`). The consumer thread writes formatted records to the stream.                                         | Stream selection (default `stderr`), terminator customization.                                             |
-| `FileHandler`              | `FemtoFileHandler`              | Logs to a disk file. The consumer thread manages file I/O.                                                                                            | Filename, mode (append/overwrite), encoding, delayed open.                                                 |
-| `RotatingFileHandler`      | `FemtoRotatingFileHandler`      | Logs to a file, with rotation based on size. The consumer thread handles the rotation logic.                                                          | `maxBytes`, `backupCount`, file renaming scheme.                                                           |
-| `TimedRotatingFileHandler` | `FemtoTimedRotatingFileHandler` | Logs to a file, with rotation based on time intervals. The consumer thread handles timed rotation.                                                    | `when`, `interval`, `backupCount`, `utc`, `atTime`.                                                        |
-| `SocketHandler`            | `FemtoSocketHandler`            | Sends log records over a TCP or Unix domain socket. The consumer thread manages socket connection and data transmission (pickled/serialized records). | Host, port, TCP/Unix socket, reconnection logic, pickling/serialization of `FemtoLogRecord`.               |
-| `HTTPHandler`              | `FemtoHTTPHandler`              | Sends log records to an HTTP server (GET or POST). The consumer thread makes HTTP requests.                                                           | Host, URL, method (GET/POST), secure (HTTPS), credentials, `mapLogRecord` equivalent for data preparation. |
+| CPython `logging` Handler  | `femtologging` Equivalent       | Brief Description                                                                                                                                                                    | Key CPython Features to Replicate                                                                          |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `StreamHandler`            | `FemtoStreamHandler`            | Logs to an I/O stream (e.g., `stdout`, `stderr`). The consumer thread writes formatted records to the stream.                                                                        | Stream selection (default `stderr`), terminator customization.                                             |
+| `FileHandler`              | `FemtoFileHandler`              | Logs to a disk file. The consumer thread manages file I/O.                                                                                                                           | Filename, mode (append/overwrite), encoding, delayed open.                                                 |
+| `RotatingFileHandler`      | `FemtoRotatingFileHandler`      | Logs to a file, with rotation based on size. The consumer thread handles the rotation logic.                                                                                         | `maxBytes`, `backupCount`, file renaming scheme.                                                           |
+| `TimedRotatingFileHandler` | `FemtoTimedRotatingFileHandler` | Logs to a file, with rotation based on time intervals. The consumer thread delegates each rollover to `TimedFileRotationStrategy`, which owns the deadline and the filesystem steps. | `when`, `interval`, `backupCount`, `utc`, `atTime`.                                                        |
+| `SocketHandler`            | `FemtoSocketHandler`            | Sends log records over a TCP or Unix domain socket. The consumer thread manages socket connection and data transmission (pickled/serialized records).                                | Host, port, TCP/Unix socket, reconnection logic, pickling/serialization of `FemtoLogRecord`.               |
+| `HTTPHandler`              | `FemtoHTTPHandler`              | Sends log records to an HTTP server (GET or POST). The consumer thread makes HTTP requests.                                                                                          | Host, URL, method (GET/POST), secure (HTTPS), credentials, `mapLogRecord` equivalent for data preparation. |
 
 <!-- markdownlint-enable MD056 -->
 
@@ -720,6 +720,22 @@ bounded `crossbeam-channel` with a capacity of 1024 records. This guards
 against unbounded memory growth when producers outpace the consumer thread.
 Later versions may expose the channel type and capacity as configuration
 options.
+
+#### Timed rotation boundary
+
+`FemtoTimedRotatingFileHandler` keeps only the handler in
+`rust_extension/src/handlers/timed_rotating/core.rs`: the writer the worker
+owns, the handler's lifecycle, and the seeding decisions that need the active
+file. About 258 lines of rotation logic moved out of that module into
+`rotation_strategy.rs`, with `rollover_schedule.rs` (the injectable
+`RotationClock` and the single deadline), `schedule.rs` (the cadence rules),
+`rotation_steps.rs` (rename, writer swap and unwinding), `rotation_store.rs`
+(the filesystem seam) and `backup_retention.rs` (pruning) alongside it.
+`core.rs` is now 165 lines, well inside the repository's 400-line per-module
+cap, so the extraction is structural rather than cosmetic: each module has one
+reason to change, and a rotation can be driven at a chosen instant through a
+scripted clock and file store instead of by arranging a directory that fails a
+rename at the right moment.
 
 ### 3.5 Handler flush at the Python boundary
 
