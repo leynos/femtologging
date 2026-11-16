@@ -1,7 +1,10 @@
 //! Core timed rotating file handler logic.
 //!
 //! This module keeps worker-thread rollover logic and filesystem retention
-//! separate from the Python bindings.
+//! separate from the Python bindings. The public
+//! `FemtoTimedRotatingFileHandler` wrapper that owns the worker lives in
+//! `handler.rs`; this module supplies the rotation mechanics and
+//! `TimedRotationConfig` it uses.
 
 use std::{
     ffi::OsString,

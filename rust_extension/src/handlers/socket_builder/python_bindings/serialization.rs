@@ -1,4 +1,8 @@
 //! Python dictionary serialization for the socket handler builder.
+//!
+//! Each transport writes its own keys: the Unix variant records its path, and
+//! the TCP variant records its host and port before any TLS options, so a
+//! reader can tell which fields belong to which transport.
 
 use std::path::Path;
 
