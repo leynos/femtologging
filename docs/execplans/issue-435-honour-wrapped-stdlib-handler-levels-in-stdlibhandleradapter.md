@@ -482,7 +482,7 @@ Known uncertainties identified upfront, with mitigations.
   re-exports with plain ones; Ruff's `unsorted-imports` autofix rewrites them
   into one single-name `from … import (X as X)` block each. Impact: the
   re-export style in `femtologging/adapter.py` is Ruff-authored, not a
-  hand-written choice, and should be left exactly as the autofix emits it.
+  handwritten choice, and should be left exactly as the autofix emits it.
 
 ## Decision log
 
