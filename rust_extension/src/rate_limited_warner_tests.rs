@@ -314,8 +314,10 @@ fn failed_flush_enqueue_restores_the_due_drop_count() {
     let mut cap = crate::handler::FlushCap::new(deadline, Duration::from_millis(50), &mut now);
     let outcome: Option<Result<(), crate::handler::QueueFlushFailure>> =
         crate::handler::flush_handler_until(
-            || warner.take_due(),
-            |count| warner.restore_drops(count),
+            crate::handler::PendingDrops::new(
+                || warner.take_due(),
+                |count| warner.restore_drops(count),
+            ),
             &mut cap,
             || Some(tx.clone()),
             |tx, pending_drops, budget| {

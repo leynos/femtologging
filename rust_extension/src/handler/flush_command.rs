@@ -13,31 +13,56 @@ use std::time::{Duration, Instant};
 
 use super::{capped_deadline, remaining};
 
+/// How a handler hands its due drop count to a flush marker, and takes it back.
+///
+/// The pair travels together because either half alone is unusable: the take is
+/// destructive, so a flush that cannot enqueue must undo it. Keeping them in one
+/// value also keeps [`flush_handler_until`]'s argument list to the four things it
+/// genuinely needs.
+pub(crate) struct PendingDrops<T, R> {
+    /// Supplies the count that is due, removing it from the rate limiter.
+    take: T,
+    /// Puts a count back when the marker never entered the queue.
+    restore: R,
+}
+
+impl<T, R> PendingDrops<T, R>
+where
+    T: FnOnce() -> Option<u64>,
+    R: FnOnce(u64),
+{
+    /// Pair a destructive take with the restore that undoes it.
+    ///
+    /// Example: `PendingDrops::new(|| warner.take_due(), |n| warner.restore_drops(n))`.
+    pub(crate) fn new(take: T, restore: R) -> Self {
+        Self { take, restore }
+    }
+}
+
 /// Run one handler flush against a capped deadline, carrying its due drops.
 ///
 /// The handler's own budget caps the caller's deadline first, then `prepare`
 /// supplies the queue to write to; a handler whose worker has gone returns
 /// `None` without waiting. The pending drop count travels on the marker so the
 /// logging callback runs on the worker rather than on the flush caller, and it
-/// goes back through `restore_drops` when the marker never entered the queue —
-/// a saturated or closed queue would otherwise strand the records the flush was
-/// meant to report.
+/// goes back through the restore half of [`PendingDrops`] when the marker never
+/// entered the queue — a saturated or closed queue would otherwise strand the
+/// records the flush was meant to report.
 ///
-/// The count and its restore arrive as arguments rather than as a warner
+/// The count and its restore arrive as a value rather than as a warner
 /// reference. Rate-limit policy decides *which* drops are pending; this helper
 /// decides *where* they travel. Keeping the two apart is what lets the stream,
 /// HTTP and socket handlers share one transport without sharing a policy type.
 ///
-/// `take_pending_drops` runs only once a queue was found, because taking the
-/// count is destructive: a handler whose worker has gone must leave the drops
-/// pending for whoever flushes next.
+/// The take runs only once a queue was found, because taking the count is
+/// destructive: a handler whose worker has gone must leave the drops pending for
+/// whoever flushes next.
 ///
 /// `prepare` runs after the cap deliberately. The stream handler's sender sits
 /// behind a mutex, and sampling the deadline while holding it would make one
 /// flush wait on another thread's flush.
 pub(crate) fn flush_handler_until<S, A, Ack>(
-    take_pending_drops: impl FnOnce() -> Option<u64>,
-    restore_drops: impl FnOnce(u64),
+    pending: PendingDrops<impl FnOnce() -> Option<u64>, impl FnOnce(u64)>,
     cap: &mut FlushCap<'_>,
     prepare: impl FnOnce() -> Option<S>,
     enqueue: impl FnOnce(S, Option<u64>, Duration) -> Option<Ack>,
@@ -45,16 +70,17 @@ pub(crate) fn flush_handler_until<S, A, Ack>(
 where
     Ack: FnOnce(Duration) -> Option<A>,
 {
+    let PendingDrops { take, restore } = pending;
     let effective = cap.effective();
     let sender = prepare()?;
-    let pending_drops = take_pending_drops();
+    let pending_drops = take();
     let outcome = flush_command_until(effective, cap.clock(), |budget| {
         enqueue(sender, pending_drops, budget)
     });
     if matches!(outcome, Err(QueueFlushFailure::Enqueue))
         && let Some(count) = pending_drops
     {
-        restore_drops(count);
+        restore(count);
     }
     Some(outcome)
 }

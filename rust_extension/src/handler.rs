@@ -13,7 +13,7 @@ use thiserror::Error;
 mod flush_command;
 
 pub(crate) use flush_command::{
-    FlushCap, QueueFlushFailure, flush_command_until, flush_handler_until,
+    FlushCap, PendingDrops, QueueFlushFailure, flush_command_until, flush_handler_until,
 };
 
 /// The flush budget of a handler that does not configure one of its own.

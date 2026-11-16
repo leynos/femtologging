@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 
 use crate::{
     handler::{
-        FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after,
+        FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, PendingDrops, deadline_after,
         flush_handler_until,
     },
     log_record::FemtoLogRecord,
@@ -119,8 +119,10 @@ impl FemtoSocketHandler {
         };
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
         let outcome = flush_handler_until(
-            || self.warner.take_due(),
-            |count| self.warner.restore_drops(count),
+            PendingDrops::new(
+                || self.warner.take_due(),
+                |count| self.warner.restore_drops(count),
+            ),
             &mut cap,
             || Some(tx),
             |tx, pending_drops, budget| {
