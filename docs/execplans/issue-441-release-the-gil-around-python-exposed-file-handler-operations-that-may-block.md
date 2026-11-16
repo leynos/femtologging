@@ -2102,6 +2102,40 @@ errors and the wheel jobs pass. `git diff --stat origin/main...HEAD` for
 `rust_extension/src/python_module.rs` and `rust_extension/src/lib.rs` is empty,
 so the branch does not touch the failing code.
 
+### The diagnostics tests and the call-keyed guards, rebased onto main's #622
+
+The work described in the two sections above was committed as `bac7c2b3` on the
+old base, `d36cd742`. While the gates for that commit ran, main advanced to
+`2dc7b4e2` with #616 (one loader for documented Python examples) and #622
+(extract helpers to clear `bumpy_road_function` findings). #622 matters here:
+the rolling Whitaker tip had been reporting fourteen `bumpy_road_function`
+errors in code this branch never touched, and the extraction clears all
+fourteen.
+
+The branch was rebased onto `origin/main` with the host-wide Weave merge driver
+disabled (`-c core.attributesFile=/dev/null`), because that enrolment is for
+interactive use and an unattended replay should use the ordinary three-way
+merge. The replay was clean. To confirm nothing was silently taken from either
+side, the branch's own diff was compared before and after:
+
+```sh
+git diff d36cd742 bac7c2b3 > /tmp/before-rebase.diff
+git diff origin/main HEAD  > /tmp/after-rebase.diff
+diff -u /tmp/before-rebase.diff /tmp/after-rebase.diff
+```
+
+The only differences are the `index` lines and the hunk offsets, so every
+branch change survived verbatim and main's commits are layered underneath.
+
+The replayed head `bf600e2f` is gate-clean: `make fmt`, `make check-fmt`,
+`make lint`, `make typecheck`, `make test`, `make markdownlint` and
+`make nixie` all exit 0. `make lint` now completes with the Whitaker suite
+clean instead of reporting the fourteen errors. `make test` ran all four cargo
+lanes (774, 774, 774 and 827 passing, with 11/11 trybuild fixtures in each) and
+pytest reported 1234 passed and 5 skipped, up from 1203 because main's #616
+added tests of the documented-example loader. The logs carry the `-rebased`
+suffix under `/tmp`.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
