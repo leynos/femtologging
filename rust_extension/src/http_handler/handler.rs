@@ -16,7 +16,10 @@ use pyo3::Python;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after},
+    handler::{
+        FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, deadline_after,
+        flush_handler_until,
+    },
     log_record::{FemtoLogRecord, RecordOrigin},
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
@@ -118,7 +121,9 @@ impl FemtoHTTPHandler {
             return false;
         };
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
-        let outcome = self.warner.flush_handler(
+        let outcome = flush_handler_until(
+            || self.warner.take_due(),
+            |count| self.warner.restore_drops(count),
             &mut cap,
             || Some(tx),
             |tx, pending_drops, budget| {

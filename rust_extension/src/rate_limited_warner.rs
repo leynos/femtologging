@@ -3,30 +3,67 @@
 //! This module provides [`RateLimitedWarner`], which tracks dropped log records
 //! and emits warnings at configurable intervals to avoid spamming logs while
 //! still alerting users to potential issues.
+//!
+//! # What this module does not do
+//!
+//! The warner decides *which* drops are due for a warning and *when* the next
+//! warning may be emitted. It does not carry them anywhere: the flush transport
+//! that caps a handler's deadline and puts the count on a marker lives in
+//! [`flush_handler_until`](crate::handler::flush_handler_until). A handler asks
+//! for the due count with [`RateLimitedWarner::take_due`] and hands it back with
+//! [`RateLimitedWarner::restore_drops`] if the marker never entered its queue.
+//! Retry bookkeeping stays here because a restored count is not merely pending
+//! again: reporting it restarts the warning interval, which is rate-limit
+//! policy.
+//!
+//! # A clock of its own
+//!
+//! [`Clock`] reports milliseconds since the warner was constructed — an opaque
+//! counter for deciding whether an interval elapsed. It is deliberately not
+//! [`MonotonicClock`](crate::monotonic_clock::MonotonicClock), which reports an
+//! absolute [`Instant`]: a deadline must be compared against another absolute
+//! instant, and a counter whose epoch belongs to one object cannot express
+//! that. The two seams answer different questions, so they stay separate; see
+//! the [`monotonic_clock`](crate::monotonic_clock) module for the same
+//! reasoning from that side.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::handler::{FlushCap, QueueFlushFailure, flush_command_until};
-
-/// Source of time for [`RateLimitedWarner`] and the stream handler's flush deadline.
+/// Source of time for deciding when the next dropped-record warning is due.
 pub trait Clock: Send + Sync {
     /// Return the current time in milliseconds since an arbitrary epoch.
     fn now_millis(&self) -> u64;
 }
 
 /// [`Clock`] implementation backed by [`Instant`], used outside tests.
+///
+/// Reading the real clock here is the production behaviour, not a test seam
+/// leaking through: a warner that never sampled `Instant::now` could not tell
+/// whether an interval had elapsed. The epoch is captured at construction, so
+/// both the reading and the comparison come from the same monotonic source.
 pub struct SystemClock {
     /// Instant captured at construction; elapsed time is reported relative to it.
     start: Instant,
 }
 
-impl Default for SystemClock {
-    fn default() -> Self {
+impl SystemClock {
+    /// Start a clock whose epoch is the instant of construction.
+    ///
+    /// Explicit rather than hidden behind [`Default`], so a caller that needs
+    /// a specific epoch — a test double, or a warner restored alongside its
+    /// handler — can say so.
+    pub fn new() -> Self {
         Self {
             start: Instant::now(),
         }
+    }
+}
+
+impl Default for SystemClock {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -108,8 +145,13 @@ impl RateLimitedWarner {
 
     /// Take a due warning count without invoking its callback.
     ///
-    /// Flush callers move the count onto the existing handler worker so a
-    /// synchronous `log` callback cannot hold the caller beyond its deadline.
+    /// The number is destructive: the count leaves the warner here, so a caller
+    /// that cannot deliver it must give it back with [`Self::restore_drops`].
+    /// Flush handlers hand it to
+    /// [`flush_handler_until`](crate::handler::flush_handler_until), which puts
+    /// it on the marker for the existing worker; warning there rather than here
+    /// keeps a synchronous `log` callback from holding the flush caller beyond
+    /// its deadline.
     pub(crate) fn take_due(&self) -> Option<u64> {
         let retry_count = self.retry_drops.swap(0, Ordering::Relaxed);
         if retry_count > 0 {
@@ -131,63 +173,14 @@ impl RateLimitedWarner {
         }
     }
 
-    /// Retry a due warning when a handler could not enqueue its flush.
+    /// Hand back a count that [`Self::take_due`] removed but could not deliver.
+    ///
+    /// A restored count is reported by the next [`Self::take_due`] or
+    /// [`Self::flush`] even inside the warning interval, because the interval
+    /// only limits how often warnings are emitted, not whether records are
+    /// accounted for.
     pub(crate) fn restore_drops(&self, count: u64) {
         self.retry_drops.fetch_add(count, Ordering::Relaxed);
-    }
-
-    /// Enqueue a flush command that carries the due drop count.
-    ///
-    /// The count leaves the warner before the send and goes back if the
-    /// command never entered the queue. Restoring it keeps the figure attached
-    /// to the next warning: a saturated or closed queue would otherwise strand
-    /// the drops this flush was meant to report.
-    pub(crate) fn flush_with_pending_drops<A, Ack>(
-        &self,
-        deadline: Instant,
-        now: &mut dyn FnMut() -> Instant,
-        enqueue: impl FnOnce(Option<u64>, Duration) -> Option<Ack>,
-    ) -> Result<A, QueueFlushFailure>
-    where
-        Ack: FnOnce(Duration) -> Option<A>,
-    {
-        let pending_drops = self.take_due();
-        let outcome = flush_command_until(deadline, now, |budget| enqueue(pending_drops, budget));
-        if matches!(outcome, Err(QueueFlushFailure::Enqueue))
-            && let Some(count) = pending_drops
-        {
-            self.restore_drops(count);
-        }
-        outcome
-    }
-
-    /// Flush one handler queue against a caller's deadline.
-    ///
-    /// The handler's own budget caps the caller's deadline first, then
-    /// `prepare` supplies the queue to write to; a handler whose worker has
-    /// gone returns `None` without waiting. The warner carries its due drop
-    /// count onto the marker, so the logging callback runs on the worker
-    /// rather than on the flush caller.
-    ///
-    /// `prepare` runs after the cap deliberately. The stream handler's sender
-    /// sits behind a mutex, and sampling the deadline while holding it would
-    /// make one flush wait on another thread's flush.
-    pub(crate) fn flush_handler<S, A, Ack>(
-        &self,
-        cap: &mut FlushCap<'_>,
-        prepare: impl FnOnce() -> Option<S>,
-        enqueue: impl FnOnce(S, Option<u64>, Duration) -> Option<Ack>,
-    ) -> Option<Result<A, QueueFlushFailure>>
-    where
-        Ack: FnOnce(Duration) -> Option<A>,
-    {
-        let effective = cap.effective();
-        let sender = prepare()?;
-        Some(
-            self.flush_with_pending_drops(effective, cap.clock(), |drops, budget| {
-                enqueue(sender, drops, budget)
-            }),
-        )
     }
 
     /// Immediately warn about pending drops and restart the rate limit interval.

@@ -311,20 +311,27 @@ fn failed_flush_enqueue_restores_the_due_drop_count() {
     let start = Instant::now();
     let deadline = start + Duration::from_millis(50);
     let mut now = || start;
-    let outcome: Result<(), crate::handler::QueueFlushFailure> =
-        warner.flush_with_pending_drops(deadline, &mut now, |pending_drops, budget| {
-            assert_eq!(
-                pending_drops,
-                Some(3),
-                "the flush must carry the count it took"
-            );
-            tx.send_timeout((), budget).ok()?;
-            Some(|_: Duration| Some(()))
-        });
+    let mut cap = crate::handler::FlushCap::new(deadline, Duration::from_millis(50), &mut now);
+    let outcome: Option<Result<(), crate::handler::QueueFlushFailure>> =
+        crate::handler::flush_handler_until(
+            || warner.take_due(),
+            |count| warner.restore_drops(count),
+            &mut cap,
+            || Some(tx.clone()),
+            |tx, pending_drops, budget| {
+                assert_eq!(
+                    pending_drops,
+                    Some(3),
+                    "the flush must carry the count it took"
+                );
+                tx.send_timeout((), budget).ok()?;
+                Some(|_: Duration| Some(()))
+            },
+        );
 
     assert_eq!(
         outcome,
-        Err(crate::handler::QueueFlushFailure::Enqueue),
+        Some(Err(crate::handler::QueueFlushFailure::Enqueue)),
         "a full queue refuses the flush command"
     );
     assert_eq!(

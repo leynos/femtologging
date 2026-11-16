@@ -24,7 +24,9 @@ use std::{
 
 use pyo3::prelude::*;
 
-use crate::handler::{FemtoHandlerTrait, FlushCap, FlushContext, deadline_after};
+use crate::handler::{
+    FemtoHandlerTrait, FlushCap, FlushContext, deadline_after, flush_handler_until,
+};
 use crate::shutdown::ShutdownCompletion;
 use crate::sync::{JoinHandle, Mutex, Sender, bounded, spawn};
 use crate::{
@@ -294,7 +296,9 @@ impl FemtoStreamHandler {
         // Cap first, then read the sender: the guard is taken and released
         // inside the closure, so no lock outlives the deadline sample.
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
-        let outcome = self.warner.flush_handler(
+        let outcome = flush_handler_until(
+            || self.warner.take_due(),
+            |count| self.warner.restore_drops(count),
             &mut cap,
             || self.tx.lock().clone(),
             |tx, pending_drops, budget| {
