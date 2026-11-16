@@ -9,13 +9,13 @@
 //! The working directory is global, so changing it inside the shared test
 //! binary would redirect every other test running at the same time. The
 //! scenario therefore runs as an ignored test in a child process whose working
-//! directory is a temporary directory, and the test left in the ordinary run
-//! checks that the child ran it and passed.
+//! directory is a temporary directory, through the same environment-clearing
+//! helper the other isolated-child tests use, and the test left in the ordinary
+//! run checks that the child ran it and passed.
 
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use chrono::Duration;
 use tempfile::tempdir;
@@ -25,6 +25,7 @@ use super::rotation_strategy::TimedFileRotationStrategy;
 use super::schedule::{TimedRotationSchedule, TimedRotationWhen};
 use super::test_helpers::utc_datetime;
 use crate::handlers::file::RotationStrategy;
+use crate::test_utils::isolated_child::run_isolated_test_in;
 
 /// Test-name filter that selects the scenario and nothing else.
 ///
@@ -35,18 +36,14 @@ const SCENARIO_FILTER: &str = "bare_name_retention_survives_multiple_rollovers";
 
 /// Run the retention scenario in a child process with its own directory.
 ///
-/// The child inherits the environment deliberately: it is this same test
-/// binary and may need the loader path the test harness exported for it, and
-/// no inherited setting changes the scenario's outcome. Its working directory
-/// is what the scenario must not share with the rest of this binary.
+/// The child gets the same cleared environment as every other isolated test
+/// child, with only Cargo's loader path forwarded, so an inherited setting
+/// cannot change the scenario's outcome. Its working directory is what the
+/// scenario must not share with the rest of this binary.
 #[test]
 fn a_child_directory_runs_the_bare_name_retention_scenario() {
     let directory = tempdir().expect("tempdir must create a temporary directory");
-    let executable = std::env::current_exe().expect("the test binary path must resolve");
-    let output = Command::new(executable)
-        .args([SCENARIO_FILTER, "--ignored"])
-        .current_dir(directory.path())
-        .output()
+    let output = run_isolated_test_in(SCENARIO_FILTER, directory.path())
         .expect("the child test process must start");
 
     let stdout = String::from_utf8_lossy(&output.stdout);

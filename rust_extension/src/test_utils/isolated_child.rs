@@ -1,6 +1,7 @@
 //! Helpers for running Rust tests in a clean child process.
 
 use std::io;
+use std::path::Path;
 use std::process::{Command, Output};
 
 use std::ffi::OsString;
@@ -11,6 +12,30 @@ use std::ffi::OsString;
 /// binaries. Preserve that one value so the child can load the same Python
 /// shared library while keeping unrelated ambient configuration out.
 pub(crate) fn run_isolated_test(test_filter: &str) -> io::Result<Output> {
+    isolated_command(test_filter)?.output()
+}
+
+/// Run one ignored test in a fresh copy of the current test executable, with
+/// `working_directory` as its working directory.
+///
+/// A test that resolves a bare file name against the current directory needs a
+/// directory of its own, because the working directory is global to the test
+/// binary. Everything else, including the cleared environment, matches
+/// [`run_isolated_test`].
+pub(crate) fn run_isolated_test_in(
+    test_filter: &str,
+    working_directory: &Path,
+) -> io::Result<Output> {
+    let mut command = isolated_command(test_filter)?;
+    command.current_dir(working_directory);
+    command.output()
+}
+
+/// Build a child test command with the ambient environment cleared.
+///
+/// Only Cargo's loader search path is forwarded, so a variable the parent
+/// happens to carry cannot change the child's outcome.
+fn isolated_command(test_filter: &str) -> io::Result<Command> {
     let executable = std::env::current_exe()?;
     let mut command = Command::new(executable);
     command.env_clear();
@@ -18,7 +43,7 @@ pub(crate) fn run_isolated_test(test_filter: &str) -> io::Result<Output> {
         command.env(name, value);
     }
     command.args(["--ignored", test_filter, "--nocapture"]);
-    command.output()
+    Ok(command)
 }
 
 #[cfg(target_os = "linux")]
