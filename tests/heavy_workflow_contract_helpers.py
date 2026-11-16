@@ -31,6 +31,11 @@ SYNC_COMMAND: typ.Final[tuple[str, ...]] = (
 TEST_UTIL_CONFIG: typ.Final[str] = ".github/uv-test-util.toml"
 ISSUE_TITLE: typ.Final[str] = "heavy-tests nightly failure"
 TEST_UTIL_FEATURES: typ.Final[str] = "--features python,test-util"
+_REQUIRED_COMMANDS: typ.Final[tuple[tuple[str, str], ...]] = (
+    ("gh issue list", "the job must search for an existing tracking issue"),
+    ("gh issue comment", "the job must comment on an existing tracking issue"),
+    ("gh issue create", "the job must create the tracking issue when absent"),
+)
 
 type Document = dict[str, typ.Any]
 type Job = dict[str, typ.Any]
@@ -276,14 +281,21 @@ def _environment_problems(found: Job) -> list[str]:
 def _command_problems(found: Job, *, subject: str) -> list[str]:
     """Return the complaints about the commands the notification runs."""
     runs = [run_text(step) for step in steps(found, subject=subject)]
+    return [*_missing_command_problems(runs), *_run_detail_problems(runs)]
+
+
+def _missing_command_problems(runs: list[str]) -> list[str]:
+    """Return one complaint for each required ``gh`` command that never runs."""
+    return [
+        complaint
+        for command, complaint in _REQUIRED_COMMANDS
+        if not any(command in run for run in runs)
+    ]
+
+
+def _run_detail_problems(runs: list[str]) -> list[str]:
+    """Return the complaints about the run details the notification reports."""
     problems: list[str] = []
-    for command, complaint in (
-        ("gh issue list", "the job must search for an existing tracking issue"),
-        ("gh issue comment", "the job must comment on an existing tracking issue"),
-        ("gh issue create", "the job must create the tracking issue when absent"),
-    ):
-        if not any(command in run for run in runs):
-            problems.append(complaint)
     if not any(_reads_run_creation_time(run) for run in runs):
         problems.append("the job must read the run date from the run")
     if any("--label" in run for run in runs):

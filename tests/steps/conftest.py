@@ -29,6 +29,10 @@ _TRACEBACK_FRAME_PATTERN: re.Pattern[str] = re.compile(
 )
 _STACK_HEADING: typ.Final[str] = "Stack (most recent call last):"
 _TRACEBACK_HEADING: typ.Final[str] = "Traceback (most recent call last):"
+_SECTION_HEADINGS: typ.Final[frozenset[str]] = frozenset({
+    _STACK_HEADING,
+    _TRACEBACK_HEADING,
+})
 _CARET_LINE_PATTERN: re.Pattern[str] = re.compile(r"^\s*[\^~]+$")
 _FROZEN_FILENAME_PATTERN: re.Pattern[str] = re.compile(r"^<frozen\b[^>]*>$")
 _EXTERNAL_ROOT_KEYS: typ.Final[tuple[str, ...]] = (
@@ -176,43 +180,52 @@ def strip_external_stack_frames(
         if external_roots is not None
         else _external_roots_from_sysconfig()
     )
-    lines = output.splitlines()
+    return _rejoin_lines(_strip_frames(output.splitlines(), roots), output)
+
+
+def _strip_frames(lines: list[str], roots: cabc.Sequence[Path]) -> list[str]:
+    """Return the lines with external frame blocks removed from stack sections."""
     kept: list[str] = []
     index = 0
     in_stack_section = False
 
     while index < len(lines):
-        line = lines[index]
-        heading = line.strip()
-        if heading == _STACK_HEADING:
-            in_stack_section = True
-            kept.append(line)
+        heading = lines[index].strip()
+        if heading in _SECTION_HEADINGS:
+            # A heading always ends the previous section and starts its own,
+            # so a second stack heading inside one section is still a heading.
+            in_stack_section = heading == _STACK_HEADING
+            kept.append(lines[index])
             index += 1
-            continue
-        if in_stack_section and heading == _TRACEBACK_HEADING:
-            in_stack_section = False
-            kept.append(line)
+        elif not in_stack_section:
+            kept.append(lines[index])
             index += 1
-            continue
-        if not in_stack_section:
-            kept.append(line)
-            index += 1
-            continue
+        else:
+            index = _keep_or_drop_frame(lines, index, roots, kept)
+    return kept
 
-        frame = _parse_frame(lines, index)
-        if frame is None:
-            kept.append(line)
-            index += 1
-            continue
 
-        block_end = _frame_block_end(lines, frame)
-        if _is_external_frame_file(frame.frame_file, roots):
-            index = block_end
-            continue
+def _keep_or_drop_frame(
+    lines: list[str],
+    index: int,
+    roots: cabc.Sequence[Path],
+    kept: list[str],
+) -> int:
+    """Append one stack frame's block to ``kept`` unless it is external.
+
+    Returns
+    -------
+    int
+        The index just past the frame block, whether kept or dropped.
+    """
+    frame = _parse_frame(lines, index)
+    if frame is None:
+        kept.append(lines[index])
+        return index + 1
+    block_end = _frame_block_end(lines, frame)
+    if not _is_external_frame_file(frame.frame_file, roots):
         kept.extend(lines[index:block_end])
-        index = block_end
-
-    return _rejoin_lines(kept, output)
+    return block_end
 
 
 def _external_roots_from_sysconfig() -> tuple[Path, ...]:
