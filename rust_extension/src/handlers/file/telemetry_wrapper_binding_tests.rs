@@ -36,16 +36,16 @@ fn rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
         test_config(),
         RotationConfig::new(1 << 20, 2),
     )
-    .expect("the rotating handler must open its file");
+    .unwrap_or_else(|err| panic!("the rotating handler must open its file: {err}"));
     Py::new(py, PyRotatingFileHandler::from_core(core))
-        .expect("the rotating handler must be a valid pyclass")
+        .unwrap_or_else(|err| panic!("the rotating handler must be a valid pyclass: {err}"))
         .into_any()
 }
 
 /// Build a timed-rotating wrapper over a real file.
 fn timed_rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
-        .expect("an hourly schedule is valid");
+        .unwrap_or_else(|err| panic!("an hourly schedule is valid: {err}"));
     let core = FemtoTimedRotatingFileHandler::with_capacity_flush_policy(
         path,
         DefaultFormatter,
@@ -55,14 +55,14 @@ fn timed_rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
             backup_count: 2,
         },
     )
-    .expect("the timed-rotating handler must open its file");
+    .unwrap_or_else(|err| panic!("the timed-rotating handler must open its file: {err}"));
     Py::new(py, PyTimedRotatingFileHandler::from_core(core))
-        .expect("the timed-rotating handler must be a valid pyclass")
+        .unwrap_or_else(|err| panic!("the timed-rotating handler must be a valid pyclass: {err}"))
         .into_any()
 }
 
 /// Queue configuration shared by the wrapper cases.
-fn test_config() -> HandlerConfig {
+const fn test_config() -> HandlerConfig {
     HandlerConfig {
         capacity: 4,
         flush_interval: 1,
@@ -76,7 +76,7 @@ fn test_config() -> HandlerConfig {
 /// writer only reports stages that call caused. The capacity and the policy
 /// come from the case: a narrow queue is what makes a refusal or an enqueue
 /// timeout reachable, and a wider one leaves room while the worker is parked.
-pub(super) fn scripted_config(
+pub(super) const fn scripted_config(
     writer: ScriptedWriter,
     policy: OverflowPolicy,
     capacity: usize,
@@ -107,7 +107,7 @@ pub(super) fn rotating_over_writer_with_capacity(
     let core =
         FemtoRotatingFileHandler::with_writer_for_test(scripted_config(writer, policy, capacity));
     Py::new(py, PyRotatingFileHandler::from_core(core))
-        .expect("the rotating handler must be a valid pyclass")
+        .unwrap_or_else(|err| panic!("the rotating handler must be a valid pyclass: {err}"))
         .into_any()
 }
 
@@ -129,10 +129,10 @@ pub(super) fn timed_rotating_over_writer_with_capacity(
 ) -> Py<PyAny> {
     let inner = FemtoFileHandler::with_writer_for_test(scripted_config(writer, policy, capacity));
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
-        .expect("an hourly schedule is valid");
+        .unwrap_or_else(|err| panic!("an hourly schedule is valid: {err}"));
     let core = FemtoTimedRotatingFileHandler::new_with_schedule(inner, schedule, 2);
     Py::new(py, PyTimedRotatingFileHandler::from_core(core))
-        .expect("the timed-rotating handler must be a valid pyclass")
+        .unwrap_or_else(|err| panic!("the timed-rotating handler must be a valid pyclass: {err}"))
         .into_any()
 }
 
@@ -140,9 +140,9 @@ pub(super) fn timed_rotating_over_writer_with_capacity(
 pub(super) fn diagnostics_map(py: Python<'_>, handler: &Py<PyAny>) -> BTreeMap<String, u64> {
     handler
         .call_method0(py, "wait_diagnostics")
-        .expect("wait_diagnostics must not raise")
+        .unwrap_or_else(|err| panic!("wait_diagnostics must not raise: {err}"))
         .extract(py)
-        .expect("wait_diagnostics must return a counter map")
+        .unwrap_or_else(|err| panic!("wait_diagnostics must return a counter map: {err}"))
 }
 
 /// Each wrapper's successful waits are counted and labelled with its own kind.
@@ -181,44 +181,59 @@ fn each_wrapper_labels_its_own_waits(
     });
 
     assert_eq!(
-        diagnostics["handle_accepted"], 1,
+        diagnostics.get("handle_accepted").copied(),
+        Some(1),
         "the wrapper must count its accepted record: {diagnostics:?}",
     );
     assert_eq!(
-        diagnostics["flush_acknowledged"], 1,
+        diagnostics.get("flush_acknowledged").copied(),
+        Some(1),
         "the wrapper must count its acknowledged flush: {diagnostics:?}",
     );
     assert_eq!(
-        diagnostics["close_completed"], 1,
+        diagnostics.get("close_completed").copied(),
+        Some(1),
         "the wrapper must count its shutdown: {diagnostics:?}",
     );
 
     let events = collector.captured();
     let kinds: Vec<_> = events
         .iter()
-        .map(|event| event.fields["handler_kind"].clone())
+        .map(|event| event.fields.get("handler_kind").map(String::as_str))
         .collect();
     assert_eq!(
         kinds,
-        [expected_kind, expected_kind, expected_kind],
+        [
+            Some(expected_kind),
+            Some(expected_kind),
+            Some(expected_kind)
+        ],
         "every wait must carry the wrapper's own kind: {events:?}",
     );
     let operations: Vec<_> = events
         .iter()
-        .map(|event| event.fields["operation"].clone())
+        .map(|event| event.fields.get("operation").map(String::as_str))
         .collect();
     assert_eq!(
         operations,
-        ["handler_handle", "handler_flush", "handler_close"],
+        [
+            Some("handler_handle"),
+            Some("handler_flush"),
+            Some("handler_close")
+        ],
         "one wait must emit one event: {events:?}",
     );
     let outcomes: Vec<_> = events
         .iter()
-        .map(|event| event.fields["wait_outcome"].clone())
+        .map(|event| event.fields.get("wait_outcome").map(String::as_str))
         .collect();
     assert_eq!(
         outcomes,
-        ["handle_accepted", "flush_acknowledged", "close_completed"],
+        [
+            Some("handle_accepted"),
+            Some("flush_acknowledged"),
+            Some("close_completed")
+        ],
         "the wrappers must record the outcomes they observed: {events:?}",
     );
 }
