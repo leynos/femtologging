@@ -111,7 +111,12 @@ impl Serialize for HttpSerializableRecord<'_> {
     }
 }
 
-/// Emit the always-present fields that identify the logging call.
+/// Emit the fields that identify the logging call, and its thread.
+///
+/// `threadName` is emitted here, beside `thread`, rather than with the optional
+/// payloads below: splitting the serialiser must not reorder the wire format,
+/// and a peer that reads the map in order would see `threadName` move past any
+/// caller-supplied key/value pairs.
 fn serialize_identity<M>(map: &mut M, record: &HttpSerializableRecord<'_>) -> Result<(), M::Error>
 where
     M: SerializeMap,
@@ -123,7 +128,11 @@ where
     map.serialize_entry("filename", record.filename)?;
     map.serialize_entry("lineno", &record.lineno)?;
     map.serialize_entry("module", record.module)?;
-    map.serialize_entry("thread", &format_args!("{:?}", record.thread_id))
+    map.serialize_entry("thread", &format_args!("{:?}", record.thread_id))?;
+    if let Some(name) = record.thread_name {
+        map.serialize_entry("threadName", name)?;
+    }
+    Ok(())
 }
 
 /// Emit the user's structured key/value pairs as top-level fields.
@@ -141,7 +150,7 @@ where
     Ok(())
 }
 
-/// Emit the fields that are present only when the record carries them.
+/// Emit the payload fields that are present only when the record carries them.
 fn serialize_optional_payloads<M>(
     map: &mut M,
     record: &HttpSerializableRecord<'_>,
@@ -149,9 +158,6 @@ fn serialize_optional_payloads<M>(
 where
     M: SerializeMap,
 {
-    if let Some(name) = record.thread_name {
-        map.serialize_entry("threadName", name)?;
-    }
     if let Some(exc) = record.exc_info {
         map.serialize_entry("exc_info", exc)?;
     }
