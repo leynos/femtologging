@@ -44,19 +44,43 @@ installed_toolchains() {
   ( cd -- / && rustup toolchain list )
 }
 
-# Report whether `channel` is installed, matching its name literally.
+# Resolve rustup's default host triple from a neutral directory.
+#
+# As with the enumeration, `/` lies outside the repository, so the pinned
+# `rust-toolchain.toml` cannot override the answer. A rustup too old, or too
+# broken, to report a host triple yields a failure that the caller turns into
+# the bare-channel fallback below.
+host_triple() {
+  local shown host
+  shown=$( cd -- / && rustup show ) || return 1
+  host=$(printf '%s\n' "$shown" | sed -n 's/^Default host: //p')
+  if [ -z "$host" ]; then
+    return 1
+  fi
+  printf '%s\n' "$host"
+}
+
+# Report whether `channel` is installed for this host, matching its name
+# literally.
 #
 # rustup prints one line per toolchain as `<name>[ (<status>)]`, so the first
-# whitespace-delimited field is the name. Literal `case` patterns accept only
-# the exact channel or that channel with a host-triple suffix; a prefix regex
-# would wrongly accept `1.99.1` when the host only has `1.99.10`.
+# whitespace-delimited field is the name. The pinned channel is materialised
+# as `<channel>-<host>`; accepting any host-triple suffix would let another
+# architecture's toolchain satisfy a preflight whose linker and binaries are
+# host-specific. Only when rustup cannot report a host triple is the exact
+# bare `<channel>` accepted, as a fallback rather than a general pattern.
 toolchain_is_installed() {
-  local channel=$1 line name
+  local channel=$1 host line name
+  host=$(host_triple) || host=
   while IFS= read -r line; do
     name=${line%%[[:space:]]*}
-    case "$name" in
-      "$channel" | "$channel"-*) return 0 ;;
-    esac
+    if [ -n "$host" ]; then
+      if [ "$name" = "$channel-$host" ]; then
+        return 0
+      fi
+    elif [ "$name" = "$channel" ]; then
+      return 0
+    fi
   done < <(installed_toolchains)
   return 1
 }

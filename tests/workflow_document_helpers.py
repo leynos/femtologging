@@ -1,10 +1,10 @@
-"""Readers for workflow documents and their runner labels.
+"""Readers that discover, load and walk the repository's workflow documents.
 
-The provisioning contract inspects every job of every repository workflow,
-including runner forms expressed as a scalar, a sequence, a mapping or a
-matrix. Keeping these document readers away from the Make reachability rules
-lets each module stay small and gives the workflow mutations one place to
-change.
+The provisioning contract inspects every concrete job of every workflow.
+Discovery, parsing (including duplicate-key rejection) and job or step access
+live here, away from the Make reachability rules and the runner classification
+in `workflow_runner_helpers`, so each module stays small and gives the workflow
+mutations one place to change.
 """
 
 from __future__ import annotations
