@@ -52,12 +52,14 @@ impl FileHandlerBuilder {
     }
 
     /// Set the overflow policy for the handler.
+    #[must_use]
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.common.set_overflow_policy(policy);
         self
     }
 
     /// Attach a formatter instance or identifier.
+    #[must_use]
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -67,6 +69,7 @@ impl FileHandlerBuilder {
     }
 
     /// Attach filters by identifier.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -118,15 +121,15 @@ builder_methods! {
                 py_fn: py_with_flush_after_records,
                 py_name: "with_flush_after_records",
                 py_text_signature: "(self, interval)",
-                rust_args: (interval: NonZeroU64),
+                rust_args: (validated_interval: NonZeroU64),
                 py_args: (interval: u64),
                 py_prelude: {
-                    let interval =
+                    let validated_interval =
                         py_flush_after_records_to_nonzero(interval)?;
                 },
                 self_ident: builder,
                 body: {
-                    builder.common.set_flush_after_records(interval);
+                    builder.common.set_flush_after_records(validated_interval);
                 }
             }
         }
@@ -143,12 +146,12 @@ builder_methods! {
 
             /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
             #[pyo3(name = "with_overflow_policy")]
-            fn py_with_overflow_policy<'py>(
-                mut slf: PyRefMut<'py, Self>,
-                policy: PyOverflowPolicy,
-            ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_overflow_policy(policy.inner);
-                Ok(slf)
+            fn py_with_overflow_policy(
+                mut slf: PyRefMut<'_, Self>,
+                #[pyo3(from_py_with = extract_overflow_policy)] policy: OverflowPolicy,
+            ) -> PyRefMut<'_, Self> {
+                slf.common.set_overflow_policy(policy);
+                slf
             }
 
             /// Preserves the file worker ownership boundary: producers enqueue commands while this path alone mutates buffered I/O and rotation state.
@@ -159,16 +162,17 @@ builder_methods! {
                 mut slf: PyRefMut<'py, Self>,
                 formatter: Bound<'py, PyAny>,
             ) -> PyResult<PyRefMut<'py, Self>> {
-                slf.common.set_formatter_from_py(&formatter)?;
+                let formatter_any = formatter.into_any();
+                slf.common.set_formatter_from_py(&formatter_any)?;
                 Ok(slf)
             }
 
             /// Store filter IDs for resolution by the configuration builder.
             #[pyo3(name = "with_filters")]
-            fn py_with_filters<'py>(
-                mut slf: PyRefMut<'py, Self>,
+            fn py_with_filters(
+                mut slf: PyRefMut<'_, Self>,
                 filter_ids: Vec<String>,
-            ) -> PyRefMut<'py, Self> {
+            ) -> PyRefMut<'_, Self> {
                 slf.common.set_filter_ids(filter_ids);
                 slf
             }
@@ -185,6 +189,16 @@ builder_methods! {
             }
         }
     }
+}
+
+/// Read the overflow policy out of the Python wrapper argument.
+///
+/// The wrapper is owned by Python, and the policy it carries is `Copy`, so the
+/// binding takes the inner value and leaves the wrapper with the interpreter.
+#[cfg(feature = "python")]
+fn extract_overflow_policy(policy: &Bound<'_, PyAny>) -> PyResult<OverflowPolicy> {
+    let wrapper = policy.extract::<PyRef<'_, PyOverflowPolicy>>()?;
+    Ok(wrapper.inner)
 }
 
 #[cfg(feature = "python")]
