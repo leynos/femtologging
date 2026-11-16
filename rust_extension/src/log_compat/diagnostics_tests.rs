@@ -68,7 +68,8 @@ fn ignored_internal_warnings_are_mirrored_to_stderr() {
 /// without the fixture this case would assert nothing.
 #[rstest]
 #[serial]
-fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) {
+fn refused_targets_fall_back_to_root_without_losing_records() {
+    log_max_level();
     manager::reset_manager();
 
     let refused = [
@@ -78,7 +79,7 @@ fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) 
             "a".repeat(crate::manager::MAX_LOGGER_NAME_BYTES)
         ),
         // A newline would let a target forge a line boundary in output.
-        "stress.forged\nfake [ERROR] injected".to_string(),
+        "stress.forged\nfake [ERROR] injected".to_owned(),
         // Deeper than `MAX_LOGGER_NAME_SEGMENTS`.
         ["deep"; crate::manager::MAX_LOGGER_NAME_SEGMENTS + 1].join("."),
     ];
@@ -148,7 +149,8 @@ fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) 
 /// fixture the assertion would hold for the wrong reason.
 #[rstest]
 #[serial]
-fn the_bridge_ignores_records_about_itself(_log_max_level: ()) {
+fn the_bridge_ignores_records_about_itself() {
+    log_max_level();
     manager::reset_manager();
 
     Python::attach(|py| {
@@ -221,7 +223,7 @@ fn refused_target_diagnostics_are_bounded_and_escaped() {
     let escaped = format!("stress.forged\nfake [ERROR] {}", "b".repeat(1_000_000));
     let overlong = format!("stress.{}", "c".repeat(1_000_000));
 
-    let message = lookup_failure_message(LookupFailureDiagnostic {
+    let message = lookup_failure_message(&LookupFailureDiagnostic {
         reason: "invalid logger target",
         target: &escaped,
         normalized: &escaped,
