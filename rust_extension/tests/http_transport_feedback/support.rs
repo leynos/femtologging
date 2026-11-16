@@ -110,20 +110,16 @@ impl TestCollector {
         let count = Arc::new(AtomicUsize::new(0));
         let (tx, requests) = mpsc::channel();
 
-        let thread_stop = Arc::clone(&stop);
-        let thread_overflowed = Arc::clone(&overflowed);
-        let thread_count = Arc::clone(&count);
+        let state = RequestState {
+            stop: Arc::clone(&stop),
+            overflowed: Arc::clone(&overflowed),
+            count: Arc::clone(&count),
+            hard_cap,
+        };
         let handle = thread::spawn(move || {
-            serve_requests(
-                listener,
-                &thread_stop,
-                &thread_overflowed,
-                &thread_count,
-                hard_cap,
-                |request| {
-                    let _ = tx.send(request);
-                },
-            );
+            serve_requests(listener, &state, |request| {
+                let _ = tx.send(request);
+            });
         });
 
         Ok(Self {
@@ -178,27 +174,45 @@ impl Drop for TestCollector {
     }
 }
 
-/// Accept and answer requests until the stop flag is raised.
-fn serve_requests<F>(
-    listener: TcpListener,
-    stop: &AtomicBool,
-    overflowed: &AtomicBool,
-    count: &AtomicUsize,
+/// Request accounting shared with the collector's accept loop.
+struct RequestState {
+    /// Set when the accept loop should stop.
+    stop: Arc<AtomicBool>,
+    /// Set once more requests arrive than the hard cap allows.
+    overflowed: Arc<AtomicBool>,
+    /// Number of requests observed, including those above the hard cap.
+    count: Arc<AtomicUsize>,
+    /// Number of requests accepted before overflow is declared.
     hard_cap: usize,
-    mut observe: F,
-) where
+}
+
+impl RequestState {
+    /// Account for one observed request, flagging overflow past the cap.
+    fn record_request(&self) {
+        let seen = self.count.fetch_add(1, Ordering::SeqCst) + 1;
+        if seen > self.hard_cap {
+            self.overflowed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Return whether the accept loop should stop.
+    fn should_stop(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+}
+
+/// Accept and answer requests until the stop flag is raised.
+fn serve_requests<F>(listener: TcpListener, state: &RequestState, mut observe: F)
+where
     F: FnMut(RequestObservation),
 {
-    while !stop.load(Ordering::SeqCst) {
+    while !state.should_stop() {
         match listener.accept() {
             Ok((mut stream, _)) => {
                 let Ok(request) = read_request(&mut stream) else {
                     continue;
                 };
-                let seen = count.fetch_add(1, Ordering::SeqCst) + 1;
-                if seen > hard_cap {
-                    overflowed.store(true, Ordering::SeqCst);
-                }
+                state.record_request();
                 observe(request);
                 let _ = stream.write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",

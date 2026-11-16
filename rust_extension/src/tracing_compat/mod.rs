@@ -269,9 +269,15 @@ where
             }
 
             let metadata = Self::build_record_metadata(event, ctx, captured.key_values);
-            let _ = logger
-                .borrow(py)
-                .log_with_metadata_and_origin(level, &message, metadata, origin);
+            let _ =
+                logger
+                    .borrow(py)
+                    .log_with_metadata_and_origin(crate::logger::OriginLogRequest {
+                        level,
+                        message: &message,
+                        metadata,
+                        origin,
+                    });
         });
     }
 }

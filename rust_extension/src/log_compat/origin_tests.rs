@@ -20,7 +20,7 @@ use serial_test::serial;
 use super::FemtoLogAdapter;
 use super::test_support::{log_max_level, unique_logger_name};
 use crate::handler::FemtoHandlerTrait;
-use crate::log_record::RecordOrigin;
+use crate::log_record::{FemtoLogRecord, RecordOrigin};
 use crate::manager::{self, MAX_LOGGERS};
 use crate::test_utils::collecting_handler::CollectingHandler;
 use crate::transport_origin::{
@@ -54,22 +54,31 @@ fn attach_collector(logger_name: &str) -> Arc<CollectingHandler> {
     })
 }
 
-/// Emit one information record for `target` through the adapter.
+/// Message used by the bridge-origin probes.
 ///
-/// The record is built inside the call expression so the lazily formatted
-/// arguments outlive the borrow the record takes of them.
-fn log_info_record(target: &str, message: &str) {
+/// The tests assert the record's origin and logger, not its text, so one
+/// message keeps the probe helper to a single string argument.
+const PROBE_MESSAGE: &str = "bridge origin probe";
+
+/// Emit one information record for `target` through the adapter.
+fn log_info_record(target: &str) {
     FemtoLogAdapter.log(
         &log::Record::builder()
-            .args(format_args!("{message}"))
+            .args(format_args!("{PROBE_MESSAGE}"))
             .level(log::Level::Info)
             .target(target)
             .build(),
     );
 }
 
+/// Assert the collector received exactly one record with `origin`.
+fn assert_single_record(records: &[FemtoLogRecord], origin: RecordOrigin) {
+    assert_eq!(records.len(), 1, "expected exactly one record");
+    assert_eq!(records[0].origin(), origin);
+}
+
 /// Flush `logger_name` and return the records its collector received.
-fn flushed_records(logger_name: &str, handler: &CollectingHandler) -> Vec<crate::FemtoLogRecord> {
+fn flushed_records(logger_name: &str, handler: &CollectingHandler) -> Vec<FemtoLogRecord> {
     Python::attach(|py| {
         let logger = manager::get_logger(py, logger_name).expect("logger created");
         assert!(logger.borrow(py).flush_handlers(), "flush should drain");
@@ -87,11 +96,10 @@ fn adapter_marks_records_emitted_inside_transport_work(
     let handler = attach_collector(&unique_logger_name);
 
     let _scope = enter_http_transport();
-    log_info_record(&unique_logger_name, "delivery diagnostic");
+    log_info_record(&unique_logger_name);
 
     let records = flushed_records(&unique_logger_name, &handler);
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
+    assert_single_record(&records, RecordOrigin::HttpTransport);
 }
 
 /// A record emitted outside transport work remains application-origin.
@@ -100,11 +108,10 @@ fn adapter_marks_records_emitted_inside_transport_work(
 fn adapter_leaves_ordinary_records_unmarked(_log_max_level: (), unique_logger_name: String) {
     let handler = attach_collector(&unique_logger_name);
 
-    log_info_record(&unique_logger_name, "application record");
+    log_info_record(&unique_logger_name);
 
     let records = flushed_records(&unique_logger_name, &handler);
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].origin(), RecordOrigin::Application);
+    assert_single_record(&records, RecordOrigin::Application);
 }
 
 /// Arguments are formatted after the bridge suspends the transport scope.
@@ -144,8 +151,7 @@ fn lazily_formatted_arguments_observe_a_suspended_scope(
     drop(scope);
 
     let records = flushed_records(&unique_logger_name, &handler);
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
+    assert_single_record(&records, RecordOrigin::HttpTransport);
 }
 
 /// An invalid target falls back to root and keeps the marker.
@@ -156,12 +162,11 @@ fn an_invalid_target_falls_back_to_root_with_the_marker(_log_max_level: ()) {
     let handler = attach_collector("root");
 
     let _scope = enter_http_transport();
-    log_info_record("invalid..target", "marked fallback");
+    log_info_record("invalid..target");
 
     let records = flushed_records("root", &handler);
-    assert_eq!(records.len(), 1);
+    assert_single_record(&records, RecordOrigin::HttpTransport);
     assert_eq!(records[0].logger(), "root");
-    assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
 }
 
 /// A full registry falls back to root and keeps the marker.
@@ -202,13 +207,12 @@ fn log_bridge_origin_capacity_child() {
             .expect("collector registers on root");
 
         let _scope = enter_http_transport();
-        log_info_record("origin-capacity-overflow", "marked fallback");
+        log_info_record("origin-capacity-overflow");
 
         assert!(root.borrow(py).flush_handlers(), "root should drain");
         let records = handler.collected();
-        assert_eq!(records.len(), 1);
+        assert_single_record(&records, RecordOrigin::HttpTransport);
         assert_eq!(records[0].logger(), "root");
-        assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
     });
 }
 
@@ -222,12 +226,11 @@ fn parent_propagation_preserves_the_marker(_log_max_level: ()) {
     let handler = attach_collector(parent_name);
 
     let _scope = enter_http_transport();
-    log_info_record(child_name, "propagated delivery diagnostic");
+    log_info_record(child_name);
 
     let records = flushed_records(parent_name, &handler);
-    assert_eq!(records.len(), 1);
+    assert_single_record(&records, RecordOrigin::HttpTransport);
     assert_eq!(records[0].logger(), child_name);
-    assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
 }
 
 /// Suspending is visible to the bridge's own nested call, but not outside it.

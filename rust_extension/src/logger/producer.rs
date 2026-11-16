@@ -24,6 +24,22 @@ mod handler_filters;
 use super::HandlerAttachment;
 use super::{FemtoLogger, QueuedRecord};
 
+/// A log request whose transport origin the caller has already decided.
+///
+/// Bundling the fields keeps the origin-aware entry point within the project's
+/// parameter-count budget and makes the origin an explicit part of the request
+/// rather than an easy-to-forget trailing argument.
+pub(crate) struct OriginLogRequest<'a> {
+    /// Severity the producer should apply.
+    pub(crate) level: FemtoLevel,
+    /// Rendered message to attach to the record.
+    pub(crate) message: &'a str,
+    /// Metadata captured by the caller.
+    pub(crate) metadata: RecordMetadata,
+    /// Origin to attach before producer filters run.
+    pub(crate) origin: RecordOrigin,
+}
+
 impl FemtoLogger {
     /// Core logging logic shared between Python and Rust APIs.
     ///
@@ -89,7 +105,12 @@ impl FemtoLogger {
         message: &str,
         metadata: RecordMetadata,
     ) -> Option<String> {
-        self.log_with_metadata_and_origin(level, message, metadata, RecordOrigin::Application)
+        self.log_with_metadata_and_origin(OriginLogRequest {
+            level,
+            message,
+            metadata,
+            origin: RecordOrigin::Application,
+        })
     }
 
     /// Log a message with metadata and an explicit origin.
@@ -100,11 +121,14 @@ impl FemtoLogger {
     /// journey, including handler-filter snapshots and parent propagation.
     pub(crate) fn log_with_metadata_and_origin(
         &self,
-        level: FemtoLevel,
-        message: &str,
-        mut metadata: RecordMetadata,
-        origin: RecordOrigin,
+        request: OriginLogRequest<'_>,
     ) -> Option<String> {
+        let OriginLogRequest {
+            level,
+            message,
+            mut metadata,
+            origin,
+        } = request;
         if self.refuse_if_disabled() {
             return None;
         }

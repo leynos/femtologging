@@ -199,12 +199,16 @@ impl log::Log for FemtoLogAdapter {
                 ..Default::default()
             };
 
-            let _ = logger.borrow(py).log_with_metadata_and_origin(
-                level,
-                &record.args().to_string(),
-                metadata,
-                origin,
-            );
+            let message = record.args().to_string();
+            let _ =
+                logger
+                    .borrow(py)
+                    .log_with_metadata_and_origin(crate::logger::OriginLogRequest {
+                        level,
+                        message: &message,
+                        metadata,
+                        origin,
+                    });
         });
     }
 

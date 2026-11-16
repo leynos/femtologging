@@ -17,7 +17,7 @@ use crate::http_handler::FemtoHTTPHandler;
 use crate::http_handler::queue::HTTPCommand;
 use crate::level::FemtoLevel;
 use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
-use crate::logger::FemtoLogger;
+use crate::logger::{FemtoLogger, OriginLogRequest};
 use crate::shutdown_signal::ShutdownSignal;
 use crate::test_utils::collecting_handler::CollectingHandler;
 
@@ -148,12 +148,12 @@ fn marked_records_reach_only_the_non_http_handler() {
         .add_handler(Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>)
         .expect("collector registers");
 
-    logger.log_with_metadata_and_origin(
-        FemtoLevel::Info,
-        "marked",
-        RecordMetadata::default(),
-        RecordOrigin::HttpTransport,
-    );
+    logger.log_with_metadata_and_origin(OriginLogRequest {
+        level: FemtoLevel::Info,
+        message: "marked",
+        metadata: RecordMetadata::default(),
+        origin: RecordOrigin::HttpTransport,
+    });
     assert!(logger.flush_handlers(), "dispatch should drain");
     assert!(first.flush(), "first worker should acknowledge");
     assert!(second.flush(), "second worker should acknowledge");
@@ -170,12 +170,12 @@ fn marked_records_reach_only_the_non_http_handler() {
         "another HTTP handler must not continue the cycle"
     );
 
-    logger.log_with_metadata_and_origin(
-        FemtoLevel::Info,
-        "application",
-        RecordMetadata::default(),
-        RecordOrigin::Application,
-    );
+    logger.log_with_metadata_and_origin(OriginLogRequest {
+        level: FemtoLevel::Info,
+        message: "application",
+        metadata: RecordMetadata::default(),
+        origin: RecordOrigin::Application,
+    });
     assert!(logger.flush_handlers(), "dispatch should drain");
     assert!(first.flush(), "first worker should acknowledge");
     assert!(second.flush(), "second worker should acknowledge");
