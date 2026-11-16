@@ -206,11 +206,11 @@ impl FemtoHandlerTrait for PyHandler {
 }
 
 #[cfg(all(test, feature = "python"))]
-#[path = "py_handler/flush_diagnostics_tests.rs"]
+#[path = "flush_diagnostics_tests.rs"]
 mod flush_diagnostics_tests;
 
 #[cfg(all(test, feature = "python"))]
-#[path = "py_handler/tests.rs"]
+#[path = "tests.rs"]
 mod tests;
 
 /// Fallback PyHandler when python feature is disabled.

@@ -375,5 +375,5 @@ pub(crate) fn clear_log_context_for_test() {
 }
 
 #[cfg(test)]
-#[path = "log_context_tests.rs"]
+#[path = "../log_context_tests.rs"]
 mod tests;
