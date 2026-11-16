@@ -9,10 +9,17 @@ document reader never asks about the platform.
 
 from __future__ import annotations
 
+import re
 import typing as typ
 
 if typ.TYPE_CHECKING:
     from tests.workflow_document_helpers import Job
+
+#: A ``matrix.<key>`` reference in a ``runs-on`` expression names the matrix
+#: value that supplies the concrete runner label.
+_MATRIX_REFERENCE: typ.Final[re.Pattern[str]] = re.compile(
+    r"matrix\.([A-Za-z_][A-Za-z0-9_]*)"
+)
 
 
 def _flatten(value: object) -> list[str]:
@@ -39,35 +46,63 @@ def _flatten(value: object) -> list[str]:
             return []
 
 
-def _matrix_runner_values(matrix: dict[str, typ.Any]) -> list[str]:
-    """Return the runner labels a job matrix names.
+def _matrix_runner_keys(runs_on: list[str]) -> list[str]:
+    """Return the matrix keys a job's ``runs-on`` values name, in order.
+
+    Parameters
+    ----------
+    runs_on
+        The scalar runner values flattened from a job's ``runs-on``.
+
+    Returns
+    -------
+    list[str]
+        The distinct ``matrix.<key>`` names, without repetition.
+    """
+    keys = [
+        match.group(1)
+        for value in runs_on
+        for match in _MATRIX_REFERENCE.finditer(value)
+    ]
+    return list(dict.fromkeys(keys))
+
+
+def _matrix_runner_values(matrix: dict[str, typ.Any], keys: list[str]) -> list[str]:
+    """Return the runner labels a job matrix names for `keys`.
 
     Parameters
     ----------
     matrix
         The job's ``strategy.matrix`` mapping.
+    keys
+        The matrix keys the job's ``runs-on`` expressions reference; ``os``
+        when it references none. Other fields, such as ``arch`` or ``target``,
+        are not runner labels and are never read.
 
     Returns
     -------
     list[str]
-        Labels from ``include`` entries and from a direct ``os`` key.
+        Labels from ``include`` entries and from the direct key mappings.
     """
+    wanted = keys or ["os"]
     included = matrix.get("include")
     entries = included if isinstance(included, list) else []
     from_include = [
-        str(entry["os"])
+        str(entry[key])
         for entry in entries
-        if isinstance(entry, dict) and "os" in entry
+        if isinstance(entry, dict)
+        for key in wanted
+        if key in entry
     ]
-    return from_include + _flatten(matrix.get("os"))
+    return from_include + [text for key in wanted for text in _flatten(matrix.get(key))]
 
 
 def runner_values(job: Job) -> list[str]:
-    """Return the runner labels and matrix operating systems of `job`."""
+    """Return the runner labels and matrix values of `job`."""
     values = _flatten(job.get("runs-on"))
     matrix = job.get("strategy", {}).get("matrix", {})
     if isinstance(matrix, dict):
-        values.extend(_matrix_runner_values(matrix))
+        values.extend(_matrix_runner_values(matrix, _matrix_runner_keys(values)))
     return values
 
 

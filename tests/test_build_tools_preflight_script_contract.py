@@ -137,7 +137,13 @@ def _installed(channel: str) -> str:
     return f"{channel}-{_HOST_TRIPLE} (active)"
 
 
-def _stub_rustup(bin_dir: Path, listed: str, *, pwd_log: Path | None = None) -> None:
+def _stub_rustup(
+    bin_dir: Path,
+    listed: str,
+    *,
+    pwd_log: Path | None = None,
+    host_triple: str | None = _HOST_TRIPLE,
+) -> None:
     """Install a rustup stub that lists `listed` as an installed toolchain.
 
     Parameters
@@ -147,13 +153,23 @@ def _stub_rustup(bin_dir: Path, listed: str, *, pwd_log: Path | None = None) -> 
     listed
         The single line the stub reports for `rustup toolchain list`.
     pwd_log
-        When given, the stub also records its working directory here.
+        When given, the stub records its working directory here for each
+        command it serves.
+    host_triple
+        The triple `rustup show` reports, or None when the probe must fail.
     """
-    record = f"pwd > '{pwd_log}'; " if pwd_log is not None else ""
+    record = f"pwd >> '{pwd_log}'; " if pwd_log is not None else ""
+    host = (
+        f"printf 'Default host: {host_triple}\\n'; exit 0"
+        if host_triple is not None
+        else "exit 1"
+    )
     fake_executable(
         bin_dir / "rustup",
         'if [ "$1" = toolchain ] && [ "$2" = list ]; then '
-        f"{record}printf '{listed}\\n'; exit 0; fi; exit 1",
+        f"{record}printf '{listed}\\n'; exit 0; fi; "
+        f'if [ "$1" = show ]; then {record}{host}; fi; '
+        "exit 1",
     )
 
 
@@ -166,6 +182,7 @@ class _Case:
     host_os: str
     returncode: int
     messages: tuple[str, ...]
+    host_triple: str | None = _HOST_TRIPLE
 
 
 def _cases() -> tuple[_Case, ...]:
@@ -201,6 +218,21 @@ def _cases() -> tuple[_Case, ...]:
             messages=("is not installed",),
         ),
         _Case(
+            listed_toolchain=f"{channel}-aarch64-unknown-linux-gnu (installed)",
+            mold_body="printf 'mold 2.41.0\\n'",
+            host_os="Linux",
+            returncode=1,
+            messages=("is not installed",),
+        ),
+        _Case(
+            listed_toolchain=f"{channel} (installed)",
+            mold_body="printf 'mold 2.41.0\\n'",
+            host_os="Linux",
+            returncode=0,
+            messages=("mold at",),
+            host_triple=None,
+        ),
+        _Case(
             listed_toolchain=_installed(channel),
             mold_body=None,
             host_os="Darwin",
@@ -224,6 +256,8 @@ CASE_IDS: typ.Final[tuple[str, ...]] = (
     "mold-missing",
     "toolchain-missing",
     "toolchain-prefix-collision",
+    "toolchain-other-host",
+    "toolchain-host-unresolved",
     "non-linux",
     "broken-mold",
 )
@@ -245,7 +279,7 @@ def _run_case(tmp_path: Path, case: _Case) -> subprocess.CompletedProcess[str]:
         The probe's completed run.
     """
     bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, case.listed_toolchain)
+    _stub_rustup(bin_dir, case.listed_toolchain, host_triple=case.host_triple)
     if case.mold_body is not None:
         fake_executable(bin_dir / "mold", case.mold_body)
     return _run_preflight(_preflight_environment(bin_dir, host_os=case.host_os))
@@ -260,8 +294,8 @@ def test_the_preflight_judges_each_host_capability(case: _Case, tmp_path: Path) 
         assert message in result.stderr, result.stderr
 
 
-def test_the_toolchain_probe_runs_outside_the_repository(tmp_path: Path) -> None:
-    """The enumeration cannot resolve the repository's toolchain override."""
+def test_the_toolchain_probes_run_outside_the_repository(tmp_path: Path) -> None:
+    """Neither rustup probe can resolve the repository's toolchain override."""
     bin_dir = _probe_bin_dir(tmp_path)
     pwd_log = tmp_path / "rustup-pwd"
     _stub_rustup(bin_dir, _installed(_channel()), pwd_log=pwd_log)
@@ -270,6 +304,8 @@ def test_the_toolchain_probe_runs_outside_the_repository(tmp_path: Path) -> None
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
 
     assert result.returncode == 0, result.stderr
-    assert pwd_log.read_text("utf-8").strip() == "/", (
-        "rustup must be enumerated outside the repository"
+    records = pwd_log.read_text("utf-8").splitlines()
+    assert len(records) == 2, (
+        f"both rustup probes must report their directory: {records}"
     )
+    assert set(records) == {"/"}, "rustup must run outside the repository"
