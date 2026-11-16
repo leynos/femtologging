@@ -168,8 +168,12 @@ jobs:
           # the run's creation time; a blank session date is worse than none.
           run_date="$(gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --json createdAt --jq .createdAt)"
+          # Narrow to title matches on the server first. `--limit` bounds the
+          # fetched results, not the filtered ones, so listing every open issue
+          # and filtering locally would open a duplicate once the tracking issue
+          # fell past the limit. The exact-title check still decides the match.
           issue="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --limit 100 --json number,title \
+            --search "in:title \"$ISSUE_TITLE\"" --limit 100 --json number,title \
             --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')"
           body="$(printf '%s\n' \
             "The scheduled \`heavy-tests\` workflow failed." \

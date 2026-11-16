@@ -242,12 +242,45 @@ def _trigger_problems(found: Job) -> list[str]:
     needed = {needs} if isinstance(needs, str) else set(needs or ())
     if HEAVY_JOB not in needed:
         problems.append("the notification job must depend on the heavy job")
-    condition = str(found.get("if", ""))
-    if "failure()" not in condition:
+    problems.extend(_condition_problems(str(found.get("if", ""))))
+    return problems
+
+
+def _condition_problems(condition: str) -> list[str]:
+    """Return the complaints about the notification job's ``if`` expression.
+
+    Both requirements must be separate conjuncts. ``failure() ||
+    github.event_name == 'schedule'`` contains the same text as the conjunction
+    it is meant to be, but it also fires after a successful scheduled run and
+    after a failed manual one, so substring presence alone cannot accept it.
+
+    Returns
+    -------
+    list[str]
+        One complaint per requirement the expression fails to impose.
+    """
+    terms = [_peel_parens(term) for term in condition.split("&&")]
+    problems: list[str] = []
+    if "||" in condition:
+        problems.append("the notification condition must join its terms with &&")
+    if not any(term == "failure()" for term in terms):
         problems.append("the notification job must run only after a failure")
-    if "schedule" not in condition:
+    if not any(_names_schedule_event(term) for term in terms):
         problems.append("the notification job must run only for scheduled runs")
     return problems
+
+
+def _peel_parens(term: str) -> str:
+    """Return a condition term without whitespace or wrapping parentheses."""
+    term = term.strip()
+    while term.startswith("(") and term.endswith(")"):
+        term = term[1:-1].strip()
+    return term
+
+
+def _names_schedule_event(term: str) -> bool:
+    """Return whether a condition term compares the event name to schedule."""
+    return "github.event_name" in term and "schedule" in term
 
 
 def _permission_problems(found: Job) -> list[str]:
@@ -281,7 +314,11 @@ def _environment_problems(found: Job) -> list[str]:
 def _command_problems(found: Job, *, subject: str) -> list[str]:
     """Return the complaints about the commands the notification runs."""
     runs = [run_text(step) for step in steps(found, subject=subject)]
-    return [*_missing_command_problems(runs), *_run_detail_problems(runs)]
+    return [
+        *_missing_command_problems(runs),
+        *_run_detail_problems(runs),
+        *_issue_lookup_problems(runs),
+    ]
 
 
 def _missing_command_problems(runs: list[str]) -> list[str]:
@@ -295,17 +332,29 @@ def _missing_command_problems(runs: list[str]) -> list[str]:
 
 def _run_detail_problems(runs: list[str]) -> list[str]:
     """Return the complaints about the run details the notification reports."""
-    problems: list[str] = []
     if not any(_reads_run_creation_time(run) for run in runs):
-        problems.append("the job must read the run date from the run")
-    if any("--label" in run for run in runs):
-        problems.append("the tracking issue must not be found by a label")
-    return problems
+        return ["the job must read the run date from the run"]
+    return []
 
 
 def _reads_run_creation_time(run: str) -> bool:
     """Return whether a command asks GitHub for the run's creation time."""
     return "gh run view" in run and "--json createdAt" in run
+
+
+def _issue_lookup_problems(runs: list[str]) -> list[str]:
+    """Return the complaints about how the notification finds the issue."""
+    problems: list[str] = []
+    if any("--label" in run for run in runs):
+        problems.append("the tracking issue must not be found by a label")
+    if not any(_searches_issue_titles(run) for run in runs):
+        problems.append("the issue lookup must search titles on the server")
+    return problems
+
+
+def _searches_issue_titles(run: str) -> bool:
+    """Return whether a command narrows the issue lookup to title matches."""
+    return "gh issue list" in run and "in:title" in run
 
 
 def loom_position_problems(found: Job) -> list[str]:

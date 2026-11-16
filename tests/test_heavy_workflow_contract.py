@@ -98,6 +98,11 @@ def _notification_always(document: Document) -> None:
     job(document, NOTIFY_JOB)["if"] = "always()"
 
 
+def _notification_or_condition(document: Document) -> None:
+    """Accept either a failure or a scheduled run, rather than both."""
+    job(document, NOTIFY_JOB)["if"] = "failure() || github.event_name == 'schedule'"
+
+
 def _notification_without_issue_write(document: Document) -> None:
     """Withhold the permission the notification job needs."""
     job(document, NOTIFY_JOB)["permissions"] = {"contents": "read"}
@@ -132,6 +137,13 @@ def _notification_finds_a_label(document: Document) -> None:
     )
 
 
+def _notification_searches_bodies(document: Document) -> None:
+    """Search issue bodies rather than titles, so a title match is missed."""
+    found = job(document, NOTIFY_JOB)
+    step = steps(found, subject=NOTIFY_JOB)[0]
+    step["run"] = run_text(step).replace("in:title", "in:body")
+
+
 def _loom_step_no_longer_last(document: Document) -> None:
     """Insert a step after the Loom models."""
     found = job(document, HEAVY_JOB)
@@ -146,6 +158,7 @@ _MUTATIONS = (
     pytest.param(_build_without_test_util, id="build-without-test-util"),
     pytest.param(_notification_without_needs, id="notification-without-needs"),
     pytest.param(_notification_always, id="notification-always"),
+    pytest.param(_notification_or_condition, id="notification-or-condition"),
     pytest.param(_notification_without_issue_write, id="notification-read-only"),
     pytest.param(_notification_without_actions_read, id="notification-no-actions"),
     pytest.param(
@@ -154,6 +167,7 @@ _MUTATIONS = (
     ),
     pytest.param(_notification_without_run_url, id="notification-without-run-url"),
     pytest.param(_notification_finds_a_label, id="notification-by-label"),
+    pytest.param(_notification_searches_bodies, id="notification-searches-bodies"),
     pytest.param(_loom_step_no_longer_last, id="loom-not-last"),
 )
 
