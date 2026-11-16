@@ -1030,21 +1030,22 @@ their bindings give the interpreter lock back for the duration of those waits.
 The `flush()` and `close()` boundary is described in
 [Python-facing `flush()` and `close()` waits](#python-facing-flush-and-close-waits);
 this section covers `handle()`, whose wait is the unbounded one, and the
-mechanics all three operations share. `FemtoFileHandler::py_handle` takes no
-interpreter token: it attaches with `Python::attach(...)` and detaches around
-the enqueue inside the method, which keeps its Rust parameter count inside the
-lint's argument budget. Its `close()` boundary, and the rotating and
-timed-rotating wrappers that delegate to `handle()`, still take a
-`py: Python<'_>` token and use `py.detach(...)` around the operation.
-`handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
-(`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
-(`send_timeout`). Other Python-exposed handler families also have operations
-that may block. The stream, socket and HTTP bindings detach both their
-`flush()` and their `close()` waits. The socket and HTTP `close()` methods take
-an exclusive PyO3 borrow (`&mut self`) for the whole wait, so a second
-`close()`, or a `close()` overlapping a detached `flush()`, is refused by the
-borrow check rather than queued; the file and stream families use a shared
-borrow and allow those overlaps.
+mechanics all three operations share. The file, rotating and timed-rotating
+`handle()` bindings — `FemtoFileHandler::py_handle`,
+`PyRotatingFileHandler::py_handle` and
+`PyTimedRotatingFileHandler::py_handle` — take no interpreter token: each
+attaches with `Python::attach(...)` and detaches around the enqueue inside the
+method, which keeps its Rust parameter count inside the lint's argument budget.
+Their `flush()` and `close()` boundaries still take a `py: Python<'_>` token
+and use `py.detach(...)` around the wait. `handle()` waits on channel capacity,
+unbounded under `OverflowPolicy::Block` (`Sender::send`) and bounded by the
+deadline under `OverflowPolicy::Timeout` (`send_timeout`). Other Python-exposed
+handler families also have operations that may block. The stream, socket and
+HTTP bindings detach both their `flush()` and their `close()` waits. The socket
+and HTTP `close()` methods take an exclusive PyO3 borrow (`&mut self`) for the
+whole wait, so a second `close()`, or a `close()` overlapping a detached
+`flush()`, is refused by the borrow check rather than queued; the file and
+stream families use a shared borrow and allow those overlaps.
 
 The native-handler flush and the socket and HTTP `flush()` and `close()` waits
 go through `rust_extension/src/py_detach.rs`. Its `pub(crate)` helper
