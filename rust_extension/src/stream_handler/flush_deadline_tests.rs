@@ -297,6 +297,9 @@ fn failed_flush_enqueue_reports_its_drops_on_the_next_warning() {
 ///
 /// The writer is a plain buffer, so the worker's flush completes at once and
 /// the acknowledgement is genuinely ready when the caller's receive begins.
+/// The zero-budget variant — an answer ready *before* the wait begins, received
+/// with nothing left to wait with — is pinned in `handler_tests.rs`, because a
+/// live worker cannot be scheduled to have answered that early.
 #[test]
 fn a_ready_acknowledgement_observed_after_the_deadline_does_not_confirm() {
     let handler = FemtoStreamHandler::with_capacity_timeout(

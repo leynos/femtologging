@@ -163,3 +163,47 @@ fn an_answer_observed_after_the_deadline_does_not_confirm() {
         "admission, acknowledgement and the lateness check must each sample the clock"
     );
 }
+
+/// An answer that is ready before the receive starts, and is still received
+/// under a zero budget, must not confirm a flush whose deadline has passed.
+///
+/// This is the case the handler tests cannot schedule: there, a live worker puts
+/// the answer on a channel whenever it is descheduled to, so the receive may find
+/// an empty queue. Supplying the acknowledgement from the test itself makes the
+/// answer ready by construction, and the budget the receive is handed is recorded
+/// rather than inferred, so both halves of the rule are observed directly.
+#[test]
+fn a_ready_answer_received_with_no_budget_left_does_not_confirm() {
+    // Admission sees the clock at the start; the acknowledgement budget sample is
+    // one millisecond past the thirty-second deadline, so it leaves nothing.
+    let mut clock = ScriptedClock::new(&[0, 30_001]);
+    let deadline = clock.deadline();
+    let mut budgets = Vec::new();
+    let outcome = {
+        let budgets = &mut budgets;
+        flush_command_until(deadline, &mut || clock.now(), |_enqueue_budget| {
+            // The answer is a value the receive already holds, which is what a
+            // message queued before the wait begins looks like.
+            Some(move |ack_budget: Duration| {
+                budgets.push(ack_budget);
+                Some(())
+            })
+        })
+    };
+
+    assert_eq!(
+        budgets,
+        [Duration::ZERO],
+        "the acknowledgement must be offered the zero budget the deadline left it"
+    );
+    assert_eq!(
+        outcome,
+        Err(QueueFlushFailure::Acknowledgement),
+        "a ready answer does not confirm a flush whose deadline has passed"
+    );
+    assert_eq!(
+        clock.samples(),
+        3,
+        "admission, acknowledgement and the lateness check must each sample the clock"
+    );
+}

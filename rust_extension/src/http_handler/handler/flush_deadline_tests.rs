@@ -88,6 +88,12 @@ fn handler_with_answering_worker(capacity: usize, flush_timeout: Duration) -> Fe
 
 /// An answer the caller only observes after the deadline must not confirm the
 /// flush, even though the worker sent it and the receive took it.
+///
+/// The zero-budget variant — an answer ready *before* the wait begins, received
+/// with nothing left to wait with — is pinned in `handler_tests.rs`, because a
+/// live worker cannot be scheduled to have answered that early. Here the answer
+/// is genuinely received under a whole budget and only the lateness sample sees
+/// the deadline passed, which is the case this handler can schedule.
 #[test]
 fn a_ready_acknowledgement_observed_after_the_deadline_does_not_confirm() {
     let handler = handler_with_answering_worker(2, Duration::from_secs(1));
