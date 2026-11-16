@@ -1,25 +1,20 @@
 //! Regression tests for flushing Python handlers through the Rust `log` bridge.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use log::Log;
 use pyo3::prelude::{Py, PyAny, PyResult, Python};
 use pyo3::types::{PyAnyMethods, PyModule};
+use rstest::rstest;
 use serial_test::serial;
 
 use crate::level::FemtoLevel;
 use crate::manager;
 
 use super::FemtoLogAdapter;
-
-static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-fn unique_logger_name() -> String {
-    let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("bridge.flush.{suffix}")
-}
+use super::test_support::unique_logger_name;
 
 fn create_gated_handler(py: Python<'_>) -> PyResult<(Py<PyAny>, Py<PyAny>, Py<PyAny>)> {
     let source = std::ffi::CString::new(concat!(
@@ -94,11 +89,11 @@ fn spawn_manager_lock_probe(
     (lock_probe, lock_available_during_flush)
 }
 
-#[test]
+#[rstest]
 #[serial]
-fn adapter_flush_releases_manager_for_python_handlers() -> PyResult<()> {
+fn adapter_flush_releases_manager_for_python_handlers(unique_logger_name: String) -> PyResult<()> {
     let adapter = FemtoLogAdapter;
-    let logger_name = unique_logger_name();
+    let logger_name = unique_logger_name;
     Python::attach(|py| -> PyResult<()> {
         let (handler, started, release) = create_gated_handler(py)?;
         let logger = manager::get_logger(py, &logger_name)?;
