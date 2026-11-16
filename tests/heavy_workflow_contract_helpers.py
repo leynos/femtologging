@@ -87,6 +87,8 @@ def install_problems(found: Job) -> list[str]:
 def _sync_problems(sync: Step) -> list[str]:
     """Return the complaints about the locked dependency sync."""
     problems: list[str] = []
+    if "if" in sync:
+        problems.append("the sync step must run unconditionally")
     if tuple(run_text(sync).split()) != SYNC_COMMAND:
         problems.append(f"the sync must run exactly `{' '.join(SYNC_COMMAND)}`")
     environment = env(sync)
@@ -224,11 +226,37 @@ def _environment_problems(found: Job) -> list[str]:
 
 def _command_problems(found: Job, *, subject: str) -> list[str]:
     """Return the complaints about the commands the notification runs."""
-    runs = [run_text(step) for step in steps(found, subject=subject)]
+    found_steps = steps(found, subject=subject)
+    runs = [run_text(step) for step in found_steps]
     return [
+        *_conditional_step_problems(found_steps),
         *_missing_command_problems(runs),
         *_run_detail_problems(runs),
         *_issue_lookup_problems(runs),
+    ]
+
+
+def _conditional_step_problems(found_steps: list[Step]) -> list[str]:
+    """Return one complaint per notification step that carries an ``if``.
+
+    A step-level condition is not matched by the text rules: ``gh issue create``
+    is still in the ``run`` string of a step disabled with ``if: false``, so the
+    notification would be silently silenced while the contract passed.
+
+    Parameters
+    ----------
+    found_steps : list[Step]
+        The notification job's step mappings.
+
+    Returns
+    -------
+    list[str]
+        One complaint per step that carries an ``if`` key.
+    """
+    return [
+        f"the notification step {step.get('name')!r} must run unconditionally"
+        for step in found_steps
+        if "if" in step
     ]
 
 

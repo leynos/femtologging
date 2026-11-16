@@ -77,6 +77,12 @@ def _sync_without_test_util_config(document: Document) -> None:
     env(named_step(found, SYNC_STEP, subject=HEAVY_JOB)).pop("UV_CONFIG_FILE", None)
 
 
+def _sync_step_disabled(document: Document) -> None:
+    """Keep the sync command but disable the step that runs it."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, SYNC_STEP, subject=HEAVY_JOB)["if"] = "false"
+
+
 def _build_without_test_util(document: Document) -> None:
     """Build the editable extension without the test hooks."""
     replace_run(
@@ -113,6 +119,12 @@ def _notification_disabled_condition(document: Document) -> None:
     job(document, NOTIFY_JOB)["if"] = (
         "failure() && github.event_name == 'schedule' && false"
     )
+
+
+def _notification_step_disabled(document: Document) -> None:
+    """Keep the notification commands but disable the step that runs them."""
+    found = job(document, NOTIFY_JOB)
+    steps(found, subject=NOTIFY_JOB)[0]["if"] = "false"
 
 
 def _notification_without_issue_write(document: Document) -> None:
@@ -167,6 +179,7 @@ _MUTATIONS = (
     pytest.param(_pip_install_returns, id="pip-install-returns"),
     pytest.param(_sync_after_build, id="sync-after-build"),
     pytest.param(_sync_without_test_util_config, id="sync-without-test-util"),
+    pytest.param(_sync_step_disabled, id="sync-step-disabled"),
     pytest.param(_build_without_test_util, id="build-without-test-util"),
     pytest.param(_notification_without_needs, id="notification-without-needs"),
     pytest.param(_notification_always, id="notification-always"),
@@ -179,6 +192,7 @@ _MUTATIONS = (
         _notification_disabled_condition,
         id="notification-disabled-condition",
     ),
+    pytest.param(_notification_step_disabled, id="notification-step-disabled"),
     pytest.param(_notification_without_issue_write, id="notification-read-only"),
     pytest.param(_notification_without_actions_read, id="notification-no-actions"),
     pytest.param(
