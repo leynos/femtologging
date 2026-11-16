@@ -303,7 +303,7 @@ def test_handler_dispatch_path_frozen_at_registration() -> None:
 
     ``PyHandler::new`` caches only a boolean -- whether the handler had a
     callable ``handle_record`` at registration time -- not the callable
-    itself (see ``rust_extension/src/logger/py_handler.rs``). Once that
+    itself (see ``rust_extension/src/logger/py_handler/mod.rs``). Once that
     boolean is ``True`` for a handler, the runtime never falls back to the
     legacy ``handle()`` method, no matter what ``handle_record`` is rebound
     to afterwards; each call resolves the *current* ``handle_record``

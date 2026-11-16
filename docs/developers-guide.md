@@ -783,9 +783,9 @@ synchronization primitives. Logger models use a Loom-specific logger-owned
 shard rather than the process-wide production `Dispatcher`; dropping the logger
 sends `Job::Stop` and joins that worker during model cleanup. Every worker
 spawns, queues and locks through the private seam in
-`rust_extension/src/sync.rs`, which is `std::thread`, `crossbeam_channel` and
-`parking_lot` in an ordinary build and Loom's thread, locks and a small bounded
-channel under `--cfg loom`. Loom arrives only as a `cfg(loom)` target
+`rust_extension/src/sync/mod.rs`, which is `std::thread`, `crossbeam_channel`
+and `parking_lot` in an ordinary build and Loom's thread, locks and a small
+bounded channel under `--cfg loom`. Loom arrives only as a `cfg(loom)` target
 dependency. The Python-specific paths — the GIL-detached wait and delivery, and
 the manager-lock release before a bridge flush — are outside the
 `--no-default-features` Loom lane; the Python regression tests cover them
@@ -907,12 +907,13 @@ The production pool is outside the Loom model. Each Loom run owns and stops its
 own shard so worker threads do not survive between model iterations; the
 topology tests exercise routing and handler isolation with a smaller
 `LOOM_RECORDS_PER_LOGGER` depth. The primitives behind both workers live in
-`rust_extension/src/sync.rs`: production `spawn_named` returns the operating
-system's spawn error and gives shard workers recognizable names, while Loom's
-implementation keeps the same signature without process thread names. Its timed
-send and receive operations keep their normal API shape, but Loom has no clock,
-so the heavy lane's outer timeout bounds waits that would otherwise remain
-blocked. The shard worker uses blocking `recv()` and has no idle polling tick.
+`rust_extension/src/sync/mod.rs`: production `spawn_named` returns the
+operating system's spawn error and gives shard workers recognizable names,
+while Loom's implementation keeps the same signature without process thread
+names. Its timed send and receive operations keep their normal API shape, but
+Loom has no clock, so the heavy lane's outer timeout bounds waits that would
+otherwise remain blocked. The shard worker uses blocking `recv()` and has no
+idle polling tick.
 
 ## Releasing the GIL at the Python boundary
 
@@ -1406,7 +1407,7 @@ file run too and do emit, which is why the assertions name their records.
 Python logging captures the active task-local `ContextVar` fields and any
 explicit `extra` fields when `FemtoLogger.py_log` creates a record. The
 `rust_extension/src/python_context.rs` adapter converts Python mappings and
-scalar values, then `ContextBudget` in `rust_extension/src/log_context.rs`
+scalar values, then `ContextBudget` in `rust_extension/src/log_context/mod.rs`
 validates keys, values, and aggregate size. The resulting fields are stored in
 record metadata; this path does not read or merge Rust thread-local context.
 Conversion failures are reported to Python as type errors, and invalid context
