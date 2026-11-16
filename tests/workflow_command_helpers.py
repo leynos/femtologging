@@ -155,8 +155,10 @@ def _cargo_command(tokens: list[str]) -> str | None:
     """Return the Cargo subcommand named by `tokens`, if there is one.
 
     Cargo's grammar puts options before the subcommand, so the subcommand is
-    the first token after `cargo` that is not an option. Options that take a
-    separate value are skipped with it, which is why they are listed above.
+    the first token after `cargo` that is not an option. A leading
+    ``+<toolchain>`` override is skipped first, as the shell passes it to
+    Cargo ahead of every option. Options that take a separate value are
+    skipped with it, which is why they are listed above.
 
     Parameters
     ----------
@@ -172,6 +174,8 @@ def _cargo_command(tokens: list[str]) -> str | None:
         if word != "cargo":
             continue
         index = at + 1
+        if index < len(tokens) and tokens[index].startswith("+"):
+            index += 1
         while index < len(tokens) and tokens[index].startswith("-"):
             index += 2 if tokens[index] in CARGO_VALUE_OPTIONS else 1
         return tokens[index] if index < len(tokens) else None
@@ -179,8 +183,20 @@ def _cargo_command(tokens: list[str]) -> str | None:
 
 
 def _runs_cargo_suite(tokens: list[str]) -> bool:
-    """Report whether `tokens` invoke Cargo's test runner."""
-    return _cargo_command(tokens) in CARGO_SUITE_COMMANDS
+    """Report whether any command in `tokens` invokes Cargo's test runner.
+
+    A line may chain several commands, so ``cargo build && cargo test`` must be
+    read as a suite step even though the first command is a plain build.
+
+    Returns
+    -------
+    bool
+        Whether any segment runs Cargo's ``test`` or ``nextest`` subcommand.
+    """
+    return any(
+        _cargo_command(segment) in CARGO_SUITE_COMMANDS
+        for segment in _command_segments(tokens)
+    )
 
 
 def _continues(line: str) -> bool:
@@ -193,8 +209,10 @@ def _logical_lines(run: str) -> list[str]:
 
     A trailing backslash joins its line to the next one, so tokenising the
     lines separately would see `make \\` and `  test` as two commands and miss
-    the invocation entirely. Two backslashes are an escaped backslash and do
-    not continue the line.
+    the invocation entirely. The join inserts nothing: the shell deletes the
+    backslash and its newline before tokenising, so `make te\\` followed by
+    `st` runs `make test`. Two backslashes are an escaped backslash and do not
+    continue the line.
 
     Parameters
     ----------
@@ -210,7 +228,7 @@ def _logical_lines(run: str) -> list[str]:
     pending = ""
     for line in run.splitlines():
         if _continues(line):
-            pending += line[:-1] + " "
+            pending += line[:-1]
             continue
         commands.append(pending + line)
         pending = ""

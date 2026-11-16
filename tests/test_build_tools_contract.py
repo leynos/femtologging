@@ -5,11 +5,12 @@ toolchain or the Linux ``mold`` linker fails with an installation command,
 rather than an opaque error deep inside Cargo. These tests hold the Makefile
 wiring, run the repository's own check script against stub tools, prove that
 ``$(CARGO)`` keeps every direct Cargo invocation substitutable, and show that
-a refusing preflight stops a build before any compiler runs.
+a refusing preflight stops a build before any build command runs.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs fixed make and shell argv
@@ -169,41 +170,81 @@ def test_the_preflight_precedes_the_first_compile(target: str) -> None:
         )
 
 
-FAKE_CARGO: typ.Final[str] = """#!/bin/sh
-printf '%s\\n' "$*" >> "$CARGO_LOG"
+FAKE_UV: typ.Final[str] = """#!/bin/sh
+printf '%s\\n' "$*" >> "$UV_LOG"
 exit 0
 """
 
+# The `build` recipe runs only `uv` commands, so observing those invocations is
+# what distinguishes a correctly gated build from one that reached the recipe.
+_REFUSING_PREFLIGHT: typ.Final[str] = "@printf 'preflight refused\\n' >&2; exit 1"
 
-def test_a_refused_preflight_stops_the_build_before_cargo_runs(
-    tmp_path: Path,
-) -> None:
-    """Make's failure propagation keeps a broken preflight off the compiler.
 
-    The copy carries one changed recipe: the preflight refuses. If the
-    prerequisite ordering were wrong, the fake Cargo would still record a
-    build invocation.
+def _mutated_makefile(tmp_path: Path, *, preflight: str) -> Path:
+    """Write a copy of the Makefile whose preflight recipe is replaced.
+
+    Parameters
+    ----------
+    tmp_path
+        Scratch directory that holds the mutated Makefile.
+    preflight
+        Recipe text to put in place of the preflight script invocation.
+
+    Returns
+    -------
+    Path
+        The mutated Makefile.
     """
     original = (ROOT / "Makefile").read_text("utf-8")
-    mutated = original.replace(
-        "@scripts/check-build-tools.sh",
-        "@printf 'preflight refused\\n' >&2; exit 1",
-        1,
-    )
+    mutated = original.replace("@scripts/check-build-tools.sh", preflight, 1)
     assert mutated != original, (
         "the Makefile must reach the preflight through its recipe"
     )
     makefile = tmp_path / "Makefile"
     makefile.write_text(mutated, "utf-8")
-    fake = fake_executable(tmp_path / "probe-cargo", FAKE_CARGO)
-    log = tmp_path / "cargo.log"
+    return makefile
+
+
+def _stubbed_build_environment(uv: Path, log: Path) -> dict[str, str]:
+    """Return an environment whose first ``uv`` on PATH records its arguments.
+
+    Parameters
+    ----------
+    uv
+        The recording stub to put ahead of the inherited PATH.
+    log
+        File the stub appends each command line to.
+
+    Returns
+    -------
+    dict[str, str]
+        The environment for one fixed Make invocation.
+    """
+    environment = make_environment(UV_LOG=str(log))
+    environment["PATH"] = os.pathsep.join((str(uv.parent), environment["PATH"]))
+    return environment
+
+
+def test_a_refused_preflight_stops_the_build_before_uv_runs(
+    tmp_path: Path,
+) -> None:
+    """Make's failure propagation keeps a broken preflight off the build recipe.
+
+    The copy carries one changed recipe: the preflight refuses. The ``build``
+    recipe runs ``uv`` and never ``$(CARGO)``, so a recording ``uv`` stub is
+    what shows whether the recipe was reached. The control below proves that
+    stub observes the recipe when the preflight allows it.
+    """
+    makefile = _mutated_makefile(tmp_path, preflight=_REFUSING_PREFLIGHT)
+    uv = fake_executable(tmp_path / "uv", FAKE_UV)
+    log = tmp_path / "uv.log"
     make = shutil.which("make")
     assert make is not None, "make must be installed"
     # ruff: ignore[subprocess-without-shell-equals-true] fixed argv, no shell
     result = subprocess.run(
-        [make, "-f", str(makefile), "build", f"CARGO={fake}"],
+        [make, "-f", str(makefile), "build"],
         cwd=ROOT,
-        env=make_environment(CARGO_LOG=str(log)),
+        env=_stubbed_build_environment(uv, log),
         capture_output=True,
         text=True,
         check=False,
@@ -211,5 +252,33 @@ def test_a_refused_preflight_stops_the_build_before_cargo_runs(
     assert result.returncode != 0, "a refused preflight must fail the build"
     assert "preflight refused" in result.stderr, result.stderr
     assert not log.exists() or not log.read_text("utf-8"), (
-        "no compiler may run after the preflight refuses"
+        "no build command may run after the preflight refuses"
     )
+
+
+def test_a_permitted_preflight_reaches_the_build_recipe(tmp_path: Path) -> None:
+    """The ``uv`` stub records the build commands when the preflight passes.
+
+    This control keeps the refusal test honest: its empty log means the recipe
+    was gated, not that the stub could never observe a build.
+    """
+    makefile = _mutated_makefile(tmp_path, preflight="@true")
+    uv = fake_executable(tmp_path / "uv", FAKE_UV)
+    log = tmp_path / "uv.log"
+    make = shutil.which("make")
+    assert make is not None, "make must be installed"
+    # ruff: ignore[subprocess-without-shell-equals-true] fixed argv, no shell
+    result = subprocess.run(
+        [make, "-f", str(makefile), "build"],
+        cwd=ROOT,
+        env=_stubbed_build_environment(uv, log),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert log.exists(), "the build recipe never invoked the uv stub"
+    recorded = log.read_text("utf-8")
+    assert "venv" in recorded, recorded
+    assert "sync" in recorded, recorded
+    assert "maturin develop" in recorded, recorded
