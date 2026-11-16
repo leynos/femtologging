@@ -48,14 +48,14 @@ impl<C> TimedFileRotationStrategy<C>
 where
     C: RotationClock,
 {
-    /// Builds strategy state from a known seed so tests and mtime recovery share the same deadline calculation.
-    fn from_seed(
+    /// Samples the supplied clock and seeds the first rollover deadline from that instant.
+    pub(crate) fn new_with_clock(
         path: PathBuf,
         schedule: TimedRotationSchedule,
         backup_count: usize,
-        clock: C,
-        seed: DateTime<Utc>,
+        mut clock: C,
     ) -> Self {
+        let seed = clock.now();
         let next_rollover_at = schedule.next_rollover(seed);
         Self {
             path,
@@ -65,17 +65,6 @@ where
             created_at: seed,
             next_rollover_at,
         }
-    }
-
-    /// Samples the supplied clock and seeds the first rollover deadline from that instant.
-    pub(crate) fn new_with_clock(
-        path: PathBuf,
-        schedule: TimedRotationSchedule,
-        backup_count: usize,
-        mut clock: C,
-    ) -> Self {
-        let seed = clock.now();
-        Self::from_seed(path, schedule, backup_count, clock, seed)
     }
 
     /// Re-seed `next_rollover_at` from an externally determined instant, such as
@@ -99,7 +88,7 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn next_rollover_at(&self) -> DateTime<Utc> {
+    pub(crate) const fn next_rollover_at(&self) -> DateTime<Utc> {
         self.next_rollover_at
     }
 
@@ -224,11 +213,10 @@ where
     fn rotated_path(&self, rollover_at: DateTime<Utc>) -> PathBuf {
         let suffix = self.schedule.suffix_for(rollover_at);
         let mut rotated = self.path.clone();
-        let mut name = self
-            .path
-            .file_name()
-            .map(|file_name| file_name.to_os_string())
-            .unwrap_or_else(|| self.path.as_os_str().to_os_string());
+        let mut name = self.path.file_name().map_or_else(
+            || self.path.as_os_str().to_os_string(),
+            std::ffi::OsStr::to_os_string,
+        );
         name.push(format!(".{suffix}"));
         rotated.set_file_name(name);
         rotated
@@ -242,9 +230,9 @@ where
         if !has_os_prefix(name, prefix) {
             return false;
         }
-        let name = name.to_string_lossy();
-        let prefix = prefix.to_string_lossy();
-        let Some(suffix) = name.strip_prefix(prefix.as_ref()) else {
+        let file_name_lossy = name.to_string_lossy();
+        let prefix_lossy = prefix.to_string_lossy();
+        let Some(suffix) = file_name_lossy.strip_prefix(prefix_lossy.as_ref()) else {
             return false;
         };
         self.schedule.is_valid_suffix(suffix)
@@ -256,11 +244,10 @@ where
             return Ok(());
         }
         let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
-        let base_name = self
-            .path
-            .file_name()
-            .map(|value| value.to_os_string())
-            .unwrap_or_else(|| self.path.as_os_str().to_os_string());
+        let base_name = self.path.file_name().map_or_else(
+            || self.path.as_os_str().to_os_string(),
+            std::ffi::OsStr::to_os_string,
+        );
         let prefix = {
             let mut value = base_name.clone();
             value.push(".");
@@ -268,10 +255,10 @@ where
         };
         let mut backups = Vec::new();
         for entry in fs::read_dir(parent)? {
-            let entry = entry?;
-            let name = entry.file_name();
+            let dir_entry = entry?;
+            let name = dir_entry.file_name();
             if self.matches_rotated_file_name(&name, &prefix) {
-                backups.push(entry.path());
+                backups.push(dir_entry.path());
             }
         }
         backups.sort();

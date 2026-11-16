@@ -45,12 +45,14 @@ impl RotatingFileHandlerBuilder {
     }
 
     /// Set the overflow policy for the handler.
+    #[must_use]
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.common.set_overflow_policy(policy);
         self
     }
 
     /// Attach a formatter instance or identifier.
+    #[must_use]
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -60,6 +62,7 @@ impl RotatingFileHandlerBuilder {
     }
 
     /// Attach filters by identifier.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -84,7 +87,7 @@ impl RotatingFileHandlerBuilder {
         self.common.filter_ids()
     }
 
-    /// Attach a Python formatter object from PyO3 bindings.
+    /// Attach a Python formatter object from `PyO3` bindings.
     #[cfg(feature = "python")]
     pub(super) fn with_formatter_from_py(
         mut self,
@@ -100,6 +103,7 @@ impl RotatingFileHandlerBuilder {
     ///
     /// The capacity must be greater than zero; invalid values cause `build` to
     /// error.
+    #[must_use]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.common.set_capacity(capacity);
         self
@@ -116,20 +120,23 @@ impl RotatingFileHandlerBuilder {
     /// On 32-bit platforms where `usize::MAX < u64::MAX`, values exceeding
     /// `usize::MAX` are clamped silently at build time. Python callers receive
     /// an `OverflowError` instead (validated at the API boundary).
+    #[must_use]
     pub fn with_flush_after_records(mut self, interval: NonZeroU64) -> Self {
         self.common.set_flush_after_records(interval);
         self
     }
 
     /// Set the maximum number of bytes before rotation occurs.
-    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+    #[must_use]
+    pub const fn with_max_bytes(mut self, max_bytes: u64) -> Self {
         self.max_bytes = NonZeroU64::new(max_bytes);
         self.max_bytes_set = true;
         self
     }
 
     /// Set how many backup files to retain during rotation.
-    pub fn with_backup_count(mut self, backup_count: usize) -> Self {
+    #[must_use]
+    pub const fn with_backup_count(mut self, backup_count: usize) -> Self {
         self.backup_count = NonZeroUsize::new(backup_count);
         self.backup_count_set = true;
         self
@@ -183,7 +190,8 @@ impl RotatingFileHandlerBuilder {
             (
                 self.max_bytes.map_or(0, NonZeroU64::get),
                 self.backup_count.map_or(0, NonZeroUsize::get),
-            )
+            ),
+            "handler rotation limits must match the builder configuration"
         );
         let _ = limits;
         Ok(handler)
@@ -208,7 +216,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
             // is ever broken.
             (Some(_), None) => {
                 return Err(HandlerBuildError::InvalidConfig(
-                    "backup_count must be set when max_bytes is set".to_string(),
+                    "backup_count must be set when max_bytes is set".to_owned(),
                 ));
             }
             (None, _) => RotationConfig::disabled(),
@@ -221,7 +229,7 @@ impl HandlerBuilderTrait for RotatingFileHandlerBuilder {
                 self.build_handler_with_formatter(DefaultFormatter, cfg, rotation)
             }
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => Err(
-                HandlerBuildError::InvalidConfig(format!("unknown formatter id: {other}",)),
+                HandlerBuildError::InvalidConfig(format!("unknown formatter id: {other}")),
             ),
         }
     }
