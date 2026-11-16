@@ -10,6 +10,7 @@ from tests.make_contract_helpers import (
     repo_root,
     sole_recipe_rule,
     text_sequence,
+    variable_tokens,
 )
 
 if typ.TYPE_CHECKING:
@@ -17,12 +18,6 @@ if typ.TYPE_CHECKING:
 
 type Tokens = tuple[str, ...]
 
-_SPELLING_SOURCES: Tokens = (
-    "scripts/generate_typos_config.py",
-    "scripts/typos_rollout.py",
-    "scripts/typos_rollout_cache.py",
-    "scripts/tests/test_typos_rollout.py",
-)
 _MARKDOWN_FILES: Tokens = (
     "git",
     "ls-files",
@@ -35,97 +30,6 @@ _MARKDOWN_FILES: Tokens = (
     "xargs",
     "-0",
     "-r",
-)
-_SPELLING_COMMANDS: tuple[Tokens, ...] = (
-    ("@$(UV_ENV)", "uv", "run", "scripts/generate_typos_config.py"),
-    (
-        "@git",
-        "ls-files",
-        "-z",
-        "--cached",
-        "--others",
-        "--exclude-standard",
-        "*.md",
-        "|",
-        "xargs",
-        "-0",
-        "-r",
-        "env",
-        "$(UV_ENV)",
-        "uv",
-        "tool",
-        "run",
-        "typos@$(TYPOS_VERSION)",
-        "--config",
-        "typos.toml",
-        "--force-exclude",
-    ),
-)
-_CHECK_API_BOUNDARY_COMMANDS: tuple[Tokens, ...] = (
-    (
-        "$(CARGO_BUILD_ENV)",
-        "UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml",
-        "uv",
-        "run",
-        "pytest",
-        "-v",
-        "-o",
-        "addopts=",
-        "tests/test_release_api_boundary.py",
-    ),
-)
-_SPELLING_HELPER_COMMANDS: tuple[Tokens, ...] = (
-    (
-        "@$(UV_ENV)",
-        "uv",
-        "tool",
-        "run",
-        "ruff@$(RUFF_VERSION)",
-        "format",
-        "--isolated",
-        "--target-version",
-        "py313",
-        "--check",
-        *_SPELLING_SOURCES,
-    ),
-    (
-        "@$(UV_ENV)",
-        "uv",
-        "tool",
-        "run",
-        "ruff@$(RUFF_VERSION)",
-        "check",
-        "--isolated",
-        "--target-version",
-        "py313",
-        *_SPELLING_SOURCES,
-    ),
-    (
-        "@PYTHONPATH=scripts",
-        "$(UV_ENV)",
-        "uv",
-        "run",
-        "--no-project",
-        "--python",
-        "3.13",
-        "--with",
-        "pytest==9.0.2",
-        "--with",
-        "pytest-cov==7.0.0",
-        "python",
-        "-m",
-        "pytest",
-        "scripts/tests/test_typos_rollout.py",
-        "-c",
-        "/dev/null",
-        "--rootdir=.",
-        "-p",
-        "no:cacheprovider",
-        "--cov=generate_typos_config",
-        "--cov=typos_rollout",
-        "--cov=typos_rollout_cache",
-        "--cov-fail-under=90",
-    ),
 )
 
 
@@ -169,9 +73,9 @@ def test_typecheck_recipe_uses_the_project_extension_environment() -> None:
         "typecheck must check the build tools, then build the extension, "
         "before static analysis"
     )
-    assert _commands("typecheck") == (
-        ("$(TY)", "check", "--python", ".venv", "--extra-search-path", "scripts"),
-    ), "typecheck must preserve its complete ty invocation"
+    assert _commands("typecheck") == (("$(TY)", "check", "--python", ".venv"),), (
+        "typecheck must preserve its complete ty invocation"
+    )
 
 
 def test_check_api_boundary_builds_then_runs_the_boundary_suite() -> None:
@@ -205,21 +109,17 @@ def test_markdownlint_recipe_requires_spelling_and_scans_repository_markdown() -
     )
 
 
-def test_spelling_recipe_generates_policy_and_runs_the_pinned_checker() -> None:
-    """`spelling` must validate helpers, regenerate policy, and run pinned typos."""
-    assert _prerequisites("spelling") == ("spelling-helper-test",), (
-        "spelling must validate policy helpers before regenerating typos.toml"
+def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
+    """`spelling` must delegate generation and checking to the builder gate."""
+    assert variable_tokens("TYPOS_CONFIG_BUILDER") == (
+        "uvx",
+        "--from",
+        "git+https://github.com/leynos/typos-config-builder.git@v0.1.3",
+        "typos-config-builder",
+    ), "the builder must stay pinned to the reviewed release"
+    assert not _prerequisites("spelling"), (
+        "the gate owns dictionary refresh, generation and checking"
     )
-    assert _commands("spelling") == _SPELLING_COMMANDS, (
-        "spelling must preserve its generator and pinned typos invocations"
-    )
-
-
-def test_spelling_helper_recipe_checks_format_lint_and_coverage() -> None:
-    """`spelling-helper-test` must validate its helpers before policy generation."""
-    assert not _prerequisites("spelling-helper-test"), (
-        "spelling helper validation must not depend on generated policy output"
-    )
-    assert _commands("spelling-helper-test") == _SPELLING_HELPER_COMMANDS, (
-        "spelling helper validation must retain all three complete commands"
-    )
+    assert _commands("spelling") == (
+        ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
+    ), "spelling must run the builder gate in write mode"

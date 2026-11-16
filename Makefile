@@ -1,7 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
-        check-fmt markdownlint tools nixie spelling spelling-helper-test \
-        check-lock check-api-boundary test typecheck makeutil skylos skylos-allow \
+        check-fmt markdownlint tools nixie spelling \
+        check-lock test typecheck makeutil skylos skylos-allow \
         install-build-tools check-build-tools
 
 CARGO ?= cargo
@@ -30,10 +30,11 @@ MDTABLEFIX ?= mdtablefix
 MDTABLEFIX_SELECT = --git --include-untracked
 MDTABLEFIX_RULES = --wrap --renumber --breaks --ellipsis --fences
 NIXIE ?= nixie
-# Single source of truth for the typos version, keeping the Makefile and any
-# CI that shells out to this target from drifting apart.
-TYPOS_VERSION ?= 1.48.0
-TYPOS ?= $(UV_ENV) uv tool run typos@$(TYPOS_VERSION)
+# Pin the builder release, not the dictionary it fetches: the builder is
+# reviewed code, while the shared en-GB-oxendict dictionary stays live so a
+# dictionary fix reaches every consumer without a repin. The gate writes
+# typos.toml, then runs the pinned Typos binary and the shared phrase checks.
+TYPOS_CONFIG_BUILDER ?= uvx --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" typos-config-builder
 WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
@@ -294,27 +295,8 @@ markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spellin
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(MDLINT) --
 
-spelling: spelling-helper-test ## Enforce en-GB-oxendict spelling in Markdown prose
-	@$(UV_ENV) uv run scripts/generate_typos_config.py
-	@git ls-files -z --cached --others --exclude-standard '*.md' | \
-		xargs -0 -r env $(UV_ENV) uv tool run typos@$(TYPOS_VERSION) \
-		--config typos.toml --force-exclude
-
-spelling-helper-test: ## Validate the shared spelling-policy integration
-	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
-		--target-version py313 --check scripts/generate_typos_config.py \
-		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
-		scripts/tests/test_typos_rollout.py
-	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
-		--target-version py313 scripts/generate_typos_config.py \
-		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
-		scripts/tests/test_typos_rollout.py
-	@PYTHONPATH=scripts $(UV_ENV) uv run --no-project --python 3.13 \
-		--with pytest==9.0.2 --with pytest-cov==7.0.0 \
-		python -m pytest scripts/tests/test_typos_rollout.py \
-		-c /dev/null --rootdir=. -p no:cacheprovider \
-		--cov=generate_typos_config --cov=typos_rollout \
-		--cov=typos_rollout_cache --cov-fail-under=90
+spelling: ## Enforce en-GB-oxendict spelling and shared phrase corrections
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) gate
 
 nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
@@ -345,8 +327,7 @@ typecheck: check-build-tools build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter
 	# that has the compiled extension installed; it does not reliably apply the
 	# equivalent `[tool.ty.environment]` settings.
-	# The spelling-policy helpers import siblings with PYTHONPATH=scripts.
-	$(TY) check --python .venv --extra-search-path scripts
+	$(TY) check --python .venv
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \

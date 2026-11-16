@@ -53,11 +53,10 @@ exclude = [
 [tool.ty.environment]
 # Newer ty releases resolve against their own tool environment unless the
 # project virtual environment is named explicitly; `make build` creates it
-# at `.venv` and installs the extension module there. The `scripts` helpers
-# import each other as top-level modules. (`typings` is deliberately absent:
-# its partial pytest stub is for pyright and would shadow the real pytest.)
+# at `.venv` and installs the extension module there. (`typings` is
+# deliberately absent: its partial pytest stub is for pyright and would shadow
+# the real pytest.)
 python = "./.venv"
-extra-paths = ["scripts"]
 
 [tool.ruff]
 line-length = 88
@@ -67,10 +66,6 @@ extend-exclude = [
     # Python source fixtures embedded in Rust tests via include_str!; their
     # shape (line numbers, minimal bodies) is part of the test data.
     "rust_extension/src/test_fixtures",
-    "scripts/generate_typos_config.py",
-    "scripts/typos_rollout.py",
-    "scripts/typos_rollout_cache.py",
-    "scripts/tests/test_typos_rollout.py",
 ]
 
 [tool.ruff.lint]
@@ -226,14 +221,9 @@ max-locals = 10
 [tool.pylint.main]
 # Activate rules whose behaviour depends on the project's Python baseline.
 py-version = "3.12"
-# The shared rollout helper has its own pinned Ruff and coverage policy. The
-# .pyi stub declares the native extension's interface, so its ellipsis bodies
-# and argument counts are inherent to the surface it describes.
+# The .pyi stub declares the native extension's interface, so its ellipsis
+# bodies and argument counts are inherent to the surface it describes.
 ignore = [
-    "generate_typos_config.py",
-    "typos_rollout.py",
-    "typos_rollout_cache.py",
-    "test_typos_rollout.py",
     "_femtologging_rs.pyi",
 ]
 # Expand directory targets like tests and scripts even when they are not packages.
@@ -483,15 +473,6 @@ include = [{ path = "docs/users-guide.md", format = "sdist" }]
 
 [tool.pytest.ini_options]
 timeout = 30
-# The API-boundary suite builds a release wheel and compiles two Rust probes,
-# so only `make check-api-boundary` runs it. That target clears this option
-# with `-o addopts=`. Leaving the suite in default collection would make every
-# local `pytest` run and every CI coverage lane repeat the packaging build.
-addopts = "--ignore=tests/test_release_api_boundary.py"
-# The helper scripts import each other as top-level modules, exactly as
-# `[tool.ty.environment] extra-paths` records. `--doctest-modules` imports
-# every module pytest walks, so without this their collection fails.
-pythonpath = ["scripts"]
 markers = [
     "concurrency: tests covering threaded behaviour",
     "log_compat: tests requiring the Rust log-compat feature",
