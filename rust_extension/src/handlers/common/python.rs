@@ -42,8 +42,8 @@ use crate::handlers::file::OverflowPolicy;
 /// Format an [`OverflowPolicy`] for Python `__repr__`.
 fn format_overflow_policy(policy: &OverflowPolicy) -> String {
     match policy {
-        OverflowPolicy::Drop => "OverflowPolicy.drop()".to_string(),
-        OverflowPolicy::Block => "OverflowPolicy.block()".to_string(),
+        OverflowPolicy::Drop => "OverflowPolicy.drop()".to_owned(),
+        OverflowPolicy::Block => "OverflowPolicy.block()".to_owned(),
         OverflowPolicy::Timeout(duration) => {
             format!("OverflowPolicy.timeout({})", duration.as_millis())
         }
@@ -56,7 +56,10 @@ fn write_overflow_policy_fields(d: &Bound<'_, PyDict>, policy: &OverflowPolicy) 
         OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,
         OverflowPolicy::Block => d.set_item("overflow_policy", "block")?,
         OverflowPolicy::Timeout(duration) => {
-            d.set_item("timeout_ms", duration.as_millis() as u64)?;
+            d.set_item(
+                "timeout_ms",
+                u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+            )?;
             d.set_item("overflow_policy", "timeout")?;
         }
     }
@@ -76,7 +79,7 @@ pub struct PyOverflowPolicy {
 impl PyOverflowPolicy {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
-    fn drop() -> Self {
+    const fn drop() -> Self {
         Self {
             inner: OverflowPolicy::Drop,
         }
@@ -84,7 +87,7 @@ impl PyOverflowPolicy {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
-    fn block() -> Self {
+    const fn block() -> Self {
         Self {
             inner: OverflowPolicy::Block,
         }
@@ -113,25 +116,21 @@ impl PyOverflowPolicy {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
-        let other_policy = other.extract::<PyRef<'py, PyOverflowPolicy>>().ok();
+        let other_policy = other.extract::<PyRef<'py, Self>>().ok();
 
         match op {
-            CompareOp::Eq => Ok(other_policy
-                .map(|policy| self.inner == policy.inner)
-                .unwrap_or(false)),
-            CompareOp::Ne => Ok(other_policy
-                .map(|policy| self.inner != policy.inner)
-                .unwrap_or(true)),
+            CompareOp::Eq => Ok(other_policy.is_some_and(|policy| self.inner == policy.inner)),
+            CompareOp::Ne => Ok(other_policy.is_none_or(|policy| self.inner != policy.inner)),
             _ => Err(PyTypeError::new_err("ordering not supported")),
         }
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
-    fn __hash__(&self) -> PyResult<isize> {
+    fn __hash__(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.inner.hash(&mut hasher);
 
-        Ok(hasher.finish() as isize)
+        hasher.finish()
     }
 }
 
@@ -163,8 +162,7 @@ impl CommonBuilder {
                 let callable_msg = callable_err
                     .value(py)
                     .repr()
-                    .map(|r| r.to_string())
-                    .unwrap_or_else(|_| "<unknown>".to_string());
+                    .map_or_else(|_| "<unknown>".to_owned(), |r| r.to_string());
 
                 let msg = format!(
                     "invalid formatter: expected a string identifier or callable.\n\
