@@ -109,11 +109,11 @@ pub(crate) enum ContextValidationError {
 
 impl ContextValidationError {
     /// Attach the relevant key and map this internal failure to its public error variant.
-    fn into_log_context_error(self, key: &str) -> LogContextError {
+    fn into_log_context_error(self, context_key: &str) -> LogContextError {
         match self {
             Self::TooManyKeys { count, max } => LogContextError::TooManyKeys { count, max },
             Self::KeyTooLong { len, max } => LogContextError::KeyTooLong {
-                key: key.to_owned(),
+                key: context_key.to_owned(),
                 len,
                 max,
             },
@@ -151,6 +151,10 @@ impl Drop for LogContextGuard {
 }
 
 /// Push a map-based context frame onto the current thread's context stack.
+///
+/// # Errors
+///
+/// Returns [`LogContextError`] when a configured context limit is exceeded.
 pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), LogContextError> {
     push_context_frame(context).map(|_| ())
 }
@@ -159,11 +163,19 @@ pub fn push_log_context_map(context: BTreeMap<String, String>) -> Result<(), Log
 ///
 /// Prefer [`push_log_context`] for scoped use: its guard removes only the
 /// frame it created, even when guards are dropped out of order.
+///
+/// # Errors
+///
+/// Returns [`LogContextError::EmptyContextStack`] when no frame is present.
 pub fn pop_log_context() -> Result<(), LogContextError> {
     pop_internal()
 }
 
 /// Push a context frame and return a thread-affine guard that removes only that frame on drop.
+///
+/// # Errors
+///
+/// Returns [`LogContextError`] when a configured context limit is exceeded.
 pub fn push_log_context<I, K, V>(fields: I) -> Result<LogContextGuard, LogContextError>
 where
     I: IntoIterator<Item = (K, V)>,
@@ -183,6 +195,10 @@ where
 }
 
 /// Run a closure with a pushed context frame and pop it afterward.
+///
+/// # Errors
+///
+/// Returns [`LogContextError`] when a configured context limit is exceeded.
 pub fn with_log_context<I, K, V, F, R>(fields: I, f: F) -> Result<R, LogContextError>
 where
     I: IntoIterator<Item = (K, V)>,
@@ -254,11 +270,11 @@ fn pop_internal() -> Result<(), LogContextError> {
 /// Remove one identified frame without disturbing newer or older frames.
 fn remove_context_frame(frame_id: u64) -> bool {
     CONTEXT_STACK.with(|stack| {
-        let mut stack = stack.borrow_mut();
-        let Some(position) = stack.iter().position(|frame| frame.id == frame_id) else {
+        let mut frames = stack.borrow_mut();
+        let Some(position) = frames.iter().position(|frame| frame.id == frame_id) else {
             return false;
         };
-        stack.remove(position);
+        frames.remove(position);
         true
     })
 }

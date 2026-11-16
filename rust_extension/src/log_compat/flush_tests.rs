@@ -82,7 +82,7 @@ fn spawn_manager_lock_probe(
                     py.detach(|| wait_for_manager_write_lock(Duration::from_secs(3)));
                 helper_lock_available.store(manager_lock_was_available, Ordering::Release);
             }
-            let _ = release.bind(py).call_method0("set");
+            drop(release.bind(py).call_method0("set"));
         });
     });
 
@@ -119,16 +119,26 @@ fn adapter_flush_releases_manager_for_python_handlers(unique_logger_name: String
         logger.borrow(py).py_remove_handler(handler.clone_ref(py));
         let helper_joined = py.detach(|| lock_probe.join()).is_ok();
 
-        assert!(helper_joined, "manager lock probe thread should finish");
-        assert!(cleanup_flushed, "cleanup should drain the Python handler");
-        assert!(
-            delivered_before_bridge_return,
-            "log bridge flush should deliver the queued Python callback before returning",
-        );
-        assert!(
-            manager_lock_was_available,
-            "manager lock should be available while the Python handler is gated",
-        );
+        if !helper_joined {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "manager lock probe thread should finish",
+            ));
+        }
+        if !cleanup_flushed {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "cleanup should drain the Python handler",
+            ));
+        }
+        if !delivered_before_bridge_return {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "log bridge flush should deliver the queued Python callback before returning",
+            ));
+        }
+        if !manager_lock_was_available {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "manager lock should be available while the Python handler is gated",
+            ));
+        }
         Ok(())
     })
 }

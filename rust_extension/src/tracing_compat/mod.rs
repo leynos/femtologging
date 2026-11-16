@@ -18,7 +18,7 @@ use tracing_subscriber::registry::LookupSpan;
 
 use crate::http_handler::transport_origin;
 use crate::level::FemtoLevel;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
+use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
 use crate::manager;
 
 pub mod python;
@@ -52,14 +52,14 @@ pub struct FemtoTracingLayer;
 
 /// Construct a tracing layer that forwards events into femtologging.
 #[must_use]
-pub fn layer() -> FemtoTracingLayer {
+pub const fn layer() -> FemtoTracingLayer {
     FemtoTracingLayer
 }
 
 impl FemtoTracingLayer {
     /// Convert tracing's five levels to the corresponding femtologging level.
-    fn map_level(level: &Level) -> FemtoLevel {
-        match *level {
+    const fn map_level(level: Level) -> FemtoLevel {
+        match level {
             Level::TRACE => FemtoLevel::Trace,
             Level::DEBUG => FemtoLevel::Debug,
             Level::INFO => FemtoLevel::Info,
@@ -85,23 +85,23 @@ impl FemtoTracingLayer {
 
     /// Resolve a normalized target, creating a missing valid logger through
     /// `manager::get_logger` and falling back to the root logger on error.
-    fn resolve_logger<'a, 'py>(
-        py: Python<'py>,
+    fn resolve_logger<'a>(
+        py: Python<'_>,
         target: &'a str,
     ) -> Option<(Cow<'a, str>, Py<crate::FemtoLogger>)> {
         let normalized = Self::normalize_target(target);
-        match manager::get_logger(py, normalized.as_ref()) {
-            Ok(logger) => Some((normalized, logger)),
-            Err(_) => manager::get_logger(py, "root")
-                .ok()
-                .map(|logger| (Cow::Borrowed("root"), logger)),
+        if let Ok(logger) = manager::get_logger(py, normalized.as_ref()) {
+            return Some((normalized, logger));
         }
+        manager::get_logger(py, "root")
+            .ok()
+            .map(|logger| (Cow::Borrowed("root"), logger))
     }
 
     /// Build record source metadata, then add the event's active span fields.
     fn build_record_metadata<S>(
         event: &Event<'_>,
-        ctx: Context<'_, S>,
+        ctx: &Context<'_, S>,
         key_values: BTreeMap<String, String>,
     ) -> RecordMetadata
     where
@@ -112,8 +112,8 @@ impl FemtoTracingLayer {
                 .metadata()
                 .module_path()
                 .unwrap_or_default()
-                .to_string(),
-            filename: event.metadata().file().unwrap_or_default().to_string(),
+                .to_owned(),
+            filename: event.metadata().file().unwrap_or_default().to_owned(),
             line_number: event.metadata().line().unwrap_or(0),
             key_values,
             ..Default::default()
@@ -125,7 +125,7 @@ impl FemtoTracingLayer {
     /// Add root-to-leaf span names and stored fields with `span.<depth>` prefixes.
     fn merge_span_context<S>(
         key_values: &mut BTreeMap<String, String>,
-        ctx: Context<'_, S>,
+        ctx: &Context<'_, S>,
         event: &Event<'_>,
     ) where
         S: Subscriber + for<'span> LookupSpan<'span>,
@@ -136,20 +136,67 @@ impl FemtoTracingLayer {
 
         for (depth, span) in scope.from_root().enumerate() {
             let prefix = format!("span.{depth}");
-            key_values.insert(format!("{prefix}.name"), span.metadata().name().to_string());
+            key_values.insert(format!("{prefix}.name"), span.metadata().name().to_owned());
 
             if let Some(stored) = span.extensions().get::<StoredSpanFields>() {
-                for (key, value) in &stored.fields {
-                    key_values.insert(format!("{prefix}.{key}"), value.clone());
-                }
+                Self::merge_stored_fields(key_values, &prefix, stored);
             }
         }
+    }
+
+    /// Copy one span's stored fields into the record under `prefix`.
+    fn merge_stored_fields(
+        key_values: &mut BTreeMap<String, String>,
+        prefix: &str,
+        stored: &StoredSpanFields,
+    ) {
+        for (key, value) in &stored.fields {
+            key_values.insert(format!("{prefix}.{key}"), value.clone());
+        }
+    }
+
+    /// Resolve an event's logger and queue the captured record.
+    ///
+    /// A target that cannot be resolved, or a logger that refuses the event by
+    /// level, drops the event silently, matching the layer's enablement
+    /// decision. `origin` is the transport marker the caller captured before
+    /// field capture, so HTTP-worker diagnostics keep their provenance through
+    /// the queue.
+    fn dispatch_event<S>(
+        py: Python<'_>,
+        event: &Event<'_>,
+        ctx: &Context<'_, S>,
+        captured: visitor::CapturedFields,
+        origin: RecordOrigin,
+    ) where
+        S: Subscriber + for<'span> LookupSpan<'span>,
+    {
+        let Some((_, logger)) = Self::resolve_logger(py, event.metadata().target()) else {
+            return;
+        };
+
+        let level = Self::map_level(*event.metadata().level());
+        {
+            let guarded = logger.borrow(py);
+            if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
+                return;
+            }
+        }
+
+        let message = captured
+            .message
+            .unwrap_or_else(|| Self::fallback_message(&captured.key_values));
+        let metadata = Self::build_record_metadata(event, ctx, captured.key_values);
+        let guarded = logger.borrow(py);
+        let prebuilt = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
+            .with_origin(origin);
+        let _ = guarded.log_prebuilt(prebuilt);
     }
 
     /// Build a stable fallback message from captured fields when no message exists.
     fn fallback_message(key_values: &BTreeMap<String, String>) -> String {
         if key_values.is_empty() {
-            return FALLBACK_EVENT_MESSAGE.to_string();
+            return FALLBACK_EVENT_MESSAGE.to_owned();
         }
 
         let joined = key_values
@@ -171,7 +218,7 @@ where
         }
 
         // Check logger-level filtering to avoid evaluating field expressions for disabled events.
-        let level = Self::map_level(metadata.level());
+        let level = Self::map_level(*metadata.level());
         Python::attach(|py| {
             let Some((_, logger)) = Self::resolve_logger(py, metadata.target()) else {
                 return false;
@@ -250,29 +297,6 @@ where
         let _suspended = transport_origin::suspend_http_transport();
 
         let captured = visitor::capture_event(event);
-        let message = captured
-            .message
-            .clone()
-            .unwrap_or_else(|| Self::fallback_message(&captured.key_values));
-        let level = Self::map_level(event.metadata().level());
-
-        Python::attach(|py| {
-            let Some((_, logger)) = Self::resolve_logger(py, event.metadata().target()) else {
-                return;
-            };
-
-            {
-                let guarded = logger.borrow(py);
-                if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
-                    return;
-                }
-            }
-
-            let metadata = Self::build_record_metadata(event, ctx, captured.key_values);
-            let guarded = logger.borrow(py);
-            let record = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
-                .with_origin(origin);
-            let _ = guarded.log_prebuilt(record);
-        });
+        Python::attach(|py| Self::dispatch_event(py, event, &ctx, captured, origin));
     }
 }
