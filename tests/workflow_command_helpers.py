@@ -325,9 +325,9 @@ def _logical_lines(run: str) -> list[str]:
 
     The join inserts nothing, as the shell deletes the backslash and the
     newline before tokenising, so `make te\` followed by `st` runs
-    `make test`. One approximation remains: the literal newline inside a
-    single-quoted string is not preserved in the joined text, because only
-    goal detection reads the result.
+    `make test`. One approximation remains: a newline that a quoted string
+    spans is not kept in the joined text, because only goal detection reads
+    the result.
 
     Parameters
     ----------
