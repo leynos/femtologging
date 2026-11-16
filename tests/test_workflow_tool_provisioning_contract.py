@@ -138,8 +138,11 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
         ("make lint; make test", True),
         ("cargo --locked test --manifest-path rust_extension/Cargo.toml", True),
         ("cargo --manifest-path rust_extension/Cargo.toml test", True),
+        ("cargo +stable test", True),
+        ("cargo build && cargo test", True),
         ("cargo build --locked", False),
         ("make \\\n  test", True),
+        ("make te\\\nst", True),
         ("# make test", False),
     ],
     ids=[
@@ -151,8 +154,11 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
         "two-invocations-semicolon",
         "cargo-leading-option",
         "cargo-option-with-value",
+        "cargo-toolchain-override",
+        "cargo-suite-after-build",
         "cargo-not-the-suite",
         "continued-line",
+        "mid-word-continuation",
         "shell-comment",
     ],
 )
@@ -241,6 +247,16 @@ def test_the_workflow_reader_rejects_duplicate_mapping_keys(tmp_path: Path) -> N
             {"include": [{"os": "macos-15-intel"}, {"os": "ubuntu-latest"}]},
             True,
         ),
+        (
+            "${{ matrix.runner }}",
+            {"runner": ["ubuntu-latest"], "os": ["windows-2022"]},
+            True,
+        ),
+        (
+            "${{ matrix.runner }}",
+            {"include": [{"runner": "windows-2022", "os": "ubuntu-latest"}]},
+            False,
+        ),
     ],
     ids=[
         "scalar-linux",
@@ -251,6 +267,8 @@ def test_the_workflow_reader_rejects_duplicate_mapping_keys(tmp_path: Path) -> N
         "scalar-macos",
         "matrix-non-linux",
         "matrix-mixed",
+        "matrix-runner-key",
+        "matrix-runner-key-include",
     ],
 )
 def test_runner_forms_are_classified_by_platform(
