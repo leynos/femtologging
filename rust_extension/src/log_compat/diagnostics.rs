@@ -6,6 +6,7 @@
 //! warnings visible, and the rate-limited diagnostic a target refused by the
 //! bounded registry produces before the bridge falls back to root.
 
+use std::io::Write;
 use std::sync::LazyLock;
 
 use log::Record;
@@ -108,7 +109,7 @@ pub(super) struct LookupFailureDiagnostic<'a> {
 /// fixed prefix. Quoting them verbatim would let one warning write an unbounded
 /// line, and an unescaped one could forge a record boundary in the same
 /// line-oriented output the name rules exist to protect.
-pub(super) fn lookup_failure_message(diagnostic: LookupFailureDiagnostic<'_>) -> String {
+pub(super) fn lookup_failure_message(diagnostic: &LookupFailureDiagnostic<'_>) -> String {
     let LookupFailureDiagnostic {
         reason,
         target,
@@ -146,16 +147,19 @@ fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &s
         // here is written and immediately dropped — leaving a registry at its
         // cap with no visible diagnostic at all on the bridge path. Writing to
         // stderr bypasses the logger being diagnosed.
-        eprintln!(
+        // A failed diagnostic write must not take down the logging path, so the
+        // write result is discarded.
+        drop(writeln!(
+            std::io::stderr(),
             "{}",
-            lookup_failure_message(LookupFailureDiagnostic {
+            lookup_failure_message(&LookupFailureDiagnostic {
                 reason,
                 target,
                 normalized,
                 detail: &detail,
                 count,
             })
-        );
+        ));
     });
 }
 
@@ -176,8 +180,8 @@ fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
 ///
 /// For example, a valid `my::service` target resolves to `my.service`; a name
 /// refused by the bounded registry resolves to the root logger.
-pub(super) fn resolve_logger<'py>(
-    py: Python<'py>,
+pub(super) fn resolve_logger(
+    py: Python<'_>,
     target: &str,
 ) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
@@ -188,7 +192,7 @@ pub(super) fn resolve_logger<'py>(
             // Root is always resolvable: it is exempt from the registry cap, so
             // this fallback cannot itself be refused.
             let logger = manager::get_logger(py, "root").ok()?;
-            Some(("root".to_string(), logger))
+            Some(("root".to_owned(), logger))
         }
     }
 }

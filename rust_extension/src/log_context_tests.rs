@@ -42,7 +42,8 @@ fn isolated_context() {
 }
 
 #[rstest]
-fn context_push_pop_round_trip(_isolated_context: ()) {
+fn context_push_pop_round_trip() {
+    isolated_context();
     push_log_context_map(BTreeMap::from([("request_id".into(), "123".into())]))
         .expect("context push should succeed");
     let merged = merge_context_values(&BTreeMap::new()).expect("merge should succeed");
@@ -51,7 +52,8 @@ fn context_push_pop_round_trip(_isolated_context: ()) {
 }
 
 #[rstest]
-fn nested_context_overrides_outer_keys(_isolated_context: ()) {
+fn nested_context_overrides_outer_keys() {
+    isolated_context();
     push_log_context_map(BTreeMap::from([("user".into(), "outer".into())]))
         .expect("outer context should push");
     push_log_context_map(BTreeMap::from([("user".into(), "inner".into())]))
@@ -63,7 +65,8 @@ fn nested_context_overrides_outer_keys(_isolated_context: ()) {
 }
 
 #[rstest]
-fn guards_remove_only_their_own_frames_when_dropped_out_of_order(_isolated_context: ()) {
+fn guards_remove_only_their_own_frames_when_dropped_out_of_order() {
+    isolated_context();
     let outer = push_log_context([("scope", "outer")]).expect("outer context should push");
     let inner = push_log_context([("scope", "inner")]).expect("inner context should push");
 
@@ -77,6 +80,21 @@ fn guards_remove_only_their_own_frames_when_dropped_out_of_order(_isolated_conte
             .expect("empty context should merge")
             .is_empty()
     );
+}
+
+/// Apply a generated drop action, ignoring indices that no longer exist.
+fn apply_drop(
+    guards: &mut [Option<LogContextGuard>],
+    model: &mut [Option<BTreeMap<String, String>>],
+    index: usize,
+) {
+    let Some((guard_slot, model_slot)) = guards.iter_mut().zip(model.iter_mut()).nth(index) else {
+        return;
+    };
+    if let Some(guard) = guard_slot.take() {
+        drop(guard);
+        *model_slot = None;
+    }
 }
 
 proptest! {
@@ -96,12 +114,7 @@ proptest! {
                     guards.push(Some(guard));
                     model.push(Some(fields));
                 }
-                ContextAction::Drop(index) => {
-                    if let Some(guard) = guards.get_mut(index).and_then(Option::take) {
-                        drop(guard);
-                        model[index] = None;
-                    }
-                }
+                ContextAction::Drop(index) => apply_drop(&mut guards, &mut model, index),
             }
 
             let mut expected = BTreeMap::new();
@@ -116,12 +129,14 @@ proptest! {
 }
 
 #[rstest]
-fn guard_is_not_send_or_sync(_isolated_context: ()) {
+fn guard_is_not_send_or_sync() {
+    isolated_context();
     assert_not_impl_any!(LogContextGuard: Send, Sync);
 }
 
 #[rstest]
-fn foreign_thread_drop_leaves_owner_context_unchanged(_isolated_context: ()) {
+fn foreign_thread_drop_leaves_owner_context_unchanged() {
+    isolated_context();
     let guard = push_log_context([("request_id", "owner")]).expect("owner context should push");
     let frame_id = guard.frame_id;
     let owner_thread = guard.owner_thread;
@@ -158,7 +173,8 @@ fn foreign_thread_drop_leaves_owner_context_unchanged(_isolated_context: ()) {
 }
 
 #[rstest]
-fn explicit_values_override_context(_isolated_context: ()) {
+fn explicit_values_override_context() {
+    isolated_context();
     push_log_context_map(BTreeMap::from([("request_id".into(), "ctx".into())]))
         .expect("context should push");
     let explicit = BTreeMap::from([("request_id".into(), "inline".into())]);
@@ -167,23 +183,25 @@ fn explicit_values_override_context(_isolated_context: ()) {
     pop_log_context().expect("context should pop");
 }
 
-fn assert_rejected_context(context: BTreeMap<String, String>, expected: LogContextError) {
+fn assert_rejected_context(context: BTreeMap<String, String>, expected: &LogContextError) {
     let err = push_log_context_map(context).expect_err("invalid context should fail");
-    assert_eq!(err, expected);
+    assert_eq!(&err, expected);
 }
 
 #[rstest]
-fn pop_on_empty_stack_errors(_isolated_context: ()) {
+fn pop_on_empty_stack_errors() {
+    isolated_context();
     let err = pop_log_context().expect_err("empty pop should fail");
     assert_eq!(err, LogContextError::EmptyContextStack);
 }
 
 #[rstest]
-fn reject_oversized_context_values(_isolated_context: ()) {
+fn reject_oversized_context_values() {
+    isolated_context();
     let long_key = "k".repeat(MAX_KEY_BYTES + 1);
     assert_rejected_context(
         BTreeMap::from([(long_key.clone(), "v".into())]),
-        LogContextError::KeyTooLong {
+        &LogContextError::KeyTooLong {
             key: long_key,
             len: MAX_KEY_BYTES + 1,
             max: MAX_KEY_BYTES,
@@ -192,7 +210,7 @@ fn reject_oversized_context_values(_isolated_context: ()) {
     let long_value = "v".repeat(MAX_VALUE_BYTES + 1);
     assert_rejected_context(
         BTreeMap::from([(String::from("ok"), long_value)]),
-        LogContextError::ValueTooLong {
+        &LogContextError::ValueTooLong {
             key: String::from("ok"),
             len: MAX_VALUE_BYTES + 1,
             max: MAX_VALUE_BYTES,
@@ -201,7 +219,8 @@ fn reject_oversized_context_values(_isolated_context: ()) {
 }
 
 #[rstest]
-fn reject_too_many_keys(_isolated_context: ()) {
+fn reject_too_many_keys() {
+    isolated_context();
     let context = (0..=MAX_CONTEXT_KEYS)
         .map(|index| (format!("k{index}"), String::from("v")))
         .collect::<BTreeMap<_, _>>();
@@ -306,7 +325,8 @@ fn reserved_name_check_runs_before_value_limits(_isolated_context: ()) {
 }
 
 #[rstest]
-fn reject_total_bytes_exceeded(_isolated_context: ()) {
+fn reject_total_bytes_exceeded() {
+    isolated_context();
     let value_len = 300usize;
     let mut context = BTreeMap::new();
     for index in 0..60usize {
