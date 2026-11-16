@@ -196,7 +196,7 @@ path still performs per-record writes through `WorkerState::handle_record()` and
 `super::io_utils::write_record()` in
 `rust_extension/src/handlers/file/worker.rs`, and the stream path still writes
 per record in `handle_record_command()` in
-`rust_extension/src/stream_handler.rs`. The contiguous-buffer `Vec<u8>` plus
+`rust_extension/src/stream_handler/mod.rs`. The contiguous-buffer `Vec<u8>` plus
 `write_all` path described below remains the intended next step for Phase 1
 write batching rather than an already-landed implementation.
 
