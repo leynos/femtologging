@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import enum
 import re
+import sysconfig
 import typing as typ
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 from pytest_bdd import given, parsers, then
 
@@ -24,6 +26,17 @@ _TRACEBACK_FRAME_PATTERN: re.Pattern[str] = re.compile(
     r'^(?P<indent>\s*)File "(?P<file>[^"]+)", line (?P<line>[^,]+), '
     r"in (?P<func>.+)$",
 )
+_STACK_HEADING: typ.Final[str] = "Stack (most recent call last):"
+_TRACEBACK_HEADING: typ.Final[str] = "Traceback (most recent call last):"
+_CARET_LINE_PATTERN: re.Pattern[str] = re.compile(r"^\s*[\^~]+$")
+_FROZEN_FILENAME_PATTERN: re.Pattern[str] = re.compile(r"^<frozen\b[^>]*>$")
+_EXTERNAL_ROOT_KEYS: typ.Final[tuple[str, ...]] = (
+    "stdlib",
+    "platstdlib",
+    "purelib",
+    "platlib",
+    "scripts",
+)
 
 
 class LauncherFrameFunc(enum.StrEnum):
@@ -38,12 +51,14 @@ class LauncherFrameFunc(enum.StrEnum):
 _LAUNCHER_FRAME_FUNCS: frozenset[str] = frozenset(
     member.value for member in LauncherFrameFunc
 )
-_SYSTEM_EXIT_PYTEST_LINES: frozenset[str] = frozenset({
-    "raise SystemExit(pytest.console_main())",
-    "raise SystemExit(pytest._console_main())",
-    "raise SystemExit(_console_main())",
-    "sys.exit(_console_main())",
-})
+_SYSTEM_EXIT_PYTEST_LINES: frozenset[str] = frozenset(
+    {
+        "raise SystemExit(pytest.console_main())",
+        "raise SystemExit(pytest._console_main())",
+        "raise SystemExit(_console_main())",
+        "sys.exit(_console_main())",
+    }
+)
 _PYTEST_MAIN_INVOCATION_PREFIX = "code = _main("
 _PYTEST_CMDLINE_MAIN_PREFIX = "ret: ExitCode | int = "
 _PYTEST_PREPARECONFIG_PREFIX = "config = prepareconfig("
@@ -100,6 +115,138 @@ def normalize_traceback_output(output: str | None, placeholder: str = "<file>") 
         r"\g<indent>\g<prefix>(...),",
         result,
     )
+
+
+def strip_external_stack_frames(
+    output: str | None,
+    external_roots: cabc.Iterable[Path] | None = None,
+) -> str:
+    r"""Remove installed and standard-library frames from a captured stack.
+
+    A ``stack_info=True`` record captures the whole call stack, including the
+    frames of pytest, pluggy and the interpreter. Normalizing paths and line
+    numbers keeps their locations stable, but not their source text: an
+    upstream release may wrap a call across lines and change the snapshot
+    without any change to this repository. Dropping those frame blocks before
+    normalization leaves a snapshot that records only the frames the project
+    controls.
+
+    Only the section between the ``Stack (most recent call last):`` heading
+    and the next ``Traceback (most recent call last):`` heading or the end of
+    the output is considered, so exception tracebacks are untouched. A frame
+    is external when its filename is frozen or resolves beneath one of the
+    interpreter's standard-library or site-package roots. Relative and
+    unrecognized filenames are kept, because they cannot be attributed
+    reliably.
+
+    Parameters
+    ----------
+    output : str | None
+        The raw logging output, or ``None``.
+    external_roots : collections.abc.Iterable[pathlib.Path] | None
+        Directories whose frames are removed. Defaults to the ``stdlib``,
+        ``platstdlib``, ``purelib``, ``platlib`` and ``scripts`` entries of
+        :func:`sysconfig.get_paths`.
+
+    Returns
+    -------
+    str
+        The output with external frame blocks removed, or an empty string
+        when ``output`` is ``None``.
+
+    Examples
+    --------
+    >>> raw = (
+    ...     "Stack (most recent call last):\n"
+    ...     '  File "/usr/lib/python3.12/runpy.py", line 1, in run\n'
+    ...     "    run_code()\n"
+    ...     '  File "/repo/app.py", line 2, in main\n'
+    ...     "    app.run()\n"
+    ... )
+    >>> kept = strip_external_stack_frames(
+    ...     raw, external_roots=(Path("/usr/lib/python3.12"),)
+    ... )
+    >>> "runpy.py" not in kept and "/repo/app.py" in kept
+    True
+
+    """
+    if output is None:
+        return ""
+    roots = (
+        tuple(external_roots)
+        if external_roots is not None
+        else _external_roots_from_sysconfig()
+    )
+    lines = output.splitlines()
+    kept: list[str] = []
+    index = 0
+    in_stack_section = False
+
+    while index < len(lines):
+        line = lines[index]
+        heading = line.strip()
+        if heading == _STACK_HEADING:
+            in_stack_section = True
+            kept.append(line)
+            index += 1
+            continue
+        if in_stack_section and heading == _TRACEBACK_HEADING:
+            in_stack_section = False
+            kept.append(line)
+            index += 1
+            continue
+        if not in_stack_section:
+            kept.append(line)
+            index += 1
+            continue
+
+        frame = _parse_frame(lines, index)
+        if frame is None:
+            kept.append(line)
+            index += 1
+            continue
+
+        block_end = _frame_block_end(lines, frame)
+        if _is_external_frame_file(frame.frame_file, roots):
+            index = block_end
+            continue
+        kept.extend(lines[index:block_end])
+        index = block_end
+
+    return _rejoin_lines(kept, output)
+
+
+def _external_roots_from_sysconfig() -> tuple[Path, ...]:
+    """Return this interpreter's resolved standard-library and package roots."""
+    scheme = sysconfig.get_paths()
+    return tuple(
+        Path(scheme[key]).resolve() for key in _EXTERNAL_ROOT_KEYS if scheme.get(key)
+    )
+
+
+def _is_external_frame_file(frame_file: str, roots: cabc.Sequence[Path]) -> bool:
+    """Return whether a frame's filename is frozen or beneath an external root."""
+    if _FROZEN_FILENAME_PATTERN.match(frame_file):
+        return True
+    candidate = Path(frame_file)
+    if not candidate.is_absolute():
+        return False
+    resolved = candidate.resolve()
+    return any(resolved.is_relative_to(root) for root in roots)
+
+
+def _frame_block_end(lines: list[str], frame: _FrameInfo) -> int:
+    """Return the index just past a frame's header, source and caret lines."""
+    end = frame.next_index
+    while end < len(lines) and _CARET_LINE_PATTERN.match(lines[end]):
+        end += 1
+    return end
+
+
+def _rejoin_lines(lines: list[str], original: str) -> str:
+    """Join split lines, preserving whether the original ended with a newline."""
+    joined = "\n".join(lines)
+    return f"{joined}\n" if original.endswith("\n") else joined
 
 
 def _normalize_launcher_frames(output: str) -> str:
@@ -184,10 +331,12 @@ def _is_pytest_command_main_frame(frame_func: str, code_line: str) -> bool:
     """Return whether a pytest command-line ``_main`` frame should be stable."""
     if frame_func != "_main":
         return False
-    return code_line.startswith((
-        _PYTEST_CMDLINE_MAIN_PREFIX,
-        _PYTEST_PREPARECONFIG_PREFIX,
-    ))
+    return code_line.startswith(
+        (
+            _PYTEST_CMDLINE_MAIN_PREFIX,
+            _PYTEST_PREPARECONFIG_PREFIX,
+        )
+    )
 
 
 def _is_runpy_launcher_path(frame_file: str) -> bool:
