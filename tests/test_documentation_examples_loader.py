@@ -6,8 +6,11 @@ import re
 
 import pytest
 
+from tests import documentation_examples
 from tests.documentation_examples import (
     DocumentationExampleError,
+    documented_example,
+    load_documented_examples,
     parse_document,
     unmarked_fences,
 )
@@ -209,3 +212,62 @@ def test_malformed_documents_report_their_location(text: str, diagnostic: str) -
     """Every contract breach names the document and the offending line."""
     with pytest.raises(DocumentationExampleError, match=re.escape(diagnostic)):
         parse_document("doc.md", text)
+
+
+@pytest.mark.parametrize(
+    "indent",
+    [
+        pytest.param("\t", id="tab"),
+        pytest.param(" \t", id="space-tab"),
+        pytest.param("  \t", id="two-spaces-tab"),
+        pytest.param("   \t", id="three-spaces-tab"),
+    ],
+)
+def test_a_tab_indented_fence_line_stays_in_the_body(indent: str) -> None:
+    """A tab reaches the next four-column stop, so the line is never a closer.
+
+    Counting a tab as a single column would keep these lines within the
+    three-column limit and let them close the example early, cutting the body
+    short. The example's own trailing fence still closes it.
+    """
+    text = f"<!-- tested-example: tabbed -->\n```markdown\n{indent}```\n```\n"
+    [example] = parse_document("doc.md", text)
+
+    assert example.body == f"{indent}```\n", (
+        "a tab-indented fence line must stay inside the example"
+    )
+
+
+def test_load_rejects_an_identifier_shared_by_two_documents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An identifier reused across documents is refused, not merely in one file."""
+    documents = {
+        "first.md": "<!-- tested-example: shared -->\n```python\nassert 1\n```\n",
+        "second.md": "<!-- tested-example: shared -->\n```python\nassert 2\n```\n",
+    }
+    monkeypatch.setattr(documentation_examples, "DOCUMENTS", tuple(documents))
+    monkeypatch.setattr(documentation_examples, "read_document", documents.__getitem__)
+
+    with pytest.raises(
+        DocumentationExampleError,
+        match="duplicate tested-example identifier 'shared'",
+    ):
+        load_documented_examples()
+
+
+def test_an_unknown_identifier_raises_key_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lookup finds a declared identifier and names one that no document has."""
+    documents = {
+        "only.md": "<!-- tested-example: known -->\n```python\nassert 1\n```\n",
+    }
+    monkeypatch.setattr(documentation_examples, "DOCUMENTS", tuple(documents))
+    monkeypatch.setattr(documentation_examples, "read_document", documents.__getitem__)
+
+    assert documented_example("known").id == "known", (
+        "the declared identifier should be found"
+    )
+    with pytest.raises(KeyError, match="unknown"):
+        documented_example("unknown")
