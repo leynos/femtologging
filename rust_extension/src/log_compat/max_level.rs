@@ -36,7 +36,7 @@ fn adapter_is_installed() -> bool {
 /// ```ignore
 /// assert_eq!(map_femto_to_log_filter(FemtoLevel::Critical), log::LevelFilter::Off);
 /// ```
-pub(super) fn map_femto_to_log_filter(level: FemtoLevel) -> log::LevelFilter {
+pub(super) const fn map_femto_to_log_filter(level: FemtoLevel) -> log::LevelFilter {
     match level {
         FemtoLevel::Trace => log::LevelFilter::Trace,
         FemtoLevel::Debug => log::LevelFilter::Debug,
