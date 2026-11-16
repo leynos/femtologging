@@ -42,7 +42,7 @@ from femtologging import StreamHandlerBuilder, basicConfig, get_logger, reset_ma
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-# Mirrors `MAX_LOGGERS` in `rust_extension/src/manager/registry.rs`.
+# Mirrors `MAX_LOGGERS` in `rust_extension/src/manager/registry/mod.rs`.
 MAX_LOGGERS = 10_000
 
 # Mirrors `MAX_LOGGER_NAME_BYTES` and `MAX_LOGGER_NAME_SEGMENTS` in
@@ -336,7 +336,7 @@ def test_thread_count_does_not_track_logger_count() -> None:
 def _dispatch_pool_ceiling() -> int:
     """Return the most dispatch threads the pool can start on this machine.
 
-    Mirrors the clamp in `rust_extension/src/logger/dispatcher.rs`: at least
+    Mirrors the clamp in `rust_extension/src/logger/dispatcher/mod.rs`: at least
     one shard, at most four, otherwise one per available core. A little slack
     is allowed for threads the interpreter itself creates while the loggers
     are registered.
