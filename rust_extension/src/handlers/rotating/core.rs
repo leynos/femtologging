@@ -92,7 +92,7 @@ impl FemtoRotatingFileHandler {
     ///
     /// Internal visibility allows the builder to construct instances whilst
     /// preventing external crates from bypassing validation.
-    pub(crate) fn new_with_rotation_limits(
+    pub(crate) const fn new_with_rotation_limits(
         inner: FemtoFileHandler,
         max_bytes: u64,
         backup_count: usize,
@@ -105,11 +105,15 @@ impl FemtoRotatingFileHandler {
     }
 
     /// Return the configured rotation thresholds.
-    pub(crate) fn rotation_limits(&self) -> (u64, usize) {
+    pub(crate) const fn rotation_limits(&self) -> (u64, usize) {
         (self.max_bytes, self.backup_count)
     }
 
     /// Build a rotating handler with the supplied configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error from opening or creating the configured `path`.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
