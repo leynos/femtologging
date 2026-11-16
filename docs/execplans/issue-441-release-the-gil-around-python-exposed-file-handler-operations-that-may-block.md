@@ -2029,6 +2029,12 @@ one still open.
 Queue request `45e1ae9b` for `@coderabbitai review` was still pending at this
 point, so the review of this head is not yet complete.
 
+Hosted CI run `43816675008` on `63dc0ad3` reproduces the upstream red: all four
+`build-test` jobs fail the `Lint` step with fourteen `bumpy-road-function`
+errors and the wheel jobs pass. `git diff --stat origin/main...HEAD` for
+`rust_extension/src/python_module.rs` and `rust_extension/src/lib.rs` is empty,
+so the branch does not touch the failing code.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
