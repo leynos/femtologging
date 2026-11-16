@@ -1,4 +1,20 @@
 //! Python accessors for per-logger diagnostic counters.
+//!
+//! [`FemtoLogger::get_flush_diagnostics`] returns the flush barrier's
+//! fixed-cardinality counters as a `dict`, so a Python metrics adapter can poll
+//! them without parsing log output. The keys are stable — attempts,
+//! confirmations, failures by stage and elapsed-time buckets — and contain no
+//! logger names, paths, messages or payloads, which keeps the cardinality
+//! bounded regardless of how many loggers exist.
+//!
+//! [`FemtoLogger::get_context_capture_failures`] reports a single counter:
+//! records dropped because capturing Python context raised. It is separate from
+//! the flush counters because it measures an input failure, not a flush
+//! outcome.
+//!
+//! Both accessors read relaxed atomics through [`super::flush_diagnostics`], so
+//! a snapshot taken during a flush can be temporarily inconsistent. The module
+//! is Python-only in practice and adds no state of its own.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;

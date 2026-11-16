@@ -1,4 +1,20 @@
 //! Fixed-cardinality accounting for logger flush outcomes and durations.
+//!
+//! [`FlushDiagnostics`] is what one logger records about its flush barrier: an
+//! attempt and confirmation count, one counter per terminal failure stage from
+//! [`FlushFailureStage`], and elapsed-time buckets. A stage is a fixed variant
+//! rather than a message, so the exposed key set cannot grow with the number of
+//! loggers or with the text of an error.
+//!
+//! The barrier in [`super::flush`] is the only writer, and
+//! [`FlushDiagnosticsSnapshot`] is the only read shape: the Python accessor in
+//! [`super::flush_diagnostics_api`] lists the snapshot into a `dict`, and the
+//! metrics tests read the same keys. Counters are relaxed atomics, so a
+//! snapshot taken during a flush may show an attempt that its confirmation has
+//! not yet caught up with.
+//!
+//! Adding an outcome is one variant plus one key; the fixed-key tests fail
+//! until the Python surface and its stub agree.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};

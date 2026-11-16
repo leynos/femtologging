@@ -1,4 +1,21 @@
 //! The monotonic time source and absolute deadline shared by one flush barrier.
+//!
+//! [`FlushDeadline`] is the value [`FemtoLogger`](super::FemtoLogger) creates
+//! when `flush_handlers()` starts, and the value every later stage of that
+//! barrier reads. One absolute deadline is formed from the logger's configured
+//! timeout and the barrier's clock, then carried through marker admission, the
+//! handler snapshot, the worker's drain of the marker and each handler's own
+//! flush, so time spent in an early stage is not offered again to a later one.
+//!
+//! The clock is a [`SharedClock`] rather than a raw [`Instant`] so a test can
+//! script the deadline transitions the shard flush path sees, and so the
+//! worker's bounded waits and the caller's budget are sampled from the same
+//! source. Under `tracing-compat` the deadline also carries the trace span and
+//! dispatcher the caller was using, which is what keeps worker-side events in
+//! the caller's span and subscriber.
+//!
+//! The logger's flush orchestration lives in [`super::flush`], which owns the
+//! shard flush path and the `FemtoLogger::flush_handlers` entry point.
 
 use std::time::{Duration, Instant};
 

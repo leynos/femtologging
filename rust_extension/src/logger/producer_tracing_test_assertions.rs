@@ -1,4 +1,17 @@
 //! Assertions for bounded producer tracing event fields.
+//!
+//! The dispatch trace events carry a fixed field vocabulary, and these helpers
+//! are the check that it stays fixed: they select the events for one dispatch
+//! outcome and assert both the count the scenario should produce and the exact
+//! key set.
+//!
+//! [`assert_no_local_handler_events`] is called by
+//! `producer_tracing_tests::context_dispatch_tracing_reports_bounded_outcomes`
+//! for the two records dispatched with no attached handler, and
+//! [`assert_no_handlers_accepted_events`] for the one record every handler
+//! filter rejected. Keeping the assertions here rather than inline lets both
+//! outcomes share the "exact keys, no payload" check without that test growing
+//! past its own scenario.
 
 use std::collections::BTreeSet;
 
