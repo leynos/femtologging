@@ -373,5 +373,5 @@ impl HandlerBuilderTrait for HTTPHandlerBuilder {
 mod python_bindings;
 
 #[cfg(test)]
-#[path = "http_builder/tests.rs"]
+#[path = "tests.rs"]
 mod tests;
