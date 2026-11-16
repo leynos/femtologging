@@ -834,10 +834,11 @@ checker fails each. `make loom-runner-test` tests it. A scheduled failure is
 not left silent: the workflow's `notify-failure` job comments on, or opens, the
 `heavy-tests nightly failure` issue with the run URL, commit and run date.
 `tests/test_heavy_workflow_contract.py`, with its rules in
-`tests/heavy_workflow_contract_helpers.py`, pins that the job installs from
-`uv.lock` before building, keeps the Loom step last, and runs only for a
-scheduled failure. Every rule is also applied to a deliberately broken copy of
-the workflow, so a check that reports nothing cannot pass by accident.
+`tests/heavy_workflow_contract_helpers.py` and its document accessors in
+`tests/heavy_workflow_document.py`, pins that the job installs from `uv.lock`
+before building, keeps the Loom step last, and runs only for a scheduled
+failure. Every rule is also applied to a deliberately broken copy of the
+workflow, so a check that reports nothing cannot pass by accident.
 
 Both steps build into `target/loom` under their own cache key, which names the
 toolchain, the lockfile, the feature selection and the flags, apart from the

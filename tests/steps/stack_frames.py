@@ -80,7 +80,32 @@ def parse_frames(output: str) -> list[tuple[Path, str]]:
 
 
 def parse_frame(lines: list[str], index: int) -> FrameInfo | None:
-    """Return parsed frame information when the line starts a traceback frame."""
+    r"""Return parsed frame information when the line starts a traceback frame.
+
+    Parameters
+    ----------
+    lines : list[str]
+        The output split into lines, without line terminators.
+    index : int
+        The position of the line to parse.
+
+    Returns
+    -------
+    FrameInfo | None
+        The frame's header, filename, function name, first source line and the
+        index just past that source line, or ``None`` when ``lines[index]`` is
+        not a frame header.
+
+    Examples
+    --------
+    >>> frame = parse_frame(
+    ...     ['  File "/repo/app.py", line 2, in main', "    app.run()"], 0
+    ... )
+    >>> (frame.frame_file, frame.frame_func, frame.code_line, frame.next_index)
+    ('/repo/app.py', 'main', 'app.run()', 2)
+    >>> parse_frame(["plain text"], 0) is None
+    True
+    """
     frame_line = lines[index]
     frame_match = _TRACEBACK_FRAME_PATTERN.match(frame_line)
     if frame_match is None:

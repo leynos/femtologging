@@ -21,7 +21,8 @@ import typing as typ
 
 import pytest
 
-from tests.heavy_workflow_contract_helpers import (
+from tests.heavy_workflow_contract_helpers import workflow_problems
+from tests.heavy_workflow_document import (
     BUILD_STEP,
     HEAVY_JOB,
     NOTIFY_JOB,
@@ -34,13 +35,12 @@ from tests.heavy_workflow_contract_helpers import (
     replace_run,
     run_text,
     steps,
-    workflow_problems,
 )
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from tests.heavy_workflow_contract_helpers import Document
+    from tests.heavy_workflow_document import Document
 
 
 def _unfrozen_sync(document: Document) -> None:
