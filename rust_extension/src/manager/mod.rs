@@ -98,7 +98,7 @@ mod manager_tests;
 #[cfg(all(test, feature = "python"))]
 mod configuration_tests;
 #[cfg(all(test, feature = "python"))]
-#[path = "manager/manager_tests_capacity.rs"]
+#[path = "manager_tests_capacity.rs"]
 mod manager_tests_capacity;
 #[cfg(feature = "python")]
 pub(crate) use configuration::{

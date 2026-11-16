@@ -376,5 +376,5 @@ mod python_bindings;
 mod validation;
 
 #[cfg(test)]
-#[path = "http_builder/tests.rs"]
+#[path = "tests.rs"]
 mod tests;

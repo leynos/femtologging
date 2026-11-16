@@ -342,31 +342,31 @@ pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {
 mod test_support;
 
 #[cfg(test)]
-#[path = "log_compat_context_tests.rs"]
+#[path = "../log_compat_context_tests.rs"]
 mod context_tests;
 
 #[cfg(test)]
-#[path = "log_compat_tests.rs"]
+#[path = "../log_compat_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "log_compat/enabled_tests.rs"]
+#[path = "enabled_tests.rs"]
 mod enabled_tests;
 
 #[cfg(test)]
-#[path = "log_compat/flush_tests.rs"]
+#[path = "flush_tests.rs"]
 mod flush_tests;
 
 #[cfg(test)]
-#[path = "log_compat/diagnostics_tests.rs"]
+#[path = "diagnostics_tests.rs"]
 mod diagnostics_tests;
 
 #[cfg(test)]
-#[path = "log_compat/origin_tests.rs"]
+#[path = "origin_tests.rs"]
 mod origin_tests;
 
 #[cfg(all(test, not(loom), feature = "python"))]
-#[path = "log_compat/cardinality_tests.rs"]
+#[path = "cardinality_tests.rs"]
 mod cardinality_tests;
 
 #[cfg(all(test, not(loom)))]
