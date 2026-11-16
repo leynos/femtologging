@@ -132,39 +132,53 @@ fn transactional_builder(root: LoggerConfigBuilder) -> ConfigBuilder {
         .with_root_logger(root)
 }
 
-/// Reject a configuration and assert no pre-existing logger changed.
+/// Logger plan for `keep`, which carries both the shared handler and filter.
+fn keep_logger_builder() -> LoggerConfigBuilder {
+    LoggerConfigBuilder::new()
+        .with_handlers(["h"])
+        .with_filters(["f"])
+}
+
+/// Every observable piece of state a rejected configuration must restore.
+#[derive(Debug, PartialEq, Eq)]
+struct TransactionStateSnapshot {
+    /// State of each logger named by [`TRANSACTION_LOGGER_NAMES`], in order.
+    loggers: Vec<LoggerStateSnapshot>,
+    /// Manager registry membership at capture time.
+    registered_loggers: Vec<String>,
+    /// Runtime handler and filter attachment metadata at capture time.
+    runtime_attachments: RuntimeAttachmentSnapshot,
+}
+
+/// Capture the loggers and attachment metadata a rejection must preserve.
+fn capture_transaction_state(py: Python<'_>) -> pyo3::PyResult<TransactionStateSnapshot> {
+    Ok(TransactionStateSnapshot {
+        loggers: TRANSACTION_LOGGER_NAMES
+            .iter()
+            .map(|name| snapshot_logger_state(py, name))
+            .collect::<pyo3::PyResult<Vec<_>>>()?,
+        registered_loggers: manager::registered_logger_names_for_test(),
+        runtime_attachments: snapshot_runtime_attachments(),
+    })
+}
+
+/// Establish the baseline a rejected configuration is compared against.
 ///
-/// `mutate` supplies the invalid element, so one body covers unknown handler
-/// ids, unknown filter ids, and malformed logger names. The comparison covers
-/// handler and filter identity, level, propagation, the disabled flag, and
-/// runtime attachment metadata, and it includes a logger that an earlier
-/// configuration already disabled.
-fn assert_rejected_configuration_changes_nothing(
+/// Stage one configures `keep` and `stale`; stage two omits `stale` while
+/// disabling, so the returned snapshot already contains one disabled logger.
+/// A rejected run must neither re-enable it nor leave any other logger
+/// partially disabled.
+fn prepare_rejection_baseline(
     py: Python<'_>,
-    root: LoggerConfigBuilder,
-    mutate: impl FnOnce(ConfigBuilder) -> ConfigBuilder,
-) {
-    // Stage one configures `keep` and `stale`; stage two omits `stale` while
-    // disabling, so the comparison below starts from a state that already has
-    // one disabled logger. A rejected run must neither re-enable it nor leave
-    // any other logger partially disabled.
+    root: &LoggerConfigBuilder,
+) -> pyo3::PyResult<TransactionStateSnapshot> {
     transactional_builder(root.clone())
-        .with_logger(
-            "keep",
-            LoggerConfigBuilder::new()
-                .with_handlers(["h"])
-                .with_filters(["f"]),
-        )
+        .with_logger("keep", keep_logger_builder())
         .with_logger("stale", LoggerConfigBuilder::new().with_handlers(["h"]))
         .build_and_init()
         .expect("stage one should succeed");
     transactional_builder(root.clone())
-        .with_logger(
-            "keep",
-            LoggerConfigBuilder::new()
-                .with_handlers(["h"])
-                .with_filters(["f"]),
-        )
+        .with_logger("keep", keep_logger_builder())
         .with_disable_existing_loggers(true)
         .build_and_init()
         .expect("stage two should succeed");
@@ -175,34 +189,40 @@ fn assert_rejected_configuration_changes_nothing(
         "the baseline must include a logger a previous configuration disabled",
     );
 
-    let before = TRANSACTION_LOGGER_NAMES
-        .iter()
-        .map(|name| snapshot_logger_state(py, name).expect("baseline logger exists"))
-        .collect::<Vec<_>>();
-    let registered_before = manager::registered_logger_names_for_test();
-    let runtime_before = snapshot_runtime_attachments();
+    capture_transaction_state(py)
+}
+
+/// Reject a configuration and assert no pre-existing logger changed.
+///
+/// `mutate` supplies the invalid element, so one body covers unknown handler
+/// ids, unknown filter ids, and malformed logger names. The comparison covers
+/// handler and filter identity, level, propagation, the disabled flag, and
+/// runtime attachment metadata, and it includes a logger that an earlier
+/// configuration already disabled.
+#[track_caller]
+fn assert_rejected_configuration_changes_nothing(
+    py: Python<'_>,
+    root: LoggerConfigBuilder,
+    mutate: impl FnOnce(ConfigBuilder) -> ConfigBuilder,
+) {
+    let before = prepare_rejection_baseline(py, &root).expect("baseline logger exists");
 
     let invalid = mutate(transactional_builder(root).with_disable_existing_loggers(true));
     invalid
         .build_and_init()
         .expect_err("the invalid configuration must be rejected");
 
-    let after = TRANSACTION_LOGGER_NAMES
-        .iter()
-        .map(|name| snapshot_logger_state(py, name).expect("logger survives a rejection"))
-        .collect::<Vec<_>>();
-    let registered_after = manager::registered_logger_names_for_test();
-    let runtime_after = snapshot_runtime_attachments();
+    let after = capture_transaction_state(py).expect("logger survives a rejection");
     assert_eq!(
-        after, before,
+        after.loggers, before.loggers,
         "a rejected configuration must leave every pre-existing logger unchanged",
     );
     assert_eq!(
-        registered_after, registered_before,
+        after.registered_loggers, before.registered_loggers,
         "a rejected configuration must not change manager registry membership",
     );
     assert_eq!(
-        runtime_after, runtime_before,
+        after.runtime_attachments, before.runtime_attachments,
         "a rejected configuration must preserve runtime handler and filter metadata",
     );
 }
