@@ -116,8 +116,7 @@ fn attempt_non_blocking_writes(
             FemtoLevel::Info,
             &format!("extra {idx}"),
         )) {
-            Ok(()) => {}
-            Err(HandlerError::QueueFull) => {
+            Ok(()) | Err(HandlerError::QueueFull) => {
                 // Dropped records are acceptable here because the test exercises non-blocking queueing.
             }
             Err(other) => return Err(other),
