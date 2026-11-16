@@ -15,7 +15,7 @@ import pytest
 import yaml.constructor
 
 from tests.make_contract_helpers import prerequisite_map
-from tests.workflow_command_helpers import make_goals
+from tests.workflow_command_helpers import _logical_lines, make_goals
 from tests.workflow_contract_helpers import (
     depends_on_preflight,
     provisioning_problems,
@@ -143,6 +143,7 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
         ("cargo build --locked", False),
         ("make \\\n  test", True),
         ("make te\\\nst", True),
+        ("# note \\\nmake test", True),
         ("# make test", False),
     ],
     ids=[
@@ -159,6 +160,7 @@ def test_the_provisioning_reader_reports_each_way_the_install_can_be_lost(
         "cargo-not-the-suite",
         "continued-line",
         "mid-word-continuation",
+        "comment-continuation",
         "shell-comment",
     ],
 )
@@ -199,6 +201,30 @@ def test_the_reader_recognises_each_make_goal_form(run: str, *, expected: bool) 
 def test_make_goals_reads_each_invocation_form(line: str, expected: list[str]) -> None:
     """The tokenizer returns exactly the goals of every `make` on the line."""
     assert make_goals(line) == expected, line
+
+
+@pytest.mark.parametrize(
+    ("run", "expected"),
+    [
+        ("# note \\\nmake test", ["# note \\", "make test"]),
+        ("printf one \\\\\ntwo", ["printf one \\\\", "two"]),
+        ("printf one \\\\\\\ntwo", ["printf one \\\\two"]),
+        ('printf "double \\\ntwo"', ['printf "double two"']),
+        ("printf 'single \\\ntwo'", ["printf 'single \\two'"]),
+    ],
+    ids=[
+        "comment-backslash",
+        "escaped-backslash",
+        "bare-continuation",
+        "double-quoted",
+        "single-quoted",
+    ],
+)
+def test_logical_lines_follows_shell_quoting_and_comments(
+    run: str, expected: list[str]
+) -> None:
+    """Only a real shell continuation joins lines, and the join inserts nothing."""
+    assert _logical_lines(run) == expected, run
 
 
 def test_prerequisite_map_accumulates_repeated_rules() -> None:
