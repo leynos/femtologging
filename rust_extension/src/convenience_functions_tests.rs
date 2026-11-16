@@ -6,19 +6,11 @@ use crate::log_context;
 use crate::log_record::RecordMetadata;
 use crate::logger::FemtoLogger;
 use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::test_utils::logging_test_helpers::unique_logger_name;
 use pyo3::types::PyDict;
-use rstest::{fixture, rstest};
+use rstest::rstest;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-#[fixture]
-fn unique_logger_name() -> String {
-    let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("conv.test.{suffix}")
-}
 
 /// Fetch `name`'s logger and attach a fresh [`CollectingHandler`] to it.
 ///

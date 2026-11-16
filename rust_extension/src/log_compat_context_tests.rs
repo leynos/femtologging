@@ -5,27 +5,11 @@ use crate::handler::FemtoHandlerTrait;
 use crate::log_context;
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
-use log::{LevelFilter, Log};
+use crate::test_utils::logging_test_helpers::{log_max_level, unique_logger_name};
+use log::Log;
 use pyo3::prelude::*;
-use rstest::{fixture, rstest};
-use std::sync::{
-    Arc, Once,
-    atomic::{AtomicUsize, Ordering},
-};
-
-static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-#[fixture]
-fn unique_logger_name() -> String {
-    let suffix = LOGGER_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("bridge.context.{suffix}")
-}
-
-#[fixture]
-fn log_max_level() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| log::set_max_level(LevelFilter::Trace));
-}
+use rstest::rstest;
+use std::sync::Arc;
 
 #[rstest]
 fn adapter_merges_active_rust_context(_log_max_level: (), unique_logger_name: String) {
