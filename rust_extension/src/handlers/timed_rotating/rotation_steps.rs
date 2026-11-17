@@ -7,6 +7,12 @@
 //! the active file is undone so the handler still points at the file it
 //! started with.
 //!
+//! Undoing the rename can fail too, and then the active path is gone while the
+//! timestamped file holds the only copy of its records. [`Rollback`] reports
+//! that outcome rather than reducing it to an error message: the caller has to
+//! remember the stranded name and restore it before a later rotation stages
+//! over the same target.
+//!
 //! These steps are free functions rather than methods because they take the
 //! rotation's state apart: [`RotationParts`] carries what the steps share, and
 //! the strategy that owns the path, schedule and retention stays the only
@@ -109,26 +115,50 @@ where
     Ok(BufWriter::with_capacity(capacity, file))
 }
 
+/// What undoing a rotation rename achieved.
+///
+/// The error is always present, because a rollback exists only to report why
+/// the rotation failed. [`Rollback::is_restored`] says whether the records are
+/// back under the active path or stranded under the timestamped one.
+pub(super) struct Rollback {
+    /// The failure to report, naming the rollback failure when there was one.
+    pub(super) error: io::Error,
+    /// Whether the rotated file was renamed back onto the active path.
+    pub(super) is_restored: bool,
+}
+
 /// Undo a rotation rename, reporting both failures when the undo also fails.
 ///
 /// The open error stays the cause so callers see why rotation started, while
 /// the message names the rollback failure that left the handler degraded.
+/// `is_restored` is `false` when that failure means the timestamped file is now
+/// the only copy of the records and the active path is missing.
 pub(super) fn rollback_rotation<S>(
     store: &S,
     active_path: &Path,
     rotated_path: &Path,
     cause: io::Error,
-) -> io::Result<()>
+) -> Rollback
 where
     S: RotationFileStore,
 {
     if let Err(rollback_err) = store.rename(rotated_path, active_path) {
-        return Err(io::Error::new(
-            cause.kind(),
-            format!(
-                "failed to open fresh writer: {cause}; rollback rename also failed: {rollback_err}"
+        return Rollback {
+            error: io::Error::new(
+                cause.kind(),
+                format!(
+                    concat!(
+                        "failed to open fresh writer: {}; ",
+                        "rollback rename also failed: {}"
+                    ),
+                    cause, rollback_err
+                ),
             ),
-        ));
+            is_restored: false,
+        };
     }
-    Err(cause)
+    Rollback {
+        error: cause,
+        is_restored: true,
+    }
 }

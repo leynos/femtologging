@@ -16,7 +16,8 @@
 //!   from the observation instant after a completed rotation.
 //! - [rotation steps](super::rotation_steps) performs the rename and writer
 //!   swap, restoring the original writer and undoing the rename when a step
-//!   fails.
+//!   fails. When even the undo fails the strategy keeps the stranded name and
+//!   restores the active path before the next write can stage over it.
 //! - [`BackupRetention`] prunes timestamped siblings beyond the configured
 //!   count once a rotation has completed.
 //!
@@ -89,6 +90,9 @@ pub(crate) struct TimedFileRotationStrategy<C = SystemClock, S = StdFileStore> {
     retention: BackupRetention,
     /// Filesystem seam every rotation step goes through.
     store: S,
+    /// Timestamped file left holding the records because its rollback rename
+    /// failed, until the active path is restored from it.
+    pending_rollback: Option<PathBuf>,
 }
 
 impl TimedFileRotationStrategy<SystemClock, StdFileStore> {
@@ -140,6 +144,7 @@ where
             schedule: RolloverSchedule::new(schedule, clock),
             retention,
             store,
+            pending_rollback: None,
         }
     }
 
@@ -215,14 +220,45 @@ where
             }
             Err(err) => {
                 rotation.restore_writer();
-                rotation_steps::rollback_rotation(
+                let rollback = rotation_steps::rollback_rotation(
                     &self.store,
                     &self.path,
                     &rotation.rotated_path,
                     err,
-                )
+                );
+                if !rollback.is_restored {
+                    // The rename back failed, so the timestamped file now holds
+                    // the only copy of the records while the active path is
+                    // missing. Remember it: staging another rotation removes
+                    // that target before renaming, which would delete the
+                    // records while the writer keeps appending through its open
+                    // handle.
+                    self.pending_rollback = Some(rotation.rotated_path.clone());
+                }
+                Err(rollback.error)
             }
         }
+    }
+
+    /// Restore the active path from a rollback that could not be undone.
+    ///
+    /// A stranded rotation is repaired by the same rename the rollback failed
+    /// to perform, retried as soon as the handler writes again. Until that
+    /// succeeds the error reports why, and the pending name is kept so the next
+    /// attempt retries it rather than staging over the records.
+    fn recover_stranded_rotation(&mut self) -> io::Result<()> {
+        let Some(rotated_path) = self.pending_rollback.take() else {
+            return Ok(());
+        };
+        if let Err(err) = self.store.rename(&rotated_path, &self.path) {
+            let message = format!(
+                "failed to restore the active log path from {}: {err}",
+                rotated_path.display()
+            );
+            self.pending_rollback = Some(rotated_path);
+            return Err(io::Error::new(err.kind(), message));
+        }
+        Ok(())
     }
 
     /// Builds the timestamped filename for a completed rotation period.
@@ -247,6 +283,10 @@ where
     S: RotationFileStore,
 {
     fn before_write(&mut self, writer: &mut BufWriter<File>, _formatted: &str) -> io::Result<bool> {
+        // Repair a stranded rotation before the due check: restoring the name
+        // is safe at any write, and staging a rotation while the timestamped
+        // file still holds the records would delete them.
+        self.recover_stranded_rotation()?;
         let Some(due) = self.schedule.due() else {
             return Ok(false);
         };

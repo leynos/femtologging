@@ -4,8 +4,12 @@
 //! kinds of test awkward: a retention scan needs a directory containing the
 //! exact backup names under test, and a failed step needs the failure to
 //! happen at a chosen point in the rotation. This double reports its listing
-//! from memory, records the steps it was asked for, and can fail one named
-//! step, so both cases are arranged in the test rather than on disk.
+//! from memory, records the steps it was asked for, and can fail a named step
+//! or a rename onto a chosen destination, so both cases are arranged in the
+//! test rather than on disk.
+//!
+//! Every step it does not refuse is performed for real, so a test can inspect
+//! what the filesystem holds after the strategy gave up or recovered.
 
 use std::{
     ffi::OsString,
@@ -36,11 +40,12 @@ pub(crate) enum StoreStep {
 
 /// A [`RotationFileStore`] whose answers the test decides.
 ///
-/// Cloning shares the recorded calls, so a test can hand one clone to the
-/// strategy under test and read the record from the one it kept.
+/// Cloning shares the recorded calls and the remaining scripted failures, so a
+/// test can hand one clone to the strategy under test and read the record from
+/// the one it kept.
 #[derive(Clone)]
 pub(crate) struct ScriptedFileStore {
-    /// Real store used only for steps that must yield a file handle.
+    /// Real store used for every step the test did not refuse.
     files: StdFileStore,
     /// Names [`RotationFileStore::read_file_names`] reports.
     listing: Vec<OsString>,
@@ -48,8 +53,10 @@ pub(crate) struct ScriptedFileStore {
     removed: Arc<Mutex<Vec<PathBuf>>>,
     /// Renames the store was asked to perform, as `(from, to)` pairs.
     renames: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
-    /// Step that fails instead of doing its work, if the test chose one.
-    failing: Option<StoreStep>,
+    /// Steps with a scripted failure still to spend.
+    failing: Arc<Mutex<Vec<StoreStep>>>,
+    /// Rename destinations with a scripted failure still to spend.
+    failing_onto: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl ScriptedFileStore {
@@ -60,13 +67,29 @@ impl ScriptedFileStore {
             listing: listing.iter().map(OsString::from).collect(),
             removed: Arc::new(Mutex::new(Vec::new())),
             renames: Arc::new(Mutex::new(Vec::new())),
-            failing: None,
+            failing: Arc::new(Mutex::new(Vec::new())),
+            failing_onto: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    /// A store whose `step` reports an error instead of performing it.
-    pub(crate) fn failing_at(mut self, step: StoreStep) -> Self {
-        self.failing = Some(step);
+    /// Make the next `step` report an error instead of performing it.
+    ///
+    /// One failure per call, so a second `failing_at` for the same step makes
+    /// two calls fail. A retry within the same test therefore sees the step
+    /// behaving normally, which is how a transient failure is arranged.
+    pub(crate) fn failing_at(self, step: StoreStep) -> Self {
+        self.failing.lock().push(step);
+        self
+    }
+
+    /// Make the next rename onto `destination` report an error.
+    ///
+    /// A rollback and the recovery that retries it both rename back onto the
+    /// active path, while the forward rename before them targets the
+    /// timestamped name. Failing by destination is what lets a test break the
+    /// rollback without breaking the forward rename or the recovery after it.
+    pub(crate) fn failing_rename_onto(self, destination: &Path) -> Self {
+        self.failing_onto.lock().push(destination.to_path_buf());
         self
     }
 
@@ -80,18 +103,36 @@ impl ScriptedFileStore {
         self.renames.lock().clone()
     }
 
-    /// Report the scripted failure for `step`, if the test chose it.
+    /// Report the scripted failure for `step`, if one is still to spend.
     fn refuse(&self, step: StoreStep) -> io::Result<()> {
-        if self.failing == Some(step) {
-            return Err(io::Error::other(format!("scripted {step:?} failure")));
-        }
-        Ok(())
+        let mut failing = self.failing.lock();
+        let Some(position) = failing.iter().position(|planned| *planned == step) else {
+            return Ok(());
+        };
+        failing.remove(position);
+        Err(io::Error::other(format!("scripted {step:?} failure")))
+    }
+
+    /// Report the scripted failure for a rename onto `destination`, if one is
+    /// still to spend.
+    fn refuse_rename_onto(&self, destination: &Path) -> io::Result<()> {
+        let mut failing = self.failing_onto.lock();
+        let Some(position) = failing.iter().position(|planned| planned == destination) else {
+            return Ok(());
+        };
+        failing.remove(position);
+        Err(io::Error::other(format!(
+            "scripted rename onto {} failure",
+            destination.display()
+        )))
     }
 }
 
 impl RotationFileStore for ScriptedFileStore {
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         self.refuse(StoreStep::Rename)?;
+        self.refuse_rename_onto(to)?;
+        self.files.rename(from, to)?;
         self.renames
             .lock()
             .push((from.to_path_buf(), to.to_path_buf()));
@@ -100,6 +141,7 @@ impl RotationFileStore for ScriptedFileStore {
 
     fn remove_file_if_exists(&self, path: &Path) -> io::Result<()> {
         self.refuse(StoreStep::Remove)?;
+        self.files.remove_file_if_exists(path)?;
         self.removed.lock().push(path.to_path_buf());
         Ok(())
     }

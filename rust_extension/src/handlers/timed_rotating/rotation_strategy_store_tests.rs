@@ -160,3 +160,75 @@ fn a_refused_fresh_open_restores_the_writer_then_rolls_back_the_rename() {
         "a rolled-back rotation must leave the active file usable"
     );
 }
+
+/// A failed rollback must be undone before the next rotation stages.
+///
+/// The fresh open and the rename back onto the active path both fail, which
+/// leaves the timestamped file holding the only copy of the records while the
+/// active path is missing. The deadline did not advance, so the next due write
+/// retries the rotation, and staging removes the timestamped target before it
+/// renames. A retry that begins by staging therefore deletes the records. The
+/// strategy must instead restore the active path first, leaving the records
+/// readable after the retried rotation.
+#[test]
+fn a_failed_rollback_is_recovered_before_the_next_rotation_stages() {
+    let directory = tempdir().expect("tempdir must create a temporary directory");
+    let path = directory.path().join("timed.log");
+    fs::write(&path, "prior records\n").expect("the active log must be writable");
+    let store = ScriptedFileStore::with_listing(&[])
+        .failing_at(StoreStep::Open)
+        .failing_rename_onto(&path);
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
+        .expect("seconds schedule must validate");
+    let start = utc_datetime!("2026-03-12T00:00:00Z");
+    let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
+    let mut strategy = TimedFileRotationStrategy::with_seams(
+        path.clone(),
+        schedule,
+        1,
+        RotationSeams::new(clock, store.clone()),
+    );
+    let mut writer = BufWriter::new(
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("log file must open"),
+    );
+
+    let error = RotationStrategy::before_write(&mut strategy, &mut writer, "second")
+        .expect_err("a failed rollback must surface as a rotation error");
+    assert!(
+        error.to_string().contains("rollback rename also failed"),
+        "the error must name the undo that failed: {error}"
+    );
+    let rotated = store.renames()[0].1.clone();
+    assert!(
+        !path.exists(),
+        "the failed rollback must leave the active path missing"
+    );
+    assert_eq!(
+        fs::read_to_string(&rotated).expect("the timestamped log must be readable"),
+        "prior records\n",
+        "the timestamped file must hold the only copy of the records"
+    );
+
+    RotationStrategy::before_write(&mut strategy, &mut writer, "third")
+        .expect("a retry must restore the active path and rotate");
+
+    let renames = store.renames();
+    assert_eq!(
+        renames.len(),
+        3,
+        "the retry must add only the recovery and the forward rename: {renames:?}"
+    );
+    assert_eq!(
+        renames[1],
+        (rotated.clone(), path.clone()),
+        "the retry must rename the records back onto the active path first"
+    );
+    assert_eq!(
+        fs::read_to_string(&rotated).expect("the rotated log must be readable"),
+        "prior records\n",
+        "the retried rotation must not delete the only copy of the records"
+    );
+}
