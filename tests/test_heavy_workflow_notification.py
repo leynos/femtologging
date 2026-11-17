@@ -10,7 +10,6 @@ and nothing is written to GitHub.
 from __future__ import annotations
 
 import json
-import os
 import stat
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests execute the checked-in workflow script
 import sys
@@ -85,16 +84,34 @@ def notification_script() -> str:
 
 
 def _write_stub(directory: Path) -> None:
-    """Write the stub ``gh`` executable into ``directory``."""
+    """Write the stub ``gh`` and the ``python3`` its shebang needs.
+
+    The stub names ``python3`` on its shebang line, so the directory also
+    carries a link to the interpreter running the tests. A host whose
+    interpreter lives outside ``/bin`` and ``/usr/bin`` would otherwise leave
+    that name unresolvable in the child's PATH.
+    """
     stub = directory / "gh"
     stub.write_text(_GH_STUB, encoding="utf-8")
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    (directory / "python3").symlink_to(sys.executable)
 
 
 def _notification_environment(tmp_path: Path, *, issue: str) -> dict[str, str]:
-    """Return an explicit child environment for one notification run."""
+    """Return an explicit child environment for one notification run.
+
+    PATH holds only the stub directory. The script needs nothing else: its
+    remaining commands are shell builtins. Keeping the host's default path out
+    of it means the stub's own shebang resolution is what the test exercises,
+    rather than a ``python3`` the host happened to install.
+
+    Returns
+    -------
+    dict[str, str]
+        The child environment, including the stub's log, issue and run date.
+    """
     return {
-        "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.defpath}",
+        "PATH": str(tmp_path / "bin"),
         "HOME": str(tmp_path),
         "GH_TOKEN": "stub-token",
         "ISSUE_TITLE": ISSUE_TITLE,
