@@ -333,6 +333,62 @@ def _job_references(document: dict[str, typ.Any]) -> list[str]:
     ]
 
 
+def _display_name_index(
+    documents: cabc.Mapping[str, dict[str, typ.Any]],
+) -> dict[str, str]:
+    """Map each workflow's display name to the file that declares it."""
+    return {
+        str(document["name"]): file_name
+        for file_name, document in documents.items()
+        if "name" in document
+    }
+
+
+def _pull_request_documents(
+    documents: cabc.Mapping[str, dict[str, typ.Any]],
+) -> set[str]:
+    """Return the workflows a pull-request event triggers directly."""
+    return {
+        file_name
+        for file_name, document in documents.items()
+        if PULL_REQUEST_EVENTS & set(triggers(document))
+    }
+
+
+def _document_targets(
+    file_name: str,
+    document: dict[str, typ.Any],
+    documents: cabc.Mapping[str, dict[str, typ.Any]],
+    by_display: cabc.Mapping[str, str],
+) -> tuple[list[str], list[str]]:
+    """Return the workflows one document can reach, and its remote calls.
+
+    A reusable-workflow call into another repository is returned separately
+    rather than followed: its jobs live elsewhere, so its environment
+    declarations cannot be proved from this repository.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        The workflows this document reaches, and the remote reusable-workflow
+        references it calls.
+    """
+    calls = [(ref, _local_target(ref, documents)) for ref in _job_references(document)]
+    remote = [ref for ref, target in calls if target is None]
+    targets = [target for _, target in calls if target is not None]
+    for display in _workflow_run_names(triggers(document)):
+        require(display in by_display, f"{file_name} listens for unknown: {display}")
+        targets.append(by_display[display])
+    return targets, remote
+
+
+def _enqueue_unreached(target: str, reached: set[str], frontier: list[str]) -> None:
+    """Add `target` to the frontier unless it has already been reached."""
+    if target not in reached:
+        reached.add(target)
+        frontier.append(target)
+
+
 def pull_request_reach(
     documents: cabc.Mapping[str, dict[str, typ.Any]],
 ) -> tuple[set[str], set[str]]:
@@ -355,35 +411,19 @@ def pull_request_reach(
         The reachable file names and the remote reusable-workflow references
         those workflows call, which the caller must account for explicitly.
     """
-    by_display = {
-        str(document["name"]): file_name
-        for file_name, document in documents.items()
-        if "name" in document
-    }
-    reached = {
-        file_name
-        for file_name, document in documents.items()
-        if PULL_REQUEST_EVENTS & set(triggers(document))
-    }
+    by_display = _display_name_index(documents)
+    reached = _pull_request_documents(documents)
     remote: set[str] = set()
     frontier = sorted(reached)
     while frontier:
         file_name = frontier.pop()
         document = documents[file_name]
-        calls = [
-            (ref, _local_target(ref, documents)) for ref in _job_references(document)
-        ]
-        remote.update(ref for ref, target in calls if target is None)
-        targets = [target for _, target in calls]
-        for display in _workflow_run_names(triggers(document)):
-            require(
-                display in by_display, f"{file_name} listens for unknown: {display}"
-            )
-            targets.append(by_display[display])
+        targets, remote_calls = _document_targets(
+            file_name, document, documents, by_display
+        )
+        remote.update(remote_calls)
         for target in targets:
-            if target is not None and target not in reached:
-                reached.add(target)
-                frontier.append(target)
+            _enqueue_unreached(target, reached, frontier)
     return reached, remote
 
 
