@@ -2205,6 +2205,16 @@ Two mutations were rebuilt and run against the focused files:
 With both restored the two files pass all 14 tests, five consecutive runs, and
 the module's three unit tests pass under `--features python,test-util`.
 
+The handover after the call returns was checked the same way. A forced
+half-second sleep was inserted between the call returning and the count being
+read, long enough for the ticker to observe about a hundred times, and
+`py.detach` was again replaced by a direct call in `detach_for_wait`. All three
+network cases still failed, each reporting that another thread ran `0 times`
+during the `0.300s` wait, where a Python-side sampler would have counted the
+handover observations and passed. With the detach restored and the same forced
+handover in place, the three cases passed, so the check neither inflates a real
+result nor hides a stall.
+
 The release delay stays at half a second because the file handler's flush has a
 one-second deadline of its own; an earlier attempt to double it made the
 released flush report failure at exactly the deadline.
