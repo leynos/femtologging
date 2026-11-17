@@ -59,31 +59,46 @@ def _token_steps(document: dict[str, typ.Any]) -> list[tuple[str, dict[str, typ.
     ]
 
 
-def _guard_problems(document: dict[str, typ.Any]) -> list[str]:
-    """Return one complaint per way the upload guard could be weakened."""
-    documents = {PUBLISHER: document}
-    problems: list[str] = []
-    uploads = steps_using(documents, UPLOAD_MARKER)
+def _token_guard_problems(
+    document: dict[str, typ.Any],
+    uploads: list[tuple[str, str, dict[str, typ.Any]]],
+) -> list[str]:
+    """Return one complaint per way the token-presence step could be weakened."""
     tokens = _token_steps(document)
     if len(tokens) != 1:
-        problems.append(f"expected one token-presence step, found {len(tokens)}")
-    else:
-        job_id, token_step = tokens[0]
-        if token_step.get("id") != "codescene-token":
-            problems.append("the token step must expose the `codescene-token` id")
-        if token_step.get("run") != TOKEN_COMMAND:
-            problems.append("the token step must run the canonical command alone")
-        if not any(upload_job == job_id for _, upload_job, _ in uploads):
-            problems.append("the upload must run beside the token-presence step")
+        return [f"expected one token-presence step, found {len(tokens)}"]
+    job_id, token_step = tokens[0]
+    problems: list[str] = []
+    if token_step.get("id") != "codescene-token":
+        problems.append("the token step must expose the `codescene-token` id")
+    if token_step.get("run") != TOKEN_COMMAND:
+        problems.append("the token step must run the canonical command alone")
+    if not any(upload_job == job_id for _, upload_job, _ in uploads):
+        problems.append("the upload must run beside the token-presence step")
+    return problems
+
+
+def _upload_guard_problems(
+    uploads: list[tuple[str, str, dict[str, typ.Any]]],
+) -> list[str]:
+    """Return one complaint per way the upload step could be weakened."""
     if len(uploads) != 1:
-        problems.append(f"expected one upload step, found {len(uploads)}")
-    else:
-        upload = uploads[0][2]
-        if upload.get("if") != UPLOAD_CONDITION:
-            problems.append("the upload must require the token and the trunk")
-        shared = upload.get("with") or {}
-        if shared.get("access-token") != "${{ secrets.CS_ACCESS_TOKEN }}":
-            problems.append("the token must travel as the uploader's input")
+        return [f"expected one upload step, found {len(uploads)}"]
+    upload = uploads[0][2]
+    problems: list[str] = []
+    if upload.get("if") != UPLOAD_CONDITION:
+        problems.append("the upload must require the token and the trunk")
+    shared = upload.get("with") or {}
+    if shared.get("access-token") != "${{ secrets.CS_ACCESS_TOKEN }}":
+        problems.append("the token must travel as the uploader's input")
+    return problems
+
+
+def _guard_problems(document: dict[str, typ.Any]) -> list[str]:
+    """Return one complaint per way the upload guard could be weakened."""
+    uploads = steps_using({PUBLISHER: document}, UPLOAD_MARKER)
+    problems = _token_guard_problems(document, uploads)
+    problems.extend(_upload_guard_problems(uploads))
     problems.extend(
         f"the token is in {location}" for location in secret_in_env(document)
     )
