@@ -139,6 +139,7 @@ def _installed(channel: str) -> str:
 class _Case:
     """One host capability scenario and the report it must produce."""
 
+    name: str
     listed_toolchain: str
     mold_body: str | None
     host_os: str
@@ -150,18 +151,20 @@ class _Case:
     listing_exit_status: int = 0
 
 
-def _cases() -> tuple[_Case, ...]:
-    """Return the capability scenarios, pinned to the repository's channel."""
-    channel = _channel()
+def _mold_cases(channel: str) -> tuple[_Case, ...]:
+    """Return the scenarios that exercise the linker half of the check."""
+    mol = "printf 'mold 2.41.0\\n'"
     return (
         _Case(
+            name="both-present",
             listed_toolchain=_installed(channel),
-            mold_body="printf 'mold 2.41.0\\n'",
+            mold_body=mol,
             host_os="Linux",
             returncode=0,
             messages=("mold at",),
         ),
         _Case(
+            name="mold-missing",
             listed_toolchain=_installed(channel),
             mold_body=None,
             host_os="Linux",
@@ -169,52 +172,7 @@ def _cases() -> tuple[_Case, ...]:
             messages=("mold not found", "make install-build-tools"),
         ),
         _Case(
-            listed_toolchain=_installed("stable"),
-            mold_body="printf 'mold 2.41.0\\n'",
-            host_os="Linux",
-            returncode=1,
-            messages=("is not installed",),
-        ),
-        _Case(
-            listed_toolchain=_installed(f"{channel}0"),
-            mold_body="printf 'mold 2.41.0\\n'",
-            host_os="Linux",
-            returncode=1,
-            messages=("is not installed",),
-        ),
-        _Case(
-            listed_toolchain=f"{channel}-aarch64-unknown-linux-gnu (installed)",
-            mold_body="printf 'mold 2.41.0\\n'",
-            host_os="Linux",
-            returncode=1,
-            messages=("is not installed",),
-        ),
-        _Case(
-            listed_toolchain="",
-            mold_body="printf 'mold 2.41.0\\n'",
-            host_os="Linux",
-            returncode=1,
-            messages=("rustup could not list installed toolchains",),
-            absent_messages=("is not installed",),
-            listing_exit_status=1,
-        ),
-        _Case(
-            listed_toolchain=f"{channel} (installed)",
-            mold_body="printf 'mold 2.41.0\\n'",
-            host_os="Linux",
-            returncode=0,
-            messages=("rustup show failed", "mold at"),
-            host_triple=None,
-        ),
-        _Case(
-            listed_toolchain=f"{channel} (installed)",
-            mold_body="printf 'mold 2.41.0\\n'",
-            host_os="Linux",
-            returncode=0,
-            messages=("rustup show reported no default host triple", "mold at"),
-            reports_host=False,
-        ),
-        _Case(
+            name="non-linux",
             listed_toolchain=_installed(channel),
             mold_body=None,
             host_os="Darwin",
@@ -222,6 +180,7 @@ def _cases() -> tuple[_Case, ...]:
             messages=("Linux-only",),
         ),
         _Case(
+            name="broken-mold",
             listed_toolchain=_installed(channel),
             mold_body="exit 2",
             host_os="Linux",
@@ -231,20 +190,85 @@ def _cases() -> tuple[_Case, ...]:
     )
 
 
+def _absent_toolchain_cases(channel: str) -> tuple[_Case, ...]:
+    """Return the scenarios where the pinned channel is not installed."""
+    mol = "printf 'mold 2.41.0\\n'"
+    return (
+        _Case(
+            name="toolchain-missing",
+            listed_toolchain=_installed("stable"),
+            mold_body=mol,
+            host_os="Linux",
+            returncode=1,
+            messages=("is not installed",),
+        ),
+        _Case(
+            name="toolchain-prefix-collision",
+            listed_toolchain=_installed(f"{channel}0"),
+            mold_body=mol,
+            host_os="Linux",
+            returncode=1,
+            messages=("is not installed",),
+        ),
+        _Case(
+            name="toolchain-other-host",
+            listed_toolchain=f"{channel}-aarch64-unknown-linux-gnu (installed)",
+            mold_body=mol,
+            host_os="Linux",
+            returncode=1,
+            messages=("is not installed",),
+        ),
+    )
+
+
+def _probe_failure_cases(channel: str) -> tuple[_Case, ...]:
+    """Return the scenarios where a rustup probe cannot answer."""
+    mol = "printf 'mold 2.41.0\\n'"
+    return (
+        _Case(
+            name="toolchain-listing-failed",
+            listed_toolchain="",
+            mold_body=mol,
+            host_os="Linux",
+            returncode=1,
+            messages=("rustup could not list installed toolchains",),
+            absent_messages=("is not installed",),
+            listing_exit_status=1,
+        ),
+        _Case(
+            name="toolchain-host-unresolved",
+            listed_toolchain=f"{channel} (installed)",
+            mold_body=mol,
+            host_os="Linux",
+            returncode=0,
+            messages=("rustup show failed", "mold at"),
+            host_triple=None,
+        ),
+        _Case(
+            name="toolchain-host-unreported",
+            listed_toolchain=f"{channel} (installed)",
+            mold_body=mol,
+            host_os="Linux",
+            returncode=0,
+            messages=("rustup show reported no default host triple", "mold at"),
+            reports_host=False,
+        ),
+    )
+
+
+def _cases() -> tuple[_Case, ...]:
+    """Return the capability scenarios, pinned to the repository's channel."""
+    channel = _channel()
+    return (
+        *_mold_cases(channel),
+        *_absent_toolchain_cases(channel),
+        *_probe_failure_cases(channel),
+    )
+
+
 CASES: typ.Final[tuple[_Case, ...]] = _cases()
 
-CASE_IDS: typ.Final[tuple[str, ...]] = (
-    "both-present",
-    "mold-missing",
-    "toolchain-missing",
-    "toolchain-prefix-collision",
-    "toolchain-other-host",
-    "toolchain-listing-failed",
-    "toolchain-host-unresolved",
-    "toolchain-host-unreported",
-    "non-linux",
-    "broken-mold",
-)
+CASE_IDS: typ.Final[tuple[str, ...]] = tuple(case.name for case in CASES)
 
 
 def _run_case(tmp_path: Path, case: _Case) -> subprocess.CompletedProcess[str]:
@@ -344,3 +368,30 @@ def test_a_failed_show_is_named_with_the_bare_channel(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "rustup show failed" in result.stderr, result.stderr
     assert f"toolchain {channel} available" in result.stderr, result.stderr
+
+
+def test_a_failed_show_still_selects_the_host_it_reported(tmp_path: Path) -> None:
+    """A host printed before the probe failed still matches the pinned channel."""
+    bin_dir = _probe_bin_dir(tmp_path)
+    stub_rustup(bin_dir, _installed(_channel()), StubOptions(show_exit_status=1))
+    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
+
+    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
+
+    assert result.returncode == 0, result.stderr
+    assert "using the host it reported" in result.stderr, result.stderr
+    assert "is not installed" not in result.stderr, result.stderr
+
+
+def test_the_rustup_probes_cannot_auto_install(tmp_path: Path) -> None:
+    """A probe may not provision the toolchain it exists to find missing."""
+    bin_dir = _probe_bin_dir(tmp_path)
+    env_log = tmp_path / "rustup-auto-install"
+    stub_rustup(bin_dir, _installed(_channel()), StubOptions(env_log=env_log))
+    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
+
+    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
+
+    assert result.returncode == 0, result.stderr
+    recorded = env_log.read_text("utf-8").splitlines()
+    assert recorded == ["0", "0"], recorded
