@@ -67,8 +67,7 @@ where
         }
     }
 
-    /// Re-seed `next_rollover_at` from an externally determined instant, such as
-    /// an existing log file's modification time.
+    /// Re-seed the deadline from an externally determined instant, such as a file mtime.
     pub(crate) fn seed_rollover_from(&mut self, seed: DateTime<Utc>) {
         self.next_rollover_at = self.schedule.next_rollover(seed);
     }
@@ -108,7 +107,7 @@ where
 
         match Self::open_fresh_writer(&self.path, capacity) {
             Ok(fresh_writer) => {
-                let _ = original_file;
+                drop(original_file);
                 *writer = fresh_writer;
                 self.advance_rollover(now)
             }
@@ -222,10 +221,7 @@ where
         rotated
     }
 
-    /// Check if a filename matches the expected pattern for a rotated log file.
-    ///
-    /// Returns `true` only if the filename starts with the expected prefix
-    /// and has a valid suffix for this schedule's rotation cadence.
+    /// Check whether a filename is a rotated backup for this schedule.
     fn matches_rotated_file_name(&self, name: &OsString, prefix: &OsString) -> bool {
         if !has_os_prefix(name, prefix) {
             return false;
@@ -248,11 +244,8 @@ where
             || self.path.as_os_str().to_os_string(),
             std::ffi::OsStr::to_os_string,
         );
-        let prefix = {
-            let mut value = base_name.clone();
-            value.push(".");
-            value
-        };
+        let mut prefix = base_name.clone();
+        prefix.push(".");
         let mut backups = Vec::new();
         for entry in fs::read_dir(parent)? {
             let dir_entry = entry?;
@@ -269,8 +262,7 @@ where
         Ok(())
     }
 
-    /// Treats an absent file as already removed while propagating other I/O
-    /// failures.
+    /// Treats an absent file as already removed, propagating other failures.
     fn remove_file_if_exists(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -309,4 +301,33 @@ pub(crate) struct TimedRotationConfig {
     pub(crate) schedule: TimedRotationSchedule,
     /// Number of timestamped backups retained by the timed handler.
     pub(crate) backup_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for rollback after a failed fresh-writer open.
+
+    use std::fs::File;
+    use std::io::{self, BufWriter};
+
+    use tempfile::tempdir;
+
+    use super::TimedFileRotationStrategy;
+    use crate::handlers::timed_rotating::schedule::{TimedRotationSchedule, TimedRotationWhen};
+
+    #[test]
+    fn restore_after_failed_open_reports_a_failed_rename() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("timed.log");
+        let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
+            .expect("seconds schedule must validate");
+        let mut strategy = TimedFileRotationStrategy::new(path.clone(), schedule, 1);
+        let mut writer = BufWriter::new(File::create(&path).expect("active file"));
+        let original = File::create(dir.path().join("original")).expect("original file");
+        let missing = dir.path().join("missing");
+        let err = strategy
+            .restore_after_failed_open(&mut writer, 8, original, &missing, io::Error::other("boom"))
+            .expect_err("missing rotated file must fail the rename");
+        assert!(err.to_string().contains("rollback rename also failed"));
+    }
 }
