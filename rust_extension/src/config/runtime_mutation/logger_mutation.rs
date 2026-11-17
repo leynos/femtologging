@@ -34,6 +34,7 @@ pub struct LoggerMutationBuilder {
 impl LoggerMutationBuilder {
     /// Start a mutation with no recorded changes. Setters record changes, and `apply` makes
     /// them effective.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -58,8 +59,8 @@ impl LoggerMutationBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let ids = Self::normalize_ids(ids);
-        set(&mut self, mutation(ids));
+        let normalized = Self::normalize_ids(ids);
+        set(&mut self, mutation(normalized));
         self
     }
 
@@ -98,13 +99,15 @@ impl LoggerMutationBuilder {
     }
 
     /// Override the logger's level when the transaction is applied.
-    pub fn with_level(mut self, level: FemtoLevel) -> Self {
+    #[must_use]
+    pub const fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
     }
 
     /// Set whether records from this logger also reach handlers on its ancestor loggers.
-    pub fn with_propagate(mut self, propagate: bool) -> Self {
+    #[must_use]
+    pub const fn with_propagate(mut self, propagate: bool) -> Self {
         self.propagate = Some(propagate);
         self
     }
@@ -112,6 +115,7 @@ impl LoggerMutationBuilder {
     /// Make the logger's handlers exactly `ids`, discarding its current handlers.
     ///
     /// Duplicate ids are dropped, keeping the first occurrence.
+    #[must_use]
     pub fn replace_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -123,6 +127,7 @@ impl LoggerMutationBuilder {
     /// Attach the handlers in `ids` after the logger's current handlers.
     ///
     /// Ids that are already attached are skipped.
+    #[must_use]
     pub fn append_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -136,6 +141,7 @@ impl LoggerMutationBuilder {
     /// `apply` rejects the transaction with `ConfigError::UnknownIds` if any listed id is not
     /// attached to the logger. A logger with no runtime metadata yet is rejected with
     /// `ConfigError::InvalidMutation` instead.
+    #[must_use]
     pub fn remove_handlers<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -145,6 +151,7 @@ impl LoggerMutationBuilder {
     }
 
     /// Detach every handler from the logger.
+    #[must_use]
     pub fn clear_handlers(self) -> Self {
         self.do_clear(Self::set_handlers)
     }
@@ -152,6 +159,7 @@ impl LoggerMutationBuilder {
     /// Make the logger's filters exactly `ids`, discarding its current filters.
     ///
     /// Duplicate ids are dropped, keeping the first occurrence.
+    #[must_use]
     pub fn replace_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -163,6 +171,7 @@ impl LoggerMutationBuilder {
     /// Attach the filters in `ids` after the logger's current filters.
     ///
     /// Ids that are already attached are skipped.
+    #[must_use]
     pub fn append_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -176,6 +185,7 @@ impl LoggerMutationBuilder {
     /// `apply` rejects the transaction with `ConfigError::UnknownIds` if any listed id is not
     /// attached to the logger. A logger with no runtime metadata yet is rejected with
     /// `ConfigError::InvalidMutation` instead.
+    #[must_use]
     pub fn remove_filters<I, S>(self, ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -185,6 +195,7 @@ impl LoggerMutationBuilder {
     }
 
     /// Detach every filter from the logger.
+    #[must_use]
     pub fn clear_filters(self) -> Self {
         self.do_clear(Self::set_filters)
     }
