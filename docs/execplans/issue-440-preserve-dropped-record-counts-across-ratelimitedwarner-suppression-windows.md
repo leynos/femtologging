@@ -5,8 +5,9 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS — implementation complete on draft PR #613; CodeRabbit
-review convergence in progress.
+Status: IN PROGRESS — implementation complete on draft PR #613 and all
+deterministic gates green on `336c7c5d`; CodeRabbit review convergence in
+progress.
 
 ## Purpose / big picture
 
@@ -319,6 +320,19 @@ suite that fails if any drop is discarded or handed off more than once.
       `logger/producer_rejection_tests`) and documented the contract for users
       and developers, including the fork-safe drain lock rationale in the design
       document.
+- [x] (2026-11-17) All four deterministic gates passed on the candidate at
+      `e364345c`, run once each and strictly sequentially: `make check-fmt`,
+      `make test` (four Rust feature configurations, 1209 pytest tests, 66
+      snapshots), `make typecheck`, and `make lint`. The Whitaker lane that had
+      failed on unchanged code in the previous round now passes, so the earlier
+      repository-wide `bumpy-road-function` drift no longer blocks the branch.
+      Hosted CI on the same commit was green apart from CodeScene.
+- [x] (2026-11-17) CodeScene reported `Code Duplication` in both new
+      drop-reporting test modules: the close and the drop regressions repeated
+      the same fixture and assertion. They now share
+      `closed_handler_holding_one_drop()` and `assert_held_back_drop_reported()`
+      (`336c7c5d`), and `cs delta origin/main` reports no issues. The four gates
+      passed again on the refactored candidate.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
