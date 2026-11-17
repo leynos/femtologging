@@ -38,6 +38,7 @@ from tests.env_policy_lane_support import (
     MAKE_TIMEOUT_SECONDS,
     FakeCargo,
     captured_output,
+    diagnostic_count,
     expected_invocation,
     policy_defaults,
     recorded_invocations,
@@ -327,10 +328,11 @@ POLICY_TARGET_MARKER: typ.Final = pytest.mark.timeout(POLICY_CONTRACT_TIMEOUT_SE
 def test_a_failing_lane_fails_the_policy_target(fake_cargo: FakeCargo) -> None:
     """Scenario: one lane rejects the code and a later lane accepts it.
 
-    Invariant: `make lint-env-policy` fails, names the rejected lane, and stops
-    before the lane after it. The fake rejects the `python` lane with Cargo's
-    compile-failure status, so this drives status propagation through the real
-    Make → uv → driver boundary without compiling anything.
+    Invariant: `make lint-env-policy` fails, names the rejected lane, forwards
+    both lanes' diagnostics, and stops before the lane after it. The fake
+    rejects the `python` lane with Cargo's compile-failure status, so this
+    drives status propagation through the real Make → uv → driver boundary
+    without compiling anything.
     """
     failing_lane = run_policy_target(
         fake_cargo,
@@ -343,6 +345,10 @@ def test_a_failing_lane_fails_the_policy_target(fake_cargo: FakeCargo) -> None:
     )
     assert "# Rust lint lane failed: python (exit 101)" in failing_lane.stdout, (
         "the driver must name the rejected lane and its status\n"
+        f"{captured_output(failing_lane)}"
+    )
+    assert diagnostic_count(failing_lane) == 2, (
+        "each lane's diagnostics must reach the caller before the failure\n"
         f"{captured_output(failing_lane)}"
     )
     assert recorded_invocations(fake_cargo.log) == tuple(
@@ -358,19 +364,24 @@ def test_a_failing_lane_fails_the_policy_target(fake_cargo: FakeCargo) -> None:
 def test_accepting_lanes_pass_the_policy_target(fake_cargo: FakeCargo) -> None:
     """Scenario: every default lane accepts the code.
 
-    Invariant: `make lint-env-policy` succeeds and invokes Cargo exactly once
-    per default lane, in Makefile order, with the default manifest and
-    arguments. This measures the policy wiring rather than the host's queue.
+    Invariant: `make lint-env-policy` succeeds, invokes Cargo exactly once per
+    default lane in Makefile order with the default manifest and arguments, and
+    lets each lane's diagnostics reach the caller. This measures the policy
+    wiring rather than the host's queue.
     """
     passing_lane = run_policy_target(fake_cargo)
     manifest, cargo_args, lint_args = policy_defaults()
+    lanes = variable_tokens("ENV_POLICY_FEATURE_LANES")
     assert passing_lane.returncode == 0, (
         f"lint-env-policy must succeed when every lane passes\n"
         f"{captured_output(passing_lane)}"
     )
+    assert diagnostic_count(passing_lane) == len(lanes), (
+        "every lane's diagnostics must reach the caller\n"
+        f"{captured_output(passing_lane)}"
+    )
     assert recorded_invocations(fake_cargo.log) == tuple(
-        expected_invocation(manifest, lane, cargo_args, lint_args)
-        for lane in variable_tokens("ENV_POLICY_FEATURE_LANES")
+        expected_invocation(manifest, lane, cargo_args, lint_args) for lane in lanes
     ), (
         "every default lane must be linted once, in Makefile order, with the "
         f"default arguments\n{captured_output(passing_lane)}"

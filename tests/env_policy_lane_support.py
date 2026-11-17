@@ -5,7 +5,8 @@ propagation and exact argument order through the real Make → uv → lane-drive
 boundary. Cargo itself is replaced: the accepting `none` lane once waited 420
 seconds on Cargo's package-cache lock before reporting anything ([#537]), and
 that wait measures another job's build rather than this repository's policy.
-The fake records each invocation and fails only the lane a test names.
+The fake records each invocation, writes a standard-error diagnostic, and fails
+only the lane a test names.
 """
 
 from __future__ import annotations
@@ -38,11 +39,17 @@ _FAKE_CARGO_LAUNCHER: typ.Final = f"""#!/bin/sh
 exec {shlex.quote(sys.executable)} "$(dirname "$0")/cargo_runner.py" "$@"
 """
 
+#: A line every fake Cargo run writes to standard error. The contract asserts
+#: that it reaches the caller once per lane, so a driver that swallowed a
+#: lane's diagnostics would fail the test instead of passing silently.
+FAKE_CARGO_DIAGNOSTIC: typ.Final = "fake cargo: policy lane diagnostic"
+
 #: The fake Cargo program. It records every argument vector as one JSON array
-#: per line, derives the lane from the driver's own flags, and rejects at most
-#: the lane named by `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's failed
-#: compile so the driver has a real failure to propagate.
-_FAKE_CARGO_RUNNER: typ.Final = """# Recording Cargo stand-in; see
+#: per line, writes `FAKE_CARGO_DIAGNOSTIC` to standard error, derives the lane
+#: from the driver's own flags, and rejects at most the lane named by
+#: `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's failed compile so the
+#: driver has a real failure to propagate.
+_FAKE_CARGO_RUNNER: typ.Final = f"""# Recording Cargo stand-in; see
 # tests/env_policy_lane_support.py for the contract it serves.
 import json
 import os
@@ -51,6 +58,8 @@ import sys
 arguments = sys.argv[1:]
 with open(os.environ["FAKE_CARGO_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(arguments) + "\\n")
+
+print({FAKE_CARGO_DIAGNOSTIC!r}, file=sys.stderr)
 
 if "--all-features" in arguments:
     lane = "all"
@@ -216,3 +225,14 @@ def run_policy_target(
 def captured_output(completed: subprocess.CompletedProcess[str]) -> str:
     """Return both output streams, labelled for an assertion message."""
     return f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+
+
+def diagnostic_count(completed: subprocess.CompletedProcess[str]) -> int:
+    """Return how many lane diagnostics reached the caller's captured output.
+
+    Returns
+    -------
+    int
+        The number of times the fake's standard-error sentinel appears.
+    """
+    return captured_output(completed).count(FAKE_CARGO_DIAGNOSTIC)
