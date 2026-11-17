@@ -76,12 +76,15 @@ fn filter_and_extract_frames<'py>(
 macro_rules! extract_dict_value {
     ($dict:expr, $key:expr, $ty:ty) => {{
         let key = $key;
-        let value: $ty = $dict
-            .get_item(key)
-            .unwrap_or_else(|err| panic!("failed to get {key} key: {err}"))
-            .unwrap_or_else(|| panic!("{key} key is None"))
-            .extract()
-            .unwrap_or_else(|err| panic!("failed to extract {key}: {err}"));
+        let item = match $dict.get_item(key) {
+            Ok(Some(item)) => item,
+            Ok(None) => panic!("{key} key is None"),
+            Err(err) => panic!("failed to get {key} key: {err}"),
+        };
+        let value: $ty = match item.extract() {
+            Ok(value) => value,
+            Err(err) => panic!("failed to extract {key}: {err}"),
+        };
         value
     }};
 }
