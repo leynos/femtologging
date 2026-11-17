@@ -106,33 +106,58 @@ fn stream_waiter_count_for_test() -> usize {
     crate::stream_handler::waiting_count()
 }
 
-/// Register Python-only functions with the module.
-pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
-    m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
-    m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
-    register_test_util_functions(m)?;
-    register_frame_filter_functions(m)?;
-    register_convenience_functions(m)?;
+/// Register Python-only classes, builder bindings, and functions.
+///
+/// One helper per registration phase keeps the module initialiser a short,
+/// ordered list of steps, matching the order the bindings have always been
+/// exposed in.
+pub(crate) fn register_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_python_classes(m)?;
+    add_python_bindings(m)?;
+    register_python_functions(m)?;
     Ok(())
 }
 
-/// Register the test-only hooks that the `test-util` feature adds.
+/// Register Python-only functions with the module.
+pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_config_functions(m)?;
+    #[cfg(feature = "test-util")]
+    {
+        register_flush_wait_functions(m)?;
+        register_gil_release_test_functions(m)?;
+        register_rotation_test_functions(m)?;
+    }
+    register_frame_and_logging_functions(m)?;
+    Ok(())
+}
+
+/// Register configuration parsing and rotation test hooks.
+fn register_config_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
+    m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
+    Ok(())
+}
+
+/// Register the test-only flush wait hooks.
 #[cfg(feature = "test-util")]
-fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    use crate::gil_release_test::{
-        gil_release_observations_for_test, note_python_thread_ran_for_test,
-        reset_gil_release_observations_for_test, wait_for_wait_in_flight_for_test,
-    };
-    use crate::handlers::timed_rotating::{
-        clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
-    };
+fn register_flush_wait_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use crate::logger::flush_test::{
         cancel_flush_wait_for_test, drain_flush_signals_for_test, wait_for_flush_entry_for_test,
     };
     m.add_function(wrap_pyfunction!(wait_for_flush_entry_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(cancel_flush_wait_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(drain_flush_signals_for_test, m)?)?;
+    Ok(())
+}
+
+/// Register the test-only GIL-release observation hooks.
+#[cfg(feature = "test-util")]
+fn register_gil_release_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::gil_release_test::{
+        gil_release_observations_for_test, note_python_thread_ran_for_test,
+        reset_gil_release_observations_for_test, wait_for_wait_in_flight_for_test,
+    };
     m.add_function(wrap_pyfunction!(note_python_thread_ran_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(gil_release_observations_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(
@@ -140,6 +165,15 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(wait_for_wait_in_flight_for_test, m)?)?;
+    Ok(())
+}
+
+/// Register the test-only timed-rotation control hooks.
+#[cfg(feature = "test-util")]
+fn register_rotation_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::handlers::timed_rotating::{
+        clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+    };
     m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(
         clear_timed_rotation_test_times_for_test,
@@ -149,32 +183,19 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Without `test-util` there are no test hooks to register.
-#[cfg(not(feature = "test-util"))]
-fn register_test_util_functions(_m: &Bound<'_, PyModule>) -> PyResult<()> {
-    Ok(())
-}
-
-/// Register the frame-filtering helpers.
-fn register_frame_filter_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        crate::frame_filter_py::get_logging_infrastructure_patterns,
-        m
-    )?)?;
-    Ok(())
-}
-
-/// Register the module-level convenience logging functions.
-fn register_convenience_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_debug, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_info, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_warn, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::convenience_functions::py_error, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        crate::convenience_functions::py_validate_log_context,
-        m
-    )?)?;
+/// Register frame filtering and module-level convenience logging functions.
+fn register_frame_and_logging_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::convenience_functions::{
+        py_debug, py_error, py_info, py_validate_log_context, py_warn,
+    };
+    use crate::frame_filter_py::{filter_frames, get_logging_infrastructure_patterns};
+    m.add_function(wrap_pyfunction!(filter_frames, m)?)?;
+    m.add_function(wrap_pyfunction!(get_logging_infrastructure_patterns, m)?)?;
+    m.add_function(wrap_pyfunction!(py_debug, m)?)?;
+    m.add_function(wrap_pyfunction!(py_info, m)?)?;
+    m.add_function(wrap_pyfunction!(py_warn, m)?)?;
+    m.add_function(wrap_pyfunction!(py_error, m)?)?;
+    m.add_function(wrap_pyfunction!(py_validate_log_context, m)?)?;
     Ok(())
 }
 

@@ -331,12 +331,7 @@ fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(feature = "python")]
 fn register_feature_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Python-only classes, builders, and functions
-    #[cfg(feature = "python")]
-    {
-        python_module::register_python_classes(m)?;
-        python_module::add_python_bindings(m)?;
-        python_module::register_python_functions(m)?;
-    }
+    python_module::register_python_bindings(m)?;
 
     // Log-compat functions (requires both python and log-compat features)
     #[cfg(all(feature = "python", feature = "log-compat"))]
