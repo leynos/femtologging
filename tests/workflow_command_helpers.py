@@ -14,11 +14,8 @@ from __future__ import annotations
 import shlex
 import typing as typ
 
-from tests.workflow_heredoc_helpers import (
-    HereDocument,
-    here_document_at,
-    skip_here_documents,
-)
+from tests.workflow_heredoc_helpers import skip_here_documents
+from tests.workflow_shell_helpers import scan_line
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -73,11 +70,6 @@ VALUE_OPTIONS: typ.Final[frozenset[str]] = frozenset({
     "--assume-new",
     "--eval",
 })
-# A ``#`` opens a shell comment only at the start of a word, so it is literal
-# inside a word such as ``a#b``. A word begins at the start of the line or
-# just after one of these separators.
-_WORD_SEPARATORS: typ.Final[frozenset[str]] = frozenset(" \t;&|()<>")
-_QUOTE_CHARS: typ.Final[frozenset[str]] = frozenset("'\"")
 
 
 def _line_tokens(line: str) -> list[str]:
@@ -210,149 +202,6 @@ def _runs_cargo_suite(tokens: list[str]) -> bool:
     )
 
 
-class _LineScan(typ.NamedTuple):
-    """The shell state one line leaves behind and what the join must remove."""
-
-    quote: str | None
-    continues: bool
-    drops_trailing_backslash: bool
-
-
-class _ScanStep(typ.NamedTuple):
-    """Where scanning resumes, the quote state, and whether the line joins."""
-
-    index: int
-    quote: str | None
-    drops_trailing_backslash: bool
-
-
-def _resume(
-    index: int, quote: str | None, *, drops_trailing_backslash: bool = False
-) -> _ScanStep:
-    """Return the step that resumes scanning at `index` inside `quote`."""
-    return _ScanStep(
-        index=index,
-        quote=quote,
-        drops_trailing_backslash=drops_trailing_backslash,
-    )
-
-
-def _starts_comment(line: str, index: int) -> bool:
-    """Report whether the ``#`` at `index` opens a shell comment."""
-    return index == 0 or line[index - 1] in _WORD_SEPARATORS
-
-
-def _scan_single_quoted(char: str, index: int, quote: str | None) -> _ScanStep:
-    """Consume a character in a single-quoted string, where backslash is literal."""
-    return _resume(index + 1, None if char == "'" else quote)
-
-
-def _scan_double_quoted(line: str, index: int, quote: str | None) -> _ScanStep:
-    """Consume a character inside a double-quoted string, honouring escapes."""
-    char = line[index]
-    if char == "\\" and index + 1 == len(line):
-        return _resume(index + 1, quote, drops_trailing_backslash=True)
-    if char == "\\":
-        return _resume(index + 2, quote)
-    return _resume(index + 1, None if char == '"' else quote)
-
-
-def _scan_unquoted(line: str, index: int) -> _ScanStep:
-    """Consume a character outside quotes, where quotes and comments begin."""
-    char = line[index]
-    if char == "\\" and index + 1 == len(line):
-        return _resume(index + 1, None, drops_trailing_backslash=True)
-    if char == "\\":
-        return _resume(index + 2, None)
-    if char in _QUOTE_CHARS:
-        return _resume(index + 1, char)
-    if char == "#" and _starts_comment(line, index):
-        return _resume(len(line), None)
-    return _resume(index + 1, None)
-
-
-def _scan_step(line: str, index: int, quote: str | None) -> _ScanStep:
-    """Consume the character at `index` in the state left by `quote`."""
-    if quote == "'":
-        return _scan_single_quoted(line[index], index, quote)
-    if quote == '"':
-        return _scan_double_quoted(line, index, quote)
-    return _scan_unquoted(line, index)
-
-
-def _scan_line(line: str, quote: str | None) -> _LineScan:
-    r"""Scan one shell line, carrying `quote` in and reporting how it ends.
-
-    A backslash joins the next line only when it is the line's last character,
-    outside a comment and outside single quotes. Two backslashes are an
-    escaped backslash, so the second is not a continuation. A quoted string
-    may hold a newline, which keeps the line open until its closing quote
-    appears.
-
-    Parameters
-    ----------
-    line
-        One physical line of a ``run`` body, without its newline.
-    quote
-        The quote character left open by the previous line, if any.
-
-    Returns
-    -------
-    _LineScan
-        The open quote, whether the line continues, and whether the joining
-        backslash must be removed.
-    """
-    index = 0
-    while index < len(line):
-        step = _scan_step(line, index, quote)
-        if step.drops_trailing_backslash:
-            return _LineScan(
-                quote=step.quote,
-                continues=True,
-                drops_trailing_backslash=True,
-            )
-        index, quote = step.index, step.quote
-    return _LineScan(
-        quote=quote,
-        continues=quote is not None,
-        drops_trailing_backslash=False,
-    )
-
-
-def _operator_offsets(command: str) -> cabc.Iterator[int]:
-    """Yield where an unquoted `<<` starts in `command`, in order.
-
-    The shell reads a here-document operator only outside quotes, so a `<<`
-    inside a quoted word is data. Scanning with the same quoting rules that
-    join lines is what keeps ``echo '<<EOF'`` from hiding the commands below
-    it. A comment ends the scan, since nothing after it is shell.
-
-    Yields
-    ------
-    int
-        The offset of each operator, in the order the shell reads them.
-    """
-    index = 0
-    quote: str | None = None
-    while index < len(command):
-        if quote is None and command.startswith("<<", index):
-            yield index
-            index += 2
-            continue
-        step = _scan_step(command, index, quote)
-        index, quote = step.index, step.quote
-
-
-def _here_documents(command: str) -> list[HereDocument]:
-    """Return the here-documents the shell would read in `command`."""
-    return [
-        document
-        for at in _operator_offsets(command)
-        for document in (here_document_at(command, at),)
-        if document is not None
-    ]
-
-
 def _logical_lines(run: str) -> list[str]:
     r"""Join the shell lines of `run` into the commands the shell would run.
 
@@ -391,13 +240,13 @@ def _logical_lines(run: str) -> list[str]:
     while index < len(lines):
         line = lines[index]
         index += 1
-        scan = _scan_line(line, quote)
+        scan = scan_line(line, quote)
         quote = scan.quote
         pending += line[:-1] if scan.drops_trailing_backslash else line
         if scan.continues:
             continue
         commands.append(pending)
-        index = skip_here_documents(lines, index, _here_documents(pending))
+        index = skip_here_documents(lines, index, pending)
         pending = ""
     if pending:
         commands.append(pending)
