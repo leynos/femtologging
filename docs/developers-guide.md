@@ -1426,8 +1426,11 @@ handler builder compiles that formatter for the handler. Passing a formatter ID
 instead defers resolution to `ConfigBuilder`, which resolves the registered
 builder during configuration; `dictConfig` formatter definitions use the same
 registered-ID path. A configured percent formatter reads standard record fields
-and structured values from `metadata.key_values`. Formatter objects and filters
-are therefore both resolved before the configuration transaction commits.
+and structured values from `metadata.key_values`. It compiles its format string
+once when the formatter is constructed, so rendering a record walks literal and
+directive segments without reparsing; an unsupported directive is preserved as
+literal text. Formatter objects and filters are therefore both resolved before
+the configuration transaction commits.
 
 ## Shared Rust test helpers and fixtures
 
