@@ -245,10 +245,7 @@ fn set_optional_exception_items(
 }
 
 /// Set the module name, when the exception class carries one.
-fn set_exception_module_item(
-    dict: &Bound<'_, PyDict>,
-    payload: &ExceptionPayload,
-) -> PyResult<()> {
+fn set_exception_module_item(dict: &Bound<'_, PyDict>, payload: &ExceptionPayload) -> PyResult<()> {
     if let Some(ref module) = payload.module {
         dict.set_item("module", module)?;
     }
