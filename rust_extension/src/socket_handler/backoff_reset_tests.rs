@@ -184,14 +184,25 @@ fn reset_after_idle_clears_the_last_success() {
     );
 }
 
-/// A `record_success` reset must not reseed the random source.
+/// Which reset path a no-reseed case exercises.
+#[derive(Clone, Copy, Debug)]
+enum ResetPath {
+    /// `record_success` at the reset threshold.
+    RecordSuccess,
+    /// `reset_after_idle` at the reset threshold.
+    Idle,
+}
+
+/// Neither reset path may reseed the random source.
 ///
 /// Both states draw the same sequence before the reset. Afterwards the ranges
-/// are identical because base and cap are equal, so equal draws prove the
+/// are identical because base and cap are equal, so equal draws prove that the
 /// reset left the random source untouched. A reseed would restart the stream
 /// and make the post-reset sequences differ.
 #[rstest]
-fn record_success_reset_does_not_reseed() {
+#[case(ResetPath::RecordSuccess, 0xA11CE)]
+#[case(ResetPath::Idle, 0xB0B)]
+fn resets_do_not_reseed(#[case] path: ResetPath, #[case] seed: u64) {
     let policy = BackoffPolicy {
         base: Duration::from_millis(1000),
         cap: Duration::from_millis(1000),
@@ -199,54 +210,32 @@ fn record_success_reset_does_not_reseed() {
         deadline: Duration::from_secs(60),
     };
     let start = Instant::now();
-    let mut reset = BackoffState::with_seed(policy.clone(), 0xA11CE);
-    let mut control = BackoffState::with_seed(policy, 0xA11CE);
+    let mut reset = BackoffState::with_seed(policy.clone(), seed);
+    let mut control = BackoffState::with_seed(policy, seed);
 
     for step in 0..4_u64 {
         let now = start + Duration::from_millis(step * 10);
         assert_eq!(reset.next_sleep(now), control.next_sleep(now));
     }
-    reset.record_success(start + Duration::from_millis(100));
-    control.record_success(start + Duration::from_millis(50));
+    match path {
+        ResetPath::RecordSuccess => {
+            reset.record_success(start + Duration::from_millis(100));
+            control.record_success(start + Duration::from_millis(50));
+        }
+        ResetPath::Idle => {
+            reset.record_success(start + Duration::from_millis(50));
+            control.record_success(start + Duration::from_millis(50));
+            reset.reset_after_idle(start + Duration::from_millis(150));
+            control.reset_after_idle(start + Duration::from_millis(149));
+        }
+    }
 
     for step in 0..8_u64 {
         let now = start + Duration::from_millis(200 + step * 10);
         assert_eq!(
             reset.next_sleep(now),
             control.next_sleep(now),
-            "the reset state diverged at step {step}, so it reseeded"
-        );
-    }
-}
-
-/// An idle reset must also leave the random source untouched.
-#[rstest]
-fn reset_after_idle_does_not_reseed() {
-    let policy = BackoffPolicy {
-        base: Duration::from_millis(1000),
-        cap: Duration::from_millis(1000),
-        reset_after: Duration::from_millis(100),
-        deadline: Duration::from_secs(60),
-    };
-    let start = Instant::now();
-    let mut reset = BackoffState::with_seed(policy.clone(), 0xB0B);
-    let mut control = BackoffState::with_seed(policy, 0xB0B);
-
-    for step in 0..4_u64 {
-        let now = start + Duration::from_millis(step * 10);
-        assert_eq!(reset.next_sleep(now), control.next_sleep(now));
-    }
-    reset.record_success(start + Duration::from_millis(50));
-    control.record_success(start + Duration::from_millis(50));
-    reset.reset_after_idle(start + Duration::from_millis(150));
-    control.reset_after_idle(start + Duration::from_millis(149));
-
-    for step in 0..8_u64 {
-        let now = start + Duration::from_millis(200 + step * 10);
-        assert_eq!(
-            reset.next_sleep(now),
-            control.next_sleep(now),
-            "the idle reset diverged at step {step}, so it reseeded"
+            "the {path:?} reset diverged at step {step}, so it reseeded"
         );
     }
 }
