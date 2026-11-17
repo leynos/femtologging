@@ -14,7 +14,11 @@ from __future__ import annotations
 import shlex
 import typing as typ
 
-from tests.workflow_heredoc_helpers import skip_here_documents
+from tests.workflow_heredoc_helpers import (
+    HereDocument,
+    here_document_at,
+    skip_here_documents,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -315,6 +319,40 @@ def _scan_line(line: str, quote: str | None) -> _LineScan:
     )
 
 
+def _operator_offsets(command: str) -> cabc.Iterator[int]:
+    """Yield where an unquoted `<<` starts in `command`, in order.
+
+    The shell reads a here-document operator only outside quotes, so a `<<`
+    inside a quoted word is data. Scanning with the same quoting rules that
+    join lines is what keeps ``echo '<<EOF'`` from hiding the commands below
+    it. A comment ends the scan, since nothing after it is shell.
+
+    Yields
+    ------
+    int
+        The offset of each operator, in the order the shell reads them.
+    """
+    index = 0
+    quote: str | None = None
+    while index < len(command):
+        if quote is None and command.startswith("<<", index):
+            yield index
+            index += 2
+            continue
+        step = _scan_step(command, index, quote)
+        index, quote = step.index, step.quote
+
+
+def _here_documents(command: str) -> list[HereDocument]:
+    """Return the here-documents the shell would read in `command`."""
+    return [
+        document
+        for at in _operator_offsets(command)
+        for document in (here_document_at(command, at),)
+        if document is not None
+    ]
+
+
 def _logical_lines(run: str) -> list[str]:
     r"""Join the shell lines of `run` into the commands the shell would run.
 
@@ -359,7 +397,7 @@ def _logical_lines(run: str) -> list[str]:
         if scan.continues:
             continue
         commands.append(pending)
-        index = skip_here_documents(lines, index, pending)
+        index = skip_here_documents(lines, index, _here_documents(pending))
         pending = ""
     if pending:
         commands.append(pending)
