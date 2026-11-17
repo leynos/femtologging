@@ -1,0 +1,248 @@
+"""Regression tests: network handler waits must not freeze other Python threads.
+
+A socket or HTTP worker stuck on an unresponsive peer can keep ``flush()`` or
+``close()`` waiting for as long as the write timeout. Python-facing waits must
+release the GIL, or every other Python thread stops for that whole period.
+"""
+
+from __future__ import annotations
+
+import socket
+import threading
+import time
+import typing as typ
+
+import pytest
+
+from femtologging import HTTPHandlerBuilder, SocketHandlerBuilder
+from femtologging import _femtologging_rs as rust
+
+# These hooks exist only when the extension was built with the Rust `test-util`
+# feature, which the test builds enable.
+_note_python_thread_ran = getattr(rust, "note_python_thread_ran_for_test", None)
+_read_observations = getattr(rust, "gil_release_observations_for_test", None)
+_reset_observations = getattr(rust, "reset_gil_release_observations_for_test", None)
+GIL_RELEASE_OBSERVATION_AVAILABLE = all(
+    callable(hook)
+    for hook in (_note_python_thread_ran, _read_observations, _reset_observations)
+)
+
+pytestmark = pytest.mark.skipif(
+    not GIL_RELEASE_OBSERVATION_AVAILABLE,
+    reason="requires Rust extension built with the 'test-util' feature",
+)
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+    class _NetworkHandler(typ.Protocol):
+        """The handler surface these tests drive."""
+
+        def handle(self, logger: str, level: str, message: str) -> None:
+            """Queue one record for the handler's worker."""
+
+        def flush(self) -> bool:
+            """Wait for the worker to flush queued records."""
+
+        def close(self) -> None:
+            """Stop the worker and wait for it to finish."""
+
+
+WRITE_TIMEOUT_MS = 300
+# Well below the write timeout, so a released GIL always clears these bars.
+MINIMUM_WAIT_SECONDS = 0.15
+MINIMUM_TICKS = 5
+TICK_SECONDS = 0.005
+# Enough data to overflow loopback TCP buffers, so the socket worker blocks in
+# its write rather than finishing before the wait under test begins.
+LARGE_MESSAGE = "x" * (256 * 1024)
+LARGE_MESSAGE_COUNT = 32
+
+
+class _SilentServer(typ.NamedTuple):
+    """A server that accepts connections and never answers them."""
+
+    port: int
+    connected: threading.Event
+    """Set once a handler has connected, so a test can wait for that."""
+
+
+@pytest.fixture
+def silent_server() -> cabc.Iterator[_SilentServer]:
+    """Yield a server that accepts connections and never reads or answers."""
+    connections: list[socket.socket] = []
+    connected = threading.Event()
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        listener.settimeout(0.05)
+        is_stopping = threading.Event()
+
+        def accept_forever() -> None:
+            """Accept connections until the fixture stops."""
+            while not is_stopping.is_set():
+                try:
+                    connections.append(listener.accept()[0])
+                except TimeoutError:
+                    continue
+                connected.set()
+
+        acceptor = threading.Thread(target=accept_forever, daemon=True)
+        acceptor.start()
+        yield _SilentServer(listener.getsockname()[1], connected)
+        is_stopping.set()
+        acceptor.join()
+    for connection in connections:
+        connection.close()
+
+
+class _WaitMeasurement(typ.NamedTuple):
+    """What other threads observed while a measured wait was running."""
+
+    ticks: int
+    """Observations recorded while the call had the interpreter detached."""
+
+    elapsed: float
+    """How long the measured call took, in seconds."""
+
+
+class _Ticker:
+    """Record each moment its thread holds the interpreter."""
+
+    def __init__(self) -> None:
+        """Start with a thread that is not yet running."""
+        self._is_finished = threading.Event()
+        self._has_ticked = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        """Start recording, and wait until one observation was made."""
+        self._thread.start()
+        assert self._has_ticked.wait(timeout=5), "the ticker thread never started"
+
+    def stop(self) -> None:
+        """Stop counting once the thread has finished."""
+        self._is_finished.set()
+        self._thread.join()
+
+    def _run(self) -> None:
+        """Record an observation, giving the GIL up between observations.
+
+        The recording call needs the GIL, and the extension counts it only
+        while the measured call has the interpreter detached. The count is
+        therefore the wait's own witness: it can include neither time before
+        the wait nor the handover after the call returns, and a wait that kept
+        the GIL counts nothing, because this thread could not run at all.
+        """
+        note = _note_python_thread_ran
+        assert note is not None, "the test-util hooks are missing"
+        while not self._is_finished.is_set():
+            note()
+            self._has_ticked.set()
+            time.sleep(TICK_SECONDS)
+
+
+def _ticks_during(
+    prepare: cabc.Callable[[], cabc.Callable[[], object]],
+) -> _WaitMeasurement:
+    """Measure another thread's progress during the wait ``prepare`` sets up.
+
+    ``prepare`` builds the handler and queues its work once the ticker is
+    already running, and hands back the wait to measure. Setting up inside the
+    timed region would let the setup hide the very stall under test.
+
+    The count is kept by the extension and advanced only while the measured
+    call has the interpreter detached, so neither a slow schedule nor a
+    GIL-holding wait can produce a false pass.
+
+    Returns
+    -------
+    The ticks another thread completed while the call waited with the GIL
+    released, and how long the call took.
+    """
+    reset = _reset_observations
+    read = _read_observations
+    assert reset is not None, "the reset hook is missing"
+    assert read is not None, "the read hook is missing"
+    ticker = _Ticker()
+    ticker.start()
+    try:
+        call = prepare()
+        # Forget observations made while the handler was being built, so only
+        # the measured call's own wait is counted.
+        reset()
+        started = time.monotonic()
+        try:
+            call()
+        finally:
+            elapsed = time.monotonic() - started
+        counted = read()
+    finally:
+        ticker.stop()
+    return _WaitMeasurement(counted, elapsed)
+
+
+def _stalled_socket_handler(server: _SilentServer) -> _NetworkHandler:
+    """Build a socket handler whose worker is blocked writing to ``server``."""
+    handler = (
+        SocketHandlerBuilder()
+        .with_tcp("127.0.0.1", server.port)
+        .with_write_timeout_ms(WRITE_TIMEOUT_MS)
+        .build()
+    )
+    for _ in range(LARGE_MESSAGE_COUNT):
+        handler.handle("app", "INFO", LARGE_MESSAGE)
+    # Wait for the worker to connect before the caller starts timing, so the
+    # measured call cannot arrive after the worker has finished with the peer.
+    assert server.connected.wait(timeout=5), "the socket worker never connected"
+    return typ.cast("_NetworkHandler", handler)
+
+
+def _stalled_http_handler(server: _SilentServer) -> _NetworkHandler:
+    """Build an HTTP handler whose worker awaits a response from ``server``."""
+    handler = (
+        HTTPHandlerBuilder()
+        .with_endpoint(f"http://127.0.0.1:{server.port}/ingest")
+        .with_write_timeout_ms(WRITE_TIMEOUT_MS)
+        .build()
+    )
+    handler.handle("app", "INFO", "never answered")
+    # The request timeout starts when the worker sends, so measuring from the
+    # connection leaves the whole timeout inside the call being measured.
+    assert server.connected.wait(timeout=5), "the HTTP worker never connected"
+    return typ.cast("_NetworkHandler", handler)
+
+
+@pytest.mark.parametrize(
+    ("build_handler", "method"),
+    [
+        pytest.param(_stalled_socket_handler, "flush", id="socket-flush"),
+        pytest.param(_stalled_socket_handler, "close", id="socket-close"),
+        pytest.param(_stalled_http_handler, "close", id="http-close"),
+    ],
+)
+def test_wait_on_a_stalled_worker_lets_python_threads_run(
+    build_handler: cabc.Callable[[_SilentServer], _NetworkHandler],
+    method: str,
+    silent_server: _SilentServer,
+) -> None:
+    """Other Python threads keep running while the handler waits on its worker."""
+    built: list[_NetworkHandler] = []
+
+    def prepare() -> cabc.Callable[[], object]:
+        """Build and block the handler's worker before the timed call begins."""
+        handler = build_handler(silent_server)
+        built.append(handler)
+        return getattr(handler, method)
+
+    try:
+        measurement = _ticks_during(prepare)
+    finally:
+        for handler in built:
+            handler.close()
+    assert measurement.elapsed >= MINIMUM_WAIT_SECONDS, (
+        f"{method}() returned after {measurement.elapsed:.3f}s, so the worker "
+        "never stalled and this test proved nothing"
+    )
+    assert measurement.ticks >= MINIMUM_TICKS, (
+        f"another thread ran only {measurement.ticks} times during "
+        f"{measurement.elapsed:.3f}s of {method}(), so the wait held the GIL"
+    )

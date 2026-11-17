@@ -579,6 +579,21 @@ against unbounded memory growth when producers outpace the consumer thread.
 Later versions may expose the channel type and capacity as configuration
 options.
 
+### 3.5 Handler flush at the Python boundary
+
+`FemtoLogger.flush_handlers()` reaches the handler behind the Python wrapper,
+not only the dispatch shard. The calling thread first waits for its records to
+drain, then flushes every configured handler on that same thread. A built-in
+handler is flushed through its native implementation with the GIL detached; a
+user-defined handler is asked to flush through its own `flush` method, which
+lets a buffering handler persist its records. Every handler is flushed even
+when an earlier one fails, and the results are combined. A missing or
+non-callable `flush` counts as success, a `None` return counts as success, any
+other return value is read for its truthiness, and a raised exception is
+reported as failure. The warning gives a bounded failure category and, except
+for a user-defined handler's own flush failure, whose fixed message already
+identifies it as custom, the handler kind; the exception text is never recorded.
+
 ## 4. Leveraging Rust's Strengths
 
 Rust offers a unique combination of features that are particularly well-suited

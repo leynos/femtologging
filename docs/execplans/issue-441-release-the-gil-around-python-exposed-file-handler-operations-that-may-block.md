@@ -1722,6 +1722,571 @@ observation that establishes the send is waiting before `close()` starts.
 The focused run of the matrix passed seven cases in 18.02 s on the
 `--no-default-features --features tracing-compat` lane.
 
+## Eighth review follow-up after `051576bc`
+
+CodeRabbit reviewed `051576bc` and asked for two documentation corrections,
+both of which described main's #555 flush semantics rather than this branch's
+pre-rebase behaviour:
+
+- `docs/users-guide.md` said a handler's `flush` result is read as a boolean.
+  `call_python_flush` treats `None` as success and reads every other result for
+  its truthiness, so `0` and an empty container fail the call.
+- Both user-facing guides said a raised exception is printed to standard
+  error. The flush path logs a fixed, bounded warning that omits the exception
+  text — it never runs `PyErr::print` or `PyErr::display` — and then reports
+  failure.
+
+The same review raised one failed pre-merge warning, Testing (Property/Proof),
+which asked for generated coverage of the classification and aggregation rules
+rather than more named examples.
+
+`976002bf` corrects the three documents and adds two Hypothesis properties to
+`tests/test_custom_handler_flush.py`:
+
+- `test_flush_result_classification_follows_python_truthiness` draws arbitrary
+  return values, including `None`, `0`, empty containers and an object whose
+  `__bool__` raises, and asserts that `flush_handlers()` reports exactly what
+  the documented rule predicts.
+- `test_flush_handlers_aggregates_generated_handler_outcomes` draws lists of
+  one to eight per-handler outcomes and asserts the call succeeds exactly when
+  every handler does, and that every handler was flushed once.
+
+Each logger is created under a unique name, because handlers accumulate on a
+named logger and a shared name would make one generated case flush the cases
+before it. The named cases remain as readable specification.
+
+## Second hosted lint outage from the rolling Whitaker suite
+
+`976002bf` passed every gate this branch owns but failed `make lint` here and
+at the hosted `Lint` step of all four `build-test` jobs (run 43699353457). The
+failure is the Whitaker Dylint suite, not consumer code:
+
+```text
+error: Multiple clusters of nested conditional logic in `create_filter_record`.
+note: Detected 2 complexity bumps above the threshold 2.5.
+= note: `-D bumpy-road-function` implied by `-D warnings`
+error: could not compile `femtologging_rs` (lib) due to 14 previous errors
+Error: Error: Compilation failed with toolchain `nightly-2026-05-28`
+```
+
+The fourteen `bumpy-road-function` findings are in `filters/python_callback/`,
+`formatter/python.rs`, both handler builders, `timed_rotating/`, both handler
+workers, `frame_filter_py.rs`, `python_module.rs` and `lib.rs`. None of those
+files appears in `git diff --name-only origin/main...HEAD`; they are
+byte-identical to `main`, so the finding is introduced by the tool, not by this
+candidate.
+
+The cause is the same class of fault recorded in the first hosted lint outage:
+`install-whitaker` refuses a suite pin by design, so every consumer takes the
+rolling archive from Whitaker's default-branch tip. The host's installed suite
+was replaced at 09:36 CET on 2026-11-15 from tip `880939d1`, *Implement the
+macro-aware cognitive complexity rule*, which reworked
+`crates/bumpy_road_function/src/driver/segment_builder/` and added authored
+condition-guard UI contracts. The earlier suite, installed on 4 August, did not
+report these functions; the gate passed on this host before the replacement.
+
+Whitaker issue 622, *Charge generated logical operands nothing in complexity
+conditions*, was opened upstream the previous day against the same rule. Until
+the archive is reissued with that correction, the local and hosted lint gates
+fail identically for every branch in this repository, including `main`. The
+candidate is unchanged: there is no repo-local remedy that does not mean
+refactoring fourteen unrelated functions or raising the rule's threshold, both
+of which are separate work with their own review. The failed `build-test` jobs
+need a rerun once the archive changes.
+
+## Ninth review follow-up after `ed199b9c`
+
+CodeRabbit's review 5911855055 raised one inline finding, 4579338942, against
+`docs/developers-guide.md`: it claimed every flush warning carries
+`handler_kind`, and that the tracing span carries a failure category. Both
+claims are false. `native_handler.rs` logs
+`handler_kind=<type>, category=flush_failed`; `flush.rs` logs
+`handler_kind=<type|custom>, category=interpreter_unavailable`; and `calls.rs`
+logs a fixed message whose only structured datum is the category
+(`flush_lookup_failed`, `flush_call_failed` or `flush_result_false`), with no
+`handler_kind`. `flush_registered_handler` records `handler_kind` and
+`flush_outcome` and no category. `5cdb1053` rewrites the paragraph to describe
+each shape from the code that emits it and to say why the difference is
+deliberate. The same review's LanguageTool nit disappears with the sentence it
+annotated.
+
+The follow-up reply in that thread produced a second finding, which was also
+valid: `docs/rust-multithreaded-logging-framework-for-python-design.md`
+repeated the blanket "handler-kind and failure-category" claim. That sentence
+now gives the category unconditionally, the handler kind except for a
+user-defined handler's own flush failure, and never the exception text.
+
+Both documents are docs-only changes; `make check-fmt`, `make markdownlint` and
+`make nixie` pass, and the Whitaker regression above is unaffected by either,
+since neither file is compiled.
+
+### The buffered-delivery regression is now deterministic
+
+The earlier walkthrough asked for a buffered-delivery regression that proved
+delegation without relying on a clock. `tests/test_flush_releases_gil.py` gains
+`test_flush_handlers_delivers_a_buffered_native_record`, which builds a file
+handler with `with_flush_after_records(3)`, logs one record, and asserts the
+file is still empty — the precondition that proves the record was buffered —
+before calling `flush_handlers()`, which must report success and leave the
+record on disk. No thread, delay or scheduler participates: only the flush can
+write that file.
+
+The requested mutation check was run against the built extension. Replacing the
+delegation in `flush_registered_handler` with an unconditional success:
+
+```rust
+let flushed = self.report_flush(|| Python::try_attach(|_py| true));
+```
+
+made both `test_flush_handlers_delivers_a_buffered_native_record` and the
+existing `test_flush_handlers_releases_the_gil_for_a_python_formatter` fail,
+with the first reporting
+`flush_handlers() returned without flushing the buffered record`. Restoring the
+implementation made the file pass again (10 passed, and 21 passed with
+`tests/test_custom_handler_flush.py` included).
+
+### The full gate set is green again
+
+The installed Whitaker suite was replaced once more on 2026-11-15 at 22:27 CET,
+and the tip-`880939d1` build is kept beside it as
+`libwhitaker_suite@nightly-2026-05-28.so.tip-880939d1-backup`. The
+`bumpy-road-function` findings that caused the second hosted lint outage no
+longer reproduce: `whitaker --all` compiles and exits 0 with no diagnostics.
+
+With the working-tree change above, every gate this branch owns passed in one
+sequential run: `make check-fmt` (255 Python files, `cargo fmt` clean, 74
+Markdown files unchanged), `make typecheck` ("All checks passed!"), `make test`
+(four cargo lanes at 4008 passed, 0 failed, 253 ignored; 44 of 44 trybuild UI
+fixtures; pytest 1202 passed, 5 skipped, 66 snapshots) and `make lint` (Ruff,
+interrogate 100.0%, Pylint 10.00/10, df12-pylint 10.00/10, ambrleaks, Skylos,
+the Rust lanes and the Whitaker suite), followed by `make markdownlint` and
+`make nixie`. The test gate's first three invocations were stopped by the
+runner's background ceiling mid-`trybuild`; each reported no failure before it
+was cut off, and the fourth completed in 1h49m33s during heavy compile-slot
+contention (`build-limits-status` reported `healthy` throughout). Logs are
+`/tmp/CHECK-FMT-`, `/tmp/TYPECHECK-`, `/tmp/TEST-final-`, `/tmp/LINT-`,
+`/tmp/MARKDOWNLINT-` and
+`/tmp/NIXIE-femtologging-release-gil-socket-http-waits-reduced.out`.
+
+The hosted `build-test` jobs still show the old suite's regression until their
+next run; that is a hosted-environment fact, not a candidate defect.
+
+### Neither GIL test can be fooled by a pre-call handover
+
+Two findings from the `051576bc` review had been left without a disposition:
+one on `tests/test_flush_releases_gil.py`, one on
+`tests/test_network_handler_gil_release.py`. Both said the same thing — the
+measurement starts before the call under test, so a thread switch in between
+counts as call time. On the flush test the objection holds: `started` is read
+before `flush_handlers()` is entered, and CPython may hand the GIL to a waiting
+thread between those two bytecodes. A 0.2-second handover there satisfies the
+`elapsed >= 0.2` guard, and the ticker ticks in the same window, so a flush
+that held the GIL could pass. The flush test had that hole; the network test
+did not, because a delay past its 300 ms write timeout shrinks `elapsed` below
+`MINIMUM_WAIT_SECONDS` and fails loudly.
+
+Both scripts now close it at the source instead of relying on that guard. They
+raise the GIL switch interval to 60 seconds and call `time.sleep(0)`, which
+gives the GIL up once and so drains any handover already requested while
+restarting the interval. The calling thread then reaches the call
+uninterrupted. The interval is restored once the call returns: in a `finally`
+in the network helper, and after the call in the flush script, which is a
+standalone process that exits on any failing assertion anyway. With no thread
+able to request the GIL during the call, a tick can only come from a voluntary
+release inside it, which is exactly what the count asserts. This is test-only:
+the production wait paths carry no instrumentation, and no release build
+changes.
+
+The mutation was repeated against this version. Removing `py.detach` from
+`flush_native` so the native flush holds the GIL still fails
+`test_flush_handlers_releases_the_gil_for_a_python_formatter` with
+`AssertionError: flush_handlers stalled behind the GIL`
+(`/tmp/pytest-falsify2-femtologging.out`). Restoring it and rebuilding gave 13
+passed in five consecutive runs of the two files.
+
+The same review then named a schedule the switch interval cannot close:
+`flush_handlers()` drains the dispatch shard before it flushes, and
+`wait_for_dispatch_to_drain` waits detached whenever its budget has work in
+flight (`rust_extension/src/logger/flush.rs`). A record whose dispatch permit
+is still held while its formatter blocks therefore releases the GIL on the way
+into the native wait, and every assertion passes even if that wait holds it.
+
+`FLUSH_FORMATTER_SCRIPT` now takes a mode. `dispatched` queues the record
+through the logger and is the original end-to-end case; `direct` queues it with
+`handler.handle`, so the logger's shard has nothing in flight, the drain
+returns immediately, and the only wait left is the one that reaches the
+handler. A second test, `test_flush_handlers_native_wait_releases_the_gil`,
+drives that mode.
+
+The first attempt at the isolated case called the handler's own `flush()`, and
+the mutation still passed: that method is its own `#[pymethods]` shim which
+detaches itself, so it never reaches `PyHandler::flush` or `flush_native`. The
+direct-queue form keeps `flush_handlers()` as the entry point and goes through
+the same native wait the drain sits in front of. With the `py.detach` removal
+in place both flush tests now fail (`/tmp/pytest-falsify4-femtologging.out`);
+with it restored, 14 passed in five consecutive runs of the two files.
+
+`.github/workflows/ci.yml` installs Whitaker from the rolling archive and the
+run fetched `whitaker-lints-880939d`, so hosted `build-test` still fails the
+`Lint` step on the same fourteen `bumpy-road-function` findings in files
+byte-identical to `main`. Nothing in this branch can change that.
+
+### Head `eaa76371` and the second hosted Whitaker revision
+
+The isolation change is committed as `eaa76371` and force-pushed with a lease
+over `bbdbb424`. `make check-fmt`, `make typecheck`, `make lint`, `make test`
+(4008 cargo tests, 44/44 trybuild fixtures, pytest 1203 passed / 5 skipped),
+`make markdownlint` and `make nixie` all exit 0 on it (`/tmp/CHECK-FMT-`,
+`/tmp/TYPECHECK-`, `/tmp/LINT-`, `/tmp/TEST-`, `/tmp/MARKDOWNLINT-` and
+`/tmp/NIXIE-femtologging-release-gil-socket-http-waits-reduced.out`).
+
+Replies were posted to both open review threads, using the manual-comment route
+and a pool identity: the flush thread now records the drain isolation and the
+double mutation failure, the network thread records that the switch-interval
+change closes its pre-call handover window.
+
+CI run `43801864472` repeats the hosted pattern with a newer archive,
+`whitaker-lints-5006fc2`. All four `build-test` jobs fail in the `Lint` step
+with fourteen `Multiple clusters of nested conditional logic` errors, the same
+`bumpy-road-function` rule, in `rust_extension/src/python_module.rs` and
+`rust_extension/src/lib.rs`. Both files are byte-identical to `origin/main`
+(`git diff --stat origin/main...HEAD` for those paths is empty), so the red is
+entirely upstream. The wheel jobs pass.
+
+### The measurement is keyed to the call instruction, not to the frame
+
+Both replies were rejected on the same point, and the objection is sound. The
+switch interval narrows the pre-call window but does not remove it: a thread
+that entered `COND_TIMED_WAIT` under the old interval can ask for a handover
+after `time.sleep(0)` returns, and a long enough pause there makes the elapsed
+and tick assertions pass while the call never waited on the blocked worker. The
+elapsed guard cannot tell "the call took half a second" from "half a second
+passed before the call".
+
+The first redesign keyed the measurement to the helper's frame. Both tests run
+the call through a one-statement helper, `_invoke`/`invoke_call`, and a second
+thread waits until `sys._current_frames()` reports that frame on the calling
+thread. The second review showed that this is not enough either: a thread can
+be switched out after the frame is created and before `call()` executes, so the
+observer can take its baseline and release the formatter while the call has not
+started.
+
+The observation now requires the frame's instruction offset as well. `f_lasti`
+names the instruction a frame was last executing, so the observer accepts the
+frame only when that offset is the byte offset of the helper's call
+instruction, computed with `dis`:
+
+```python
+CALL_OFFSETS = frozenset(
+    instruction.offset
+    for instruction in dis.get_instructions(_invoke)
+    if instruction.opname.startswith("CALL")
+)
+assert len(CALL_OFFSETS) == 1, "_invoke must make exactly one call"
+```
+
+Each helper is one statement, so its only call instruction is the one under
+test. The length check fails loudly if a later edit adds a call, rather than
+silently widening the window the guard exists to close.
+
+`/tmp/gil-exp/precall-probe.py` isolates the two predicates. Its helper yields
+in a loop before it calls, which is the schedule a frame-only observation
+accepts: the frame-only predicate accepts it on the first poll, at a loop
+offset, while the call-keyed predicate waits for the call.
+
+| CPython  | Call offset | Frame-only accepted | Call-keyed accepted |
+| -------- | ----------- | ------------------- | ------------------- |
+| 3.12.15  | 90          | +0.006 s, offset 84 | +2.105 s            |
+| 3.13.13  | 96          | +0.006 s, offset 88 | +2.063 s            |
+| 3.14.7   | 96          | +0.006 s, offset 88 | +2.124 s            |
+| 3.15.0b2 | 98          | +0.007 s, offset 90 | +1.757 s            |
+
+The guarantee is stated as narrowly as the tests can establish it, which is
+narrower than "the native wait has begun":
+
+- No observation can be taken before the caller reaches the call instruction, so
+  a pause before the call can supply neither the tick baseline nor the
+  formatter release.
+- In `direct` mode the helper's only call is `flush_handlers()`, whose dispatch
+  shard is empty, and the only GIL release on that path is the native wait
+  itself, so a tick counted after the observation can only have come from that
+  wait. The network calls have the same shape: `py_flush` and `py_close` detach
+  before they do anything else.
+- A wait that holds the GIL yields no ticks after the observation, so the tick
+  assertion fails whether or not a handover at the call boundary supplied the
+  baseline.
+
+The mutations were rebuilt into the extension, removing `py.detach` from
+`flush_native` and from the socket and HTTP shims:
+
+| Build                   | Injected pause | `dispatched` | `direct` |
+| ----------------------- | -------------- | ------------ | -------- |
+| unmutated               | none           | pass         | pass     |
+| unmutated               | 0.05 s         | pass         | pass     |
+| unmutated               | 0.6 s          | pass         | pass     |
+| `flush_native` GIL-held | none           | fail         | fail     |
+| `flush_native` GIL-held | 0.05 s         | fail         | fail     |
+| `flush_native` GIL-held | 0.6 s          | fail         | fail     |
+
+Every failing row reports `flush_handlers() stalled behind the GIL`: with the
+GIL held for the wait, the release never reaches the formatter, it times out,
+and the flush returns `False`.
+
+The network tests carry the same change, and the same mutation fails all three
+cases with `another thread ran only 0 times during 0.300s` (`1` time for the
+socket flush), so the tick count taken from the in-call baseline reports the
+GIL-holding wait directly. With the handlers restored, the two files passed 14
+tests in five consecutive runs.
+
+### The flush diagnostics have tests that fail when a field is lost
+
+The review of `5190d77d` also failed the pre-merge check "Testing (Overall)",
+which asked for tests of the diagnostic behaviour rather than only of the
+boolean a flush returns. The new module
+`rust_extension/src/logger/py_handler/flush_diagnostics_tests.rs` holds four
+groups. It is a sibling of `tests.rs`, registered from `py_handler.rs`, because
+the additions would take `tests.rs` past the 400-line limit.
+
+- `native_flush_failure_warns_with_the_handler_kind` closes a file handler and,
+  in a second case, a socket handler, flushes each, and compares the whole
+  warning:
+  `PyHandler: flush failed: handler_kind=<kind>, category=flush_failed` at
+  `Warn` level. A label that stopped depending on the handler fails one case.
+- `native_handler_kinds_have_distinct_labels` is a table over all six
+  `NativeHandlerKind` variants.
+- `unavailable_interpreter_fails_the_registered_flush_with_a_warning` drives
+  `flush_registered_handler`'s seam. That method now delegates to
+  `flush_with_interpreter`, which owns the span and calls `report_flush`, so
+  the test reaches the reporting `flush_handlers` performs rather than only the
+  helper. It asserts a `false` result and the
+  `category=interpreter_unavailable` warning.
+- `flush_diagnostics_record_the_handler_kind_and_outcome` installs a
+  `tracing-subscriber` layer that records the `flush_registered_handler` span's
+  fields and its trace event, and asserts `handler_kind` and `flush_outcome`
+  for a success and a failure.
+
+Each test was checked against a mutated source:
+
+| Source change                                | Result                              |
+| -------------------------------------------- | ----------------------------------- |
+| every `label()` arm returns `"native"`       | 9 of 9 diagnostics tests fail       |
+| `handler_kind` dropped from the trace event  | `left: None`, `right: Some("file")` |
+| `span.record("flush_outcome", ...)` removed  | `left: [None, None]`                |
+| unattachable interpreter reported as success | the result assertion fails          |
+
+### Head `3043c775`, published
+
+The redesign is committed as `3043c775` and force-pushed with a lease over
+`b6a731c8`. The remote head matches the local head and the branch tracks
+`origin/release-gil-socket-http-waits`.
+
+`make fmt`, `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+`make markdownlint` and `make nixie` all exit 0 on it. Lint reports Ruff clean,
+interrogate at 100 %, Pylint at 10.00/10, the df12 plugin set and Skylos clean,
+the Rust lanes and Whitaker clean. `make test` ran all four cargo lanes with
+11/11 trybuild fixtures in each, and pytest reported 1203 passed / 5 skipped
+(`/tmp/gates-round4-femtologging-release-gil-socket-http-waits-reduced.log`).
+
+Replies were posted to both review threads through the manual-comment route and
+a pool identity, each presenting the frame-table mechanism, the handover table
+and the mutation results: `discussion_r4582597632` on the flush thread and
+`discussion_r4582598566` on the network thread. The network thread was the only
+one still open.
+
+Queue request `45e1ae9b` for `@coderabbitai review` was still pending at this
+point, so the review of this head is not yet complete.
+
+Hosted CI run `43816675008` on `63dc0ad3` reproduces the upstream red: all four
+`build-test` jobs fail the `Lint` step with fourteen `bumpy-road-function`
+errors and the wheel jobs pass. `git diff --stat origin/main...HEAD` for
+`rust_extension/src/python_module.rs` and `rust_extension/src/lib.rs` is empty,
+so the branch does not touch the failing code.
+
+### The diagnostics tests and the call-keyed guards, rebased onto main's #622
+
+The work described in the two sections above was committed as `bac7c2b3` on the
+old base, `d36cd742`. While the gates for that commit ran, main advanced to
+`2dc7b4e2` with #616 (one loader for documented Python examples) and #622
+(extract helpers to clear `bumpy_road_function` findings). #622 matters here:
+the rolling Whitaker tip had been reporting fourteen `bumpy_road_function`
+errors in code this branch never touched, and the extraction clears all
+fourteen.
+
+The branch was rebased onto `origin/main` with the host-wide Weave merge driver
+disabled (`-c core.attributesFile=/dev/null`), because that enrolment is for
+interactive use and an unattended replay should use the ordinary three-way
+merge. The replay was clean. To confirm nothing was silently taken from either
+side, the branch's own diff was compared before and after:
+
+```sh
+git diff d36cd742 bac7c2b3 > /tmp/before-rebase.diff
+git diff origin/main HEAD  > /tmp/after-rebase.diff
+diff -u /tmp/before-rebase.diff /tmp/after-rebase.diff
+```
+
+The only differences are the `index` lines and the hunk offsets, so every
+branch change survived verbatim and main's commits are layered underneath.
+
+The replayed head `bf600e2f` is gate-clean: `make fmt`, `make check-fmt`,
+`make lint`, `make typecheck`, `make test`, `make markdownlint` and
+`make nixie` all exit 0. `make lint` now completes with the Whitaker suite
+clean instead of reporting the fourteen errors. `make test` ran all four cargo
+lanes (774, 774, 774 and 827 passing, with 11/11 trybuild fixtures in each) and
+pytest reported 1234 passed and 5 skipped, up from 1203 because main's #616
+added tests of the documented-example loader. The logs carry the `-rebased`
+suffix under `/tmp`.
+
+### The formatter release is gated on a wait the extension has in flight
+
+The next review round accepted the call-instruction keying but raised a second
+window. `py_flush_handlers` wraps the entire `flush_handlers()` call in
+`py.detach`, so the GIL is free from the moment the call instruction is reached
+— before `PyHandler` reattaches and reaches `flush_native`. The observer could
+therefore take its baseline and release the formatter inside that outer
+detached window, and a native wait that held the GIL would then find the record
+already flushed. A measured pre-wait bound was tried first and rejected: it
+bounds a different invocation, and no timing argument excludes an arbitrary
+scheduler pause in the window.
+
+The next round accepted the signal but raised a third window. The signal is
+buffered: `wait_for_gil_release_for_test` consumes it while detached, so a call
+that still held the GIL could deliver it, and the observer's Python-side
+baseline would then be taken after the call had returned and reacquired the
+GIL. Ticks counted in that handover could be read as progress during the wait,
+and `started` before the call let a scheduling delay into `elapsed`.
+
+The evidence therefore moved to the Rust side, where it cannot be separated
+from the wait it describes. A test-only module,
+`rust_extension/src/gil_release_test.rs`, holds a process-wide count.
+`WaitInFlight::enter()` is taken in `detach_for_wait` while the GIL is held and
+dropped after `Python::detach` returns — still holding the GIL, and before any
+Python code can run. `note_python_thread_ran_for_test()` needs the GIL and
+advances the count only while one of those guards is alive, so the two cannot
+overlap: an observation is recorded only between the detach and the reattach.
+Nothing that runs before the wait can be counted, including the outer detached
+section `py_flush_handlers` keeps around the whole call; nothing after the call
+returns can be counted, because the guard has already been dropped.
+`gil_release_observations_for_test` reads the count and
+`reset_gil_release_observations_for_test` re-arms it. Every detach site reaches
+the guard through the one helper:
+
+- `flush_native` in `rust_extension/src/logger/py_handler/native_handler.rs`,
+  which covers every built-in handler reached through `flush_handlers()`;
+- `FemtoSocketHandler::py_flush`/`py_close` and
+  `FemtoHTTPHandler::py_flush`/`py_close`, which detach through the same helper.
+
+The guard is compiled only with the `test-util` feature, so production builds
+carry no branch.
+
+The blocked-formatter script releases only once
+`wait_for_wait_in_flight_for_test` reports that a wait has detached; that hook
+polls the in-flight count while detached, and the release thread then sleeps
+the release delay before releasing. `PausingHandler` and its 0.6 s pause are
+gone: they existed to defeat a release timed from the start of the call, and a
+count that advances only inside the wait cannot be inflated by any pre-wait
+pause, so the extra handler was proving a schedule that can no longer matter.
+
+Both tests read the count from the extension, so there is no Python baseline
+left to race. In the network test, `_ticks_during` resets the count, calls, and
+reads it; `elapsed` remains only as a stall sanity check, and the tick count is
+the load-bearing assertion.
+
+Two mutations were rebuilt and run against the focused files:
+
+- with `py.detach` replaced by a direct call to the wait in `detach_for_wait`,
+  all five GIL tests fail — both flush modes with
+  `flush_handlers() stalled behind the GIL`, and the three network cases with
+  `another thread ran only 0 times during 0.300s of flush()/close(), so the
+  wait held the GIL`;
+- with the in-flight guard removed while the detach stays, the same five tests
+  fail with the same messages, so the guard is load-bearing and the detach
+  alone is not what the tests observe.
+
+With both restored the two files pass all 14 tests, five consecutive runs, and
+the module's three unit tests pass under `--features python,test-util`.
+
+The handover after the call returns was checked the same way. A forced
+half-second sleep was inserted between the call returning and the count being
+read, long enough for the ticker to observe about a hundred times, and
+`py.detach` was again replaced by a direct call in `detach_for_wait`. All three
+network cases still failed, each reporting that another thread ran `0 times`
+during the `0.300s` wait, where a Python-side sampler would have counted the
+handover observations and passed. With the detach restored and the same forced
+handover in place, the three cases passed, so the check neither inflates a real
+result nor hides a stall.
+
+The release delay stays at half a second because the file handler's flush has a
+one-second deadline of its own; an earlier attempt to double it made the
+released flush report failure at exactly the deadline.
+
+The scenario scripts live in `tests/flush_gil_scripts.py`, because the earlier
+control took the test module past the repository's 400-line limit (`C0302`, 423
+lines). Each script runs in a fresh interpreter so it owns its dispatch shards
+and handler workers.
+
+### The close-reentry test was racy, not broken by this change
+
+The first full chain on the signal candidate was green on `check-fmt`,
+`typecheck` and `markdownlint`, and red on `make test` for one case only:
+`tests/test_handler_close_reentry.py::test_close_allows_worker_formatter_to_reach_closed_state[timed-rotating]`
+produced `['accepted', 'Handler error: handler is closed']` where it expects a
+single closed-state observation.
+
+The case is load-sensitive, not a regression here. It queues a record, then
+calls `close()`; nothing stops the worker from formatting that record before
+`close()` takes the shutdown state, and a re-entrant `handle()` is then
+legitimately accepted. The test passed twenty consecutive runs in isolation,
+but its race is easy to force: a probe that pauses 0.2 s between `handle()` and
+`close()` reproduces the two-outcome list every time.
+
+The test now waits for the handler's own in-flight counter before it re-enters:
+`waits_in_flight > 0` from `wait_diagnostics()` for the file family, and
+`_stream_waiter_count() > 0` for the stream handler. Both are raised only after
+`take_shutdown`, so the re-entry provably happens during shutdown, whichever
+order the worker and `close()` are scheduled in. The assertions are unchanged.
+
+The chain then reran green: `make test` reported 1234 passed and 5 skipped, and
+`make check-fmt`, `make typecheck` and `make markdownlint` passed. `make lint`
+caught one missing numpy-style `Returns` section in the new helper; with that
+added, the rerun passed.
+
+The next review round found the same class of confusion inside that fix.
+`handle()` raises the file family's `waits_in_flight` gauge too: `py_handle`
+holds a `WaitScope` across its detached enqueue, and the worker starts the
+formatter inside exactly that window. The poll could therefore be satisfied by
+the record's own delivery rather than by the close. The formatter now waits on
+an event the test sets only after `handle()` returns, and only then polls for
+the close wait. Both halves are load-bearing: with the poll removed and a 0.2 s
+pause between `handle()` and `close()`, all four handler kinds fail with
+`['accepted', 'Handler error: handler is closed']`, so the event alone does not
+pin the schedule and the poll alone does not exclude the enqueue's gauge.
+
+### The in-flight record and the reentry gate are green on the full chain
+
+The close-reentry test was then rewritten to satisfy the lint chain as well:
+the outcomes and the handler reference live in a `_ReentryProbe` dataclass with
+`slots=True`, which keeps the formatter helper within the four-argument limit
+and answers the `prefer-slots-for-dataclass` rule. The network test's hook
+check was split into one assertion per hook, because the composite form is
+rejected by `pytest-composite-assertion`.
+
+The final chain on the working tree was:
+
+- `make check-fmt` — exit 0, 258 Python files and 74 Markdown files unchanged;
+- `make lint` — exit 0, all five Python stages plus every clippy feature lane;
+- `make typecheck` — exit 0;
+- `make markdownlint` — exit 0, 67 files and 0 issues;
+- `make test` — every lane and the pytest step passed with no failures: 1001
+  passed in each of the three Rust lanes, 1054 in `tracing-compat`, 14 loom
+  tests, and 1234 passed with 5 skipped under `pytest -v --doctest-modules`;
+- the focused GIL selection passed 18 tests.
+
+`make test` has no single exit code for this run. The harness stopped two
+invocations at its 70-minute and 2-hour caps, so the verdict composes the
+interrupted run's first three lanes with direct runs of the fourth lane and the
+pytest step — the recipe's own commands, run sequentially with no overlap.
+`make nixie` was not run because the change adds no Mermaid diagram.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -1752,6 +2317,18 @@ The focused run of the matrix passed seven cases in 18.02 s on the
   joined. That passes for a GIL-holding binding whenever the wait ends on its
   own deadline (`"timeout:N"`, `close()`), so the bounded scenarios now count
   watchdog records that land strictly inside the call's own window.
+- **Gate the GIL regression tests on an in-flight record on the Rust side, not
+  on a signal or a bound.** No clock or frame observation can distinguish a
+  wait from a detached section in front of it, and a signal is buffered, so
+  consuming one does not say *when* it was consumed. `detach_for_wait` marks
+  the span in flight while the GIL is held and clears it before returning, and
+  an observation is counted only inside that span, so the count cannot include
+  time outside the wait and a wait that kept the GIL counts nothing. It costs
+  production nothing: the guard is compiled out without `test-util`.
+- **Wait on the handler's in-flight counter, not on time, in the reentry test.**
+  The counter is raised inside `close()` after the shutdown state has been
+  taken, so it identifies the exact transition that test needs. A sleep, a
+  retry loop, or a looser assertion would only make the race less likely.
 
 ## Follow-up work (audited, deliberately out of scope)
 
