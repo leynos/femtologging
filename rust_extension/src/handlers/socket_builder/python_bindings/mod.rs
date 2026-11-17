@@ -56,6 +56,20 @@ fn reject_unknown_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
     Ok(())
 }
 
+/// Read the four optional backoff overrides from a validated dictionary.
+fn extract_backoff_overrides(config: &Bound<'_, PyDict>) -> PyResult<BackoffOverrides> {
+    let base_ms = extract_optional_u64(config, "base_ms")?;
+    let cap_ms = extract_optional_u64(config, "cap_ms")?;
+    let reset_after_ms = extract_optional_u64(config, "reset_after_ms")?;
+    let deadline_ms = extract_optional_u64(config, "deadline_ms")?;
+    Ok(BackoffOverrides::from_options(
+        base_ms,
+        cap_ms,
+        reset_after_ms,
+        deadline_ms,
+    ))
+}
+
 #[pymethods]
 impl BackoffOverrides {
     /// Construct `BackoffOverrides` from an optional configuration dictionary.
@@ -220,3 +234,44 @@ impl AsPyDict for SocketHandlerBuilder {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod backoff_config_tests {
+    //! Tests for `BackoffOverrides` Python configuration parsing.
+
+    use pyo3::Python;
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    use super::{backoff_overrides_from_dict, reject_unknown_backoff_keys};
+
+    #[test]
+    fn reject_unknown_backoff_keys_rejects_unknown_keys() {
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("cap_ms", 5).expect("set cap");
+            reject_unknown_backoff_keys(&config).expect("known key must pass");
+            config.set_item("bogus", 5).expect("set bogus");
+            let err = reject_unknown_backoff_keys(&config).expect_err("unknown keys must fail");
+            assert_eq!(
+                err.to_string(),
+                "ValueError: unknown BackoffConfig key \"bogus\""
+            );
+        });
+    }
+
+    #[test]
+    fn backoff_overrides_from_dict_reads_each_field() {
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("base_ms", 1).expect("set base");
+            config.set_item("cap_ms", 2).expect("set cap");
+            config.set_item("reset_after_ms", 3).expect("set reset");
+            config.set_item("deadline_ms", 4).expect("set deadline");
+            let overrides = backoff_overrides_from_dict(&config).expect("extract overrides");
+            assert_eq!(overrides.base_ms(), Some(1));
+            assert_eq!(overrides.cap_ms(), Some(2));
+            assert_eq!(overrides.reset_after_ms(), Some(3));
+            assert_eq!(overrides.deadline_ms(), Some(4));
+        });
+    }
+}

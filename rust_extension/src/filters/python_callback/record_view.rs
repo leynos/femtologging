@@ -331,3 +331,55 @@ fn python_values_equal(
         .rich_compare(current, CompareOp::Eq)?
         .is_truthy()
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the log record payload helpers.
+
+    use pyo3::Python;
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    use super::{copy_enrichments, require_dict_item};
+
+    #[test]
+    fn require_dict_item_names_the_missing_key() {
+        Python::attach(|py| {
+            let record_dict = PyDict::new(py);
+            let err = match require_dict_item(&record_dict, "metadata") {
+                Ok(_) => panic!("metadata must be required"),
+                Err(err) => err,
+            };
+            assert_eq!(
+                err.to_string(),
+                "RuntimeError: record dict missing metadata"
+            );
+
+            let metadata = PyDict::new(py);
+            record_dict
+                .set_item("metadata", &metadata)
+                .expect("set metadata");
+            let err = match require_dict_item(&record_dict, "key_values") {
+                Ok(_) => panic!("key_values must be required"),
+                Err(err) => err,
+            };
+            assert_eq!(
+                err.to_string(),
+                "RuntimeError: record dict missing key_values"
+            );
+        });
+    }
+
+    #[test]
+    fn copy_enrichments_skips_reserved_keys() {
+        Python::attach(|py| {
+            let extra = PyDict::new(py);
+            extra.set_item("request_id", "abc").expect("set extra");
+            extra.set_item("message", "ignored").expect("set extra");
+            let payload = PyDict::new(py);
+            copy_enrichments(&payload, &extra).expect("copy extras");
+
+            assert!(payload.get_item("request_id").expect("lookup").is_some());
+            assert!(payload.get_item("message").expect("lookup").is_none());
+        });
+    }
+}
