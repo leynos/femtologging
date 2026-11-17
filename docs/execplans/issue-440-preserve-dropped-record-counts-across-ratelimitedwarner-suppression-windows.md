@@ -75,7 +75,7 @@ suite that fails if any drop is discarded or handed off more than once.
   generated artefacts), stop and escalate.
 
   *Reached and recorded 2026-11-17.* Measured against `origin/main` at
-  `2dc7b4e2`, the branch changes 39 files for `+3726/-287` lines (3439 net),
+  `2dc7b4e2`, the branch changes 39 files for `+3730/-287` lines (3443 net),
   excluding the plan itself. The excess is not one large edit: it is the
   consumer wiring the issue's acceptance criteria require — four handler
   families, their workers, the logger producer, shared warning modules, the
@@ -481,7 +481,7 @@ suite that fails if any drop is discarded or handed off more than once.
       `flush_drop_warners`), and states per-process fork conservation without a
       lock; the user guide records that `logger.flush_handlers()` reports a
       pending context-capture warning. This plan's tolerance figures are
-      `+3726/-287` (3439 net) over 39 files, the stream wording exception is
+      `+3730/-287` (3443 net) over 39 files, the stream wording exception is
       recorded, and the capture-logger command names
       `stream_handler_logging_tests`.
 - [x] (2026-11-17) Closed the claim-to-publication race the second assessment
