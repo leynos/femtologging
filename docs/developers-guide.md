@@ -557,6 +557,35 @@ reachability in
 [`tests/test_workflow_tool_provisioning_contract.py`](../tests/test_workflow_tool_provisioning_contract.py),
 so a new suite job is covered without being named there.
 
+The build-standard tests are split by what each one pins. The capability
+scenarios that judge a host live in
+[`tests/test_build_tools_preflight_script_contract.py`](../tests/test_build_tools_preflight_script_contract.py);
+the rustup probes' own mechanics, such as running from `/` and refusing to
+auto-install, in
+[`tests/test_build_tools_probe_contract.py`](../tests/test_build_tools_probe_contract.py);
+and the Makefile's dependency, ordering and substitutability rules in
+[`tests/test_build_tools_contract.py`](../tests/test_build_tools_contract.py).
+Their machinery has modules of its own:
+[`tests/build_tools_support.py`](../tests/build_tools_support.py) builds the
+fake executables,
+[`tests/build_tools_script_support.py`](../tests/build_tools_script_support.py)
+varies the rustup stub's answers, and
+[`tests/build_tools_probe_support.py`](../tests/build_tools_probe_support.py)
+runs the script against them.
+
+The workflow readers divide the same way.
+[`tests/workflow_document_helpers.py`](../tests/workflow_document_helpers.py)
+discovers and parses the documents, checks that every locally reusable workflow
+a job calls exists, and offers the job and step accessors.
+[`tests/workflow_command_helpers.py`](../tests/workflow_command_helpers.py)
+reads a `run` body's shell text, with
+[`tests/workflow_heredoc_helpers.py`](../tests/workflow_heredoc_helpers.py)
+skipping here-document bodies;
+[`tests/workflow_runner_helpers.py`](../tests/workflow_runner_helpers.py)
+classifies runners; and
+[`tests/workflow_contract_helpers.py`](../tests/workflow_contract_helpers.py)
+states the provisioning rules and consumes the other three.
+
 The preflight runs `rustup toolchain list` and `rustup show` from `/`, so the
 repository's `rust-toolchain.toml` cannot provision or redirect the pinned
 channel. It matches the installed name as `<channel>-<host>`, and accepts a bare
