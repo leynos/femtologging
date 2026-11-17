@@ -547,6 +547,23 @@ nothing, so it is safe to run before every gate. Installed tooling need not be
 active in every job; release, coverage and Whitaker routes deliberately exclude
 parts of the development standard, as described below.
 
+Before the first suite step, install the pinned toolchain and `mold` in every
+hosted Linux job that runs a test suite step, or a Make goal that reaches the
+suite: place an unconditional `setup-rust` step with `install-mold: 'true'`
+ahead of that step. A late, conditional, soft-failing or `mold`-less install
+does not satisfy the rule, because the suite's Make goals reach
+`check-build-tools`. The contract is derived from Make prerequisite
+reachability in
+[`tests/test_workflow_tool_provisioning_contract.py`](../tests/test_workflow_tool_provisioning_contract.py),
+so a new suite job is covered without being named there.
+
+The preflight runs `rustup toolchain list` and `rustup show` from `/`, so the
+repository's `rust-toolchain.toml` cannot provision or redirect the pinned
+channel. It matches the installed name as `<channel>-<host>`, and accepts a
+bare `<channel>` only when `rustup show` reports no host. A probe that fails is
+named in the report rather than described as an absent toolchain, so an
+operator can tell a broken rustup from a missing installation.
+
 Every direct Cargo command line in the Makefile uses the `CARGO` variable,
 which defaults to `cargo`. Overriding it runs the same recipe with a different
 executable, so `make test CARGO=/opt/rust/bin/cargo` exercises another Cargo
