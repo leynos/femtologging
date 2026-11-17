@@ -163,6 +163,12 @@ let payload: ExceptionPayload = serde_json::from_str(&json)?;
 payload.validate_version()?;
 ```
 
+Validation covers the full payload tree. `cause`, `context`, and every
+exception-group member are independently versioned, so the call checks each of
+them, not only the root. A failure below the root is reported with a path to
+the offending payload. The traversal is bounded in depth and node count; those
+bounds limit validation work and are not parse limits.
+
 If the version is unsupported, the error message includes both the observed and
 supported versions for diagnostic purposes.
 
