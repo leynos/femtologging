@@ -6,7 +6,7 @@
 //! file so each stays readable.
 
 use std::io::{self, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -42,6 +42,36 @@ fn spawn_redirect_server(
     Ok((addr, capture_rx))
 }
 
+/// Wait for the next connection, giving up once the chain has been idle.
+///
+/// Returns `None` when no connection arrived before the idle limit or the
+/// listener failed, so the caller can stop the fixture. A client that refuses a
+/// redirect never opens another connection, which makes this wait the way the
+/// fixture ends.
+fn accept_before_idle(
+    listener: &TcpListener,
+    last_connection: Instant,
+    idle_limit: Duration,
+) -> Option<TcpStream> {
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // A non-blocking listener's accepted socket is blocking on
+                // Linux, but not necessarily everywhere.
+                let _ = stream.set_nonblocking(false);
+                return Some(stream);
+            }
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                if last_connection.elapsed() > idle_limit {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 /// Spawn a server that answers a chain of `redirects` redirects on one address.
 ///
 /// Each request is answered with a redirect to the next path until the chain
@@ -60,22 +90,9 @@ fn spawn_redirect_chain(
         let idle_limit = Duration::from_secs(2);
         let mut last_connection = Instant::now();
         for hop in 0..=redirects {
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        // A non-blocking listener's accepted socket is blocking
-                        // on Linux, but not necessarily everywhere.
-                        let _ = stream.set_nonblocking(false);
-                        break stream;
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                        if last_connection.elapsed() > idle_limit {
-                            return;
-                        }
-                        thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(_) => return,
-                }
+            let Some(mut stream) = accept_before_idle(&listener, last_connection, idle_limit)
+            else {
+                return;
             };
             if read_http_request(&mut stream).is_err() {
                 return;
