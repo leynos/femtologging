@@ -63,6 +63,16 @@ impl BackoffState {
         Self::with_rng(policy, StdRng::seed_from_u64(seed))
     }
 
+    /// Return the current delay bound for unit tests.
+    ///
+    /// The bound is private state, and sampling a jittered delay cannot prove
+    /// whether a reset or a doubling happened: both can return the same value.
+    /// Tests that assert the state transition itself read this bound instead.
+    #[cfg(test)]
+    pub(crate) fn current_bound(&self) -> Duration {
+        self.current
+    }
+
     /// Record a successful write event.
     pub fn record_success(&mut self, now: Instant) {
         self.last_success = Some(now);

@@ -74,6 +74,11 @@ fn record_success_resets_at_the_threshold() {
 }
 
 /// `reset_after_idle` measures idleness from the most recent success.
+///
+/// The first failure is 150 ms old at the idle check, which is past the reset
+/// threshold, while the last success is only 60 ms old. Measuring from the
+/// failure, or resetting unconditionally, would restore the base; measuring
+/// from the success must leave the doubled bound in place.
 #[rstest]
 fn reset_after_idle_resets_against_the_last_success() {
     let policy = BackoffPolicy {
@@ -83,29 +88,100 @@ fn reset_after_idle_resets_against_the_last_success() {
         deadline: Duration::from_secs(60),
     };
     let start = Instant::now();
+    let mut state = BackoffState::with_seed(policy, 3);
 
-    for seed in 0..64 {
-        let mut state = BackoffState::with_seed(policy.clone(), seed);
-        let _ = state.next_sleep(start).expect("first delay");
-        let _ = state
-            .next_sleep(start + Duration::from_millis(10))
-            .expect("second delay");
-        let _ = state
-            .next_sleep(start + Duration::from_millis(20))
-            .expect("third delay");
-        // Establish the last success without yet reaching the threshold.
-        state.record_success(start + Duration::from_millis(50));
+    let _ = state.next_sleep(start).expect("first delay");
+    let _ = state
+        .next_sleep(start + Duration::from_millis(10))
+        .expect("second delay");
+    assert_eq!(state.current_bound(), Duration::from_millis(20));
 
-        state.reset_after_idle(start + Duration::from_millis(150));
-        let sleep = state
-            .next_sleep(start + Duration::from_millis(151))
-            .expect("delay after reset");
-        assert_eq!(
-            sleep,
-            Duration::from_millis(10),
-            "idle reset must restore the initial bound"
-        );
-    }
+    state.record_success(start + Duration::from_millis(90));
+    state.reset_after_idle(start + Duration::from_millis(150));
+    assert_eq!(
+        state.current_bound(),
+        Duration::from_millis(20),
+        "idle time must be measured from the last success, not the first failure"
+    );
+}
+
+/// The idle threshold is inclusive, and a call below it does not reset.
+#[rstest]
+fn reset_after_idle_resets_at_the_threshold() {
+    let policy = BackoffPolicy {
+        base: Duration::from_millis(10),
+        cap: Duration::from_secs(1),
+        reset_after: Duration::from_millis(100),
+        deadline: Duration::from_secs(60),
+    };
+    let start = Instant::now();
+    let mut state = BackoffState::with_seed(policy, 4);
+
+    let _ = state.next_sleep(start).expect("first delay");
+    let _ = state
+        .next_sleep(start + Duration::from_millis(10))
+        .expect("second delay");
+    assert_eq!(state.current_bound(), Duration::from_millis(20));
+    state.record_success(start + Duration::from_millis(50));
+
+    state.reset_after_idle(start + Duration::from_millis(149));
+    assert_eq!(
+        state.current_bound(),
+        Duration::from_millis(20),
+        "a call one millisecond below the threshold must not reset"
+    );
+
+    state.reset_after_idle(start + Duration::from_millis(150));
+    assert_eq!(
+        state.current_bound(),
+        Duration::from_millis(10),
+        "a call at the threshold must reset"
+    );
+    assert_eq!(
+        state.next_sleep(start + Duration::from_millis(151)),
+        Some(Duration::from_millis(10)),
+        "the reset window must restart at the idle check"
+    );
+}
+
+/// A reset clears `last_success`, so a later idle check cannot reset again.
+///
+/// Without the clear, the success 250 ms earlier would satisfy the threshold a
+/// second time and restore the base. The test doubles the bound after the
+/// first reset and asserts that the second idle check leaves it doubled.
+#[rstest]
+fn reset_after_idle_clears_the_last_success() {
+    let policy = BackoffPolicy {
+        base: Duration::from_millis(10),
+        cap: Duration::from_secs(1),
+        reset_after: Duration::from_millis(100),
+        deadline: Duration::from_secs(60),
+    };
+    let start = Instant::now();
+    let mut state = BackoffState::with_seed(policy, 9);
+
+    let _ = state.next_sleep(start).expect("first delay");
+    let _ = state
+        .next_sleep(start + Duration::from_millis(10))
+        .expect("second delay");
+    state.record_success(start + Duration::from_millis(50));
+    state.reset_after_idle(start + Duration::from_millis(150));
+    assert_eq!(state.current_bound(), Duration::from_millis(10));
+
+    let _ = state
+        .next_sleep(start + Duration::from_millis(160))
+        .expect("delay after reset");
+    let _ = state
+        .next_sleep(start + Duration::from_millis(170))
+        .expect("second delay after reset");
+    assert_eq!(state.current_bound(), Duration::from_millis(20));
+
+    state.reset_after_idle(start + Duration::from_millis(300));
+    assert_eq!(
+        state.current_bound(),
+        Duration::from_millis(20),
+        "a cleared last_success must prevent a second idle reset"
+    );
 }
 
 /// A `record_success` reset must not reseed the random source.

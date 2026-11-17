@@ -73,18 +73,42 @@ fn the_first_delay_may_exceed_the_cap_when_the_base_does() {
 }
 
 /// Doubling a very large duration saturates instead of overflowing.
+///
+/// Both the bound and the sampled delay are checked. A floor-only assertion
+/// would pass for an implementation that wraps `Duration::MAX` back to a small
+/// value, so the bound must still be `Duration::MAX` after doubling, and the
+/// millisecond sample must stay inside the clamped range.
 #[rstest]
 fn saturating_doubling_survives_very_large_durations() {
     let huge = Duration::MAX;
     let mut state = BackoffState::with_seed(policy(huge, huge, huge), 5);
     let start = Instant::now();
+    let floor = Duration::from_millis(10);
+    let millisecond_ceiling = Duration::from_millis(u64::MAX);
 
     let first = state.next_sleep(start).expect("first delay");
-    assert!(first >= Duration::from_millis(10));
+    assert_eq!(
+        state.current_bound(),
+        Duration::MAX,
+        "the initial bound must be the base"
+    );
+    assert!(
+        (floor..=millisecond_ceiling).contains(&first),
+        "the first delay escaped the clamped range: {first:?}"
+    );
+
     let second = state
         .next_sleep(start + Duration::from_millis(1))
         .expect("second delay");
-    assert!(second >= Duration::from_millis(10));
+    assert_eq!(
+        state.current_bound(),
+        Duration::MAX,
+        "saturating doubling must not wrap to a smaller duration"
+    );
+    assert!(
+        (floor..=millisecond_ceiling).contains(&second),
+        "the second delay escaped the clamped range: {second:?}"
+    );
 }
 
 /// A repeated later timestamp still doubles the bound.
@@ -132,20 +156,36 @@ fn a_repeated_later_timestamp_still_doubles() {
     );
 }
 
-/// The millisecond bound saturates at `u64::MAX`, leaving a valid range.
+/// A bound above `u64::MAX` milliseconds clamps instead of truncating.
+///
+/// `u64::MAX + 1` whole milliseconds does not fit in a `u64`. Clamping to
+/// `u64::MAX` leaves a range so wide that a floor-only result is implausible,
+/// while truncating the `u128` back to `u64` would wrap to zero and always
+/// sample the floor. The fixed seeds make the assertion deterministic within a
+/// build without pinning a `StdRng` stream.
 #[rstest]
 fn the_millisecond_bound_saturates_at_u64_max() {
-    let nanosecond_cap = Duration::from_millis(u64::MAX);
+    let millisecond_cap = Duration::from_millis(u64::MAX) + Duration::from_millis(1);
     let mut state = BackoffState::with_seed(
-        policy(nanosecond_cap, nanosecond_cap, Duration::from_secs(60)),
+        policy(millisecond_cap, millisecond_cap, Duration::from_secs(60)),
         7,
     );
+    let start = Instant::now();
+    let floor = Duration::from_millis(10);
+    let ceiling = Duration::from_millis(u64::MAX);
+    let mut saw_above_floor = false;
 
-    let sleep = state
-        .next_sleep(Instant::now())
-        .expect("within the deadline");
+    for _ in 0..64 {
+        let sleep = state.next_sleep(start).expect("within the deadline");
+        assert!(
+            (floor..=ceiling).contains(&sleep),
+            "the clamped range escaped its bounds: {sleep:?}"
+        );
+        saw_above_floor |= sleep > floor;
+    }
+
     assert!(
-        sleep >= Duration::from_millis(10),
-        "the clamped range must start at the minimum sleep"
+        saw_above_floor,
+        "a truncated bound would sample only the floor"
     );
 }

@@ -188,3 +188,7 @@ mod cap;
 // Deadline and reset contracts, split out for the same reason.
 #[path = "backoff_reset_tests.rs"]
 mod reset;
+
+// Generated range properties that complement the named boundary cases.
+#[path = "backoff_property_tests.rs"]
+mod property;
