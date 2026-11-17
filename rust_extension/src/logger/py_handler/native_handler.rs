@@ -37,7 +37,8 @@ where
         // the `PyRef` guard while the handler stays alive in `obj`.
         Ok(handler) => {
             let handler_ref: &T = &handler;
-            let flushed = py.detach(|| FemtoHandlerTrait::flush(handler_ref));
+            let flushed =
+                crate::py_detach::detach_for_wait(py, || FemtoHandlerTrait::flush(handler_ref));
             if !flushed {
                 // `flush_handlers()` reports these failures, so an operator
                 // needs a bounded record of the handler failing to flush

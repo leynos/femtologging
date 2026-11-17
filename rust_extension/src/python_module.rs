@@ -120,6 +120,9 @@ pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()>
 /// Register the test-only hooks that the `test-util` feature adds.
 #[cfg(feature = "test-util")]
 fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::gil_release_test::{
+        drain_gil_release_signals_for_test, wait_for_gil_release_for_test,
+    };
     use crate::handlers::timed_rotating::{
         clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
     };
@@ -129,6 +132,8 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wait_for_flush_entry_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(cancel_flush_wait_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(drain_flush_signals_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(wait_for_gil_release_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(drain_gil_release_signals_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(
         clear_timed_rotation_test_times_for_test,

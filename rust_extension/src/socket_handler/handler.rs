@@ -265,7 +265,7 @@ impl FemtoSocketHandler {
     /// False
     #[pyo3(name = "flush")]
     fn py_flush(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush())
+        crate::py_detach::detach_for_wait(py, || self.flush())
     }
 
     /// Close the handler, waiting for the worker at most ``write_timeout``.
@@ -279,7 +279,7 @@ impl FemtoSocketHandler {
     /// waiting does not hold the interpreter while it does.
     #[pyo3(name = "close")]
     fn py_close(&mut self, py: Python<'_>) {
-        py.detach(|| self.close());
+        crate::py_detach::detach_for_wait(py, || self.close());
     }
 }
 

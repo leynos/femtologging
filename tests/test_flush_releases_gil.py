@@ -21,10 +21,22 @@ from femtologging import (
     StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
 )
+from femtologging import _femtologging_rs as rust
 from tests.flush_gil_scripts import (
     BUFFERED_RECORDS_SCRIPT,
     FLUSH_FORMATTER_SCRIPT,
     FLUSH_HANDLERS_SCRIPT,
+)
+
+# Both hooks exist only when the extension was built with the Rust `test-util`
+# feature, which the test builds enable.
+GIL_RELEASE_SIGNAL_AVAILABLE = callable(
+    getattr(rust, "wait_for_gil_release_for_test", None)
+) and callable(getattr(rust, "drain_gil_release_signals_for_test", None))
+
+requires_gil_release_signal = pytest.mark.skipif(
+    not GIL_RELEASE_SIGNAL_AVAILABLE,
+    reason="requires Rust extension built with the 'test-util' feature",
 )
 
 if typ.TYPE_CHECKING:
@@ -114,6 +126,7 @@ def _run_flush_formatter_script(tmp_path: Path, mode: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
+@requires_gil_release_signal
 def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     tmp_path: Path,
 ) -> None:
@@ -121,18 +134,20 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
 
     The handler is registered from Python, so ``flush_handlers()`` reaches it
     through ``PyHandler::flush()``. Its worker is parked in a Python formatter
-    that only another Python thread can release. That thread releases it only
-    once the interpreter reports the flush frame on the calling thread's stack
-    with its instruction offset on the call instruction, which it does while
-    the call is detached, so the release cannot land before or just as the call
-    starts: a flush that kept the GIL would block the release, time the
+    that only another Python thread can release, and that thread waits for the
+    extension's test-only GIL-release signal. The extension raises it as the
+    last thing it does while still holding the GIL, immediately before the
+    native wait detaches, so the release cannot land in front of the wait --
+    not even in the detached section ``flush_handlers()`` keeps around the
+    whole call. A handler registered ahead of the file handler pauses there for
+    longer than the release delay, which makes that schedule forced rather than
+    argued. A flush that kept the GIL would block the release, time the
     formatter out, and leave the ticker silent. The ticker counts the time
-    another Python thread got during the call, measured from the moment the
-    call was seen running, so a pause before the call cannot be counted. The
-    file is read before ``close()``, so the record can be there only because
-    the flush waited for the handler. A fresh interpreter keeps the logger's
-    dispatch shard idle, so the record is admitted rather than refused behind
-    earlier tests' work.
+    another Python thread got during the wait, measured from the signal, so a
+    pause before it cannot be counted. The file is read before ``close()``, so
+    the record can be there only because the flush waited for the handler. A
+    fresh interpreter keeps the logger's dispatch shard idle, so the record is
+    admitted rather than refused behind earlier tests' work.
 
     This call also drains the dispatch shard, and that drain waits detached
     too, so it can release the GIL before the native wait starts. The isolated
@@ -141,6 +156,7 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     _run_flush_formatter_script(tmp_path, "dispatched")
 
 
+@requires_gil_release_signal
 def test_flush_handlers_native_wait_releases_the_gil(
     tmp_path: Path,
 ) -> None:

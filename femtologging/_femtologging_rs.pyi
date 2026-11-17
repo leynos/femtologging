@@ -571,6 +571,14 @@ def cancel_flush_wait_for_test(logger: FemtoLogger) -> None:
     """Wake a pending test-only flush-entry wait during cleanup."""
     ...
 
+def wait_for_gil_release_for_test(timeout_ms: int) -> bool:
+    """Wait for the test-only signal raised where a wait releases the GIL."""
+    ...
+
+def drain_gil_release_signals_for_test() -> None:
+    """Clear stale test-only GIL-release signals before arming a gate."""
+    ...
+
 setup_rust_logging: Callable[[], None]
 setup_rust_tracing: Callable[[], None]
 

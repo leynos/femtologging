@@ -2136,7 +2136,7 @@ pytest reported 1234 passed and 5 skipped, up from 1203 because main's #616
 added tests of the documented-example loader. The logs carry the `-rebased`
 suffix under `/tmp`.
 
-### The formatter release is delayed past a measured pre-wait bound
+### The formatter release is gated on a native-wait signal
 
 The next review round accepted the call-instruction keying but raised a second
 window. `py_flush_handlers` wraps the entire `flush_handlers()` call in
@@ -2144,36 +2144,85 @@ window. `py_flush_handlers` wraps the entire `flush_handlers()` call in
 — before `PyHandler` reattaches and reaches `flush_native`. The observer could
 therefore take its baseline and release the formatter inside that outer
 detached window, and a native wait that held the GIL would then find the record
-already flushed.
+already flushed. A measured pre-wait bound was tried first and rejected: it
+bounds a different invocation, and no timing argument excludes an arbitrary
+scheduler pause in the window.
 
-`direct` mode keeps that window small by leaving the dispatch shard empty, but
-small is not the same as measured. The script now bounds it: before the blocked
-run it performs the same call with nothing blocked and asserts the whole
-pre-wait path finishes in under a fifth of the release delay. The release is
-issued half a second after the observation, so it cannot be issued while the
-drain is still running, and any tick it gates must come from the native wait.
-The measured control is between 0.05 ms and 0.11 ms in `dispatched` mode and
-about 0.01 ms in `direct` mode, against a 100 ms bound. If a future change made
-the pre-wait path slower than the bound, the control assertion fails the test
-loudly instead of letting the release land early.
+The tests now take their evidence from a runtime signal instead of a clock. A
+test-only module, `rust_extension/src/gil_release_test.rs`, holds a one-slot
+channel behind a process-wide gate. Each detach site raises it as the last
+statement executed while the GIL is still held, immediately before
+`Python::detach`:
+
+- `flush_native` in `rust_extension/src/logger/py_handler/native_handler.rs`,
+  which covers every built-in handler reached through `flush_handlers()`;
+- `FemtoSocketHandler::py_flush`/`py_close` and
+  `FemtoHTTPHandler::py_flush`/`py_close`, which detach directly.
+
+`wait_for_gil_release_for_test` detaches while it waits, so a thread that
+consumes the signal has proved the call under test gave the interpreter up: it
+could not run otherwise. `drain_gil_release_signals_for_test` re-arms the gate
+before each measured call. The signal is compiled only with the `test-util`
+feature, so production builds carry no branch.
+
+The blocked-formatter script releases the formatter only after that signal.
+`ticks_at_release` is read at the signal, so ticks counted before the native
+wait are excluded, and the signal cannot be raised in front of it. To make that
+schedule forced rather than argued, a second handler registered ahead of the
+file handler pauses in its own flush for 0.6 s — longer than the 0.5 s release
+delay — in the detached section in front of the native wait. A release timed
+from the start of the call would fire inside that pause; the release here
+cannot, because the signal it waits for is raised only at the native flush.
+
+The network test uses the same gate as its wait-boundary witness, replacing the
+frame observation entirely. The observer takes its tick baseline when it
+consumes the signal, so the pre-call gap and the post-return eval-breaker
+handover can neither inflate nor be mistaken for a wait, and a wait that held
+the GIL leaves the ticker at zero.
+
+The mutation was rebuilt with `py.detach` removed from `flush_native`,
+`FemtoSocketHandler::py_flush`/`py_close` and `FemtoHTTPHandler::py_flush`/
+`py_close`. All five GIL tests fail: the two flush modes with
+`flush_handlers() stalled behind the GIL`, and the three network cases with
+`another thread ran only 0 times during 0.300s of flush()/close(), so the wait
+held the GIL`
+(one socket case reported a single tick). With the detaches restored, the two
+files pass all 14 tests.
 
 The release delay stays at half a second because the file handler's flush has a
 one-second deadline of its own; an earlier attempt to double it made the
 released flush report failure at exactly the deadline.
 
-The mutation was rebuilt with `py.detach` removed from `flush_native` and the
-two flush cases still fail with `flush_handlers() stalled behind the GIL` in
-both modes. With the handler restored, the two files pass all 14 tests.
+The scenario scripts live in `tests/flush_gil_scripts.py`, because the earlier
+control took the test module past the repository's 400-line limit (`C0302`, 423
+lines). Each script runs in a fresh interpreter so it owns its dispatch shards
+and handler workers.
 
-Adding that control took the test module past the repository's 400-line limit
-(`C0302`, 423 lines), so the three embedded scenario scripts moved to
-`tests/flush_gil_scripts.py` and the test module imports them. The script text
-is unchanged, comments included; only its location moved, and the module
-docstring records why each script runs in a fresh interpreter.
+### The close-reentry test was racy, not broken by this change
 
-The network test needs no equivalent bound: it calls `flush()` or `close()` on
-the handler directly, so there is no outer detach and the only path in front of
-the wait is the binding's own detach, a few instructions before the block.
+The first full chain on the signal candidate was green on `check-fmt`,
+`typecheck` and `markdownlint`, and red on `make test` for one case only:
+`tests/test_handler_close_reentry.py::test_close_allows_worker_formatter_to_reach_closed_state[timed-rotating]`
+produced `['accepted', 'Handler error: handler is closed']` where it expects a
+single closed-state observation.
+
+The case is load-sensitive, not a regression here. It queues a record, then
+calls `close()`; nothing stops the worker from formatting that record before
+`close()` takes the shutdown state, and a re-entrant `handle()` is then
+legitimately accepted. The test passed twenty consecutive runs in isolation,
+but its race is easy to force: a probe that pauses 0.2 s between `handle()` and
+`close()` reproduces the two-outcome list every time.
+
+The test now waits for the handler's own in-flight counter before it re-enters:
+`waits_in_flight > 0` from `wait_diagnostics()` for the file family, and
+`_stream_waiter_count() > 0` for the stream handler. Both are raised only after
+`take_shutdown`, so the re-entry provably happens during shutdown, whichever
+order the worker and `close()` are scheduled in. The assertions are unchanged.
+
+The chain then reran green: `make test` reported 1234 passed and 5 skipped, and
+`make check-fmt`, `make typecheck` and `make markdownlint` passed. `make lint`
+caught one missing numpy-style `Returns` section in the new helper; with that
+added, the rerun passed.
 
 ## Decision log
 
@@ -2205,6 +2254,17 @@ the wait is the binding's own detach, a few instructions before the block.
   joined. That passes for a GIL-holding binding whenever the wait ends on its
   own deadline (`"timeout:N"`, `close()`), so the bounded scenarios now count
   watchdog records that land strictly inside the call's own window.
+- **Gate the GIL regression tests on a runtime signal, not a bound.** No clock
+  or frame observation can distinguish a wait from a detached section in front
+  of it, so the extension raises a `test-util`-only signal at each detach site
+  as its last action while the GIL is held. A test that consumes the signal has
+  proved the GIL was released; a build that removed the detach never delivers
+  it. The signal costs production nothing: it is compiled out without
+  `test-util`.
+- **Wait on the handler's in-flight counter, not on time, in the reentry test.**
+  The counter is raised inside `close()` after the shutdown state has been
+  taken, so it identifies the exact transition that test needs. A sleep, a
+  retry loop, or a looser assertion would only make the race less likely.
 
 ## Follow-up work (audited, deliberately out of scope)
 
