@@ -148,9 +148,9 @@ impl Failure {
                 );
             }
             Self::ClosePanics | Self::CloseTimedOut => {
-                handler.call_method0("close").unwrap_or_else(|err| {
-                    panic!("a failing worker must not raise from close(): {err}")
-                });
+                handler
+                    .call_method0("close")
+                    .expect("a failing worker must not raise from close()");
             }
         }
     }
