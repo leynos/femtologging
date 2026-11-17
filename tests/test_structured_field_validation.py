@@ -165,6 +165,9 @@ RESERVED_EXTRA_KEYS = [
     # Message.
     "msg",
     "message",
+    # Timing and threading.
+    "created",
+    "thread",
     # Source information.
     "filename",
     "lineno",

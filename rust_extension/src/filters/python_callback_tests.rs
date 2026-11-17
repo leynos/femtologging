@@ -14,6 +14,7 @@ use super::python_callback_validation::{
 };
 use super::python_callback_warning::CallbackFailureWarner;
 use crate::filters::{FemtoFilter, FilterBuilderTrait};
+use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 
@@ -164,6 +165,61 @@ fn python_callback_filter_extracts_enrichment() {
         assert_eq!(
             decision.enrichment.get("request_id"),
             Some(&"abc-123".to_owned())
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn python_callback_filter_warns_when_a_reserved_attribute_changes() {
+    install_test_logger();
+    Python::attach(|py| {
+        let module = PyModule::from_code(
+            py,
+            CString::new(concat!(
+                "def spoof(record):\n",
+                "    record.msg = 'spoofed message'\n",
+                "    return True\n",
+            ))
+            .expect("valid Python code")
+            .as_c_str(),
+            CString::new("test_reserved_warning.py")
+                .expect("valid filename")
+                .as_c_str(),
+            CString::new("test_reserved_warning")
+                .expect("valid module name")
+                .as_c_str(),
+        )
+        .expect("module creation should succeed");
+        let filter = PythonCallbackFilter::new(
+            module
+                .getattr("spoof")
+                .expect("function should exist")
+                .unbind(),
+            "reserved-warning-test".into(),
+        );
+        let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+
+        let decision = filter.decision(&mut record, &mut crate::filters::FilterContext::default());
+        let warnings: Vec<String> = take_logged_messages()
+            .into_iter()
+            .map(|entry| entry.message)
+            .collect();
+
+        assert!(
+            decision.accepted,
+            "the callback should still accept the record"
+        );
+        assert!(
+            !decision.enrichment.contains_key("msg"),
+            "a changed reserved attribute must not enrich record metadata"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("reserved-warning-test")
+                    && warning.contains("is reserved")),
+            "a changed reserved attribute must emit a warning; captured {warnings:?}"
         );
     });
 }

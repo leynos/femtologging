@@ -190,6 +190,26 @@ fn log_with_metadata_drops_reserved_key_values_and_counts_them() {
 }
 
 #[rstest]
+fn log_with_metadata_counts_reserved_context_when_level_is_disabled() {
+    let logger = FemtoLogger::new("producer.level.gate".to_string())
+        .expect("test logger should be constructible");
+    logger.set_level(FemtoLevel::Error);
+    let metadata = RecordMetadata {
+        key_values: BTreeMap::from([(String::from("levelname"), String::from("CRITICAL"))]),
+        ..RecordMetadata::default()
+    };
+
+    let result = logger.log_with_metadata(FemtoLevel::Info, "hello", metadata);
+
+    assert_eq!(result, None, "a disabled level must not emit the record");
+    assert_eq!(
+        logger.get_context_dropped(),
+        1,
+        "admission failures must be counted even when the level gate rejects the record"
+    );
+}
+
+#[rstest]
 fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();

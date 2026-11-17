@@ -876,10 +876,12 @@ When a Python callback filter accepts a record, any new or modified attributes
 it adds to the mutable ``logging.LogRecord`` view are copied into
 ``RecordMetadata.key_values`` before the record crosses the async queue
 boundary. Accepted enrichment keys must be non-empty strings that do not
-collide with stdlib ``LogRecord`` attributes or femtologging-reserved keys.
-Values are limited to ``str``, ``int``, ``float``, ``bool``, and ``None`` and
-are stringified into Rust-owned metadata with bounds of 64 keys, 64 UTF-8 bytes
-per key, 1,024 UTF-8 bytes per value, and 16 KiB total per record.
+collide with stdlib ``LogRecord`` attributes or femtologging-reserved keys. A
+callback that changes a reserved attribute is ignored with a warning, and the
+original attribute value is restored. Values are limited to ``str``, ``int``,
+``float``, ``bool``, and ``None`` and are stringified into Rust-owned metadata
+with bounds of 64 keys, 64 UTF-8 bytes per key, 1,024 UTF-8 bytes per value,
+and 16 KiB total per record.
 
 The ADR defines the conflict rules for mixed declarative and factory syntax:
 
