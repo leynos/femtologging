@@ -14,6 +14,8 @@ from __future__ import annotations
 import shlex
 import typing as typ
 
+from tests.workflow_heredoc_helpers import skip_here_documents
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -329,6 +331,10 @@ def _logical_lines(run: str) -> list[str]:
     spans is not kept in the joined text, because only goal detection reads
     the result.
 
+    A here-document's body is skipped rather than scanned. It is data the
+    shell never parses, so a quote inside it must not open a string that
+    carries past the delimiter and hides the commands below.
+
     Parameters
     ----------
     run
@@ -342,13 +348,18 @@ def _logical_lines(run: str) -> list[str]:
     commands: list[str] = []
     pending = ""
     quote: str | None = None
-    for line in run.splitlines():
+    lines = run.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
         scan = _scan_line(line, quote)
         quote = scan.quote
         pending += line[:-1] if scan.drops_trailing_backslash else line
         if scan.continues:
             continue
         commands.append(pending)
+        index = skip_here_documents(lines, index, pending)
         pending = ""
     if pending:
         commands.append(pending)

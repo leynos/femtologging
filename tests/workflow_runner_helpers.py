@@ -16,9 +16,11 @@ if typ.TYPE_CHECKING:
     from tests.workflow_document_helpers import Job
 
 #: A ``matrix.<key>`` reference in a ``runs-on`` expression names the matrix
-#: value that supplies the concrete runner label.
+#: value that supplies the concrete runner label. A workflow may name a matrix
+#: key with hyphens, as in ``matrix.runner-label``, so the rest of the name
+#: accepts them; stopping at the hyphen would read an unrelated key.
 _MATRIX_REFERENCE: typ.Final[re.Pattern[str]] = re.compile(
-    r"matrix\.([A-Za-z_][A-Za-z0-9_]*)"
+    r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)"
 )
 
 
