@@ -52,9 +52,22 @@ CARGO_SUBSTITUTION_TARGETS: typ.Final[tuple[str, ...]] = (
 # `probe-cargo` must not satisfy the bare-command search, and neither may a
 # variable such as `CARGO_LOG`.
 BARE_CARGO: typ.Final[re.Pattern[str]] = re.compile(r"(?<![\w-])cargo\b")
-COMPILE_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
-    r"\b(maturin|lint_rust_lanes)\b|(?<![\w-])probe-cargo\b"
+PREFLIGHT_COMMAND: typ.Final[re.Pattern[str]] = re.compile(
+    r"scripts/check-build-tools\.sh"
 )
+# The line that carries each target's compile step in its dry run. `build`
+# drives `maturin`, and `typecheck`/`test` compile through the `build`
+# prerequisite they share, so they observe that same line. The rest expand the
+# substituted `$(CARGO)` or drive the lint-lane script.
+EXPECTED_COMPILE: typ.Final[dict[str, re.Pattern[str]]] = {
+    "build": re.compile(r"\bmaturin\b"),
+    "release": re.compile(r"\bprobe-cargo\b"),
+    "test": re.compile(r"\bprobe-cargo\b"),
+    "typecheck": re.compile(r"\bmaturin\b"),
+    "lint-rust-clippy": re.compile(r"\blint_rust_lanes\b"),
+    "lint-env-policy": re.compile(r"\blint_rust_lanes\b"),
+    "lint-rust-test-docs": re.compile(r"\bprobe-cargo\b"),
+}
 
 
 @pytest.mark.parametrize("target", RUST_BUILDING_TARGETS)
@@ -152,23 +165,83 @@ def test_each_cargo_invocation_uses_the_injectable_variable(target: str) -> None
     )
 
 
+def _first_index(lines: list[str], pattern: re.Pattern[str]) -> int | None:
+    """Return the index of the first line `pattern` matches, if any.
+
+    Parameters
+    ----------
+    lines
+        The recipe lines Make printed for one target.
+    pattern
+        The command to look for.
+
+    Returns
+    -------
+    int | None
+        The zero-based index, or ``None`` when no line matches.
+    """
+    return next((at for at, line in enumerate(lines) if pattern.search(line)), None)
+
+
+def ordering_fault(lines: list[str], compile_pattern: re.Pattern[str]) -> str | None:
+    """Return why a target's dry run fails the preflight ordering, if it does.
+
+    A missing compile line is a fault in its own right: a target that compiles
+    through an unexpected command would otherwise pass this check by never
+    presenting the line the check looks for.
+
+    Parameters
+    ----------
+    lines
+        The recipe lines Make printed for one target.
+    compile_pattern
+        The line that carries that target's compile step.
+
+    Returns
+    -------
+    str | None
+        A description of the first fault, or ``None`` when the preflight comes
+        first.
+    """
+    preflight_at = _first_index(lines, PREFLIGHT_COMMAND)
+    if preflight_at is None:
+        return "the dry run never reaches the preflight"
+    compile_at = _first_index(lines, compile_pattern)
+    if compile_at is None:
+        return "the dry run never reaches the target's compile command"
+    if compile_at < preflight_at:
+        return "the compile command runs before the preflight"
+    return None
+
+
 @pytest.mark.parametrize("target", RUST_BUILDING_TARGETS)
 def test_the_preflight_precedes_the_first_compile(target: str) -> None:
-    """A dry run reaches the preflight before any compiler invocation."""
-    lines = _dry_run(target)
-    preflight_at = next(
-        (at for at, line in enumerate(lines) if "scripts/check-build-tools.sh" in line),
-        None,
+    """A dry run reaches the preflight before that target's compile command."""
+    fault = ordering_fault(_dry_run(target), EXPECTED_COMPILE[target])
+    assert fault is None, f"{target}: {fault}"
+
+
+def test_the_ordering_checker_rejects_a_compile_before_the_preflight() -> None:
+    """The checker fails a dry run whose compile command runs first.
+
+    The mutation is synthetic so the verdict does not depend on today's recipe
+    order, which is the property the check exists to guard.
+    """
+    compile_pattern = EXPECTED_COMPILE["release"]
+    late = ["probe-cargo build --release", "scripts/check-build-tools.sh"]
+    assert ordering_fault(late, compile_pattern) == (
+        "the compile command runs before the preflight"
+    ), late
+    early = ["scripts/check-build-tools.sh", "probe-cargo build --release"]
+    assert ordering_fault(early, compile_pattern) is None, early
+
+
+def test_the_ordering_checker_requires_a_compile_command() -> None:
+    """A dry run that never compiles is reported rather than passed silently."""
+    fault = ordering_fault(
+        ["scripts/check-build-tools.sh"], EXPECTED_COMPILE["release"]
     )
-    assert preflight_at is not None, f"{target} never reaches the preflight: {lines}"
-    compile_at = next(
-        (at for at, line in enumerate(lines) if COMPILE_COMMAND.search(line)),
-        None,
-    )
-    if compile_at is not None:
-        assert preflight_at < compile_at, (
-            f"{target} must check the build tools before compiling: {lines}"
-        )
+    assert fault == "the dry run never reaches the target's compile command", fault
 
 
 FAKE_UV: typ.Final[str] = """#!/bin/sh

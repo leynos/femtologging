@@ -1,10 +1,16 @@
 """Readers that discover, load and walk the repository's workflow documents.
 
-The provisioning contract inspects every concrete job of every workflow.
-Discovery, parsing (including duplicate-key rejection) and job or step access
-live here, away from the Make reachability rules and the runner classification
-in `workflow_runner_helpers`, so each module stays small and gives the workflow
-mutations one place to change.
+The provisioning contract inspects every concrete job of every workflow, so
+this module holds the reading half: discovery, parsing (including duplicate-key
+rejection), job or step access, and the check that every locally reusable
+workflow a job calls exists in the same repository.
+
+The sibling modules each answer one further question about what was read.
+`workflow_contract_helpers` states the provisioning rules and consumes these
+readers, `workflow_command_helpers` turns a step's ``run`` text into Make goals
+and suite detection, and `workflow_runner_helpers` classifies the runner a job
+asks for. Keeping them apart leaves each module small and gives each workflow
+mutation one place to change.
 """
 
 from __future__ import annotations
