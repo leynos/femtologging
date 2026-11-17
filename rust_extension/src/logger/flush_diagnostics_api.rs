@@ -12,9 +12,11 @@
 //! the flush counters because it measures an input failure, not a flush
 //! outcome.
 //!
-//! Both accessors read relaxed atomics through [`super::flush_diagnostics`], so
-//! a snapshot taken during a flush can be temporarily inconsistent. The module
-//! is Python-only in practice and adds no state of its own.
+//! The two read different places. Flush diagnostics come from the snapshot the
+//! [`super::flush_diagnostics`] store takes, while context-capture failures are
+//! read straight from the logger's own counter. Both use relaxed ordering, so a
+//! snapshot taken during a flush can be temporarily inconsistent. The module is
+//! Python-only in practice and adds no state of its own.
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
