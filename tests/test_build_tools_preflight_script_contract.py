@@ -8,131 +8,23 @@ is exercised without depending on the host's installed toolchain or linker.
 from __future__ import annotations
 
 import dataclasses
-import os
-import re
-import shutil
-import subprocess  # ruff: ignore[suspicious-subprocess-import] the contract runs the repository script
 import typing as typ
 
 import pytest
 
+from tests.build_tools_probe_support import (
+    installed_line,
+    pinned_channel,
+    preflight_environment,
+    probe_bin_dir,
+    run_preflight,
+)
 from tests.build_tools_script_support import HOST_TRIPLE, StubOptions, stub_rustup
-from tests.build_tools_support import ROOT, fake_executable
+from tests.build_tools_support import fake_executable
 
 if typ.TYPE_CHECKING:
+    import subprocess
     from pathlib import Path
-
-
-def _link_system_tools(bin_dir: Path) -> None:
-    """Link the few system tools the script runs into the stub directory.
-
-    The real ``mold`` also lives under ``/usr/bin`` on some hosts, so the test
-    PATH cannot include that directory: it would find the developer's linker
-    and the missing-tool case would never be exercised.
-
-    Parameters
-    ----------
-    bin_dir
-        Directory that becomes the whole test PATH.
-    """
-    for tool in ("sed", "uname", "dirname"):
-        resolved = shutil.which(tool)
-        assert resolved is not None, f"{tool} must be available to run the probe"
-        (bin_dir / tool).symlink_to(resolved)
-
-
-def _probe_bin_dir(tmp_path: Path) -> Path:
-    """Create the directory that becomes the probe's whole PATH.
-
-    Parameters
-    ----------
-    tmp_path
-        Per-test scratch directory.
-
-    Returns
-    -------
-    Path
-        The prepared directory.
-    """
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _link_system_tools(bin_dir)
-    return bin_dir
-
-
-def _preflight_environment(bin_dir: Path, *, host_os: str) -> dict[str, str]:
-    """Return an environment whose PATH resolves the stub tools only.
-
-    Parameters
-    ----------
-    bin_dir
-        Directory holding the stub executables and the linked system tools.
-    host_os
-        Value exported as ``BUILD_TOOLS_OS``.
-
-    Returns
-    -------
-    dict[str, str]
-        The environment for one preflight run.
-    """
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"BUILD_TOOLS_OS", "PATH"}
-    }
-    environment["PATH"] = str(bin_dir)
-    environment["BUILD_TOOLS_OS"] = host_os
-    return environment
-
-
-def _run_preflight(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Run the check script with `environment` and capture its report.
-
-    Parameters
-    ----------
-    environment
-        Environment built by `_preflight_environment`.
-
-    Returns
-    -------
-    subprocess.CompletedProcess[str]
-        The completed probe.
-    """
-    bash = shutil.which("bash")
-    assert bash is not None, "bash must be available to run the probe"
-    # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is
-    # fixed here and the script path is the repository's own
-    return subprocess.run(
-        [bash, str(ROOT / "scripts" / "check-build-tools.sh")],
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def _channel() -> str:
-    """Return the toolchain pin the preflight reads from the repository."""
-    config = (ROOT / "rust-toolchain.toml").read_text("utf-8")
-    match = re.search(r'^channel = "(.*)"$', config, re.MULTILINE)
-    assert match is not None, "rust-toolchain.toml must pin a channel"
-    return match.group(1)
-
-
-def _installed(channel: str) -> str:
-    """Return the rustup listing line for `channel` on the test host.
-
-    Parameters
-    ----------
-    channel
-        Toolchain name to suffix with the host triple.
-
-    Returns
-    -------
-    str
-        One line in the form `rustup toolchain list` emits.
-    """
-    return f"{channel}-{HOST_TRIPLE} (active)"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
@@ -157,7 +49,7 @@ def _mold_cases(channel: str) -> tuple[_Case, ...]:
     return (
         _Case(
             name="both-present",
-            listed_toolchain=_installed(channel),
+            listed_toolchain=installed_line(channel),
             mold_body=mol,
             host_os="Linux",
             returncode=0,
@@ -165,7 +57,7 @@ def _mold_cases(channel: str) -> tuple[_Case, ...]:
         ),
         _Case(
             name="mold-missing",
-            listed_toolchain=_installed(channel),
+            listed_toolchain=installed_line(channel),
             mold_body=None,
             host_os="Linux",
             returncode=1,
@@ -173,7 +65,7 @@ def _mold_cases(channel: str) -> tuple[_Case, ...]:
         ),
         _Case(
             name="non-linux",
-            listed_toolchain=_installed(channel),
+            listed_toolchain=installed_line(channel),
             mold_body=None,
             host_os="Darwin",
             returncode=0,
@@ -181,7 +73,7 @@ def _mold_cases(channel: str) -> tuple[_Case, ...]:
         ),
         _Case(
             name="broken-mold",
-            listed_toolchain=_installed(channel),
+            listed_toolchain=installed_line(channel),
             mold_body="exit 2",
             host_os="Linux",
             returncode=1,
@@ -196,7 +88,7 @@ def _absent_toolchain_cases(channel: str) -> tuple[_Case, ...]:
     return (
         _Case(
             name="toolchain-missing",
-            listed_toolchain=_installed("stable"),
+            listed_toolchain=installed_line("stable"),
             mold_body=mol,
             host_os="Linux",
             returncode=1,
@@ -204,7 +96,7 @@ def _absent_toolchain_cases(channel: str) -> tuple[_Case, ...]:
         ),
         _Case(
             name="toolchain-prefix-collision",
-            listed_toolchain=_installed(f"{channel}0"),
+            listed_toolchain=installed_line(f"{channel}0"),
             mold_body=mol,
             host_os="Linux",
             returncode=1,
@@ -258,7 +150,7 @@ def _probe_failure_cases(channel: str) -> tuple[_Case, ...]:
 
 def _cases() -> tuple[_Case, ...]:
     """Return the capability scenarios, pinned to the repository's channel."""
-    channel = _channel()
+    channel = pinned_channel()
     return (
         *_mold_cases(channel),
         *_absent_toolchain_cases(channel),
@@ -286,7 +178,7 @@ def _run_case(tmp_path: Path, case: _Case) -> subprocess.CompletedProcess[str]:
     subprocess.CompletedProcess[str]
         The probe's completed run.
     """
-    bin_dir = _probe_bin_dir(tmp_path)
+    bin_dir = probe_bin_dir(tmp_path)
     stub_rustup(
         bin_dir,
         case.listed_toolchain,
@@ -298,7 +190,7 @@ def _run_case(tmp_path: Path, case: _Case) -> subprocess.CompletedProcess[str]:
     )
     if case.mold_body is not None:
         fake_executable(bin_dir / "mold", case.mold_body)
-    return _run_preflight(_preflight_environment(bin_dir, host_os=case.host_os))
+    return run_preflight(preflight_environment(bin_dir, host_os=case.host_os))
 
 
 @pytest.mark.parametrize("case", CASES, ids=CASE_IDS)
@@ -310,88 +202,3 @@ def test_the_preflight_judges_each_host_capability(case: _Case, tmp_path: Path) 
         assert message in result.stderr, result.stderr
     for message in case.absent_messages:
         assert message not in result.stderr, result.stderr
-
-
-def test_the_toolchain_probes_run_outside_the_repository(tmp_path: Path) -> None:
-    """Neither rustup probe can resolve the repository's toolchain override."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    pwd_log = tmp_path / "rustup-pwd"
-    stub_rustup(bin_dir, _installed(_channel()), StubOptions(pwd_log=pwd_log))
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
-
-    assert result.returncode == 0, result.stderr
-    records = pwd_log.read_text("utf-8").splitlines()
-    assert len(records) == 2, (
-        f"both rustup probes must report their directory: {records}"
-    )
-    assert set(records) == {"/"}, "rustup must run outside the repository"
-
-
-def test_the_rustup_probes_run_the_expected_subcommands(tmp_path: Path) -> None:
-    """The preflight asks for the host first, then the installed listing."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    argv_log = tmp_path / "rustup-argv"
-    stub_rustup(bin_dir, _installed(_channel()), StubOptions(argv_log=argv_log))
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
-
-    assert result.returncode == 0, result.stderr
-    commands = [line.split() for line in argv_log.read_text("utf-8").splitlines()]
-    assert commands == [["show"], ["toolchain", "list"]], commands
-
-
-def test_a_failed_listing_is_reported_as_a_probe_failure(tmp_path: Path) -> None:
-    """A failed listing exits 1 and is not described as an absent toolchain."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    stub_rustup(bin_dir, "", StubOptions(listing_exit_status=1))
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
-
-    assert result.returncode == 1, result.stderr
-    assert "rustup could not list installed toolchains" in result.stderr, result.stderr
-    assert "is not installed" not in result.stderr, result.stderr
-
-
-def test_a_failed_show_is_named_with_the_bare_channel(tmp_path: Path) -> None:
-    """A failed `rustup show` is named and the bare channel still satisfies it."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    channel = _channel()
-    stub_rustup(bin_dir, f"{channel} (installed)", StubOptions(host_triple=None))
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
-
-    assert result.returncode == 0, result.stderr
-    assert "rustup show failed" in result.stderr, result.stderr
-    assert f"toolchain {channel} available" in result.stderr, result.stderr
-
-
-def test_a_failed_show_still_selects_the_host_it_reported(tmp_path: Path) -> None:
-    """A host printed before the probe failed still matches the pinned channel."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    stub_rustup(bin_dir, _installed(_channel()), StubOptions(show_exit_status=1))
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
-
-    assert result.returncode == 0, result.stderr
-    assert "using the host it reported" in result.stderr, result.stderr
-    assert "is not installed" not in result.stderr, result.stderr
-
-
-def test_the_rustup_probes_cannot_auto_install(tmp_path: Path) -> None:
-    """A probe may not provision the toolchain it exists to find missing."""
-    bin_dir = _probe_bin_dir(tmp_path)
-    env_log = tmp_path / "rustup-auto-install"
-    stub_rustup(bin_dir, _installed(_channel()), StubOptions(env_log=env_log))
-    fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
-
-    result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
-
-    assert result.returncode == 0, result.stderr
-    recorded = env_log.read_text("utf-8").splitlines()
-    assert recorded == ["0", "0"], recorded

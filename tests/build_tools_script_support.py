@@ -54,6 +54,75 @@ class StubOptions:
     listing_exit_status: int = 0
 
 
+def _record_prefix(options: StubOptions) -> str:
+    """Return the shell that records what the stub was given, if anything.
+
+    Parameters
+    ----------
+    options
+        The recording targets the caller asked for.
+
+    Returns
+    -------
+    str
+        One shell fragment per requested target, in a fixed order.
+    """
+    prefix = ""
+    if options.argv_log is not None:
+        prefix += f"printf '%s\\n' \"$*\" >> '{options.argv_log}'; "
+    if options.pwd_log is not None:
+        prefix += f"pwd >> '{options.pwd_log}'; "
+    if options.env_log is not None:
+        prefix += (
+            f"printf '%s\\n' \"${{RUSTUP_AUTO_INSTALL-unset}}\" "
+            f">> '{options.env_log}'; "
+        )
+    return prefix
+
+
+def _show_body(options: StubOptions) -> str:
+    """Return the shell that answers `rustup show`.
+
+    Parameters
+    ----------
+    options
+        The host answer to reproduce.
+
+    Returns
+    -------
+    str
+        A body that prints the requested line and exits with the requested
+        status, or fails at once when no host is to be reported.
+    """
+    if options.host_triple is None:
+        return "exit 1"
+    if options.reports_host:
+        line = f"printf 'Default host: {options.host_triple}\\n'"
+    else:
+        line = "printf 'Default toolchain: stable\\n'"
+    return f"{line}; exit {options.show_exit_status}"
+
+
+def _listing_body(listed: str, exit_status: int) -> str:
+    """Return the shell that answers `rustup toolchain list`.
+
+    Parameters
+    ----------
+    listed
+        The single line to report.
+    exit_status
+        Status to exit with; non-zero reports no listing at all.
+
+    Returns
+    -------
+    str
+        The body for the listing probe.
+    """
+    if exit_status:
+        return f"exit {exit_status}"
+    return f"printf '{listed}\\n'; exit 0"
+
+
 def stub_rustup(
     bin_dir: Path,
     listed: str,
@@ -71,30 +140,9 @@ def stub_rustup(
         Per-probe answers and recording targets; defaults to the test host.
     """
     options = options or StubOptions()
-    record = ""
-    if options.argv_log is not None:
-        record += f"printf '%s\\n' \"$*\" >> '{options.argv_log}'; "
-    if options.pwd_log is not None:
-        record += f"pwd >> '{options.pwd_log}'; "
-    if options.env_log is not None:
-        record += (
-            f"printf '%s\\n' \"${{RUSTUP_AUTO_INSTALL-unset}}\" "
-            f">> '{options.env_log}'; "
-        )
-    if options.host_triple is None:
-        shown = "exit 1"
-    elif options.reports_host:
-        shown = (
-            f"printf 'Default host: {options.host_triple}\\n'; "
-            f"exit {options.show_exit_status}"
-        )
-    else:
-        shown = (
-            f"printf 'Default toolchain: stable\\n'; exit {options.show_exit_status}"
-        )
-    listing = f"printf '{listed}\\n'; exit 0"
-    if options.listing_exit_status:
-        listing = f"exit {options.listing_exit_status}"
+    record = _record_prefix(options)
+    listing = _listing_body(listed, options.listing_exit_status)
+    shown = _show_body(options)
     fake_executable(
         bin_dir / "rustup",
         'if [ "$1" = toolchain ] && [ "$2" = list ]; then '
