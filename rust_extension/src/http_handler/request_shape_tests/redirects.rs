@@ -42,6 +42,35 @@ fn spawn_redirect_server(
     Ok((addr, capture_rx))
 }
 
+/// What one non-blocking accept attempt found.
+enum AcceptAttempt {
+    /// A connection arrived and is ready to read.
+    Connected(TcpStream),
+    /// No connection is pending yet, but the chain is still active.
+    Pending,
+    /// The fixture should stop: the chain went idle or the listener failed.
+    Finished,
+}
+
+/// Attempt one accept and classify what the caller should do next.
+fn accept_once(
+    listener: &TcpListener,
+    last_connection: Instant,
+    idle_limit: Duration,
+) -> AcceptAttempt {
+    match listener.accept() {
+        Ok((stream, _)) => {
+            // A non-blocking listener's accepted socket is blocking on
+            // Linux, but not necessarily everywhere.
+            let _ = stream.set_nonblocking(false);
+            AcceptAttempt::Connected(stream)
+        }
+        Err(err) if err.kind() != io::ErrorKind::WouldBlock => AcceptAttempt::Finished,
+        Err(_) if last_connection.elapsed() > idle_limit => AcceptAttempt::Finished,
+        Err(_) => AcceptAttempt::Pending,
+    }
+}
+
 /// Wait for the next connection, giving up once the chain has been idle.
 ///
 /// Returns `None` when no connection arrived before the idle limit or the
@@ -54,20 +83,10 @@ fn accept_before_idle(
     idle_limit: Duration,
 ) -> Option<TcpStream> {
     loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                // A non-blocking listener's accepted socket is blocking on
-                // Linux, but not necessarily everywhere.
-                let _ = stream.set_nonblocking(false);
-                return Some(stream);
-            }
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                if last_connection.elapsed() > idle_limit {
-                    return None;
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            Err(_) => return None,
+        match accept_once(listener, last_connection, idle_limit) {
+            AcceptAttempt::Connected(stream) => return Some(stream),
+            AcceptAttempt::Finished => return None,
+            AcceptAttempt::Pending => thread::sleep(Duration::from_millis(5)),
         }
     }
 }
