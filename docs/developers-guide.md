@@ -50,8 +50,8 @@ version-policy change therefore belongs in the development group only:
 would otherwise record pytest, pluggy and interpreter frames alongside this
 project's. `normalize_traceback_output()` alone cannot make that stable: it
 masks paths and line numbers but keeps each frame's source text, and an
-upstream release may wrap a call across lines. The snapshot step therefore
-calls `strip_external_stack_frames()` in `tests/steps/stack_frames.py` first.
+upstream release may wrap a call across lines. The snapshot step therefore calls
+`strip_external_stack_frames()` in `tests/steps/stack_frames.py` first.
 
 Stripping has a deliberately narrow scope. It acts only inside a
 `Stack (most recent call last):` section, up to the next
@@ -64,8 +64,8 @@ and every caret line. Relative and unrecognized filenames are kept, because
 they cannot be attributed to installed code reliably.
 
 The function is pure and idempotent, and it deletes whole lines only: each
-surviving line keeps the terminator it already had. An output that uses
-`\r\n` is returned with `\r\n`, so a traceback stays byte-identical. The
+surviving line keeps the terminator it already had. An output that uses `\r\n`
+is returned with `\r\n`, so a traceback stays byte-identical. The
 launcher-frame rule in `tests/steps/traceback_normalization.py` is separate and
 runs after stripping; a `runpy.py` counts as launcher code only when its own
 directory is an interpreter directory inside `lib` or `lib64`, or a `Lib`

@@ -155,8 +155,12 @@ class TestNotificationBranches:
             "an absent issue must not be commented on"
         )
         arguments = creates[0]
-        assert _argument(arguments, "--repo") == _REPOSITORY
-        assert _argument(arguments, "--title") == ISSUE_TITLE
+        assert _argument(arguments, "--repo") == _REPOSITORY, (
+            "the created issue must target this repository"
+        )
+        assert _argument(arguments, "--title") == ISSUE_TITLE, (
+            "the created issue must carry the tracking title"
+        )
         body = _argument(arguments, "--body")
         assert _RUN_URL in body, "the tracking issue must name the run URL"
         assert _RUN_SHA in body, "the tracking issue must name the commit"
@@ -173,7 +177,9 @@ class TestNotificationBranches:
         )
         arguments = comments[0]
         assert arguments[2] == _EXISTING_ISSUE, "the found issue must be the target"
-        assert _argument(arguments, "--repo") == _REPOSITORY
+        assert _argument(arguments, "--repo") == _REPOSITORY, (
+            "the comment must target this repository"
+        )
         body = _argument(arguments, "--body")
         assert _RUN_URL in body, "the comment must name the run URL"
         assert _RUN_SHA in body, "the comment must name the commit"
