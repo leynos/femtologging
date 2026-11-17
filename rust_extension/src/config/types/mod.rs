@@ -89,24 +89,28 @@ pub struct LoggerConfigBuilder {
 
 impl LoggerConfigBuilder {
     /// Create a new `LoggerConfigBuilder`.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the logger level, replacing any existing value.
-    pub fn with_level(mut self, level: FemtoLevel) -> Self {
+    #[must_use]
+    pub const fn with_level(mut self, level: FemtoLevel) -> Self {
         self.level = Some(level);
         self
     }
 
     /// Set propagation behaviour, replacing any existing value.
-    pub fn with_propagate(mut self, propagate: bool) -> Self {
+    #[must_use]
+    pub const fn with_propagate(mut self, propagate: bool) -> Self {
         self.propagate = Some(propagate);
         self
     }
 
     /// Set filters by identifier, replacing any existing filters.
     /// IDs are deduplicated while preserving first-seen order; see `normalize_vec`.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -118,6 +122,7 @@ impl LoggerConfigBuilder {
 
     /// Set handlers by identifier, replacing any existing handlers.
     /// IDs are deduplicated while preserving first-seen order; see `normalize_vec`.
+    #[must_use]
     pub fn with_handlers<I, S>(mut self, handler_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -128,21 +133,25 @@ impl LoggerConfigBuilder {
     }
 
     /// Retrieve the level if configured.
-    pub fn level_opt(&self) -> Option<FemtoLevel> {
+    #[must_use]
+    pub const fn level_opt(&self) -> Option<FemtoLevel> {
         self.level
     }
 
     /// Retrieve the propagate flag if configured.
-    pub fn propagate_opt(&self) -> Option<bool> {
+    #[must_use]
+    pub const fn propagate_opt(&self) -> Option<bool> {
         self.propagate
     }
 
     /// Retrieve the configured filter identifiers.
+    #[must_use]
     pub fn filter_ids(&self) -> &[String] {
         &self.filters
     }
 
     /// Retrieve the configured handler identifiers.
+    #[must_use]
     pub fn handler_ids(&self) -> &[String] {
         &self.handlers
     }
@@ -190,41 +199,48 @@ impl Default for ConfigBuilder {
 
 impl ConfigBuilder {
     /// Create a new `ConfigBuilder`.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the schema version, replacing any existing value.
-    pub fn with_version(mut self, version: u8) -> Self {
+    #[must_use]
+    pub const fn with_version(mut self, version: u8) -> Self {
         self.version = version;
         self
     }
 
     /// Set whether existing loggers are disabled, replacing any existing value.
-    pub fn with_disable_existing_loggers(mut self, disable: bool) -> Self {
+    #[must_use]
+    pub const fn with_disable_existing_loggers(mut self, disable: bool) -> Self {
         self.disable_existing_loggers = disable;
         self
     }
 
     /// Set the default log level, replacing any existing value.
-    pub fn with_default_level(mut self, level: FemtoLevel) -> Self {
+    #[must_use]
+    pub const fn with_default_level(mut self, level: FemtoLevel) -> Self {
         self.default_level = Some(level);
         self
     }
 
     /// Add a formatter by identifier, replacing any existing formatter with the same id.
+    #[must_use]
     pub fn with_formatter(mut self, id: impl Into<String>, builder: FormatterBuilder) -> Self {
         self.formatters.insert(id.into(), builder);
         self
     }
 
     /// Adds a filter configuration by its unique ID, replacing any existing entry.
+    #[must_use]
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
     }
 
     /// Add a handler builder by identifier, replacing any existing handler with the same id.
+    #[must_use]
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
         B: Into<HandlerBuilder>,
@@ -234,55 +250,64 @@ impl ConfigBuilder {
     }
 
     /// Add a logger by name, replacing any existing logger with the same name.
+    #[must_use]
     pub fn with_logger(mut self, name: impl Into<String>, builder: LoggerConfigBuilder) -> Self {
         self.loggers.insert(name.into(), builder);
         self
     }
 
     /// Set the root logger configuration, replacing any previous configuration.
+    #[must_use]
     pub fn with_root_logger(mut self, builder: LoggerConfigBuilder) -> Self {
         self.root_logger = Some(builder);
         self
     }
 
     /// Determine whether existing loggers should be disabled.
-    pub fn disable_existing_loggers(&self) -> bool {
+    #[must_use]
+    pub const fn disable_existing_loggers(&self) -> bool {
         self.disable_existing_loggers
     }
 
     /// Retrieve the default log level if configured.
-    pub fn default_level(&self) -> Option<FemtoLevel> {
+    #[must_use]
+    pub const fn default_level(&self) -> Option<FemtoLevel> {
         self.default_level
     }
 
     /// Retrieve configured handler builders.
-    pub fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
+    #[must_use]
+    pub const fn handler_builders(&self) -> &BTreeMap<String, HandlerBuilder> {
         &self.handlers
     }
 
     /// Retrieve configured formatter builders.
     #[cfg(feature = "python")]
-    pub(crate) fn formatter_builders(&self) -> &BTreeMap<String, FormatterBuilder> {
+    pub(crate) const fn formatter_builders(&self) -> &BTreeMap<String, FormatterBuilder> {
         &self.formatters
     }
 
     /// Retrieve configured filter builders.
-    pub fn filter_builders(&self) -> &BTreeMap<String, FilterBuilder> {
+    #[must_use]
+    pub const fn filter_builders(&self) -> &BTreeMap<String, FilterBuilder> {
         &self.filters
     }
 
     /// Retrieve configured logger builders.
-    pub fn logger_builders(&self) -> &BTreeMap<String, LoggerConfigBuilder> {
+    #[must_use]
+    pub const fn logger_builders(&self) -> &BTreeMap<String, LoggerConfigBuilder> {
         &self.loggers
     }
 
     /// Retrieve the root logger configuration if set.
-    pub fn root_logger(&self) -> Option<&LoggerConfigBuilder> {
+    #[must_use]
+    pub const fn root_logger(&self) -> Option<&LoggerConfigBuilder> {
         self.root_logger.as_ref()
     }
 
     /// Return the configured version.
-    pub fn version(&self) -> u8 {
+    #[must_use]
+    pub const fn version(&self) -> u8 {
         self.version
     }
 }

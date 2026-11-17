@@ -138,10 +138,10 @@ pub(crate) fn validate_remove_ids(
     let CollectionMutation::Remove(ids) = mutation else {
         return Ok(());
     };
-    let existing = existing.iter().collect::<BTreeSet<_>>();
+    let attached = existing.iter().collect::<BTreeSet<_>>();
     let missing = ids
         .iter()
-        .filter(|id| !existing.contains(*id))
+        .filter(|id| !attached.contains(*id))
         .cloned()
         .collect::<Vec<_>>();
     if missing.is_empty() {
