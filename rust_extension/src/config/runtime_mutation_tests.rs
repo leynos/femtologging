@@ -17,7 +17,7 @@ fn handler_ptrs(logger: &crate::logger::FemtoLogger) -> Vec<usize> {
     logger
         .handlers_for_test()
         .iter()
-        .map(|handler| std::sync::Arc::as_ptr(handler) as *const () as usize)
+        .map(|handler| std::sync::Arc::as_ptr(handler).cast::<()>() as usize)
         .collect()
 }
 
@@ -60,7 +60,8 @@ fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<
         let after = handler_ptrs(&logger.borrow(py));
         assert_eq!(after.len(), 2, "core logger should now have two handlers");
         assert_eq!(
-            before[0], after[0],
+            before.first(),
+            after.first(),
             "the existing handler arc should be preserved for unchanged ids",
         );
     });
@@ -174,7 +175,7 @@ fn unknown_removed_handler_preserves_existing_state(
             .apply()
             .expect_err("unknown ids should be rejected");
 
-        assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
+        assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_owned()]));
         assert_eq!(
             before,
             handler_ptrs(&logger.borrow(py)),
@@ -212,10 +213,10 @@ fn unknown_removed_handler_preserves_existing_state(
 })]
 #[serial]
 fn mutation_requires_runtime_metadata(
-    _gil_and_clean_manager: (),
-    #[case] _kind: &str,
+    #[case] kind: &str,
     #[case] mutate: fn(RuntimeConfigBuilder) -> RuntimeConfigBuilder,
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let _logger = manager::get_logger(py, "orphan").expect("logger should exist");
 
@@ -223,17 +224,21 @@ fn mutation_requires_runtime_metadata(
             .apply()
             .expect_err("mutation should reject entities without runtime metadata");
 
-        assert!(matches!(
-            err,
-            ConfigError::InvalidMutation(message)
-                if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
-        ));
+        assert!(
+            matches!(
+                err,
+                ConfigError::InvalidMutation(message)
+                    if message == "orphan: logger has no runtime metadata; Append/Remove require prior build_and_init()"
+            ),
+            "the {kind} mutation should be rejected for a logger without runtime metadata",
+        );
     });
 }
 
 #[rstest]
 #[serial]
-fn empty_append_and_remove_allow_missing_runtime_metadata(_gil_and_clean_manager: ()) {
+fn empty_append_and_remove_allow_missing_runtime_metadata() {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let logger = manager::get_logger(py, "orphan").expect("logger should exist");
 
@@ -256,7 +261,8 @@ fn empty_append_and_remove_allow_missing_runtime_metadata(_gil_and_clean_manager
 
 #[rstest]
 #[serial]
-fn replacing_shared_handler_id_updates_untouched_loggers(_gil_and_clean_manager: ()) {
+fn replacing_shared_handler_id_updates_untouched_loggers() {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let root = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["shared"]);

@@ -98,17 +98,17 @@ fn assert_released(weak: &Weak<dyn FemtoHandlerTrait>, context: &str) {
 #[case::http(HandlerKind::Http)]
 #[serial]
 fn rejected_resource_handler_churn_keeps_registry_constant(
-    _gil_and_clean_manager: (),
     temp_dir: Result<TempDir, std::io::Error>,
     #[case] kind: HandlerKind,
 ) {
-    let temp_dir = temp_dir.expect("the temporary directory should be created");
+    gil_and_clean_manager();
+    let log_dir = temp_dir.expect("the temporary directory should be created");
     install_core_logger().expect("the baseline configuration should install");
     let baseline = handler_registry_len();
 
     Python::attach(|_py| {
         for round in 0..CHURN_ROUNDS {
-            let path = temp_dir.path().join(format!("orphan-{round}.log"));
+            let path = log_dir.path().join(format!("orphan-{round}.log"));
             let err = RuntimeConfigBuilder::new()
                 .with_handler("orphan", resource_handler(kind, &path))
                 .apply()
@@ -125,7 +125,7 @@ fn rejected_resource_handler_churn_keeps_registry_constant(
             "{CHURN_ROUNDS} rejected mutations must not grow the handler registry",
         );
         if matches!(kind, HandlerKind::File) {
-            let leftover = std::fs::read_dir(temp_dir.path())
+            let leftover = std::fs::read_dir(log_dir.path())
                 .expect("the temporary directory must remain readable")
                 .count();
             assert_eq!(
@@ -142,16 +142,16 @@ fn rejected_resource_handler_churn_keeps_registry_constant(
 #[case::http(HandlerKind::Http)]
 #[serial]
 fn replacing_resource_handler_id_releases_superseded_object(
-    _gil_and_clean_manager: (),
     temp_dir: Result<TempDir, std::io::Error>,
     #[case] kind: HandlerKind,
 ) {
-    let temp_dir = temp_dir.expect("the temporary directory should be created");
+    gil_and_clean_manager();
+    let log_dir = temp_dir.expect("the temporary directory should be created");
     Python::attach(|_py| {
         ConfigBuilder::new()
             .with_handler(
                 "log",
-                resource_handler(kind, &temp_dir.path().join("first.log")),
+                resource_handler(kind, &log_dir.path().join("first.log")),
             )
             .with_root_logger(LoggerConfigBuilder::new().with_level(FemtoLevel::Debug))
             .with_logger("core", LoggerConfigBuilder::new().with_handlers(["log"]))
@@ -165,7 +165,7 @@ fn replacing_resource_handler_id_releases_superseded_object(
         RuntimeConfigBuilder::new()
             .with_handler(
                 "log",
-                resource_handler(kind, &temp_dir.path().join("second.log")),
+                resource_handler(kind, &log_dir.path().join("second.log")),
             )
             .apply()
             .expect("replacing a reachable resource handler id should succeed");
@@ -187,12 +187,10 @@ fn replacing_resource_handler_id_releases_superseded_object(
 
 #[rstest]
 #[serial]
-fn detaching_last_reference_releases_object(
-    _gil_and_clean_manager: (),
-    temp_dir: Result<TempDir, std::io::Error>,
-) {
-    let temp_dir = temp_dir.expect("the temporary directory should be created");
-    let path = temp_dir.path().join("detached.log");
+fn detaching_last_reference_releases_object(temp_dir: Result<TempDir, std::io::Error>) {
+    gil_and_clean_manager();
+    let log_dir = temp_dir.expect("the temporary directory should be created");
+    let path = log_dir.path().join("detached.log");
     Python::attach(|py| {
         ConfigBuilder::new()
             .with_handler("log", FileHandlerBuilder::new(path))
@@ -247,8 +245,8 @@ impl FemtoHandlerTrait for GatedHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
         // A closed channel means the test has already finished with the gate;
         // proceeding is the right response.
-        let _ = self.entered.send(());
-        let _ = self.release.recv();
+        self.entered.send(()).unwrap_or(());
+        self.release.recv().unwrap_or(());
         Ok(())
     }
 
@@ -259,12 +257,10 @@ impl FemtoHandlerTrait for GatedHandler {
 
 #[rstest]
 #[serial]
-fn in_flight_record_defers_release_until_worker_drains(
-    _gil_and_clean_manager: (),
-    temp_dir: Result<TempDir, std::io::Error>,
-) {
-    let temp_dir = temp_dir.expect("the temporary directory should be created");
-    let path = temp_dir.path().join("in-flight.log");
+fn in_flight_record_defers_release_until_worker_drains(temp_dir: Result<TempDir, std::io::Error>) {
+    gil_and_clean_manager();
+    let log_dir = temp_dir.expect("the temporary directory should be created");
+    let path = log_dir.path().join("in-flight.log");
     Python::attach(|py| {
         ConfigBuilder::new()
             .with_handler("log", FileHandlerBuilder::new(path))
@@ -299,7 +295,7 @@ fn in_flight_record_defers_release_until_worker_drains(
 
         // Replace the handler while the record is still in flight. The
         // registry and the live logger both stop referencing the old object.
-        let replacement_path = temp_dir.path().join("replacement.log");
+        let replacement_path = log_dir.path().join("replacement.log");
         RuntimeConfigBuilder::new()
             .with_handler("log", FileHandlerBuilder::new(replacement_path))
             .apply()
@@ -351,12 +347,10 @@ impl Drop for GilFreeingProbeHandler {
     fn drop(&mut self) {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            Python::attach(|_| {
-                let _ = tx.send(true);
-            });
+            Python::attach(|_| tx.send(true).unwrap_or(()));
         });
         let attached = rx.recv_timeout(GIL_PROBE_TIMEOUT).unwrap_or(false);
-        let _ = self.attached.send(attached);
+        self.attached.send(attached).unwrap_or(());
     }
 }
 
@@ -369,7 +363,8 @@ impl Drop for GilFreeingProbeHandler {
 /// the host is.
 #[rstest]
 #[serial]
-fn deferred_owners_are_released_without_the_gil(_gil_and_clean_manager: ()) {
+fn deferred_owners_are_released_without_the_gil() {
+    gil_and_clean_manager();
     let (attached_tx, attached_rx) = mpsc::channel();
     let mut bundle = DeferredDrop::default();
     bundle.detached.push(DetachedOwners {
