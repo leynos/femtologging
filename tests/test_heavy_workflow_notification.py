@@ -13,7 +13,10 @@ import json
 import os
 import stat
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests execute the checked-in workflow script
+import sys
 from pathlib import Path
+
+import pytest
 
 from tests.heavy_workflow_document import (
     ISSUE_TITLE,
@@ -23,6 +26,11 @@ from tests.heavy_workflow_document import (
     load_workflow,
     run_text,
     steps,
+)
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="The heavy workflow's shell steps run under Bash on Linux.",
 )
 
 _REPOSITORY = "leynos/femtologging"
