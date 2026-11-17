@@ -132,6 +132,10 @@ def assert_wheel_imports_in_clean_env(wheel_path: Path, work_dir: Path) -> None:
             "-I",
             "-m",
             "pip",
+            # `--isolated` ignores pip environment variables and per-user
+            # configuration, so an inherited PIP_TARGET cannot redirect the
+            # install outside the virtual environment.
+            "--isolated",
             "install",
             "--no-index",
             "--no-deps",
@@ -155,7 +159,7 @@ def _venv_python(environment: Path) -> Path:
 
 
 def _clean_environment() -> dict[str, str]:
-    """Return an environment without inherited Python search paths."""
+    """Return an environment without inherited Python or pip configuration."""
     environment = os.environ.copy()
     for name in (
         "PYTHONHOME",
@@ -165,6 +169,10 @@ def _clean_environment() -> dict[str, str]:
         "VIRTUAL_ENV",
     ):
         environment.pop(name, None)
+    # `--isolated` alone still loads global and site-wide pip configuration
+    # files. Pointing PIP_CONFIG_FILE at the null device is the documented way
+    # to skip them all, so no system override can redirect the install.
+    environment["PIP_CONFIG_FILE"] = os.devnull
     return environment
 
 
