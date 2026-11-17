@@ -51,8 +51,8 @@ fn build_root_and_child(
         .build_and_init()
         .map_err(|err| pyo3::exceptions::PyRuntimeError::new_err(err.to_string()))?;
     let child = manager::get_logger(py, "child")?;
-    let root = manager::get_logger(py, "root")?;
-    Ok((child, root))
+    let root_logger = manager::get_logger(py, "root")?;
+    Ok((child, root_logger))
 }
 
 #[rstest]
@@ -60,19 +60,21 @@ fn build_root_and_child(
 #[case::default_propagation(None, true)]
 #[serial]
 fn logger_propagation_controls_root_delivery(
-    _gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
     #[case] propagate: Option<bool>,
     #[case] expected_root_delivery: bool,
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
-        let child_cfg = match propagate {
-            Some(propagate) => LoggerConfigBuilder::new()
-                .with_level(FemtoLevel::Info)
-                .with_propagate(propagate),
-            None => LoggerConfigBuilder::new().with_level(FemtoLevel::Info),
-        };
+        let child_cfg = propagate.map_or_else(
+            || LoggerConfigBuilder::new().with_level(FemtoLevel::Info),
+            |value| {
+                LoggerConfigBuilder::new()
+                    .with_level(FemtoLevel::Info)
+                    .with_propagate(value)
+            },
+        );
         let (child, root) = build_root_and_child(py, root_handler, child_cfg)
             .expect("build and lookup should succeed");
         assert_eq!(
@@ -96,9 +98,9 @@ fn logger_propagation_controls_root_delivery(
 #[rstest]
 #[serial]
 fn disabled_logger_cannot_reach_root_handler(
-    _gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
         // `omitted` is never named by the second configuration, and it keeps
@@ -158,9 +160,9 @@ fn disabled_logger_cannot_reach_root_handler(
 #[rstest]
 #[serial]
 fn configured_child_propagates_through_disabled_kept_ancestor(
-    _gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
         let initial = ConfigBuilder::new()
@@ -233,9 +235,9 @@ fn configured_child_propagates_through_disabled_kept_ancestor(
 #[rstest]
 #[serial]
 fn propagate_toggle_runtime(
-    _gil_and_clean_manager: (),
     new_root_file_handler: std::io::Result<(FileHandlerBuilder, NamedTempFile)>,
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (root_handler, file) = new_root_file_handler.expect("create temp log file");
         let child_cfg = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
