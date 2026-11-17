@@ -1188,3 +1188,42 @@ appear. The only red check is the CI `Lint` job, whose Whitaker lane fails on
 `origin/main`'s own code for the reason recorded above. PR #613 is left as a
 draft with that evidence in its gate section; a suite pin or a repository-wide
 `bumpy_road_function` migration is a separate decision.
+
+2026-11-17, rebase onto current `main` and the gate runs after it: the 37
+branch commits were replayed onto `origin/main` at `2dc7b4e2`, which carries
+the extraction-only fix from #622 for the Whitaker `bumpy_road_function`
+findings. Weave was bypassed for the unattended replay in favour of Git's
+`zdiff3` text merge. No conflicts arose; `range-diff` reports all 37 commits
+unchanged, the 25 paths only the target had changed are byte-identical to it,
+and `git diff --check` is clean. The tip moved from `1490cc09` to `1f00e1a5`.
+
+The first gate run on `1f00e1a5` passed `make check-fmt` (1 s),
+`make typecheck` (61 s) and `make lint` (1305 s, including the Whitaker dylint
+lane that #622 repaired), with logs in `/tmp/gates-issue-440-20261117-rebase/`.
+`make test` failed in its `log-compat` lane on
+`http_handler::tests::drain::records_left_at_the_deadline_are_discarded_and_counted`.
+
+That test is not part of this branch and was not touched by the rebase: it is
+identical to `origin/main`, and the same test passed in the two preceding lanes
+of the same run. The failure was a race in its helper. `spawn_stalled_server`
+served a single connection and then dropped its listener, so once the first
+request timed out every later attempt was refused immediately and the worker
+drained the whole backlog inside its deadline. Whether the listener had closed
+by the time the next attempt started was decided by thread scheduling, so the
+`discarded N queued records at its shutdown deadline` contract passed or failed
+on host load. The helper now accepts connections in a loop, keeping the
+listener open so each attempt after the close stalls for the rest of the
+budget; the discard is then deterministic. Ten targeted reruns pass, and the
+change is a test-helper fix only.
+
+2026-11-17, gates after the test fix: `make check-fmt` passed, and the four
+cargo lanes passed sequentially (`no-default-features` 772, `python` 772,
+`log-compat` 824 and `tracing-compat` 824 library tests, with every integration
+suite and Doc-test green). The `make test` target's `pytest --doctest-modules`
+step passed with 1209 passed and 5 skipped; `make typecheck` (113 s) and
+`make lint` (1298 s) passed. Logs are in
+`/tmp/gates-issue-440-20261117-rebase2/` and
+`/tmp/gates-issue-440-20261117-rebase3/`. The host was carrying dozens of
+concurrent agent sessions throughout, so several invocations were cut by time
+bounds mid-lane; each resumed or repeated invocation ended green, and no lane
+reported a failure.
