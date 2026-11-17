@@ -106,10 +106,10 @@ impl HandlerBuilder {
     ) -> Result<Arc<dyn FemtoHandlerTrait>, HandlerBuildError> {
         let mut builder = self.clone();
         match &mut builder {
-            Self::Stream(builder) => builder.resolve_formatter(formatters)?,
-            Self::File(builder) => builder.resolve_formatter(formatters)?,
-            Self::Rotating(builder) => builder.resolve_formatter(formatters)?,
-            Self::TimedRotating(builder) => builder.resolve_formatter(formatters)?,
+            Self::Stream(stream) => stream.resolve_formatter(formatters)?,
+            Self::File(file) => file.resolve_formatter(formatters)?,
+            Self::Rotating(rotating) => rotating.resolve_formatter(formatters)?,
+            Self::TimedRotating(timed_rotating) => timed_rotating.resolve_formatter(formatters)?,
             Self::Socket(_) | Self::Http(_) => {}
         }
         builder.build()
