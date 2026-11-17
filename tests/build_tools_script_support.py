@@ -30,18 +30,27 @@ class StubOptions:
         command it serves.
     argv_log
         When given, the stub appends each command's argument vector here.
+    env_log
+        When given, the stub appends the `RUSTUP_AUTO_INSTALL` value it was
+        given here, so a test can prove the probe cannot provision.
     host_triple
         The triple `rustup show` reports, or None when the probe must fail.
     reports_host
         Whether `rustup show` prints a `Default host:` line; False omits it.
+    show_exit_status
+        Exit status for a `rustup show` that does report a host. A non-zero
+        value reproduces a rustup that printed the host and then failed on the
+        default toolchain it could not activate.
     listing_exit_status
         Exit status for `rustup toolchain list`; non-zero prints no listing.
     """
 
     pwd_log: Path | None = None
     argv_log: Path | None = None
+    env_log: Path | None = None
     host_triple: str | None = HOST_TRIPLE
     reports_host: bool = True
+    show_exit_status: int = 0
     listing_exit_status: int = 0
 
 
@@ -67,12 +76,22 @@ def stub_rustup(
         record += f"printf '%s\\n' \"$*\" >> '{options.argv_log}'; "
     if options.pwd_log is not None:
         record += f"pwd >> '{options.pwd_log}'; "
+    if options.env_log is not None:
+        record += (
+            f"printf '%s\\n' \"${{RUSTUP_AUTO_INSTALL-unset}}\" "
+            f">> '{options.env_log}'; "
+        )
     if options.host_triple is None:
         shown = "exit 1"
     elif options.reports_host:
-        shown = f"printf 'Default host: {options.host_triple}\\n'; exit 0"
+        shown = (
+            f"printf 'Default host: {options.host_triple}\\n'; "
+            f"exit {options.show_exit_status}"
+        )
     else:
-        shown = "printf 'Default toolchain: stable\\n'; exit 0"
+        shown = (
+            f"printf 'Default toolchain: stable\\n'; exit {options.show_exit_status}"
+        )
     listing = f"printf '{listed}\\n'; exit 0"
     if options.listing_exit_status:
         listing = f"exit {options.listing_exit_status}"
