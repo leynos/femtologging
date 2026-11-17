@@ -22,7 +22,7 @@ pub(super) struct ContextMethodCall<'py> {
 
 impl<'py> ContextMethodCall<'py> {
     /// Pairs a prepared method caller with the operation name used in errors.
-    pub(super) fn new(method_caller: Bound<'py, PyAny>, operation: &'static str) -> Self {
+    pub(super) const fn new(method_caller: Bound<'py, PyAny>, operation: &'static str) -> Self {
         Self {
             method_caller,
             operation,

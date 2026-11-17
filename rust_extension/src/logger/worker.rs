@@ -72,7 +72,7 @@ impl DispatchState {
         Self {
             process_id: std::sync::atomic::AtomicU32::new(std::process::id()),
             starting_process: std::sync::atomic::AtomicU32::new(0),
-            shard: std::sync::atomic::AtomicPtr::new(shard as *const Shard as *mut Shard),
+            shard: std::sync::atomic::AtomicPtr::new(std::ptr::from_ref(shard).cast_mut()),
             budget: shard.budget(),
         }
     }
@@ -159,7 +159,7 @@ impl FemtoLogger {
         let shard = dispatcher.assign_shard();
         self.dispatch.budget.reset_after_fork();
         self.dispatch.shard.store(
-            shard as *const Shard as *mut Shard,
+            std::ptr::from_ref(shard).cast_mut(),
             std::sync::atomic::Ordering::Release,
         );
         self.dispatch
@@ -231,7 +231,8 @@ impl FemtoLogger {
     /// rather than a public setter.
     #[cfg(all(test, feature = "python", not(loom)))]
     pub(crate) fn with_formatter_for_test(name: String, formatter: SharedFormatter) -> Self {
-        let mut logger = Self::with_parent(name, None).expect("test dispatcher should start");
+        let mut logger = Self::with_parent(name, None)
+            .unwrap_or_else(|err| panic!("test dispatcher should start: {err}"));
         logger.formatter = formatter;
         logger
     }
@@ -243,7 +244,8 @@ impl FemtoLogger {
         parent: Option<String>,
         context_snapshot_provider: std::sync::Arc<dyn ContextSnapshotProvider>,
     ) -> Self {
-        let dispatcher = Dispatcher::shared().expect("test dispatcher should start");
+        let dispatcher = Dispatcher::shared()
+            .unwrap_or_else(|err| panic!("test dispatcher should start: {err}"));
         Self::assembled(
             name,
             parent,

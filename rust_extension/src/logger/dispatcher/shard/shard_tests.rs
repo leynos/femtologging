@@ -29,6 +29,12 @@ const ENQUEUE_SPEND: Duration = Duration::from_millis(900);
 /// tests that spend part of the budget before the acknowledgement wait.
 const SCHEDULING_TOLERANCE: Duration = Duration::from_millis(600);
 
+/// The shortest enqueue or acknowledgement wait these tests accept.
+///
+/// One budget less the scheduling tolerance, saturating so a tolerance larger
+/// than the budget could never underflow the constant.
+const SHORTEST_ACCEPTED_WAIT: Duration = BARRIER_TIMEOUT.saturating_sub(SCHEDULING_TOLERANCE);
+
 /// Build one queued record for *handler* now that no worker will run it.
 fn queued_record(handler: &Arc<dyn FemtoHandlerTrait>) -> Box<QueuedRecord> {
     Box::new(QueuedRecord {
@@ -49,8 +55,18 @@ struct HeldHandler {
 
 impl FemtoHandlerTrait for HeldHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.started.send(());
-        let _ = self.release.lock().recv();
+        // A refused start signal means the test stopped waiting before the
+        // worker got here. There is nobody left to tell, so it is reported
+        // rather than retried, and the handler still blocks below.
+        if self.started.send(()).is_err() {
+            log::trace!("HeldHandler: test left before the handler started");
+        }
+        // A disconnected release sender means the test dropped it without
+        // releasing the handler, so the wait returns at once and the handler
+        // leaves, which is the outcome dropping the sender asks for.
+        if self.release.lock().recv().is_err() {
+            log::trace!("HeldHandler: release sender dropped before the handler finished");
+        }
         Ok(())
     }
 
@@ -89,9 +105,10 @@ fn a_full_queue_reports_an_enqueue_timeout() {
     let (shard, _jobs) = Shard::without_worker_for_test(1);
     let budget = shard.budget();
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(IdleHandler);
-    if shard.admit(queued_record(&handler), &budget).is_err() {
-        panic!("a fresh one-deep shard should accept its first record");
-    }
+    assert!(
+        shard.admit(queued_record(&handler), &budget).is_ok(),
+        "a fresh one-deep shard should accept its first record"
+    );
 
     let started = Instant::now();
     let outcome = shard.wait_for_drain_outcome();
@@ -103,7 +120,7 @@ fn a_full_queue_reports_an_enqueue_timeout() {
         "a barrier that never finds room in the queue must time out",
     );
     assert!(
-        elapsed >= BARRIER_TIMEOUT - SCHEDULING_TOLERANCE,
+        elapsed >= SHORTEST_ACCEPTED_WAIT,
         "the enqueue wait must use its budget before giving up: {elapsed:?}",
     );
     // Queueing and acknowledging are two halves of one wait, so the call may
@@ -124,9 +141,10 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
         started: started_tx,
         release: parking_lot::Mutex::new(release_rx),
     });
-    if shard.admit(queued_record(&handler), &budget).is_err() {
-        panic!("a fresh test shard should accept its first record");
-    }
+    assert!(
+        shard.admit(queued_record(&handler), &budget).is_ok(),
+        "a fresh test shard should accept its first record"
+    );
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("the worker should enter the blocking handler");
@@ -141,7 +159,7 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
         "a barrier behind a blocked handler must time out, not report a drain",
     );
     assert!(
-        elapsed >= BARRIER_TIMEOUT - SCHEDULING_TOLERANCE,
+        elapsed >= SHORTEST_ACCEPTED_WAIT,
         "the acknowledgement wait must use its budget before giving up: {elapsed:?}",
     );
     assert!(
@@ -151,7 +169,9 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
 
     // Releasing the handler proves the shard is still usable after a timeout:
     // the second barrier drains instead of inheriting the first one's verdict.
-    let _ = release_tx.send(());
+    release_tx
+        .send(())
+        .expect("the handler should still be waiting for its release");
     assert_eq!(shard.wait_for_drain_outcome(), DrainOutcome::Drained);
 }
 
@@ -160,9 +180,10 @@ fn an_enqueue_that_spends_the_budget_leaves_only_the_remainder_to_acknowledge() 
     let (shard, jobs) = Shard::without_worker_for_test(1);
     let budget = shard.budget();
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(IdleHandler);
-    if shard.admit(queued_record(&handler), &budget).is_err() {
-        panic!("a fresh one-deep shard should accept its first record");
-    }
+    assert!(
+        shard.admit(queued_record(&handler), &budget).is_ok(),
+        "a fresh one-deep shard should accept its first record"
+    );
 
     // The worker must not start its spend until the caller has started timing.
     // Otherwise a slow thread start could free the queue before the call
@@ -222,18 +243,25 @@ impl StandInWorker {
         let (release, released) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             go.recv_timeout(BARRIER_TIMEOUT * 2)
-                .expect("the test should start the enqueue spend");
+                .unwrap_or_else(|err| panic!("the test should start the enqueue spend: {err}"));
             std::thread::sleep(ENQUEUE_SPEND);
             let record = jobs
                 .recv_timeout(BARRIER_TIMEOUT * 2)
-                .expect("the queued record should still be there");
+                .unwrap_or_else(|err| panic!("the queued record should still be there: {err}"));
             drop(record);
             let barrier = jobs
                 .recv_timeout(BARRIER_TIMEOUT * 2)
-                .expect("the barrier should arrive once the queue has room");
+                .unwrap_or_else(|err| {
+                    panic!("the barrier should arrive once the queue has room: {err}")
+                });
             // Keeping the barrier alive without answering is what the waiter
             // must time out on rather than see as a closed channel.
-            let _ = released.recv_timeout(BARRIER_TIMEOUT * 2);
+            // The test releases the worker by dropping its sender, and a
+            // timed-out wait means the test has finished either way, so the
+            // barrier is dropped without answering.
+            if released.recv_timeout(BARRIER_TIMEOUT * 2).is_err() {
+                log::trace!("StandInWorker: test stopped waiting before releasing the worker");
+            }
             drop(barrier);
         });
         Self {
@@ -246,10 +274,14 @@ impl StandInWorker {
 impl Drop for StandInWorker {
     fn drop(&mut self) {
         if let Some(release) = self.release.take() {
-            let _ = release.send(());
+            // The worker may already have left after its own bounded wait; a
+            // refused release then has nobody to wake, so it is recorded.
+            if release.send(()).is_err() {
+                log::trace!("StandInWorker: worker left before its release arrived");
+            }
         }
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            drop(handle.join());
         }
     }
 }
