@@ -15,7 +15,12 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from tests.make_contract_helpers import prerequisite_map
-from tests.workflow_command_helpers import make_goals
+from tests.workflow_command_helpers import (
+    CARGO_SUITE_COMMANDS,
+    _logical_lines,
+    _runs_cargo_suite,
+    make_goals,
+)
 from tests.workflow_contract_helpers import (
     PREFLIGHT,
     depends_on_preflight,
@@ -256,3 +261,118 @@ def test_generated_goals_are_gated_exactly_when_the_preflight_is_named(
     depends = depends_on_preflight({"test": (PREFLIGHT,)})
     problems = provisioning_problems(job, depends)
     assert bool(problems) is ("test" in goals), (line, goals, problems)
+
+
+CONTINUATION_WORDS: typ.Final[tuple[str, ...]] = (
+    "make",
+    "test",
+    "check-fmt",
+    "-j",
+    "4",
+    "echo",
+    "hello",
+)
+CARGO_FLAGS: typ.Final[tuple[str, ...]] = (
+    "--locked",
+    "--quiet",
+    "--all-targets",
+    "--offline",
+)
+CARGO_VALUE_PAIRS: typ.Final[tuple[tuple[str, str], ...]] = (
+    ("--manifest-path", "rust_extension/Cargo.toml"),
+    ("-p", "femtologging_rs"),
+    ("--features", "python"),
+    ("--target-dir", "target"),
+)
+CARGO_SUBCOMMANDS: typ.Final[tuple[str, ...]] = ("test", "nextest", "build", "check")
+
+
+@st.composite
+def _continued_command(draw: st.DrawFn) -> tuple[str, str]:
+    """Generate a command split across backslash-continued physical lines.
+
+    The cuts fall at arbitrary offsets, including inside a word, because the
+    shell deletes the backslash and the newline before it tokenises.
+
+    Returns
+    -------
+    tuple[str, str]
+        The `run` body and the single command it must join into.
+    """
+    command = " ".join(
+        draw(st.lists(st.sampled_from(CONTINUATION_WORDS), min_size=1, max_size=4))
+    )
+    if len(command) < 2:
+        return command, command
+    cuts = sorted(
+        draw(st.sets(st.integers(min_value=1, max_value=len(command) - 1), max_size=3))
+    )
+    pieces = []
+    previous = 0
+    for cut in cuts:
+        pieces.append(command[previous:cut])
+        previous = cut
+    pieces.append(command[previous:])
+    return "\\\n".join(pieces), command
+
+
+@st.composite
+def _cargo_command(draw: st.DrawFn) -> tuple[list[str], str]:
+    """Generate a Cargo command whose options all precede its subcommand.
+
+    Returns
+    -------
+    tuple[list[str], str]
+        The shell tokens and the subcommand they declare.
+    """
+    tokens = ["cargo", draw(st.sampled_from(("+nightly-2026-05-28", "+stable")))]
+    tokens.extend(draw(st.lists(st.sampled_from(CARGO_FLAGS), max_size=2)))
+    for option, value in draw(st.lists(st.sampled_from(CARGO_VALUE_PAIRS), max_size=2)):
+        tokens.extend((option, value))
+    subcommand = draw(st.sampled_from(CARGO_SUBCOMMANDS))
+    tokens.append(subcommand)
+    return tokens, subcommand
+
+
+@settings(max_examples=50, deadline=None)
+@given(body_and_command=_continued_command())
+def test_backslash_continuations_join_into_one_command(
+    body_and_command: tuple[str, str],
+) -> None:
+    """A trailing backslash joins its line to the next and inserts nothing."""
+    body, command = body_and_command
+    assert _logical_lines(body) == [command], body
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    goals=st.lists(st.sampled_from(GOAL_NAMES), min_size=1, max_size=2),
+    commented=st.lists(st.sampled_from(GOAL_NAMES), min_size=1, max_size=2),
+)
+def test_a_trailing_comment_contributes_no_goals(
+    goals: list[str], commented: list[str]
+) -> None:
+    """A `#` at the start of a word hides the rest of its line."""
+    line = f"make {' '.join(goals)} # make {' '.join(commented)}"
+    assert make_goals(line) == goals, line
+
+
+@settings(max_examples=50, deadline=None)
+@given(goal=st.sampled_from(GOAL_NAMES), quote=st.sampled_from(("'", '"')))
+def test_a_quoted_newline_keeps_the_command_open(goal: str, quote: str) -> None:
+    """A newline inside an open quote joins lines and hides no command."""
+    run = f"printf {quote}quoted\ntext{quote}\nmake {goal}"
+    assert _logical_lines(run) == [
+        f"printf {quote}quotedtext{quote}",
+        f"make {goal}",
+    ], run
+
+
+@settings(max_examples=50, deadline=None)
+@given(command=_cargo_command())
+def test_cargo_leading_options_do_not_hide_the_subcommand(
+    command: tuple[list[str], str],
+) -> None:
+    """Flags, value-taking options and a `+toolchain` override precede the verb."""
+    tokens, subcommand = command
+    assert _runs_cargo_suite(tokens) is (subcommand in CARGO_SUITE_COMMANDS), tokens

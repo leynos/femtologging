@@ -211,6 +211,8 @@ def test_make_goals_reads_each_invocation_form(line: str, expected: list[str]) -
         ("printf one \\\\\\\ntwo", ["printf one \\\\two"]),
         ('printf "double \\\ntwo"', ['printf "double two"']),
         ("printf 'single \\\ntwo'", ["printf 'single \\two'"]),
+        ('printf "bare\ntwo"', ['printf "baretwo"']),
+        ("printf 'bare\ntwo'", ["printf 'baretwo'"]),
     ],
     ids=[
         "comment-backslash",
@@ -218,6 +220,8 @@ def test_make_goals_reads_each_invocation_form(line: str, expected: list[str]) -
         "bare-continuation",
         "double-quoted",
         "single-quoted",
+        "bare-double-quoted-newline",
+        "bare-single-quoted-newline",
     ],
 )
 def test_logical_lines_follows_shell_quoting_and_comments(
