@@ -13,7 +13,8 @@ fn root_with_handler() -> LoggerConfigBuilder {
 
 #[rstest]
 #[serial]
-fn unknown_handler_filter_id_rejected(_gil_and_clean_manager: ()) {
+fn unknown_handler_filter_id_rejected() {
+    gil_and_clean_manager();
     let builder = ConfigBuilder::new()
         .with_handler(
             "h",
@@ -23,12 +24,13 @@ fn unknown_handler_filter_id_rejected(_gil_and_clean_manager: ()) {
     let err = builder
         .build_and_init()
         .expect_err("build_and_init should fail for an unknown handler filter id");
-    assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_string()]));
+    assert!(matches!(err, ConfigError::UnknownIds(ids) if ids == vec!["missing".to_owned()]));
 }
 
 #[rstest]
 #[serial]
-fn handler_build_failure_preserves_error_mapping(_gil_and_clean_manager: ()) {
+fn handler_build_failure_preserves_error_mapping() {
+    gil_and_clean_manager();
     let builder = ConfigBuilder::new()
         .with_handler("h", StreamHandlerBuilder::stderr().with_capacity(0))
         .with_root_logger(root_with_handler());
@@ -46,7 +48,8 @@ fn handler_build_failure_preserves_error_mapping(_gil_and_clean_manager: ()) {
 
 #[rstest]
 #[serial]
-fn formatter_backed_handler_build_failure_preserves_error_mapping(_gil_and_clean_manager: ()) {
+fn formatter_backed_handler_build_failure_preserves_error_mapping() {
+    gil_and_clean_manager();
     let builder = ConfigBuilder::new()
         .with_handler(
             "h",

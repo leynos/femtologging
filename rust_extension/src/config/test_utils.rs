@@ -55,7 +55,8 @@ pub mod prune_test_support {
 
     /// Build the stderr-handler baseline, leaving the manager reset first.
     #[fixture]
-    pub fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
+    pub fn configured_core_logger() -> Result<(), ConfigError> {
+        gil_and_clean_manager();
         configured_baseline()
     }
 
