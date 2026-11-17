@@ -12,6 +12,11 @@ import venv
 
 import pytest
 
+from tests.clean_wheel_env import (
+    assert_wheel_imports_in_clean_env,
+    clean_venv_available,
+    missing_clean_venv_modules,
+)
 from tests.maturin_compat import (
     build_native_wheel_artifact,
     read_expected_maturin_version,
@@ -64,6 +69,13 @@ def production_wheel(tmp_path_factory: pytest.TempPathFactory) -> pth.Path:
         pytest.skip("Rust toolchain and maturin are required to build a wheel")
     if sys.version_info >= (3, 15):
         pytest.skip("maturin compatibility snapshot stops at Python 3.14")
+    # The clean-environment smoke test needs a stdlib venv, so skip before
+    # paying for the release build when the interpreter cannot provide one.
+    if not clean_venv_available():
+        pytest.skip(
+            "clean wheel smoke test requires missing stdlib modules: "
+            + ", ".join(missing_clean_venv_modules())
+        )
     return build_native_wheel_artifact(
         repo_root(), tmp_path_factory.mktemp("production-wheel")
     )
@@ -113,8 +125,9 @@ def test_installed_maturin_matches_expected_pin() -> None:
 @pytest.mark.timeout(3620)
 def test_maturin_wheel_build_snapshot(
     production_wheel: pth.Path,
+    tmp_path: pth.Path,
 ) -> None:
-    """Native wheel metadata and layout match expected maturin output."""
+    """The wheel matches the recorded layout and imports in a clean environment."""
     root = repo_root()
     expected = read_expected_maturin_version(root)
     if not toolchain_available():
@@ -134,6 +147,7 @@ def test_maturin_wheel_build_snapshot(
         "built wheel metadata and layout must match the recorded manifest in "
         f"{_EXPECTED_WHEEL_SNAPSHOT.name}"
     )
+    assert_wheel_imports_in_clean_env(production_wheel, tmp_path / "clean-env")
 
 
 @pytest.mark.timeout(3620)
