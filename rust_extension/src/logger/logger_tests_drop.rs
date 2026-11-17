@@ -208,6 +208,11 @@ struct BlockedSnapshot {
     drop_started: Receiver<()>,
     /// Set once the dropping thread returns.
     drop_finished: Arc<AtomicBool>,
+    /// The logger's own in-flight counter, kept alive past the logger's drop.
+    ///
+    /// The logger owns the budget the counter lives in, so a clone is what
+    /// lets the test read the count while the dropping thread holds the logger.
+    in_flight: Arc<LoggerBudget>,
     /// The thread that drops the logger.
     dropper: JoinHandle<()>,
 }
@@ -256,6 +261,13 @@ fn blocked_record_snapshot() -> BlockedSnapshot {
     };
     let drop_finished = Arc::new(AtomicBool::new(false));
     let finished = Arc::clone(&drop_finished);
+    // Read the counter through a clone taken while the logger is still here:
+    // the dropping thread owns the logger from now on, and the budget the
+    // counter lives in would otherwise go with it.
+    let (_, budget) = logger
+        .dispatch_state()
+        .expect("the drop-order test logger should own a dispatch state");
+    let in_flight = Arc::clone(budget);
     let dropper = std::thread::spawn(move || {
         drop(logger);
         finished.store(true, Ordering::SeqCst);
@@ -264,20 +276,29 @@ fn blocked_record_snapshot() -> BlockedSnapshot {
         release,
         drop_started: drop_started_rx,
         drop_finished,
+        in_flight,
         dropper,
     }
 }
 
+/// What the blocked drop was observed doing.
+struct ObservedDrop {
+    /// Records still in flight when the handler's destructor started.
+    in_flight_at_destructor: usize,
+    /// Whether the drop finished inside [`OBSERVATION_WINDOW`] while the
+    /// destructor was blocked.
+    finished_early: bool,
+    /// Whether the drop finished once the destructor was released.
+    finished: bool,
+}
+
 /// Release the record, observe the drop, then release the destructor.
-///
-/// Returns whether the drop finished inside [`OBSERVATION_WINDOW`] while the
-/// destructor was blocked, and whether it finished after the destructor was
-/// released.
-fn release_and_observe(snapshot: BlockedSnapshot) -> (bool, bool) {
+fn release_and_observe(snapshot: BlockedSnapshot) -> ObservedDrop {
     let BlockedSnapshot {
         release,
         drop_started,
         drop_finished,
+        in_flight,
         dropper,
     } = snapshot;
     release
@@ -288,13 +309,20 @@ fn release_and_observe(snapshot: BlockedSnapshot) -> (bool, bool) {
         "releasing the record must drop its handler snapshot, which runs the \
          handler's destructor",
     );
+    // The destructor blocks until this test releases it, so the count cannot
+    // change between this reading and the drop's completion.
+    let in_flight_at_destructor = in_flight.in_flight();
     let finished_early = finished_within(&drop_finished, OBSERVATION_WINDOW);
     release
         .destructor
         .send(())
         .expect("the blocked destructor must still be waiting for its release");
     dropper.join().expect("the dropping thread must not panic");
-    (finished_early, drop_finished.load(Ordering::SeqCst))
+    ObservedDrop {
+        in_flight_at_destructor,
+        finished_early,
+        finished: drop_finished.load(Ordering::SeqCst),
+    }
 }
 
 /// Whether `flag` is set before `window` elapses, sampling as it waits.
@@ -323,22 +351,34 @@ fn finished_within(flag: &AtomicBool, window: Duration) -> bool {
 ///
 /// - releasing the snapshot before publishing completion keeps the record in
 ///   flight while the destructor runs, so the drop is still waiting when the
-///   destructor starts;
+///   destructor starts and the logger's counter is still non-zero;
 /// - publishing completion first lets the drop return before the destructor
-///   starts at all.
+///   starts at all, and leaves the counter at zero when it does.
+///
+/// The counter is the scheduling-independent half of that comparison. The
+/// completion window alone can pass against the wrong ordering whenever the
+/// dropping thread is never scheduled inside it, so the count is sampled while
+/// the destructor is blocked: it cannot change between that reading and the
+/// drop's completion.
 #[test]
 fn drop_waits_for_the_record_snapshot_release() {
-    let (finished_early, finished) = release_and_observe(blocked_record_snapshot());
+    let observed = release_and_observe(blocked_record_snapshot());
 
     assert!(
-        !finished_early,
+        observed.in_flight_at_destructor > 0,
+        "the job published completion before it released its snapshot: the \
+         destructor had started while the record was no longer counted in \
+         flight, so a logger drop had nothing left to wait for"
+    );
+    assert!(
+        !observed.finished_early,
         "the drop returned while a record job still owned the handler: the \
          destructor had started and the record was still in flight, so only a \
          job that published completion before releasing its snapshot can \
          explain the drop finishing inside {OBSERVATION_WINDOW:?}"
     );
     assert!(
-        finished,
+        observed.finished,
         "the drop must finish once the record job has released its snapshot"
     );
 }
