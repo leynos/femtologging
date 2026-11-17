@@ -97,6 +97,39 @@ fn a_loggers_budget_leaves_another_logger_a_slot() {
     }
 }
 
+/// A pool that would own no shard is refused when it is built.
+///
+/// The refusal is what makes `assign_shard` total: by the time a pool exists it
+/// holds a shard, so round-robin assignment cannot look up an empty pool.
+#[test]
+fn a_pool_of_zero_shards_is_refused() {
+    use std::io::ErrorKind;
+
+    let Err(error) = Dispatcher::start_with(std::process::id(), 0, Shard::start) else {
+        panic!("a pool with no shard must be refused");
+    };
+    assert_eq!(error.started, 0, "no worker start was attempted");
+    assert_eq!(error.total, 0, "no shard was requested");
+    assert_eq!(
+        error.source.kind(),
+        ErrorKind::InvalidInput,
+        "an empty pool is an invalid request, not a thread refusal"
+    );
+    assert!(
+        error.to_string().contains("at least one shard"),
+        "the refusal must name the invariant: {error}"
+    );
+
+    let Err(seam_error) = super::shared_with_shards_for_test(0) else {
+        panic!("the test seam must refuse an empty pool too");
+    };
+    assert_eq!(
+        seam_error.source.kind(),
+        ErrorKind::InvalidInput,
+        "the test seam must report the same invalid request"
+    );
+}
+
 #[test]
 fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
     use std::io::ErrorKind;
