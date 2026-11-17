@@ -16,6 +16,7 @@ import typing as typ
 
 import pytest
 
+from tests.build_tools_script_support import HOST_TRIPLE, StubOptions, stub_rustup
 from tests.build_tools_support import ROOT, fake_executable
 
 if typ.TYPE_CHECKING:
@@ -118,9 +119,6 @@ def _channel() -> str:
     return match.group(1)
 
 
-_HOST_TRIPLE: typ.Final[str] = "x86_64-unknown-linux-gnu"
-
-
 def _installed(channel: str) -> str:
     """Return the rustup listing line for `channel` on the test host.
 
@@ -134,60 +132,7 @@ def _installed(channel: str) -> str:
     str
         One line in the form `rustup toolchain list` emits.
     """
-    return f"{channel}-{_HOST_TRIPLE} (active)"
-
-
-def _stub_rustup(
-    bin_dir: Path,
-    listed: str,
-    *,
-    pwd_log: Path | None = None,
-    host_triple: str | None = _HOST_TRIPLE,
-    reports_host: bool = True,
-    listing_exit_status: int = 0,
-    argv_log: Path | None = None,
-) -> None:
-    """Install a rustup stub that serves the two probes the script runs.
-
-    Parameters
-    ----------
-    bin_dir
-        Directory holding the stub executables.
-    listed
-        The single line the stub reports for `rustup toolchain list`.
-    pwd_log
-        When given, the stub records its working directory here for each
-        command it serves.
-    host_triple
-        The triple `rustup show` reports, or None when the probe must fail.
-    reports_host
-        Whether `rustup show` prints a `Default host:` line; False omits it.
-    listing_exit_status
-        Exit status for `rustup toolchain list`; non-zero prints no listing.
-    argv_log
-        When given, the stub appends each command's argument vector here.
-    """
-    record = ""
-    if argv_log is not None:
-        record += f"printf '%s\\n' \"$*\" >> '{argv_log}'; "
-    if pwd_log is not None:
-        record += f"pwd >> '{pwd_log}'; "
-    if host_triple is None:
-        shown = "exit 1"
-    elif reports_host:
-        shown = f"printf 'Default host: {host_triple}\\n'; exit 0"
-    else:
-        shown = "printf 'Default toolchain: stable\\n'; exit 0"
-    listing = f"printf '{listed}\\n'; exit 0"
-    if listing_exit_status:
-        listing = f"exit {listing_exit_status}"
-    fake_executable(
-        bin_dir / "rustup",
-        'if [ "$1" = toolchain ] && [ "$2" = list ]; then '
-        f"{record}{listing}; fi; "
-        f'if [ "$1" = show ]; then {record}{shown}; fi; '
-        "exit 1",
-    )
+    return f"{channel}-{HOST_TRIPLE} (active)"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
@@ -200,7 +145,7 @@ class _Case:
     returncode: int
     messages: tuple[str, ...]
     absent_messages: tuple[str, ...] = ()
-    host_triple: str | None = _HOST_TRIPLE
+    host_triple: str | None = HOST_TRIPLE
     reports_host: bool = True
     listing_exit_status: int = 0
 
@@ -318,12 +263,14 @@ def _run_case(tmp_path: Path, case: _Case) -> subprocess.CompletedProcess[str]:
         The probe's completed run.
     """
     bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(
+    stub_rustup(
         bin_dir,
         case.listed_toolchain,
-        host_triple=case.host_triple,
-        reports_host=case.reports_host,
-        listing_exit_status=case.listing_exit_status,
+        StubOptions(
+            host_triple=case.host_triple,
+            reports_host=case.reports_host,
+            listing_exit_status=case.listing_exit_status,
+        ),
     )
     if case.mold_body is not None:
         fake_executable(bin_dir / "mold", case.mold_body)
@@ -345,7 +292,7 @@ def test_the_toolchain_probes_run_outside_the_repository(tmp_path: Path) -> None
     """Neither rustup probe can resolve the repository's toolchain override."""
     bin_dir = _probe_bin_dir(tmp_path)
     pwd_log = tmp_path / "rustup-pwd"
-    _stub_rustup(bin_dir, _installed(_channel()), pwd_log=pwd_log)
+    stub_rustup(bin_dir, _installed(_channel()), StubOptions(pwd_log=pwd_log))
     fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
 
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
@@ -362,7 +309,7 @@ def test_the_rustup_probes_run_the_expected_subcommands(tmp_path: Path) -> None:
     """The preflight asks for the host first, then the installed listing."""
     bin_dir = _probe_bin_dir(tmp_path)
     argv_log = tmp_path / "rustup-argv"
-    _stub_rustup(bin_dir, _installed(_channel()), argv_log=argv_log)
+    stub_rustup(bin_dir, _installed(_channel()), StubOptions(argv_log=argv_log))
     fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
 
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
@@ -375,7 +322,7 @@ def test_the_rustup_probes_run_the_expected_subcommands(tmp_path: Path) -> None:
 def test_a_failed_listing_is_reported_as_a_probe_failure(tmp_path: Path) -> None:
     """A failed listing exits 1 and is not described as an absent toolchain."""
     bin_dir = _probe_bin_dir(tmp_path)
-    _stub_rustup(bin_dir, "", listing_exit_status=1)
+    stub_rustup(bin_dir, "", StubOptions(listing_exit_status=1))
     fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
 
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
@@ -389,7 +336,7 @@ def test_a_failed_show_is_named_with_the_bare_channel(tmp_path: Path) -> None:
     """A failed `rustup show` is named and the bare channel still satisfies it."""
     bin_dir = _probe_bin_dir(tmp_path)
     channel = _channel()
-    _stub_rustup(bin_dir, f"{channel} (installed)", host_triple=None)
+    stub_rustup(bin_dir, f"{channel} (installed)", StubOptions(host_triple=None))
     fake_executable(bin_dir / "mold", "printf 'mold 2.41.0\\n'")
 
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))

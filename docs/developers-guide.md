@@ -678,8 +678,8 @@ so a new suite job is covered without being named there.
 
 The preflight runs `rustup toolchain list` and `rustup show` from `/`, so the
 repository's `rust-toolchain.toml` cannot provision or redirect the pinned
-channel. It matches the installed name as `<channel>-<host>`, and accepts a
-bare `<channel>` only when `rustup show` reports no host. A probe that fails is
+channel. It matches the installed name as `<channel>-<host>`, and accepts a bare
+`<channel>` only when `rustup show` reports no host. A probe that fails is
 named in the report rather than described as an absent toolchain, so an
 operator can tell a broken rustup from a missing installation.
 
