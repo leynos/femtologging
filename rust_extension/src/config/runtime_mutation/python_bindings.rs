@@ -1,8 +1,12 @@
 //! Python bindings for runtime mutation builders.
 
-use super::*;
-use crate::macros::AsPyDict;
-use pyo3::{Bound, IntoPyObjectExt, types::PyDict};
+use std::collections::BTreeMap;
+
+use pyo3::{IntoPyObjectExt, prelude::*, types::PyDict};
+
+use crate::{FemtoLevel, config::types::HandlerBuilder, filters::FilterBuilder, macros::AsPyDict};
+
+use super::{CollectionMutation, LoggerMutationBuilder, RuntimeConfigBuilder};
 
 /// Serializes a string-keyed builder map by delegating each value's Python conversion.
 fn collection_to_pydict<'py, V: AsPyDict>(
@@ -60,17 +64,14 @@ impl LoggerMutationBuilder {
 
     /// Sets the scalar level override and returns the same Python-owned builder.
     #[pyo3(name = "with_level")]
-    fn py_with_level<'py>(mut slf: PyRefMut<'py, Self>, level: FemtoLevel) -> PyRefMut<'py, Self> {
+    fn py_with_level(mut slf: PyRefMut<'_, Self>, level: FemtoLevel) -> PyRefMut<'_, Self> {
         slf.level = Some(level);
         slf
     }
 
     /// Sets the scalar propagation override and returns the same Python-owned builder.
     #[pyo3(name = "with_propagate")]
-    fn py_with_propagate<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        propagate: bool,
-    ) -> PyRefMut<'py, Self> {
+    fn py_with_propagate(mut slf: PyRefMut<'_, Self>, propagate: bool) -> PyRefMut<'_, Self> {
         slf.propagate = Some(propagate);
         slf
     }
@@ -78,10 +79,7 @@ impl LoggerMutationBuilder {
     /// Replaces handler IDs with the normalized list. A conflict is recorded
     /// only if this differs from the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "replace_handlers")]
-    fn py_replace_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_replace_handlers(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::replace(ids));
         slf
     }
@@ -89,10 +87,7 @@ impl LoggerMutationBuilder {
     /// Appends normalized handler IDs. A conflict is recorded only if this
     /// differs from the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "append_handlers")]
-    fn py_append_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_append_handlers(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::append(ids));
         slf
     }
@@ -100,10 +95,7 @@ impl LoggerMutationBuilder {
     /// Removes normalized handler IDs. A conflict is recorded only if this
     /// differs from the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "remove_handlers")]
-    fn py_remove_handlers<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_remove_handlers(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::remove(ids));
         slf
     }
@@ -111,7 +103,7 @@ impl LoggerMutationBuilder {
     /// Clears handler IDs. A conflict is recorded only if this differs from
     /// the prior handler mutation; identical repeats are accepted.
     #[pyo3(name = "clear_handlers")]
-    fn py_clear_handlers<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
+    fn py_clear_handlers(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.set_handlers(CollectionMutation::Clear);
         slf
     }
@@ -119,10 +111,7 @@ impl LoggerMutationBuilder {
     /// Replaces filter IDs with the normalized list. A conflict is recorded
     /// only if this differs from the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "replace_filters")]
-    fn py_replace_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_replace_filters(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::replace(ids));
         slf
     }
@@ -130,10 +119,7 @@ impl LoggerMutationBuilder {
     /// Appends normalized filter IDs. A conflict is recorded only if this
     /// differs from the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "append_filters")]
-    fn py_append_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_append_filters(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::append(ids));
         slf
     }
@@ -141,10 +127,7 @@ impl LoggerMutationBuilder {
     /// Removes normalized filter IDs. A conflict is recorded only if this
     /// differs from the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "remove_filters")]
-    fn py_remove_filters<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        ids: Vec<String>,
-    ) -> PyRefMut<'py, Self> {
+    fn py_remove_filters(mut slf: PyRefMut<'_, Self>, ids: Vec<String>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::remove(ids));
         slf
     }
@@ -152,7 +135,7 @@ impl LoggerMutationBuilder {
     /// Clears filter IDs. A conflict is recorded only if this differs from
     /// the prior filter mutation; identical repeats are accepted.
     #[pyo3(name = "clear_filters")]
-    fn py_clear_filters<'py>(mut slf: PyRefMut<'py, Self>) -> PyRefMut<'py, Self> {
+    fn py_clear_filters(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
         slf.set_filters(CollectionMutation::Clear);
         slf
     }
@@ -176,10 +159,10 @@ impl RuntimeConfigBuilder {
     fn py_with_handler<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
-        builder: Bound<'py, PyAny>,
+        builder: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let builder = builder.extract::<HandlerBuilder>()?;
-        slf.handlers.insert(id, builder);
+        let extracted = builder.extract::<HandlerBuilder>()?;
+        slf.handlers.insert(id, extracted);
         Ok(slf)
     }
 
@@ -188,30 +171,30 @@ impl RuntimeConfigBuilder {
     fn py_with_filter<'py>(
         mut slf: PyRefMut<'py, Self>,
         id: String,
-        builder: Bound<'py, PyAny>,
+        builder: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let builder = builder.extract::<FilterBuilder>()?;
-        slf.filters.insert(id, builder);
+        let extracted = builder.extract::<FilterBuilder>()?;
+        slf.filters.insert(id, extracted);
         Ok(slf)
     }
 
     /// Stores a named logger mutation builder in the pending runtime request.
     #[pyo3(name = "with_logger")]
-    fn py_with_logger<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_logger(
+        mut slf: PyRefMut<'_, Self>,
         name: String,
         builder: LoggerMutationBuilder,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.loggers.insert(name, builder);
         slf
     }
 
     /// Stores the pending mutation for the root logger.
     #[pyo3(name = "with_root_logger")]
-    fn py_with_root_logger<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    fn py_with_root_logger(
+        mut slf: PyRefMut<'_, Self>,
         builder: LoggerMutationBuilder,
-    ) -> PyRefMut<'py, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.root_logger = Some(builder);
         slf
     }

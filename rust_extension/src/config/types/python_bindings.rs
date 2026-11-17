@@ -1,9 +1,16 @@
 //! Python bindings for configuration builders.
 
-use super::*;
-use crate::macros::{AsPyDict, impl_as_pydict, py_setters};
-use pyo3::{Bound, prelude::*};
 use std::convert::identity;
+
+use pyo3::{Bound, prelude::*};
+
+use crate::{
+    FemtoLevel,
+    filters::FilterBuilder,
+    macros::{AsPyDict, impl_as_pydict, py_setters},
+};
+
+use super::{ConfigBuilder, FormatterBuilder, HandlerBuilder, LoggerConfigBuilder, normalize_vec};
 
 impl AsPyDict for HandlerBuilder {
     fn as_pydict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -71,11 +78,11 @@ py_setters!(ConfigBuilder {
     ///
     /// Any existing formatter with the same identifier is replaced.
     #[pyo3(name = "with_formatter", text_signature = "(self, id, builder, /)")]
-    fn py_with_formatter<'py>(
-        mut slf: PyRefMut<'py, ConfigBuilder>,
+    fn py_with_formatter(
+        mut slf: PyRefMut<'_, ConfigBuilder>,
         id: String,
         builder: FormatterBuilder,
-    ) -> PyRefMut<'py, ConfigBuilder> {
+    ) -> PyRefMut<'_, ConfigBuilder> {
         slf.formatters.insert(id, builder);
         slf
     }
@@ -84,11 +91,11 @@ py_setters!(ConfigBuilder {
     ///
     /// Any existing logger with the same name is replaced.
     #[pyo3(name = "with_logger", text_signature = "(self, name, builder, /)")]
-    fn py_with_logger<'py>(
-        mut slf: PyRefMut<'py, ConfigBuilder>,
+    fn py_with_logger(
+        mut slf: PyRefMut<'_, ConfigBuilder>,
         name: String,
         builder: LoggerConfigBuilder,
-    ) -> PyRefMut<'py, ConfigBuilder> {
+    ) -> PyRefMut<'_, ConfigBuilder> {
         slf.loggers.insert(name, builder);
         slf
     }
@@ -98,7 +105,7 @@ py_setters!(ConfigBuilder {
     fn py_with_filter<'py>(
         mut slf: PyRefMut<'py, ConfigBuilder>,
         id: String,
-        builder: Bound<'py, PyAny>,
+        builder: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, ConfigBuilder>> {
         let fb = builder.extract::<FilterBuilder>()?;
         slf.filters.insert(id, fb);
@@ -110,7 +117,7 @@ py_setters!(ConfigBuilder {
     fn py_with_handler<'py>(
         mut slf: PyRefMut<'py, ConfigBuilder>,
         id: String,
-        builder: Bound<'py, PyAny>,
+        builder: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, ConfigBuilder>> {
         let hb = builder.extract::<HandlerBuilder>()?;
         slf.handlers.insert(id, hb);
