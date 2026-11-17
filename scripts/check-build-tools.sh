@@ -49,12 +49,20 @@ installed_toolchains() {
 # As with the enumeration, `/` lies outside the repository, so the pinned
 # `rust-toolchain.toml` cannot override the answer. A rustup too old, or too
 # broken, to report a host triple yields a failure that the caller turns into
-# the bare-channel fallback below.
+# the bare-channel fallback below. Both failure shapes name `rustup show`: a
+# probe that ran and failed is a different operator problem from one that
+# answered without a host triple. `note` writes to stderr, which the caller's
+# command substitution does not capture, so the diagnostic still reaches the
+# operator.
 host_triple() {
   local shown host
-  shown=$( cd -- / && rustup show ) || return 1
+  if ! shown=$( cd -- / && rustup show ); then
+    note 'rustup show failed; cannot determine the default host triple'
+    return 1
+  fi
   host=$(printf '%s\n' "$shown" | sed -n 's/^Default host: //p')
   if [ -z "$host" ]; then
+    note 'rustup show reported no default host triple'
     return 1
   fi
   printf '%s\n' "$host"
@@ -69,9 +77,14 @@ host_triple() {
 # architecture's toolchain satisfy a preflight whose linker and binaries are
 # host-specific. Only when rustup cannot report a host triple is the exact
 # bare `<channel>` accepted, as a fallback rather than a general pattern.
+#
+# Returns 0 when installed, 1 when the listing does not contain the channel,
+# and 2 when rustup could not produce a listing at all. The caller keeps those
+# apart: a failed probe must not be reported as an absent toolchain.
 toolchain_is_installed() {
-  local channel=$1 host line name
+  local channel=$1 host listing line name
   host=$(host_triple) || host=
+  listing=$(installed_toolchains) || return 2
   while IFS= read -r line; do
     name=${line%%[[:space:]]*}
     if [ -n "$host" ]; then
@@ -81,7 +94,7 @@ toolchain_is_installed() {
     elif [ "$name" = "$channel" ]; then
       return 0
     fi
-  done < <(installed_toolchains)
+  done <<< "$listing"
   return 1
 }
 
@@ -89,18 +102,26 @@ toolchain_is_installed() {
 # must already be installed. A stable/MSRV promise does not remove the need for
 # the pinned toolchain to be materialized on the host.
 check_toolchain() {
-  local channel=$1
+  local channel=$1 status=0
   if ! command -v rustup >/dev/null 2>&1; then
     note 'rustup not found on PATH; it selects the pinned toolchain'
     note 'install it from https://rustup.rs'
     return 1
   fi
-  if ! toolchain_is_installed "$channel"; then
+  # The `|| status=$?` form keeps a failing probe from tripping `set -e` while
+  # preserving the distinction between "not installed" and "could not list".
+  toolchain_is_installed "$channel" || status=$?
+  if [ "$status" -eq 0 ]; then
+    note "toolchain ${channel} available"
+    return 0
+  fi
+  if [ "$status" -eq 1 ]; then
     note "toolchain ${channel} is not installed"
     note 'install it with: make install-build-tools'
     return 1
   fi
-  note "toolchain ${channel} available"
+  note 'rustup could not list installed toolchains'
+  return 1
 }
 
 # Report on the linker half. mold ships for Linux only, so every other host
