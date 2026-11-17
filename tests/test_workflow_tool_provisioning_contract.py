@@ -237,6 +237,42 @@ def test_logical_lines_skips_here_document_bodies() -> None:
     assert _logical_lines(run) == ["cat <<'EOF'", "cargo test"], run
 
 
+@pytest.mark.parametrize(
+    ("run", "expected"),
+    [
+        ("echo '<<EOF'\ncargo test", ["echo '<<EOF'", "cargo test"]),
+        ('echo "<<EOF"\ncargo test', ['echo "<<EOF"', "cargo test"]),
+        ("cat <<-'EOF'\n\tbody\n\tEOF\ncargo test", ["cat <<-'EOF'", "cargo test"]),
+        ("(( count << 2 ))\ncargo test", ["(( count << 2 ))", "cargo test"]),
+    ],
+    ids=[
+        "single-quoted-operator",
+        "double-quoted-operator",
+        "tab-stripping-delimiter",
+        "arithmetic-shift",
+    ],
+)
+def test_only_an_unquoted_operator_opens_a_here_document(
+    run: str, expected: list[str]
+) -> None:
+    """A `<<` the shell does not read as an operator hides nothing.
+
+    A quoted `<<` is part of its word, and an arithmetic shift's operator is
+    followed by a number rather than a delimiter. Reading either as a
+    here-document would skip every later line, because no delimiter line
+    follows to end the skip.
+    """
+    assert _logical_lines(run) == expected, run
+
+
+def test_a_quoted_operator_leaves_the_suite_visible() -> None:
+    """The reported case still runs a suite the provisioning check must see."""
+    run = "echo '<<EOF'\ncargo test"
+    job = _job({"name": "Test", "run": run})
+    problems = provisioning_problems(job, depends_on_preflight(SYNTHETIC_PREREQUISITES))
+    assert problems, (run, problems)
+
+
 def test_prerequisite_map_accumulates_repeated_rules() -> None:
     """Two rules for one target contribute both prerequisite lists in order."""
     rules = [

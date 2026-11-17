@@ -1,4 +1,4 @@
-"""Skip here-document bodies while reading a workflow step's shell text.
+"""Read a here-document operator and skip the body it hands to the shell.
 
 A here-document hands the shell the lines that follow it verbatim, up to a
 delimiter line. Those lines are data, not shell, so a quote inside one must
@@ -6,10 +6,12 @@ not be read as opening a quoted string. Without that, an apostrophe in a
 here-document body would open a single quote that swallows every line below
 it, including a later `cargo test` the provisioning contract has to see.
 
-Reading the operator is deliberately approximate: it is found wherever it
-appears in the joined command, even inside a quoted string. A false match only
-costs the lines it skips when a matching delimiter line actually follows, and
-that is rarer than the miss it prevents.
+Only an operator the shell reads opens a here-document: a `<<` inside a quoted
+word is part of that word. This module therefore reads an operator at a given
+offset rather than searching for one, and its caller supplies the offsets that
+its own quoting scan found unquoted. One approximation remains: the scan does
+not look inside a command substitution that is itself quoted, so a
+here-document opened there is not seen.
 """
 
 from __future__ import annotations
@@ -17,9 +19,12 @@ from __future__ import annotations
 import re
 import typing as typ
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 #: A here-document operator and its delimiter. The delimiter may be bare or
 #: single- or double-quoted, and `<<-` strips leading tabs from the body.
-_HEREDOC: typ.Final[re.Pattern[str]] = re.compile(
+_OPERATOR: typ.Final[re.Pattern[str]] = re.compile(
     r"<<(-?)[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))"
 )
 
@@ -31,30 +36,46 @@ class HereDocument(typ.NamedTuple):
     strips_leading_tabs: bool
 
 
-def here_documents(command: str) -> list[HereDocument]:
-    """Return the here-documents `command` opens, in order.
+def here_document_at(command: str, at: int) -> HereDocument | None:
+    """Return the here-document whose operator starts at `at`, if any.
 
     Parameters
     ----------
     command
         One joined shell command.
+    at
+        Offset of a `<<` the shell would read as an operator.
 
     Returns
     -------
-    list[HereDocument]
-        One entry per operator, in the order the shell reads them.
+    HereDocument | None
+        The here-document the operator opens, or ``None`` when no delimiter
+        follows. A delimiter shaped like a plain word is required, so the
+        `<<` of an arithmetic shift opens nothing.
+
+    Examples
+    --------
+    >>> here_document_at("cat <<'EOF'", 4)
+    HereDocument(delimiter='EOF', strips_leading_tabs=False)
+    >>> here_document_at("(( n << 2 ))", 6) is None
+    True
     """
-    return [
-        HereDocument(
-            delimiter=next(part for part in match.groups()[1:] if part is not None),
-            strips_leading_tabs=match.group(1) == "-",
-        )
-        for match in _HEREDOC.finditer(command)
-    ]
+    match = _OPERATOR.match(command, at)
+    if match is None:
+        return None
+    return HereDocument(
+        delimiter=next(part for part in match.groups()[1:] if part is not None),
+        strips_leading_tabs=match.group(1) == "-",
+    )
 
 
-def skip_here_documents(lines: list[str], start: int, command: str) -> int:
-    """Return the index of the first line after `command`'s here-documents.
+def skip_here_documents(
+    lines: list[str], start: int, documents: cabc.Sequence[HereDocument]
+) -> int:
+    """Return the index of the first line after `documents`' bodies.
+
+    A here-document whose delimiter never appears is malformed shell, and the
+    shell takes every remaining line as data. The same skip applies here.
 
     Parameters
     ----------
@@ -62,8 +83,9 @@ def skip_here_documents(lines: list[str], start: int, command: str) -> int:
         Every physical line of the step's ``run`` body.
     start
         Index of the first line a here-document body may occupy.
-    command
-        The joined command whose here-documents are being read.
+    documents
+        The here-documents the command opens, in the order the shell reads
+        them.
 
     Returns
     -------
@@ -73,12 +95,14 @@ def skip_here_documents(lines: list[str], start: int, command: str) -> int:
     Examples
     --------
     >>> skip_here_documents(
-    ...     ["cat <<'EOF'", "Don't", "EOF", "cargo test"], 0, "cat <<'EOF'"
+    ...     ["cat <<'EOF'", "Don't", "EOF", "cargo test"],
+    ...     0,
+    ...     [HereDocument(delimiter="EOF", strips_leading_tabs=False)],
     ... )
     3
     """
     index = start
-    for document in here_documents(command):
+    for document in documents:
         while index < len(lines):
             candidate = lines[index]
             index += 1
