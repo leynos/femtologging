@@ -1757,9 +1757,11 @@ Implement `log::Log` first for immediate ecosystem compatibility; a
   record is the transport library's own DEBUG output, not a loss, so it is
   neither warned about nor counted, and this handler exposes no outcome
   counters; bounded handler telemetry is a separate line of work. A maintainer
-  who needs to see suppression raises `ureq.unit`, `ureq.stream` and
-  `ureq.pool` to DEBUG and watches a non-HTTP sink: the records that reach that
-  sink and never reach the endpoint are the suppressed ones.
+  who needs to see suppression raises the worker's `ureq` targets to DEBUG and
+  watches a non-HTTP sink. The marker follows the worker thread rather than any
+  target or level, so a record absent from the endpoint is evidence of
+  suppression rather than an exact count: a filter or a failed delivery can
+  also account for the absence.
 
   For Python-first hybrid applications, the package exposes
   `femtologging.setup_rust_tracing()` as an explicit convenience helper that

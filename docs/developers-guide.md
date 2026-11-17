@@ -390,14 +390,16 @@ about, nor counted as a drop: it never entered this handler's queue, so
 reporting it as a loss would misdescribe a healthy worker. Non-HTTP handlers
 still receive the record, which keeps independent diagnostics available.
 
-Suppression is silent and has no counter or summary of its own. The records it
-discards are the transport library's own DEBUG output, so a maintainer who
-needs to see them raises the `ureq` targets (`ureq.unit`, `ureq.stream`,
-`ureq.pool`) to DEBUG and watches a non-HTTP sink: the records that appear
-there and never arrive at the endpoint are exactly the suppressed ones, which
-is the route `tests/http_transport_feedback_tests.rs` takes. A counter would
-need a diagnostics surface this handler does not have. Its only existing signal
-is the drop warner, and a suppressed record is deliberately not a drop; bounded
+Suppression is silent and has no counter or summary of its own. Most of the
+records it discards are the transport library's own DEBUG output, so a
+maintainer who needs to see them raises the `ureq` targets (`ureq.unit`,
+`ureq.stream`, `ureq.pool`) to DEBUG and watches a non-HTTP sink. A record that
+appears there and never arrives at the endpoint is evidence of suppression
+rather than an exact count, because a filter or a failed delivery can also
+account for an absence; comparing the two sinks is the route
+`tests/http_transport_feedback_tests.rs` takes. A counter would need a
+diagnostics surface this handler does not have. Its only existing signal is the
+drop warner, and a suppressed record is deliberately not a drop; bounded
 handler telemetry is tracked separately by #551.
 
 The behavioural regression is `tests/http_transport_feedback_tests.rs`. Each
