@@ -40,30 +40,43 @@ pinned_toolchain() {
 # rustup resolve -- and potentially provision -- the pinned channel, which both
 # defeats the capability check and can mutate the host. `/` lies outside the
 # repository, so the listing reflects only what is genuinely installed.
+# `RUSTUP_AUTO_INSTALL=0` removes the remaining route to provisioning: an
+# inherited `RUSTUP_TOOLCHAIN` naming an absent toolchain, which changing
+# directory does not affect. A capability probe must never install what it is
+# meant to find missing.
 installed_toolchains() {
-  ( cd -- / && rustup toolchain list )
+  ( cd -- / && RUSTUP_AUTO_INSTALL=0 rustup toolchain list )
 }
 
 # Resolve rustup's default host triple from a neutral directory.
 #
 # As with the enumeration, `/` lies outside the repository, so the pinned
-# `rust-toolchain.toml` cannot override the answer. A rustup too old, or too
-# broken, to report a host triple yields a failure that the caller turns into
-# the bare-channel fallback below. Both failure shapes name `rustup show`: a
-# probe that ran and failed is a different operator problem from one that
-# answered without a host triple. `note` writes to stderr, which the caller's
-# command substitution does not capture, so the diagnostic still reaches the
-# operator.
+# `rust-toolchain.toml` cannot override the answer, and `RUSTUP_AUTO_INSTALL=0`
+# keeps a probe from provisioning whatever `RUSTUP_TOOLCHAIN` names. The host
+# line is read even when `rustup show` exits non-zero: with an absent default
+# toolchain the command prints the host it resolved and then fails on the
+# toolchain it could not activate. Discarding that host would fall back to the
+# bare-channel match, which rejects a pin that is installed for this host. A
+# probe that failed is still worth naming, so the recovery is reported rather
+# than passed over. `note` writes to stderr, which the caller's command
+# substitution does not capture, so the diagnostic reaches the operator.
+#
+# Both failure shapes name `rustup show`: a probe that ran and failed is a
+# different operator problem from one that answered without a host triple.
 host_triple() {
-  local shown host
-  if ! shown=$( cd -- / && rustup show ); then
-    note 'rustup show failed; cannot determine the default host triple'
-    return 1
-  fi
+  local shown status=0 host
+  shown=$( cd -- / && RUSTUP_AUTO_INSTALL=0 rustup show ) || status=$?
   host=$(printf '%s\n' "$shown" | sed -n 's/^Default host: //p')
   if [ -z "$host" ]; then
-    note 'rustup show reported no default host triple'
+    if [ "$status" -ne 0 ]; then
+      note 'rustup show failed; cannot determine the default host triple'
+    else
+      note 'rustup show reported no default host triple'
+    fi
     return 1
+  fi
+  if [ "$status" -ne 0 ]; then
+    note "rustup show exited ${status}; using the host it reported"
   fi
   printf '%s\n' "$host"
 }
