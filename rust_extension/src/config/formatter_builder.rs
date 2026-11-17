@@ -18,28 +18,33 @@ pub struct FormatterBuilder {
 
 impl FormatterBuilder {
     /// Create a new `FormatterBuilder`.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the format string.
+    #[must_use]
     pub fn with_format(mut self, format: impl Into<String>) -> Self {
         self.format = Some(format.into());
         self
     }
 
     /// Set the date format string.
+    #[must_use]
     pub fn with_datefmt(mut self, datefmt: impl Into<String>) -> Self {
         self.datefmt = Some(datefmt.into());
         self
     }
 
     /// Return the configured format string.
+    #[must_use]
     pub fn format_string(&self) -> Option<&str> {
         self.format.as_deref()
     }
 
     /// Return the configured date format string.
+    #[must_use]
     pub fn datefmt_string(&self) -> Option<&str> {
         self.datefmt.as_deref()
     }

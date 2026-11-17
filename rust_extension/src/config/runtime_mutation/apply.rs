@@ -20,6 +20,7 @@ use super::{
 
 impl RuntimeConfigBuilder {
     /// Start an empty transaction that changes nothing until a `with_*` method is called.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -29,6 +30,7 @@ impl RuntimeConfigBuilder {
     ///
     /// `apply` constructs the handler after validation and before it publishes the transaction,
     /// so a later failure can leave construction side effects, such as a created file.
+    #[must_use]
     pub fn with_handler<B>(mut self, id: impl Into<String>, builder: B) -> Self
     where
         B: Into<HandlerBuilder>,
@@ -42,6 +44,7 @@ impl RuntimeConfigBuilder {
     ///
     /// Handlers and loggers refer to the filter by this id. `apply` builds the filter before it
     /// publishes the transaction, so a later failure can leave construction side effects.
+    #[must_use]
     pub fn with_filter(mut self, id: impl Into<String>, builder: FilterBuilder) -> Self {
         self.filters.insert(id.into(), builder);
         self
@@ -52,6 +55,7 @@ impl RuntimeConfigBuilder {
     ///
     /// Naming `"root"` here is rejected by `apply` when `with_root_logger` is also used. Use
     /// `with_root_logger` for the root logger.
+    #[must_use]
     pub fn with_logger(mut self, name: impl Into<String>, builder: LoggerMutationBuilder) -> Self {
         self.loggers.insert(name.into(), builder);
         self
@@ -59,6 +63,7 @@ impl RuntimeConfigBuilder {
 
     /// Request changes to the root logger, replacing any earlier root request in this
     /// transaction.
+    #[must_use]
     pub fn with_root_logger(mut self, builder: LoggerMutationBuilder) -> Self {
         self.root_logger = Some(builder);
         self
@@ -102,7 +107,7 @@ impl RuntimeConfigBuilder {
                     .map(|(id, builder)| (id.clone(), builder.filter_ids().to_vec()))
                     .collect(),
             };
-            let commit = self.assemble_commit(
+            let commit = Self::assemble_commit(
                 py,
                 CommitInputs {
                     before,
@@ -125,14 +130,16 @@ impl RuntimeConfigBuilder {
         &self,
         before: &RuntimeStateSnapshot,
     ) -> Result<(), ConfigError> {
-        for builder in self.handlers.values() {
-            for id in builder.filter_ids() {
-                if !before.filter_registry.contains_key(id) && !self.filters.contains_key(id) {
-                    return Err(ConfigError::UnknownIds(vec![id.clone()]));
+        self.handlers
+            .values()
+            .flat_map(HandlerBuilder::filter_ids)
+            .try_for_each(|id| {
+                if before.filter_registry.contains_key(id) || self.filters.contains_key(id) {
+                    Ok(())
+                } else {
+                    Err(ConfigError::UnknownIds(vec![id.clone()]))
                 }
-            }
-        }
-        Ok(())
+            })
     }
 
     /// Merge current handler filter references with definitions in this transaction.
@@ -171,7 +178,7 @@ impl RuntimeConfigBuilder {
         if self.root_logger.is_some() && self.loggers.contains_key("root") {
             return Err(ConfigError::InvalidMutation(
                 "root logger cannot be mutated via both with_root_logger() and with_logger(\"root\", ...)"
-                    .to_string(),
+                    .to_owned(),
             ));
         }
         if let Some(root) = &self.root_logger {
@@ -191,29 +198,17 @@ impl RuntimeConfigBuilder {
             .logger_states
             .iter()
             .filter(|(_, state)| {
-                state
-                    .handler_ids()
-                    .iter()
-                    .any(|id| overridden_handler_ids.contains(id))
-                    || state
-                        .filter_ids()
-                        .iter()
-                        .any(|id| overridden_filter_ids.contains(id))
-                    || state.handler_ids().iter().any(|handler_id| {
-                        before
-                            .handler_filter_ids
-                            .get(handler_id)
-                            .is_some_and(|filter_ids| {
-                                filter_ids
-                                    .iter()
-                                    .any(|id| overridden_filter_ids.contains(id))
-                            })
-                    })
+                logger_references_overridden_id(
+                    state,
+                    &overridden_handler_ids,
+                    &overridden_filter_ids,
+                    &before.handler_filter_ids,
+                )
             })
             .map(|(name, _)| name.clone())
             .collect::<BTreeSet<_>>();
         if self.root_logger.is_some() {
-            impacted.insert("root".to_string());
+            impacted.insert("root".to_owned());
         }
         impacted.extend(self.loggers.keys().cloned());
         impacted
@@ -238,7 +233,7 @@ impl RuntimeConfigBuilder {
         let mut out = BTreeMap::new();
         if let Some(root) = &self.root_logger {
             out.insert(
-                "root".to_string(),
+                "root".to_owned(),
                 LoggerScalarMutation {
                     level: root.level,
                     propagate: root.propagate,
@@ -256,6 +251,39 @@ impl RuntimeConfigBuilder {
         }
         out
     }
+}
+
+/// Reports whether an attached handler carries a filter that this transaction overrides.
+fn handler_carries_overridden_filter(
+    handler_id: &str,
+    handler_filter_ids: &BTreeMap<String, Vec<String>>,
+    overridden_filters: &BTreeSet<String>,
+) -> bool {
+    handler_filter_ids
+        .get(handler_id)
+        .is_some_and(|ids| ids.iter().any(|id| overridden_filters.contains(id)))
+}
+
+/// Reports whether a logger's attachments reference a registry id this transaction overrides.
+fn logger_references_overridden_id(
+    state: &LoggerAttachmentState,
+    overridden_handlers: &BTreeSet<String>,
+    overridden_filters: &BTreeSet<String>,
+    handler_filter_ids: &BTreeMap<String, Vec<String>>,
+) -> bool {
+    let overridden_handler = state
+        .handler_ids()
+        .iter()
+        .any(|id| overridden_handlers.contains(id));
+    let overridden_filter = state
+        .filter_ids()
+        .iter()
+        .any(|id| overridden_filters.contains(id));
+    let overridden_handler_filter = state.handler_ids().iter().any(|handler_id| {
+        handler_carries_overridden_filter(handler_id, handler_filter_ids, overridden_filters)
+    });
+
+    overridden_handler || overridden_filter || overridden_handler_filter
 }
 
 #[cfg(test)]
