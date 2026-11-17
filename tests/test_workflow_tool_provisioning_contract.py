@@ -227,6 +227,12 @@ def test_logical_lines_follows_shell_quoting_and_comments(
     assert _logical_lines(run) == expected, run
 
 
+def test_logical_lines_skips_here_document_bodies() -> None:
+    """A quote inside a here-document body cannot hide the commands below it."""
+    run = "cat <<'EOF'\nDon't alter this text\nEOF\ncargo test"
+    assert _logical_lines(run) == ["cat <<'EOF'", "cargo test"], run
+
+
 def test_prerequisite_map_accumulates_repeated_rules() -> None:
     """Two rules for one target contribute both prerequisite lists in order."""
     rules = [
@@ -283,6 +289,11 @@ def test_the_workflow_reader_rejects_duplicate_mapping_keys(tmp_path: Path) -> N
             {"include": [{"runner": "windows-2022", "os": "ubuntu-latest"}]},
             False,
         ),
+        (
+            "${{ matrix.runner-label }}",
+            {"runner-label": ["ubuntu-latest"], "runner": ["windows-2022"]},
+            True,
+        ),
     ],
     ids=[
         "scalar-linux",
@@ -295,6 +306,7 @@ def test_the_workflow_reader_rejects_duplicate_mapping_keys(tmp_path: Path) -> N
         "matrix-mixed",
         "matrix-runner-key",
         "matrix-runner-key-include",
+        "matrix-hyphenated-key",
     ],
 )
 def test_runner_forms_are_classified_by_platform(
