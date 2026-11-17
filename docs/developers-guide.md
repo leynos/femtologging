@@ -917,7 +917,14 @@ because `log::Log::flush` returns `()`.
 
 Builds with `python,test-util` also expose `wait_for_flush_entry_for_test()`,
 `drain_flush_signals_for_test()`, and `cancel_flush_wait_for_test()` for
-bounded regression-test coordination. Normal `python` builds omit these hooks.
+bounded regression-test coordination. Four hooks witness the GIL-release tests:
+`note_python_thread_ran_for_test()` counts the calling thread as an observation
+only while a detached wait is in flight and reports whether it counted,
+`gil_release_observations_for_test()` reads that count,
+`reset_gil_release_observations_for_test()` clears it, and
+`wait_for_wait_in_flight_for_test()` waits until a wait has detached. Normal
+`python` builds omit every one of these hooks, and
+`femtologging/_femtologging_rs.pyi` declares them for type checkers.
 
 Dropping a logger follows the same per-logger in-flight check. The pool itself
 lives for the process lifetime. If the operating system refuses to start a
@@ -954,6 +961,21 @@ an exclusive PyO3 borrow (`&mut self`) for the whole wait, so a second
 `close()`, or a `close()` overlapping a detached `flush()`, is refused by the
 borrow check rather than queued; the file and stream families use a shared
 borrow and allow those overlaps.
+
+The native-handler flush and the socket and HTTP `flush()` and `close()` waits
+go through `rust_extension/src/py_detach.rs`. Its `pub(crate)` helper
+`detach_for_wait(py, wait)` is the single place those bindings give the lock
+back, so a new binding of that kind calls it rather than `py.detach` directly:
+one audited boundary cannot be forgotten by a wait added later, and the
+test-only in-flight record is entered in exactly one place.
+`rust_extension/src/socket_handler/handler.rs` and
+`rust_extension/src/http_handler/handler.rs` are the call sites to copy. The
+helper enters the record while the GIL is still held and drops it after
+`Python::detach` returns, which is what lets the GIL-release tests tell a
+detached wait from one that merely finished quickly; production builds compile
+the record out and leave `Python::detach` alone. The file, stream and rotating
+families are the remaining exception: they run a direct `py.detach` inside
+`WaitScope`, whose production gauge measures a different span.
 
 `py.detach` requires its closure and return type to implement `Ungil`. On
 stable Rust, PyO3 approximates that requirement through `Send`, so the bound
@@ -1150,17 +1172,18 @@ user data.
 
 Every built-in handler runs its I/O on a worker thread. The Python bindings of
 the stream, file, rotating-file, timed-rotating-file, socket, and HTTP handlers
-release the GIL with `Python::detach()` before waiting for that worker in
-`flush()` and `close()`, so a Python callable formatter queued on the worker
-can run to completion instead of deadlocking against a producer that still
-holds the GIL, and other Python threads keep running during a slow network
-shutdown. For the stream, file, rotating-file, and timed-rotating-file handlers,
-`close()` takes only a shared Python-object borrow: it copies the shutdown
-state and the owning worker handle out of the handler, releases the borrow,
-then detaches and waits outside it. A Python callback that re-enters the
-handler during shutdown therefore observes the closed state instead of blocking
-on a borrow held by the waiter. `tests/test_handler_close_reentry.py` is the
-regression test for that path.
+release the GIL before waiting for that worker in `flush()` and `close()` — the
+socket and HTTP bindings through `detach_for_wait`, the other families through
+a direct `Python::detach()` — so a Python callable formatter queued on the
+worker can run to completion instead of deadlocking against a producer that
+still holds the GIL, and other Python threads keep running during a slow
+network shutdown. For the stream, file, rotating-file, and timed-rotating-file
+handlers, `close()` takes only a shared Python-object borrow: it copies the
+shutdown state and the owning worker handle out of the handler, releases the
+borrow, then detaches and waits outside it. A Python callback that re-enters
+the handler during shutdown therefore observes the closed state instead of
+blocking on a borrow held by the waiter. `tests/test_handler_close_reentry.py`
+is the regression test for that path.
 
 `FemtoLogger.flush_handlers()` follows the same GIL rule, because the dispatch
 worker takes the GIL to reach handlers attached from Python. It then flushes

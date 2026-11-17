@@ -1,9 +1,11 @@
 //! Detaching the interpreter for a Python-facing wait.
 //!
-//! Every wait a Python binding performs on a worker goes through here, so the
-//! test-only in-flight record has exactly one place to be entered from and a
-//! new wait cannot silently omit it. See [`crate::gil_release_test`] for what
-//! the tests do with that record.
+//! The native-handler flush and the socket and HTTP `flush()` and `close()`
+//! waits go through here, so the test-only in-flight record has one entry
+//! point and a new wait of that kind cannot silently omit it. The file,
+//! stream and rotating families bracket a direct `Python::detach` with
+//! `WaitScope` instead. See [`crate::gil_release_test`] for what the tests do
+//! with that record.
 
 use pyo3::marker::Ungil;
 use pyo3::prelude::*;
