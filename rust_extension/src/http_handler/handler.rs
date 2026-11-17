@@ -33,7 +33,7 @@ use crate::{
 use super::{
     ShutdownOutcome,
     config::HTTPHandlerConfig,
-    queue::{HTTPCommand, enqueue_record, flush_drops, flush_queue, warn_drops_naming_latest},
+    queue::{HTTPCommand, enqueue_record, flush_drops, flush_queue, warn_drops_naming_cause},
     worker::spawn_worker,
 };
 
@@ -332,7 +332,7 @@ impl FemtoHTTPHandler {
 impl FemtoHandlerTrait for FemtoHTTPHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            warn_drops_naming_latest(&self.warner, "handler closed");
+            warn_drops_naming_cause(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         // Intentional suppression, not a drop: queueing one of our own

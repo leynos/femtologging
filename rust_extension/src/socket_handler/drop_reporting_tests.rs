@@ -1,17 +1,17 @@
 //! Contracts for what the socket handler reports when it drops records.
 //!
-//! The enqueue path and the worker share one counter, so a warning can carry
-//! drops from several causes and a count that spans more than one interval
-//! after a suppression. These tests pin the two consequences: a cumulative
-//! warning names only its own drop's cause as the latest, and a report that
-//! arrives on flush, close or destruction still accounts for drops the
-//! interval was holding back.
+//! One warner counts drops from several causes, and a suppression can make a
+//! count span more than one interval. These tests pin the two consequences: a
+//! cumulative warning names only the cause that triggered it, and a report that
+//! arrives on flush, close or destruction still accounts for drops the interval
+//! was holding back.
 //!
 //! Included with `#[path]` from `tests.rs`, like `close_tests.rs`, so the
 //! fixture and helpers in that file stay in scope.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
 use std::time::Duration;
 
 use crate::handler::FemtoHandlerTrait;
@@ -19,7 +19,7 @@ use crate::handlers::file::test_support::{install_test_logger, take_logged_messa
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use crate::rate_limited_warner::{Clock, RateLimitedWarner};
-use crate::socket_handler::warning::{flush_drops, warn_drops_naming_latest};
+use crate::socket_handler::warning::{flush_drops, warn_cumulative_drops, warn_drops_naming_cause};
 use crate::socket_handler::{FemtoSocketHandler, SocketHandlerConfig};
 
 /// A clock the test moves by hand.
@@ -51,24 +51,24 @@ fn record(message: &str) -> FemtoLogRecord {
     FemtoLogRecord::new("test.logger", FemtoLevel::Info, message)
 }
 
-/// A due warning that carries two causes names only the second as the latest.
+/// A due warning that carries two causes names only the one that triggered it.
 ///
 /// Scenario: the first drop warns and opens the interval, a second drop from a
 /// different cause is suppressed and stays pending, and the next interval
-/// reports both. Invariant: the message reports the cumulative count and says
-/// which cause was the most recent, rather than claiming the whole count
-/// happened for the cause that happened to trigger the report.
+/// reports both. Invariant: the message reports the cumulative count and names
+/// only the cause whose refusal asked for the report, rather than claiming the
+/// whole count happened for that cause.
 #[test]
 #[serial_test::serial]
-fn a_cumulative_warning_names_only_the_latest_cause() {
+fn a_cumulative_warning_names_only_the_triggering_cause() {
     install_test_logger();
     let clock = Arc::new(ManualClock::default());
     let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone());
 
-    warn_drops_naming_latest(&warner, "connect failure: refused");
-    warn_drops_naming_latest(&warner, "write error");
+    warn_drops_naming_cause(&warner, "connect failure: refused");
+    warn_drops_naming_cause(&warner, "write error");
     clock.elapse_interval();
-    warn_drops_naming_latest(&warner, "write error");
+    warn_drops_naming_cause(&warner, "write error");
 
     let cumulative: Vec<_> = take_logged_messages()
         .into_iter()
@@ -80,16 +80,75 @@ fn a_cumulative_warning_names_only_the_latest_cause() {
         "the second interval should report both pending drops once"
     );
     assert!(
-        cumulative[0].message.contains("latest cause: write error"),
-        "the warning must name the most recent cause: {:?}",
+        cumulative[0]
+            .message
+            .contains("triggering cause: write error"),
+        "the warning must name the cause that triggered it: {:?}",
         cumulative[0].message
     );
     assert!(
-        !cumulative[0].message.contains("due to write errors"),
+        !cumulative[0].message.contains("connect failure: refused"),
         "the warning must not attribute the earlier connect failure to the \
-         latest cause: {:?}",
+         triggering cause: {:?}",
         cumulative[0].message
     );
+}
+
+/// Two threads reporting different causes race for one interval.
+///
+/// Scenario: two drops from different causes are pending when the interval
+/// expires, and both threads report at the same moment. Invariant: exactly one
+/// report is emitted, it carries the count of both drops, and the cause it
+/// names is the triggering caller's own — a shared "most recent cause" slot
+/// would let the losing caller relabel a report it did not make.
+#[test]
+#[serial_test::serial]
+fn racing_causes_report_both_drops_and_name_the_trigger() {
+    install_test_logger();
+    let clock = Arc::new(ManualClock::default());
+    let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock);
+    // Both drops are pending before either reporter runs, so whichever caller
+    // wins the interval reports the other's drop as well as its own.
+    warner.record_drop();
+    warner.record_drop();
+
+    let start = Arc::new(Barrier::new(2));
+    thread::scope(|scope| {
+        for cause in ["connect failure: refused", "write error"] {
+            let warner = &warner;
+            let start = Arc::clone(&start);
+            scope.spawn(move || {
+                start.wait();
+                warner.warn_if_due(|count| warn_cumulative_drops(count, cause));
+            });
+        }
+    });
+
+    let messages: Vec<_> = take_logged_messages()
+        .into_iter()
+        .map(|entry| entry.message)
+        .collect();
+    assert_eq!(
+        messages.len(),
+        1,
+        "only the interval winner may report: {messages:?}"
+    );
+    let expected = [
+        concat!(
+            "FemtoSocketHandler dropped 2 records since the last report; ",
+            "triggering cause: connect failure: refused"
+        ),
+        concat!(
+            "FemtoSocketHandler dropped 2 records since the last report; ",
+            "triggering cause: write error"
+        ),
+    ];
+    assert!(
+        expected.contains(&messages[0].as_str()),
+        "the report must carry both drops and name the trigger's own cause: {:?}",
+        messages[0]
+    );
+    assert_eq!(warner.pending_drops(), 0);
 }
 
 /// A flush reports the count the interval held back, without inventing a cause.
@@ -105,9 +164,9 @@ fn a_flush_reports_the_cumulative_count_without_a_cause() {
     let clock = Arc::new(ManualClock::default());
     let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock);
 
-    warn_drops_naming_latest(&warner, "queue full");
-    warn_drops_naming_latest(&warner, "connect failure: refused");
-    warn_drops_naming_latest(&warner, "write error");
+    warn_drops_naming_cause(&warner, "queue full");
+    warn_drops_naming_cause(&warner, "connect failure: refused");
+    warn_drops_naming_cause(&warner, "write error");
     flush_drops(&warner);
 
     let reported: Vec<_> = take_logged_messages()
@@ -167,7 +226,7 @@ fn flush_reports_drops_refused_after_close() {
     let handler = closed_handler_holding_one_drop();
     let warned: Vec<_> = take_logged_messages()
         .into_iter()
-        .filter(|entry| entry.message.contains("latest cause: handler closed"))
+        .filter(|entry| entry.message.contains("triggering cause: handler closed"))
         .collect();
     assert_eq!(
         warned.len(),

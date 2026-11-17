@@ -59,31 +59,38 @@ pub(crate) fn flush_drops(warner: &RateLimitedWarner) {
 }
 
 /// Record a drop and report the cumulative count, naming this drop's cause as
-/// the latest rather than as the reason for the whole count.
+/// the one that triggered the report.
 ///
-/// The handler and the worker share one counter for every drop they see, so a
-/// due warning can carry drops from several causes. Saying the count happened
-/// for this call's reason would misattribute the earlier ones; the wording
-/// therefore names only the most recent cause.
-pub(crate) fn warn_drops_naming_latest(warner: &RateLimitedWarner, cause: &str) {
+/// One warner counts drops from several causes — the handler's sees queue-full,
+/// disconnection and closed refusals, the worker's sees serialization,
+/// connection and write failures — so a due warning can carry drops from
+/// several causes. Saying the count happened for this call's reason would
+/// misattribute the earlier ones, and nothing here can know which of them was
+/// most recent: another thread may record a drop between this one and the
+/// report. The wording therefore names only the cause whose refusal asked for
+/// the warning.
+pub(crate) fn warn_drops_naming_cause(warner: &RateLimitedWarner, cause: &str) {
     warn_drops(warner, |count| warn_cumulative_drops(count, cause));
 }
 
-/// Report the pending cumulative count now, naming the most recent cause.
+/// Report the pending cumulative count now, naming the triggering cause.
 ///
-/// The flush equivalent of [`warn_drops_naming_latest`], for paths that cannot
+/// The flush equivalent of [`warn_drops_naming_cause`], for paths that cannot
 /// wait for the interval and whose count may still hold drops from earlier
 /// causes.
-pub(crate) fn flush_drops_naming_latest(warner: &RateLimitedWarner, cause: &str) {
+pub(crate) fn flush_drops_naming_cause(warner: &RateLimitedWarner, cause: &str) {
     warner.flush(|count| warn_cumulative_drops(count, cause));
 }
 
 /// Render the one cumulative drop warning the naming helpers emit.
-fn warn_cumulative_drops(count: u64, cause: &str) {
+///
+/// Visible to the handler's tests so a controlled race between two causes can
+/// assert on the message the production helper would produce for its winner.
+pub(crate) fn warn_cumulative_drops(count: u64, cause: &str) {
     warn!(
         concat!(
             "FemtoHTTPHandler dropped {} records since the last report; ",
-            "latest cause: {}"
+            "triggering cause: {}"
         ),
         count, cause
     );
@@ -143,11 +150,11 @@ pub fn enqueue_record(
     match tx.try_send(HTTPCommand::Record(record)) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
-            warn_drops_naming_latest(warner, "queue full");
+            warn_drops_naming_cause(warner, "queue full");
             Err(HandlerError::QueueFull)
         }
         Err(TrySendError::Disconnected(_)) => {
-            warn_drops_naming_latest(warner, "worker disconnected");
+            warn_drops_naming_cause(warner, "worker disconnected");
             Err(HandlerError::Closed)
         }
     }

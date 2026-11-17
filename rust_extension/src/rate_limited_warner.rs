@@ -158,9 +158,11 @@ impl Drop for DrainGuard<'_> {
 /// thread that no longer exists instead of deadlocking on it.
 /// [`record_drop`] remains an atomic increment and does not take that lock, and
 /// a [`warn_if_due`] call whose interval is still open returns on a lock-free
-/// read of the last-warning timestamp. The lock is released before either
-/// callback runs, so callbacks are **not** serialized against one another and
-/// may re-enter the warner. At most one [`warn_if_due`] caller claims an
+/// read of the last-warning timestamp. Neither the clock nor the callbacks are
+/// called while the lock is held: the clock is a caller-supplied seam, so a
+/// clock that re-enters the warner must not find the claim's lock taken, and
+/// callbacks are **not** serialized against one another and may re-enter the
+/// warner. At most one [`warn_if_due`] caller claims an
 /// interval: the claim uses compare-exchange, and a caller that loses it
 /// returns without draining.
 /// Concurrent callbacks therefore receive disjoint batches. A callback that
@@ -237,7 +239,9 @@ impl RateLimitedWarner {
     /// pending batch cannot leave an empty interval claimed. At most one caller
     /// emits per interval; callers that lose the compare-exchange return without
     /// draining. The lock is released before the callback runs, so a slow or
-    /// re-entrant callback does not hold up another caller or a flush.
+    /// re-entrant callback does not hold up another caller or a flush. The clock
+    /// is sampled before the lock is taken, so a re-entrant clock cannot wait
+    /// for the claim it is timing.
     ///
     /// A call whose interval is still open returns before taking the lock. The
     /// refusal paths call this method for every dropped record, so under
@@ -295,14 +299,23 @@ impl RateLimitedWarner {
     /// been claimed nor take the batch this call observes as pending. The
     /// caller re-reads nothing after this returns, and the callback runs with
     /// the lock released.
+    ///
+    /// The clock is sampled *before* the lock is taken. [`Clock`] is a seam the
+    /// caller supplies, so a clock that re-enters the warner — a test clock
+    /// that flushes, say — would otherwise wait forever for the lock this very
+    /// call already holds. Sampling first is sound because the timestamp is
+    /// only compared and then published: a caller that loses the interval to a
+    /// concurrent claim observes a `last_warn` at or after its own sample and
+    /// is refused by the locked recheck, and a caller whose sample is slightly
+    /// stale claims at most a moment early, which the next call corrects.
     fn claim_due_batch(&self) -> u64 {
+        let now = self.clock.now_millis();
         let _drain_guard = self.drain_lock.lock();
         // A concurrent flush may have taken the observed batch while the clock
         // was sampled, so do not claim an interval with nothing to report.
         if self.dropped.load(Ordering::Relaxed) == 0 {
             return 0;
         }
-        let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
         if prev != u64::MAX && now.saturating_sub(prev) < self.interval_ms {
             return 0;

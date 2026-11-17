@@ -2,9 +2,10 @@
 //!
 //! [`FemtoSocketHandler`] owns the command channel to the worker built in
 //! `worker.rs`, and the shutdown signal, deadline and join policy for that
-//! thread. Both halves count drops on a [`RateLimitedWarner`], and the wording
-//! they report through lives in `warning.rs` so a drop refused at the queue and
-//! one abandoned mid-delivery cannot drift apart.
+//! thread. Each half counts drops on its own [`RateLimitedWarner`] — the
+//! handler's for refusals at the queue, the worker's for drops mid-delivery —
+//! and the wording they report through lives in `warning.rs` so a drop refused
+//! at the queue and one abandoned mid-delivery cannot drift apart.
 
 use std::{
     sync::Arc,
@@ -31,7 +32,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
-    warning::{flush_drops, warn_drops_naming_latest},
+    warning::{flush_drops, warn_drops_naming_cause},
     worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
 };
 
@@ -296,7 +297,7 @@ impl FemtoSocketHandler {
 impl FemtoHandlerTrait for FemtoSocketHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            warn_drops_naming_latest(&self.warner, "handler closed");
+            warn_drops_naming_cause(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         enqueue_record(&tx, record, &self.warner)

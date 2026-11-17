@@ -93,7 +93,7 @@ fn aborted_request_counts_the_current_record_as_a_shutdown_drop() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoHTTPHandler dropped 1 records since the last report; latest cause: abandoned retry during shutdown")
+            .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
 }
 
@@ -114,20 +114,22 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoHTTPHandler dropped 1 records since the last report; latest cause: abandoned retry during shutdown")
+            .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
 }
 
-/// A flush command reports worker drops the interval is holding back.
+/// A flush command reports worker drops before it acknowledges.
 ///
 /// The worker's warner is shared across causes, so a drop arriving inside the
 /// interval is only counted, not reported. Without this flush the count would
 /// wait for the next elapse - or never be seen, once the worker is gone. The
 /// handler treats the acknowledgement as "reporting finished", so the warning
-/// must be emitted before it.
+/// must be emitted before it: the acknowledgement channel here has no buffer,
+/// so its send cannot complete until this test receives, and capturing the
+/// warning before that receive proves the order rather than assuming it.
 #[test]
 #[serial_test::serial]
-fn the_flush_command_reports_drops_held_by_the_interval() {
+fn the_flush_command_reports_drops_before_acknowledging() {
     crate::handlers::file::test_support::install_test_logger();
     let mut worker = Worker::new(
         HTTPHandlerConfig::default(),
@@ -140,19 +142,26 @@ fn the_flush_command_reports_drops_held_by_the_interval() {
     worker.warner.record_drop();
     assert_eq!(worker.warner.pending_drops(), 1);
 
-    let (ack_tx, ack_rx) = bounded(1);
-    worker.handle_flush_command(ack_tx);
-    ack_rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("the flush command must be acknowledged");
-
-    let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(
-        messages.iter().any(|entry| {
-            entry.message == "FemtoHTTPHandler dropped 1 records since the last report"
-        }),
-        "the flush must report the count the interval was holding back: {messages:?}"
-    );
+    let (ack_tx, ack_rx) = bounded(0);
+    thread::scope(|scope| {
+        let worker = &mut worker;
+        scope.spawn(move || worker.handle_flush_command(ack_tx));
+        let messages = crate::handlers::file::test_support::wait_for_message(
+            "dropped 1 records since the last report",
+            Duration::from_secs(5),
+        );
+        // Release the worker before asserting: an assertion that fails while
+        // the sender is still blocked in a rendezvous send would leave
+        // `thread::scope` joining a thread this test can no longer release.
+        let acknowledged = ack_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        assert!(acknowledged, "the flush command must be acknowledged");
+        assert!(
+            messages.iter().any(|entry| {
+                entry.message == "FemtoHTTPHandler dropped 1 records since the last report"
+            }),
+            "the flush must report the held-back count before acknowledging: {messages:?}"
+        );
+    });
     assert_eq!(
         worker.warner.pending_drops(),
         0,

@@ -4,10 +4,11 @@
 //! count, and the thread that wins the next warning interval. These tests hold
 //! the interleavings that sharing must survive: a flush that drains a due call
 //! does not claim its interval, a suppressed call returns without waiting for a
-//! drain in progress, only one racer reports an interval, and racers recording
-//! and draining conserve every drop - none lost, none counted twice. The last
-//! pair covers the drain lock's fork safety: a child process that inherits the
-//! lock held must be able to reclaim it, while the owning process keeps it.
+//! drain in progress, a clock that re-enters the warner does not deadlock its
+//! own claim, only one racer reports an interval, and racers recording and
+//! draining conserve every drop - none lost, none counted twice. The last pair
+//! covers the drain lock's fork safety: a child process that inherits the lock
+//! held must be able to reclaim it, while the owning process keeps it.
 //!
 //! The fixtures synchronize with barriers and channels rather than sleeping, so
 //! a failure names the interleaving under test rather than the host's load.
@@ -18,6 +19,7 @@ use rstest::rstest;
 use std::sync::Arc;
 use std::sync::Barrier;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -162,6 +164,91 @@ fn suppressed_call_does_not_wait_for_the_drain_lock() {
         1,
         "a suppressed call must leave the count pending"
     );
+}
+
+/// A clock that re-enters the warner while the due claim samples it.
+///
+/// The clock is a caller-supplied seam, so nothing stops an implementation from
+/// touching the same warner: a shutdown hook that reads the time and then
+/// flushes is enough. This double does exactly that on its second sample, which
+/// is the one [`RateLimitedWarner::warn_if_due`] takes for its interval claim.
+struct ReentrantClock {
+    /// Timestamp every sample returns.
+    now_ms: u64,
+    /// Samples taken so far, so the re-entry lands on the claim's sample.
+    samples: AtomicU64,
+    /// Warner the clock re-enters, set once the warner exists.
+    warner: OnceLock<Arc<RateLimitedWarner>>,
+    /// Drops the re-entrant flush reported.
+    flushed: AtomicU64,
+}
+
+impl Clock for ReentrantClock {
+    fn now_millis(&self) -> u64 {
+        // Sample zero is the lock-free pre-check, which holds nothing. Sample
+        // one is the claim's; the previous implementation sampled it under the
+        // drain lock, so the flush below could never take that lock.
+        if self.samples.fetch_add(1, Ordering::Relaxed) == 1
+            && let Some(warner) = self.warner.get()
+        {
+            warner.flush(|count| {
+                self.flushed.fetch_add(count, Ordering::Relaxed);
+            });
+        }
+        self.now_ms
+    }
+}
+
+/// A clock that re-enters the warner must not deadlock the interval claim.
+///
+/// The re-entrant flush drains the only pending drop, so the claim that follows
+/// finds nothing left to report. What this pins is that it returns at all: a
+/// claim that sampled its clock under the drain lock would wait forever for a
+/// lock its own clock needs, and the timeout below fails the test rather than
+/// hanging the suite.
+#[test]
+fn reentrant_clock_does_not_deadlock_the_interval_claim() {
+    let clock = Arc::new(ReentrantClock {
+        now_ms: 1_000,
+        samples: AtomicU64::new(0),
+        warner: OnceLock::new(),
+        flushed: AtomicU64::new(0),
+    });
+    let warner = Arc::new(RateLimitedWarner::with_clock(
+        Duration::from_secs(1),
+        Arc::clone(&clock) as Arc<dyn Clock>,
+    ));
+    assert!(
+        clock.warner.set(Arc::clone(&warner)).is_ok(),
+        "the clock's warner is set once, before any sample"
+    );
+    warner.record_drop();
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let warned = Arc::new(AtomicBool::new(false));
+    let caller = {
+        let warner = Arc::clone(&warner);
+        let warned = Arc::clone(&warned);
+        thread::spawn(move || {
+            warner.warn_if_due(|_| warned.store(true, Ordering::Relaxed));
+            let _ = done_tx.send(());
+        })
+    };
+    done_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the due claim must not wait for a lock its own clock re-entry needs");
+    caller.join().expect("the warning caller should finish");
+
+    assert_eq!(
+        clock.flushed.load(Ordering::Relaxed),
+        1,
+        "the re-entrant flush should report the drop recorded before the claim"
+    );
+    assert!(
+        !warned.load(Ordering::Relaxed),
+        "the claim found the batch already drained and must not warn"
+    );
+    assert_eq!(warner.pending_drops(), 0);
 }
 
 /// A live thread of the same process keeps the drain lock held.

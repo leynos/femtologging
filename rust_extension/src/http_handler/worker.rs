@@ -42,8 +42,8 @@ use crate::{
 use super::{
     config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
     queue::{
-        HTTPCommand, discard_rest, flush_drops, flush_drops_naming_latest, warn_discarded,
-        warn_drops_naming_latest,
+        HTTPCommand, discard_rest, flush_drops, flush_drops_naming_cause, warn_discarded,
+        warn_drops_naming_cause,
     },
     request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
@@ -273,7 +273,7 @@ impl Worker {
             return false;
         }
         let Some(delay) = self.backoff.next_sleep(now) else {
-            warn_drops_naming_latest(&self.warner, "retry deadline exhaustion");
+            warn_drops_naming_cause(&self.warner, "retry deadline exhaustion");
             return false;
         };
         match self.signal.wait(delay) {
@@ -287,18 +287,18 @@ impl Worker {
 
     /// Count a serialization drop; invalid input increments the drop count.
     fn warn_serialization_drops(&self) {
-        warn_drops_naming_latest(&self.warner, "serialization failure");
+        warn_drops_naming_cause(&self.warner, "serialization failure");
     }
 
     /// Count a permanent failure; a non-retryable 4xx increments the drop count.
     fn warn_permanent_drops(&self) {
-        warn_drops_naming_latest(&self.warner, "permanent error");
+        warn_drops_naming_cause(&self.warner, "permanent error");
     }
 
     /// Count an abandoned retry; close increments the shutdown drop count.
     fn warn_shutdown_drops(&self) {
         self.warner.record_drop();
-        flush_drops_naming_latest(&self.warner, "abandoned retry during shutdown");
+        flush_drops_naming_cause(&self.warner, "abandoned retry during shutdown");
     }
 
     /// Handles a flush command by immediately acknowledging completion.

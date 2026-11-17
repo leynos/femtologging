@@ -68,11 +68,12 @@ your process exits.
   monitor pressure. A warning reports the number of records dropped *since the
   previous report*, not the number caused by the current event: a suppressed
   interval carries its drops into the next report, so the reported counts add
-  up to the records actually lost. HTTP and socket warnings also name the most
-  recent cause, as in
+  up to the records actually lost. HTTP and socket warnings also name the cause
+  whose refusal triggered the report, as in
   `FemtoHTTPHandler dropped 3 records since the last
-  report; latest cause: permanent error`;
-  the earlier drops in that count may have had another cause. `flush()` and
+  report; triggering cause: permanent error`;
+  the earlier drops in that count may have had another cause, and a drop
+  recorded concurrently may be more recent than the one named. `flush()` and
   `close()` report any count still pending rather than waiting for the next
   interval, and destroying a handler that has already been closed reports the
   records it refused after that close. A file handler whose policy is `"block"`

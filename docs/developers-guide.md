@@ -1455,16 +1455,26 @@ no drop is discarded and none is handed to a callback twice. A call with
 nothing pending does not start an interval, so an idle poller cannot delay the
 next real warning.
 
-The counter is per warner, not per cause. The HTTP and socket handlers each own
-one warner that both the enqueue path (queue full, worker disconnected, handler
-closed) and their worker thread (serialization, connect, write, retry
-exhaustion) count into. A warning raised by one cause can therefore carry drops
-from another, so those messages report the cumulative count and name only the
-latest cause:
+The counter is per warner, and one HTTP or socket handler has two of them. The
+handler owns one that its enqueue path counts into (queue full, worker
+disconnected, handler closed); its worker owns another, with its own interval,
+that delivery failures count into (serialization, connect, write, retry
+exhaustion). Each half flushes the warner it owns: `close()`, `take_shutdown()`,
+`Drop` and the handler's explicit `flush()` report the handler-side count, and
+the worker's flush command and exit path report the worker-side one. Within one
+warner the count is still not per cause, so a warning raised by one cause can
+carry drops from another. Those messages report the cumulative count and name
+only the cause whose refusal asked for the report:
 
 ```text
-FemtoHTTPHandler dropped 3 records since the last report; latest cause: permanent error
+FemtoHTTPHandler dropped 3 records since the last report; triggering cause: permanent error
 ```
+
+"Triggering cause", not "latest cause": another thread may record a drop
+between the refusal that triggered the report and the report itself, and
+nothing in the warner tracks causes, so the trigger is the only cause the
+message can honestly name. The matching `flush()` wording is cause-neutral
+because a flush may be raised by a path that names no cause at all.
 
 The stream handler and the logger report the same count without a cause:
 `FemtoStreamHandler: 3 log records dropped since the last report`. The phrase
@@ -1492,11 +1502,15 @@ held the lock inherits a locked word that no thread in the child will ever
 release; the PID tag shows it is not a live thread of this process, so the
 child clears it and proceeds. The critical section is short enough to spin on.
 Releasing uses a compare-exchange against the guard's own PID, so a parent
-guard dropped after the child reclaimed the lock cannot free it under the
-child. Drops the parent recorded before the fork are part of the copied counter
-and are reported by whichever process drains first; drops either process
-records afterwards are visible only to that process, as with any other
-process-local counter.
+guard dropped after the child reclaimed the lock cannot free it under the child.
+
+The drop counter itself is copied by `fork`, so a count the parent recorded
+before forking exists twice afterwards: parent and child each own a copy and
+each may report it, and a child can therefore repeat a report the parent has
+already made. That duplication is accepted — avoiding it would need shared
+memory and a cross-process lock for a diagnostic counter — so the conservation
+guarantee is per process. Within one process no drop is lost or reported twice;
+neither process can report a drop the other recorded after the fork.
 
 The contracts are covered by
 `rust_extension/src/rate_limited_warner_concurrency_tests.rs` (interval claims,

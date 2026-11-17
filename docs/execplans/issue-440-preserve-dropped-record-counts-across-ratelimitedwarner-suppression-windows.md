@@ -5,9 +5,10 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS — implementation complete on draft PR #613 and all
-deterministic gates green on `336c7c5d`; CodeRabbit review convergence in
-progress.
+Status: IN PROGRESS — implementation complete on draft PR #613. The CodeRabbit
+completeness assessment's findings are addressed in the working tree, and the
+deterministic and ignored lanes are being re-run on the resulting candidate
+before the assessment follow-up.
 
 ## Purpose / big picture
 
@@ -42,6 +43,21 @@ suite that fails if any drop is discarded or handed off more than once.
   `warn_if_due()` and `flush()` may briefly synchronize their claim and drain.
 - All existing warning message texts stay byte-for-byte identical; operators
   and downstream tests match on them.
+
+  *Amended 2026-11-17, recorded as an exception.* The constraint was written
+  before the consumer wiring was in scope, and it cannot hold alongside the
+  reporting contract the first review round required. On `origin/main` the HTTP
+  handler warned `FemtoHTTPHandler queue full; dropped N records` and
+  `FemtoHTTPHandler disconnected; dropped N records`, and the socket handler
+  warned `FemtoSocketHandler dropped N records after shutdown` and
+  `... in the last interval`. Once a suppressed interval carries its count
+  forward, each of those sentences attributes a cumulative count to the event
+  that happened to trigger it. The HTTP and socket texts therefore became
+  `... dropped N records since the last report; triggering cause: <cause>`,
+  with a cause-neutral `... dropped N records since the last report` for
+  flushes. The stream-handler, logger and shutdown-discard texts are unchanged.
+  The change and its reason are in `Decision log`; every in-repo matcher was
+  updated with it, and the user and developer guides quote the new wording.
 - At most one `warn_if_due()` emission per interval, and only one caller may
   claim an interval. Racing callers must not both warn.
 - No `Drop` hook is added to any consumer that does not already have one, apart
@@ -54,6 +70,18 @@ suite that fails if any drop is discarded or handed off more than once.
 
 - Scope: if the change exceeds 14 files or 750 net lines (excluding the plan and
   generated artefacts), stop and escalate.
+
+  *Reached and recorded 2026-11-17.* Measured against `origin/main` at
+  `2dc7b4e2`, the branch changes 34 files for `+2517/-293` lines (2224 net),
+  excluding the plan itself. The excess is not one large edit: it is the
+  consumer wiring the issue's acceptance criteria require — four handler
+  families, their workers, the logger producer, shared warning modules, the
+  fork-safe drain lock, the new regression suites and the heavy property suite
+  — plus the documentation those contracts need. The CodeRabbit completeness
+  assessment directed that the deviation be recorded here rather than silently
+  accepted, so it is recorded with the same evidence as the gates. No further
+  scope growth is planned; a new file beyond this set is a reason to stop and
+  re-plan.
 - Interface: any change to the public signature of an existing item stops the
   work for confirmation. A new `#[cfg(feature = "test-util")]` accessor is
   inside tolerance, and is recorded in `Decision log`.
@@ -307,8 +335,9 @@ suite that fails if any drop is discarded or handed off more than once.
       them, and the handler and worker destructors returned before flushing the
       drops refused after an earlier `close()`. The HTTP and socket helpers now
       report "since the last report; latest cause: …" (with a cause-neutral
-      flush wording), and `Drop` flushes before its early return in HTTP,
-      socket and stream handlers.
+      flush wording; the label was later revised to "triggering cause", see the
+      completeness-assessment entry below), and `Drop` flushes before its early
+      return in HTTP, socket and stream handlers.
 - [x] (2026-11-17) Added the regression tests the review asked for:
       `http_handler/drop_reporting_tests.rs`, `socket_handler/drop_reporting_tests.rs`
       (cumulative-cause wording, cause-neutral flush, refused-after-close
@@ -333,6 +362,42 @@ suite that fails if any drop is discarded or handed off more than once.
       `closed_handler_holding_one_drop()` and `assert_held_back_drop_reported()`
       (`336c7c5d`), and `cs delta origin/main` reports no issues. The four gates
       passed again on the refactored candidate.
+- [x] (2026-11-17) The CodeRabbit completeness assessment (Assessment-ID
+      `issue440-20261117-922a9e3e-completeness`) judged the core fix sound and
+      named six reporting and record-keeping gaps. All are addressed: the due
+      claim now samples the clock before taking the drain lock, with a
+      re-entrant-clock regression; HTTP and socket warnings say "triggering
+      cause" and a controlled two-thread race proves the report names the
+      trigger's own cause; the scope deviation and the deliberate message-text
+      change are recorded under `Tolerances` and `Constraints`; INV-1 counts
+      linearized increments; INV-7 is narrowed to drop-counting warners with
+      its three diagnostic exclusions named; and both worker flush tests now
+      prove the warning precedes the acknowledgement by using a rendezvous
+      channel.
+- [x] (2026-11-17) Corrected the developer guide on two points the assessment
+      caught: a handler owns *two* warners (handler-side and worker-side, each
+      flushed by its own half), and a forked child duplicates the pre-fork
+      count, so both processes may report it and conservation is per process.
+      The user guide now quotes the "triggering cause" wording.
+- [x] (2026-11-17) Ran the lanes the default suite skips, on this candidate:
+      `cargo test --test heavy -- --ignored` (both property suites) and
+      `cargo test --test stream_handler_logging_tests -- --ignored` (three
+      tests). All passed.
+- [x] (2026-11-17) The first gate round on the finished tree stopped in `make
+      test` after 16 s: Clippy rejected the new `ReentrantClock` double with
+      `clippy::collapsible_if` on the nested `if`/`if let` pair, which
+      `-D warnings` promotes to an error. The two conditions are now one
+      let-chain, so the second condition still short-circuits and the re-entry
+      still happens only on the claim's sample. Re-ran `make lint-rust-clippy`
+      clean, then re-ran the two gates that predated the fix (`check-fmt`,
+      `test`) and kept the already-valid later results: all six gates pass on
+      the final tree — `check-fmt` 1 s, `test` 875 s (100 passing test
+      binaries, 1209 pytest tests, 66 snapshots), `typecheck` 2 s, `lint` 186 s,
+      `markdownlint` and `nixie` clean. The last two were re-run after this
+      entry itself changed the plan. Logs are
+      `/tmp/gates-issue-440-20261117-r4-{check-fmt,test}.out`,
+      `/tmp/gates-issue-440-20261117-r3-{typecheck,lint}.out` and
+      `/tmp/gates-issue-440-20261117-r7-{check-fmt,markdownlint,nixie}.out`.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
@@ -531,6 +596,18 @@ pending action.
   avoids calling the public clock seam while holding an internal lock; the due
   path rechecks the counter under the mutex and does not claim an empty window.
   Date/Author: 2026-10-26, agent, following CodeRabbit review.
+- Decision: make the clock-before-lock rule hold in the claim *and* label the
+  HTTP and socket cause as "triggering cause" rather than "latest cause".
+  Rationale: the clock is a public seam a caller may implement by re-entering
+  the warner, so sampling it while the drain lock is held can deadlock the
+  claim against itself — the 2026-10-26 decision already required sampling
+  first, and the code had drifted from it. The cause available at report time
+  is the one whose refusal triggered the report; a concurrent `record_drop()`
+  from another cause may be more recent, and the warner tracks no causes, so
+  "latest" claimed more than the code could know. Reported under the same
+  trigger label on the flush paths, and a controlled two-thread race pins it.
+  Date/Author: 2026-11-17, agent, following the CodeRabbit completeness
+  assessment.
 - Decision: add a `#[cfg(any(test, feature = "test-util"))] pending_drops()`
   accessor. Rationale: the acceptance criteria ask for an assertion that
   "reported plus pending equals recorded". The in-module stress test can read
@@ -574,16 +651,19 @@ calls return on a lock-free read of the last-warning timestamp, so the refusal
 path does not contend for the shared mutex.
 
 The first formal review round found the reporting contract was still incomplete
-at the consumer boundary, in two ways. First, the HTTP and socket handlers and
-their workers share one counter per handler, so a warning raised by one cause
-could report a cumulative count while implying that the whole count shared that
-cause. The wording now reports the count "since the last report" and names only
-the latest cause, and the flush wording stays cause-neutral. Second, a handler
-closed before being destroyed reported only up to the moment of `close()`;
-records refused afterwards were counted but never reported, because the
-destructor returned as soon as it found no worker handle. The destructors in
-the HTTP, socket and stream handlers now flush the warner before that check, so
-the last counts are reported whatever route the object took to destruction.
+at the consumer boundary, in two ways. First, each HTTP and socket warner
+counts drops from several causes within its half — the handler's from enqueue
+refusals, the worker's from delivery failures — so a warning raised by one
+cause could report a cumulative count while implying that the whole count
+shared that cause. The wording now reports the count "since the last report"
+and names only the cause whose refusal triggered the report — "triggering
+cause", not "latest cause", because nothing in the warner can establish which
+cause was most recent — and the flush wording stays cause-neutral. Second, a
+handler closed before being destroyed reported only up to the moment of
+`close()`; records refused afterwards were counted but never reported, because
+the destructor returned as soon as it found no worker handle. The destructors
+in the HTTP, socket and stream handlers now flush the warner before that check,
+so the last counts are reported whatever route the object took to destruction.
 
 Both findings are covered by regression tests that fail without the fixes:
 `drop_reporting_tests.rs` in the HTTP and socket handler modules drives a
@@ -626,20 +706,27 @@ suppressed call. `flush()` delegates to `warn_if_due()`, so it inherits the
 suppression and can clear pending drops without reporting them, contradicting
 its own documented "immediately warn" contract.
 
-The consumers are:
+The consumers, and what each does after this change:
 
 - `rust_extension/src/stream_handler.rs` — the handler owns one warner and pairs
-  `record_drop()` with `warn_if_due()` in `handle()`, and calls
-  `warner.flush()` in `flush()` only on the open path.
+  `record_drop()` with `warn_if_due()` in `handle()`; `flush()`, `close()`,
+  `take_shutdown()` and `Drop` all report through the shared
+  `stream_handler/warning.rs` helper.
 - `rust_extension/src/logger/` — `FemtoLogger` owns `drop_warner` and, under the
-  `python` feature, `context_capture_warner`; `producer.rs` records and warns,
-  `flush_handlers_blocking()` only flushes handlers.
+  `python` feature, `context_capture_warner`; the producer records and warns,
+  and the logger's explicit flush reports both warners after the dispatch queue
+  has drained.
 - `rust_extension/src/http_handler/handler.rs` and
   `rust_extension/src/socket_handler/handler.rs` — each owns a warner for
-  refused records, flushes it only after `sender()` returns `Some`.
+  refused records and flushes it from `flush()`, `close()` and `Drop`, whether
+  or not a worker handle remains.
 - `rust_extension/src/http_handler/worker.rs` and
-  `rust_extension/src/socket_handler/worker.rs` — each owns a second warner for
-  drops discovered inside the worker, and never flushes it.
+  `rust_extension/src/socket_handler/worker.rs` — each owns a second,
+  independently rate-limited warner for drops discovered inside the worker, and
+  flushes it on its flush command and on exit.
+
+Warner instances that only count failures of the reporting machinery are
+outside this inventory; `Verification plan` records them under INV-7.
 
 The `heavy` Cargo test target is auto-discovered from
 `rust_extension/tests/heavy/main.rs`; its property tests are `#[ignore]` and
@@ -662,6 +749,9 @@ Trace links:
 issue-440 AC1 (remove the suppressed-path reset)        -> EP-M1 -> rate_limited_warner::tests::suppressed_attempts_carry_drops_forward
 issue-440 AC2 (flush is an unconditional swap)          -> EP-M1 -> rate_limited_warner::tests::flush_reports_inside_the_suppression_window
 issue-440 AC3/AC4 (concurrency contract, no loss)       -> EP-M1 -> rate_limited_warner::tests::compare_exchange_rejects_the_other_same_timestamp_claims
+issue-440 AC3 (clock sampled outside the drain lock)    -> EP-M1 -> rate_limited_warner::concurrency_tests::reentrant_clock_does_not_deadlock_the_interval_claim
+issue-440 AC8 (a cumulative warning names its trigger)  -> EP-M3 -> http_handler/socket_handler drop_reporting_tests::racing_causes_report_both_drops_and_name_the_trigger
+issue-440 AC8 (report precedes the worker ack)          -> EP-M3 -> http_handler/socket_handler worker::tests::the_flush_command_reports_drops_before_acknowledging
 issue-440 AC5/AC6/AC7 (regression and stress tests)     -> EP-M2 -> rate_limited_warner::tests::*, tests/heavy/prop_rate_limited_warner.rs
 issue-440 AC8 (consumers report on flush and shutdown)  -> EP-M3 -> stream_handler, logger, http_handler, socket_handler
 design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/rust-multithreaded-logging-framework-for-python-design.md
@@ -672,17 +762,22 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
 ### Invariants
 
 - **INV-1 (conservation).** For any interleaving of `record_drop()`,
-  `warn_if_due()` and `flush()`, let `R` be the number of completed
-  `record_drop()` calls, `D` the counter's current value, `I` the sum of
+  `warn_if_due()` and `flush()`, let `R` be the number of `record_drop()`
+  increments that have linearized — that is, whose `fetch_add(1)` has executed,
+  counted at the moment the invariant is stated, not the number of calls that
+  have returned — let `D` be the counter's current value, `I` the sum of
   drained counts whose callback has not yet returned or panicked, and `P` the
   sum of drained counts whose callback has returned or panicked. Then
   `R = P + I + D`. The `I` term includes the gap between a drain and callback
   invocation. Proof sketch: every `record_drop()` is a single relaxed
-  `fetch_add(1)`; every drain is a single `swap(0)`, which partitions the
-  increments it observes from the increments that remain pending. Each non-zero
-  drained batch is handed to one callback, so it moves from `I` to `P` when
-  that callback settles. A panic settles the handoff but may abandon the batch;
-  the warner does not retry it.
+  `fetch_add(1)`, so a call that has not returned may already be in `R` while
+  its caller is still unwinding; counting completed calls instead would make
+  the equation false for a caller delayed between its increment and its return.
+  Every drain is a single `swap(0)`, which partitions the increments it
+  observes from the increments that remain pending. Each non-zero drained batch
+  is handed to one callback, so it moves from `I` to `P` when that callback
+  settles. A panic settles the handoff but may abandon the batch; the warner
+  does not retry it.
 - **INV-2 (no double report).** No drop contributes to two callbacks. Follows
   from INV-1: `swap(0)` removes the increments it returns.
 - **INV-3 (suppression preserves).** A `warn_if_due()` call that does not
@@ -696,8 +791,32 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   apart from the `u64::MAX` sentinel that precedes it. A claim writes `now`
   only where `now` is at least `prev + interval_ms` (or `prev` is the
   sentinel), so the write is forward.
-- **INV-7 (consumer coverage).** Every warner instance reachable in the crate
-  is flushed by at least one explicit flush or shutdown path.
+- **INV-7 (drop-warning coverage).** Every warner that counts dropped log
+  records and belongs to a component with a flush or shutdown lifecycle — the
+  stream handler, the HTTP and socket handler halves, and the logger's drop and
+  context-capture warners — is flushed by at least one explicit flush or
+  shutdown path of that component.
+
+  *Narrowed 2026-11-17.* The invariant originally said "every warner instance
+  reachable in the crate", which is wider than the change's subject and
+  unachievable. Three warners count failures of the reporting machinery rather
+  than dropped records, and none has a shutdown owner that could flush it:
+
+  - `filters/python_callback_warning.rs` counts Python callback failures and
+    reports a summary only when the rate limiter allows it;
+  - `log_compat/diagnostics.rs` counts records refused by a bridge target and
+    rate-limits the stderr diagnostic for that target;
+  - `logger/flush_metrics.rs`'s timeout, handler-failure and bridge-failure
+    warners count failed flushes.
+
+  They inherit the carry-forward behaviour — a suppressed count is no longer
+  discarded, so their next due diagnostic reports it — but a pending count can
+  still end with the process. That is accepted for a diagnostic counter whose
+  subject is the reporting path itself: there is no shutdown point at which a
+  caller is waiting to hear it, and flushing process-global warners from an
+  arbitrary destructor would emit diagnostics during unrelated teardown. The
+  exclusion is stated here rather than left implicit, so the invariant is a
+  testable claim about the warners it actually covers.
 
 ### Obligations
 

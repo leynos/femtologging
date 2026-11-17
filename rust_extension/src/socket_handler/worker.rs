@@ -28,7 +28,7 @@ use super::{
     frame_write::FrameWriter,
     serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
-    warning::{flush_drops, flush_drops_naming_latest, warn_drops_naming_latest},
+    warning::{flush_drops, flush_drops_naming_cause, warn_drops_naming_cause},
 };
 
 /// Commands processed by the worker thread.
@@ -99,7 +99,7 @@ impl Worker {
             Ok(frame) => frame,
             Err(err) => {
                 warn!("FemtoSocketHandler serialization error: {err}");
-                warn_drops_naming_latest(&self.warner, "serialization failure");
+                warn_drops_naming_cause(&self.warner, "serialization failure");
                 return;
             }
         };
@@ -120,7 +120,7 @@ impl Worker {
             self.warn_shutdown_drops();
             warn!("FemtoSocketHandler failed to connect during shutdown: {err}");
         } else {
-            warn_drops_naming_latest(&self.warner, &format!("connect failure: {err}"));
+            warn_drops_naming_cause(&self.warner, &format!("connect failure: {err}"));
         }
         self.sleep_if_backing_off(now);
     }
@@ -129,14 +129,14 @@ impl Worker {
     fn handle_write_error(&mut self, err: io::Error, now: Instant) {
         warn!("FemtoSocketHandler write failed: {err}");
         self.connection = None;
-        warn_drops_naming_latest(&self.warner, "write error");
+        warn_drops_naming_cause(&self.warner, "write error");
         self.sleep_if_backing_off(now);
     }
 
     /// Count a record refused by an exhausted shutdown budget.
     fn warn_shutdown_drops(&self) {
         self.warner.record_drop();
-        flush_drops_naming_latest(&self.warner, "abandoned retry during shutdown");
+        flush_drops_naming_cause(&self.warner, "abandoned retry during shutdown");
     }
 
     /// Reuse or connect; an expired shutdown budget returns `false` without I/O.
@@ -336,11 +336,11 @@ pub fn enqueue_record(
     match tx.try_send(SocketCommand::Record(record)) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
-            warn_drops_naming_latest(warner, "queue full");
+            warn_drops_naming_cause(warner, "queue full");
             Err(HandlerError::QueueFull)
         }
         Err(TrySendError::Disconnected(_)) => {
-            warn_drops_naming_latest(warner, "worker disconnected");
+            warn_drops_naming_cause(warner, "worker disconnected");
             Err(HandlerError::Closed)
         }
     }
