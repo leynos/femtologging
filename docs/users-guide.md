@@ -662,7 +662,10 @@ socket_handler = (
   closed-handler check, so a delivery cannot manufacture the next request. The
   ignored record is not counted as a drop. Non-HTTP handlers still receive it,
   and records emitted by application code on other threads are unaffected even
-  while a worker is sending.
+  while a worker is sending. To see exactly what an endpoint suppresses, put a
+  non-HTTP sink in place and raise `ureq.unit`, `ureq.stream` and `ureq.pool` to
+  `DEBUG`: the records that reach that sink and never reach the endpoint are
+  the suppressed ones.
 - The marker is narrow on purpose. A record that Python code rebuilds from a
   marked record is a new application record, records passed directly to the
   three-argument `handler.handle(logger, level, message)` Python method carry

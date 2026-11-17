@@ -1749,7 +1749,17 @@ Implement `log::Log` first for immediate ecosystem compatibility; a
   non-HTTP handlers still receive them. `on_event` captures the marker before
   field capture and suspends it for the rest of the call, so user code reached
   during dispatch emits application records rather than inheriting the
-  transport origin.
+  transport origin. The marker is named `RecordOrigin::SelfDiagnostic` on the
+  record, which describes the logger reporting on its own work instead of the
+  adapter it came from, so the core record type stays free of transport terms.
+
+  Suppression is deliberately unobservable through this library. A suppressed
+  record is the transport library's own DEBUG output, not a loss, so it is
+  neither warned about nor counted, and this handler exposes no outcome
+  counters; bounded handler telemetry is a separate line of work. A maintainer
+  who needs to see suppression raises `ureq.unit`, `ureq.stream` and
+  `ureq.pool` to DEBUG and watches a non-HTTP sink: the records that reach that
+  sink and never reach the endpoint are the suppressed ones.
 
   For Python-first hybrid applications, the package exposes
   `femtologging.setup_rust_tracing()` as an explicit convenience helper that

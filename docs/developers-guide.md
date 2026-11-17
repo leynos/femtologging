@@ -341,7 +341,9 @@ own progress through the `log` and `tracing` facades as DEBUG records under
 `ureq.unit`, `ureq.stream`, and `ureq.pool`. With either bridge installed those
 records are ordinary records that a target route can send back to the handler
 that produced them, so each successful delivery would manufacture the next one.
-`rust_extension/src/transport_origin.rs` is the guard that stops the loop.
+`rust_extension/src/http_handler/transport_origin.rs` is the guard that stops
+the loop. It lives under the HTTP adapter, because the worker is its only
+producer.
 
 The module holds a thread-local `Cell<bool>` rather than process-wide state:
 two HTTP handlers on different threads must not hide each other's ordinary
@@ -369,18 +371,34 @@ logs during dispatch therefore emits an application record instead of
 inheriting the transport origin.
 
 `RecordOrigin` (`rust_extension/src/log_record.rs`) is a crate-private
-`Application`/`HttpTransport` field on `FemtoLogRecord`. `Clone`, the
-handler-filter snapshot, and parent propagation all preserve it, and no other
-consumer reads it, so it never reaches the Python record view, formatted output
-or an HTTP payload. The origin-aware producer entry point is
-`log_with_metadata_and_origin`, which takes an `OriginLogRequest`; the ordinary
-`log_with_metadata` path supplies `RecordOrigin::Application`.
+`Application`/`SelfDiagnostic` field on `FemtoLogRecord`. The variant names the
+relationship — the logger reporting on its own work — rather than the component
+that emits it, so the core record type carries no HTTP vocabulary and the
+adapter keeps that vocabulary to itself. `Clone`, the handler-filter snapshot,
+and parent propagation all preserve it, and no other consumer reads it, so it
+never reaches the Python record view, formatted output or an HTTP payload.
+
+The producer path only carries the value. The ordinary entry points attach
+`RecordOrigin::Application`, and `log_prebuilt` accepts a record a bridge
+assembled and returns it to the producer unchanged, so no core logger API names
+an origin. A bridge therefore builds its record, attaches the origin it
+captured at entry, and hands it over; nothing downstream rewrites it.
 
 `FemtoHTTPHandler::handle` checks the origin after its closed-handler check and
-returns `Ok(())` for a marked record. The record is not queued, warned about,
-nor counted as a drop: it never entered this handler's queue, so reporting it
-as a loss would misdescribe a healthy worker. Non-HTTP handlers still receive
-the record, which keeps independent diagnostics available.
+returns `Ok(())` for a self-diagnostic record. The record is not queued, warned
+about, nor counted as a drop: it never entered this handler's queue, so
+reporting it as a loss would misdescribe a healthy worker. Non-HTTP handlers
+still receive the record, which keeps independent diagnostics available.
+
+Suppression is silent and has no counter or summary of its own. The records it
+discards are the transport library's own DEBUG output, so a maintainer who
+needs to see them raises the `ureq` targets (`ureq.unit`, `ureq.stream`,
+`ureq.pool`) to DEBUG and watches a non-HTTP sink: the records that appear
+there and never arrive at the endpoint are exactly the suppressed ones, which
+is the route `tests/http_transport_feedback_tests.rs` takes. A counter would
+need a diagnostics surface this handler does not have. Its only existing signal
+is the drop warner, and a suppressed record is deliberately not a drop; bounded
+handler telemetry is tracked separately by #551.
 
 The behavioural regression is `tests/http_transport_feedback_tests.rs`. Each
 variant runs in a fresh child process under a watchdog against a local TCP
