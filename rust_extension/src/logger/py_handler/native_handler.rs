@@ -51,7 +51,7 @@ where
             flushed
         }
         Err(err) => {
-            map_py_err(py, err.into(), kind.extract_label());
+            map_py_err(py, &err.into(), kind.extract_label());
             false
         }
     }
@@ -145,27 +145,27 @@ impl NativeHandlerKind {
         match self {
             Self::Stream => obj
                 .extract::<PyRef<'_, FemtoStreamHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoStreamHandler"))
+                .map_err(|err| map_py_err(py, &err.into(), "extract FemtoStreamHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
             Self::File => obj
                 .extract::<PyRef<'_, FemtoFileHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoFileHandler"))
+                .map_err(|err| map_py_err(py, &err.into(), "extract FemtoFileHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
             Self::RotatingFile => obj
                 .extract::<PyRef<'_, PyRotatingFileHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoRotatingFileHandler"))
+                .map_err(|err| map_py_err(py, &err.into(), "extract FemtoRotatingFileHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
             Self::TimedRotatingFile => obj
                 .extract::<PyRef<'_, PyTimedRotatingFileHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoTimedRotatingFileHandler"))
+                .map_err(|err| map_py_err(py, &err.into(), "extract FemtoTimedRotatingFileHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
             Self::Socket => obj
                 .extract::<PyRef<'_, FemtoSocketHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoSocketHandler"))
+                .map_err(|err| map_py_err(py, &err.into(), "extract FemtoSocketHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
             Self::Http => obj
                 .extract::<PyRef<'_, FemtoHTTPHandler>>()
-                .map_err(|err| map_py_err(py, err.into(), "extract FemtoHTTPHandler"))
+                .map_err(|err| map_py_err(py, &err.into(), "extract FemtoHTTPHandler"))
                 .and_then(|handler| FemtoHandlerTrait::handle(&*handler, record)),
         }
     }
