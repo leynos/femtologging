@@ -153,6 +153,10 @@ def strip_external_stack_frames(
     unrecognized filenames are kept, because they cannot be attributed
     reliably.
 
+    Stripping deletes whole lines and keeps every surviving line with the
+    terminator it already had, so an output that uses ``\r\n`` is returned with
+    ``\r\n`` intact and a traceback stays byte-identical.
+
     Parameters
     ----------
     output : str | None
@@ -192,12 +196,52 @@ def strip_external_stack_frames(
         if external_roots is not None
         else _external_roots_from_sysconfig()
     )
-    return _rejoin_lines(_strip_frames(output.splitlines(), roots), output)
+    lines, endings = _split_lines(output)
+    return _rejoin_lines(lines, endings, _strip_frames(lines, roots))
 
 
-def _strip_frames(lines: list[str], roots: cabc.Sequence[Path]) -> list[str]:
-    """Return the lines with external frame blocks removed from stack sections."""
-    kept: list[str] = []
+def _split_lines(output: str) -> tuple[list[str], list[str]]:
+    r"""Split ``output`` into line texts and the terminator each line ended with.
+
+    Splitting without terminators and rejoining with ``\n`` would rewrite every
+    ``\r\n`` in the output, including the exception traceback that
+    :func:`strip_external_stack_frames` promises to leave untouched. Keeping
+    each terminator alongside its text means the rebuilt output differs from
+    the original only by the removed frame blocks.
+
+    Parameters
+    ----------
+    output : str
+        The raw logging output.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        The line texts, and in the same order the terminator each line ended
+        with. A final line without a newline has an empty terminator.
+
+    Examples
+    --------
+    >>> _split_lines("a\r\nb")
+    (['a', 'b'], ['\r\n', ''])
+    """
+    bodies: list[str] = []
+    endings: list[str] = []
+    for raw_line in output.splitlines(keepends=True):
+        body = raw_line.splitlines()[0]
+        bodies.append(body)
+        endings.append(raw_line[len(body) :])
+    return bodies, endings
+
+
+def _rejoin_lines(lines: list[str], endings: list[str], kept: list[int]) -> str:
+    """Rebuild the output from the kept line indices and their terminators."""
+    return "".join(f"{lines[index]}{endings[index]}" for index in kept)
+
+
+def _strip_frames(lines: list[str], roots: cabc.Sequence[Path]) -> list[int]:
+    """Return the indices of lines kept after external frames are removed."""
+    kept: list[int] = []
     index = 0
     in_stack_section = False
 
@@ -207,10 +251,10 @@ def _strip_frames(lines: list[str], roots: cabc.Sequence[Path]) -> list[str]:
             # A heading always ends the previous section and starts its own,
             # so a second stack heading inside one section is still a heading.
             in_stack_section = heading == _STACK_HEADING
-            kept.append(lines[index])
+            kept.append(index)
             index += 1
         elif not in_stack_section:
-            kept.append(lines[index])
+            kept.append(index)
             index += 1
         else:
             index = _keep_or_drop_frame(lines, index, roots, kept)
@@ -221,7 +265,7 @@ def _keep_or_drop_frame(
     lines: list[str],
     index: int,
     roots: cabc.Sequence[Path],
-    kept: list[str],
+    kept: list[int],
 ) -> int:
     """Append one stack frame's block to ``kept`` unless it is external.
 
@@ -232,11 +276,11 @@ def _keep_or_drop_frame(
     """
     frame = parse_frame(lines, index)
     if frame is None:
-        kept.append(lines[index])
+        kept.append(index)
         return index + 1
     block_end = frame_block_end(lines, frame)
     if not _is_external_frame_file(frame.frame_file, roots):
-        kept.extend(lines[index:block_end])
+        kept.extend(range(index, block_end))
     return block_end
 
 
@@ -292,9 +336,3 @@ def _is_frame_source_line(line: str) -> bool:
     if not line.startswith(_FRAME_SOURCE_INDENT):
         return False
     return _TRACEBACK_FRAME_PATTERN.match(line) is None
-
-
-def _rejoin_lines(lines: list[str], original: str) -> str:
-    """Join split lines, preserving whether the original ended with a newline."""
-    joined = "\n".join(lines)
-    return f"{joined}\n" if original.endswith("\n") else joined

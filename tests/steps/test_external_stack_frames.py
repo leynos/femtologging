@@ -239,3 +239,32 @@ class TestStripExternalStackFrames:
             + '  File "/workspace/femtologging/app.py", line 7, in emit\n'
             + "    logger.log(level, message)\n"
         ), "the stack after a traceback must be trimmed, not preserved"
+
+    @staticmethod
+    def test_crlf_line_endings_survive_stripping() -> None:
+        """Preserve each surviving line's own terminator, traceback included."""
+        traceback = (
+            "Traceback (most recent call last):\r\n"
+            '  File "/opt/python/lib/python3.12/threading.py", line 3, in run\r\n'
+            "    self._target(*self._args)\r\n"
+            '  File "/workspace/femtologging/app.py", line 9, in work\r\n'
+            "    raise ValueError('boom')\r\n"
+            "ValueError: boom"
+        )
+        output = (
+            "test [ERROR] debug\r\n"
+            "Stack (most recent call last):\r\n"
+            '  File "/workspace/.venv/lib/python3.12/site-packages/pluggy/'
+            '_callers.py", line 3, in _multicall\r\n'
+            "    res = hook_impl.function(*args)\r\n"
+            "    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n"
+            '  File "/workspace/femtologging/app.py", line 7, in emit\r\n'
+            "    logger.log(level, message)\r\n" + traceback
+        )
+        stripped = strip_external_stack_frames(output, external_roots=_EXTERNAL_ROOTS)
+        assert stripped == (
+            "test [ERROR] debug\r\n"
+            "Stack (most recent call last):\r\n"
+            '  File "/workspace/femtologging/app.py", line 7, in emit\r\n'
+            "    logger.log(level, message)\r\n" + traceback
+        ), "a CRLF output must keep its terminators, with the traceback intact"
