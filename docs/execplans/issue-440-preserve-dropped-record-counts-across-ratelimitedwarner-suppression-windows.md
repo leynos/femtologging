@@ -75,23 +75,27 @@ suite that fails if any drop is discarded or handed off more than once.
   generated artefacts), stop and escalate.
 
   *Reached and recorded 2026-11-17.* Measured against `origin/main` at
-  `2dc7b4e2`, the branch changes 36 files for `+3087/-288` lines (2799 net),
+  `2dc7b4e2`, the branch changes 39 files for `+3726/-287` lines (3439 net),
   excluding the plan itself. The excess is not one large edit: it is the
   consumer wiring the issue's acceptance criteria require — four handler
   families, their workers, the logger producer, shared warning modules, the
   lock-free interval claim, the new regression suites and the heavy property
-  suite — plus the documentation those contracts need. The CodeRabbit
-  completeness assessment directed that the deviation be recorded here rather
-  than silently accepted, so it is recorded with the same evidence as the
-  gates. No further scope growth is planned; a new file beyond this set is a
-  reason to stop and re-plan. Owner acceptance: neither exception is a
-  discretionary expansion. The scope implements the issue's own acceptance
-  criteria for all four consumer families, and the wording change was required
-  by review of a contract those criteria created; the owner's instruction for
-  this task is to action every review finding and merge the result. Both are
-  therefore authorized and recorded here, and no exception is awaiting a
-  decision. The `Decision log` names every changed string and matcher should
-  the owner later wish to revert the wording.
+  suite — plus the documentation those contracts need. Four of the files are
+  test modules split out to keep their neighbours inside the 400-line limit
+  (`rate_limited_warner_claim_tests.rs`, `rate_limited_warner_panic_tests.rs`
+  and the two `drop_race_tests.rs` modules); they add evidence for the review
+  findings, not new runtime surface. The CodeRabbit completeness assessment
+  directed that the deviation be recorded here rather than silently accepted,
+  so it is recorded with the same evidence as the gates. No further scope
+  growth is planned; a new file beyond this set is a reason to stop and
+  re-plan. Owner acceptance: neither exception is a discretionary expansion.
+  The scope implements the issue's own acceptance criteria for all four
+  consumer families, and the wording change was required by review of a
+  contract those criteria created; the owner's instruction for this task is to
+  action every review finding and merge the result. Both are therefore
+  authorized and recorded here, and no exception is awaiting a decision. The
+  `Decision log` names every changed string and matcher should the owner later
+  wish to revert the wording.
 - Interface: any change to the public signature of an existing item stops the
   work for confirmation. A new `#[cfg(feature = "test-util")]` accessor is
   inside tolerance, and is recorded in `Decision log`.
@@ -118,10 +122,22 @@ suite that fails if any drop is discarded or handed off more than once.
   advance the fake clock only from one thread, and make all assertions about
   conservation rather than about which thread observed what.
 - Risk: a flush can drain the batch observed by a due caller before that caller
-  claims its interval. Severity: medium Likelihood: medium Mitigation: recheck,
-  claim and drain under one per-warmer mutex; keep callbacks outside the mutex;
-  use a deterministic clock-barrier test to prove a winning flush does not
-  leave an empty interval claimed.
+  claims its interval. Severity: medium Likelihood: medium Mitigation: order
+  the drain before the claim, so a winning flush leaves the due caller nothing
+  to claim, and restore the batch when the claim is refused; prove both
+  orderings with deterministic clock-barrier tests rather than with a lock.
+- Risk: a caller delayed between claiming an interval and publishing its
+  report time is superseded by a later caller, and warning anyway would place
+  two warnings back to back. Severity: medium Likelihood: medium Mitigation:
+  make the publication compare-exchange the ownership check, so a failed
+  exchange restores the batch and reports nothing; prove it with a clock that
+  lets a second caller publish inside the first caller's sample.
+- Risk: a `Clock` implementation that panics would strand a drained batch, and
+  the panic contract previously accepted that loss. Severity: medium
+  Likelihood: low Mitigation: hold the drained batch in a guard that restores
+  it on unwind, and disarm it only immediately before the callback, so a
+  panicking clock restores the count while a panicking callback still abandons
+  it; test both sampling points.
 
 ## Progress
 
@@ -465,9 +481,37 @@ suite that fails if any drop is discarded or handed off more than once.
       `flush_drop_warners`), and states per-process fork conservation without a
       lock; the user guide records that `logger.flush_handlers()` reports a
       pending context-capture warning. This plan's tolerance figures are
-      `+3087/-288` (2799 net) over 36 files, the stream wording exception is
+      `+3726/-287` (3439 net) over 39 files, the stream wording exception is
       recorded, and the capture-logger command names
       `stream_handler_logging_tests`.
+- [x] (2026-11-17) Closed the claim-to-publication race the second assessment
+      named. `publish_report_time()` now returns whether its compare-exchange
+      succeeded and publishes `max(sample, claimed_at)`, so a caller that is
+      delayed after claiming and overtaken by a later claim learns it was
+      superseded, restores its batch and does not warn. Evidence:
+      `a_superseded_claim_restores_its_batch_without_warning` drives the whole
+      interleaving from a clock that performs the second report inside the
+      first caller's report-time sample; with the ownership check removed it
+      fails, reporting both warnings.
+- [x] (2026-11-17) Made a panicking clock sample preserve the batch.
+      `claim_due_batch()` now returns a `PendingBatch` guard that owns the
+      drained count and adds it back on `Drop`; it is disarmed only immediately
+      before the callback. `a_panicking_claim_sample_leaves_the_batch_pending`
+      and `a_panicking_report_time_sample_leaves_the_batch_pending`, in a new
+      `rate_limited_warner_panic_tests.rs`, cover both sampling points; a no-op
+      `Drop` fails five tests across the claim and concurrency suites. A
+      panicking publication sample can still leave its interval claimed,
+      because that sample is the only thing that would move it forward; the
+      count, which is what the issue protects, is restored.
+- [x] (2026-11-17) Added a controlled mixed-cause race through the production
+      helper in each handler: `http_handler/drop_race_tests.rs` and
+      `socket_handler/drop_race_tests.rs` park the losing
+      `warn_drops_naming_cause` caller inside its report-time sample, let the
+      other caller publish, then release it. Each test asserts the single
+      emitted message is the winner's count and cause, that the superseded batch
+      stays pending, and that the flush that follows reports it cause-neutrally.
+      With the ownership check removed both tests show the loser's cause
+      relabelling a second warning.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
@@ -694,6 +738,25 @@ pending action.
   it reported rather than in the past. Fork safety follows from the absence of
   shared lock state: a child inherits counters, not ownership. Date/Author:
   2026-11-17, agent, following the second CodeRabbit completeness assessment.
+- Decision: make the publication compare-exchange the ownership check for the
+  claim, so a superseded caller does not warn. Rationale: a caller can be
+  delayed between winning its claim and publishing its report time; if a second
+  caller then claims and reports, the first caller's correction fails but
+  reporting anyway puts two warnings back to back, each nominally inside its
+  own interval. Treating the failed exchange as "you are no longer the owner"
+  makes the interval exclusive for the caller that actually reported, and
+  restoring the batch keeps the drops. Date/Author: 2026-11-17, agent,
+  following the second CodeRabbit completeness assessment.
+- Decision: hold a drained batch in a guard that restores it on unwind, and
+  disarm the guard only immediately before invoking the callback. Rationale:
+  draining before claiming means a panic in either clock sample would otherwise
+  strand the batch with nothing to report it, which is a silent loss the issue
+  exists to prevent. A callback that panics has already been given the count,
+  so it abandons it: restoring there could report the same count twice. The
+  remaining consequence, an interval left claimed by a publication panic, is
+  accepted and documented because the sample that would move it forward is the
+  one that panicked; the count is what must survive. Date/Author: 2026-11-17,
+  agent, following the second CodeRabbit completeness assessment.
 - Decision: add a `#[cfg(any(test, feature = "test-util"))] pending_drops()`
   accessor. Rationale: the acceptance criteria ask for an assertion that
   "reported plus pending equals recorded". The in-module stress test can read
@@ -730,11 +793,20 @@ pending action.
 The warning helper preserves suppressed drops, claims warning intervals with
 compare-and-exchange, and drains explicit flushes independently of the rate
 limit. Both the original rebased candidate and the CodeRabbit-driven race fixes
-have passed the full deterministic and ignored-heavy gate suites. The fixes
-serialize the due-path recheck, claim and drain against flush, keep callbacks
-outside the mutex, and include deterministic race and CAS evidence. Suppressed
-calls return on a lock-free read of the last-warning timestamp, so the refusal
-path does not contend for the shared mutex.
+have passed the full deterministic and ignored-heavy gate suites.
+
+The warner holds no lock at all. The due path takes its batch with one swap and
+its interval with one compare-exchange, and the publication exchange is also
+the ownership check: a caller superseded while it was publishing restores its
+batch instead of warning, so two reports cannot land back to back. The drained
+batch travels in a guard that restores it if a clock sample panics, and is
+disarmed only immediately before the callback, so a panicking clock costs a
+retry while a panicking callback still cannot report its count twice.
+Suppressed calls return on a relaxed read of the last-warning timestamp and one
+clock read, without touching the counter. The drain lock an earlier review
+round added was removed once the ordering argument showed it was unnecessary
+and itself a fork hazard; the decision log records that migration, and fork
+safety now follows from having no lock state to inherit.
 
 The first formal review round found the reporting contract was still incomplete
 at the consumer boundary, in two ways. First, each HTTP and socket warner
@@ -840,6 +912,9 @@ issue-440 AC3 (clock sampled without a lock held)       -> EP-M1 -> rate_limited
 issue-440 AC3 (no start in the past after delay)        -> EP-M1 -> rate_limited_warner::claim_tests::a_delayed_claim_sample_cannot_start_the_interval_in_the_past
 issue-440 AC3 (refused claim keeps its batch)           -> EP-M1 -> rate_limited_warner::claim_tests::a_refused_claim_returns_the_batch
 issue-440 AC8 (a cumulative warning names its trigger)  -> EP-M3 -> http_handler/socket_handler drop_reporting_tests::racing_causes_report_both_drops_and_name_the_trigger
+issue-440 AC8 (the production helper names its winner)  -> EP-M3 -> http_handler/socket_handler drop_race_tests::a_superseded_report_does_not_relabel_the_winners_cause
+issue-440 AC3 (a superseded claim does not warn)        -> EP-M1 -> rate_limited_warner::claim_tests::a_superseded_claim_restores_its_batch_without_warning
+issue-440 AC3 (a panicking clock keeps the batch)       -> EP-M1 -> rate_limited_warner::panic_tests::a_panicking_{claim,report_time}_sample_leaves_the_batch_pending
 issue-440 AC8 (report precedes the worker ack)          -> EP-M3 -> http_handler/socket_handler worker::tests::the_flush_command_reports_drops_before_acknowledging
 issue-440 AC5/AC6/AC7 (regression and stress tests)     -> EP-M2 -> rate_limited_warner::tests::*, tests/heavy/prop_rate_limited_warner.rs
 issue-440 AC8 (consumers report on flush and shutdown)  -> EP-M3 -> stream_handler, logger, http_handler, socket_handler
@@ -865,8 +940,10 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   Every drain is a single `swap(0)`, which partitions the increments it
   observes from the increments that remain pending. Each non-zero drained batch
   is handed to one callback, so it moves from `I` to `P` when that callback
-  settles. A panic settles the handoff but may abandon the batch; the warner
-  does not retry it.
+  settles. A batch that never reaches a callback - a refused or superseded
+  claim, or a clock sample that panics - returns to `D` through the guard, so
+  the equation still holds; only a callback that panics settles the handoff
+  while abandoning the batch, and the warner does not retry it.
 - **INV-2 (no double report).** No drop contributes to two callbacks. Follows
   from INV-1: `swap(0)` removes the increments it returns.
 - **INV-3 (suppression preserves).** A `warn_if_due()` call that does not
@@ -968,9 +1045,10 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   where four were lost.
 - Obligation: Axioms. `swap`/`fetch_add`/`compare_exchange` provide atomicity
   for their own location under `Ordering::Relaxed`; callbacks may run
-  concurrently and are not serialized; a panicking callback abandons its batch.
-  These are Rust/`core::sync::atomic` guarantees and documented contracts, not
-  repository logic, and are treated as axioms.
+  concurrently and are not serialized; a panicking callback abandons its batch,
+  while a panicking clock sample restores it. These are
+  Rust/`core::sync::atomic` guarantees and documented contracts, not repository
+  logic, and are treated as axioms.
 
 ### Quality criteria
 
@@ -982,10 +1060,10 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
 - Performance: `record_drop()` remains one relaxed atomic increment without a
   lock or allocation. A `warn_if_due()` call whose interval is still open,
   which is every refused record under sustained overload, returns after one
-  relaxed load of the last-warning timestamp and does not touch the mutex. A
-  call that may be due takes the short per-warmer mutex, rechecks the counter
-  and claims there; callbacks remain outside the lock. No benchmark run is
-  required for this correctness fix.
+  relaxed load of the last-warning timestamp and one clock read, without
+  touching the counter. A call that may be due performs one swap, one load and
+  two compare-exchanges, and holds nothing while the callback runs. No lock
+  exists on any path. No benchmark run is required for this correctness fix.
 
 ## Milestones and plateaus
 

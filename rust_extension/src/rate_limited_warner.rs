@@ -79,16 +79,20 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 /// Neither the clock nor the callbacks run under any lock, because the warner
 /// takes none. The clock is a caller-supplied seam, so a clock that re-enters
 /// the warner is safe, and callbacks are **not** serialized against one another
-/// and may re-enter the warner. A callback that panics abandons the batch it
-/// was handed, as does a `Clock` whose sample panics: the count is not restored,
-/// which keeps the "handed off once" guarantee rather than trading it for a
-/// possibly-repeated callback.
+/// and may re-enter the warner.
+///
+/// A drained batch is restored if the report is abandoned before the callback
+/// runs, including when a clock sample panics. A callback that panics has
+/// already been handed the count, so it abandons it: restoring there could
+/// report the same count twice.
 ///
 /// An interval starts when a report is *published*, not when its caller first
 /// read the clock. The claim publishes its sample, then corrects it forward if
-/// the clock has moved on by the time the claim was won, so a caller delayed
-/// between sampling and publishing cannot start the interval in the past and
-/// let the next caller warn immediately afterwards.
+/// the clock has moved on by the time the claim was won. That correction is
+/// also the ownership check: if a caller delayed between its claim and its
+/// publication sample lets another caller publish a later interval, the first
+/// caller's compare-exchange fails and it does not report. Otherwise both would
+/// warn back to back, each nominally inside its own interval.
 ///
 /// The counter and timestamp use [`Ordering::Relaxed`], which is sound because
 /// they publish only their own values and carry no data other than the count.
@@ -152,12 +156,14 @@ impl RateLimitedWarner {
     ///
     /// The counter is checked before sampling the clock and rechecked by the
     /// claim itself. A call that takes a batch and then loses the interval
-    /// restores the batch, so the drops stay pending for the next due call.
-    /// At most one caller emits per interval; callers that lose the
-    /// compare-exchange return without reporting. Nothing is held while the
-    /// callback runs, so a slow or re-entrant callback does not hold up
-    /// another caller or a flush, and a re-entrant clock cannot wait for the
-    /// claim it is timing.
+    /// restores the batch, so the drops stay pending for the next due call. The
+    /// same applies to a call that wins a claim but is then delayed until
+    /// another caller has published a later interval: it is superseded, and
+    /// restoring rather than reporting avoids two warnings back to back. At
+    /// most one caller emits per interval, and nothing is held while the
+    /// callback runs, so a slow or re-entrant callback does not hold up another
+    /// caller or a flush, and a re-entrant clock cannot wait for the claim it
+    /// is timing.
     ///
     /// A call whose interval is still open returns after one clock read and one
     /// atomic load, without touching the counter. The refusal paths call this
@@ -186,9 +192,8 @@ impl RateLimitedWarner {
         if !self.is_warning_due() {
             return;
         }
-        let count = self.claim_due_batch();
-        if count > 0 {
-            warn(count);
+        if let Some(pending) = self.claim_due_batch() {
+            warn(pending.take());
         }
     }
 
@@ -209,7 +214,7 @@ impl RateLimitedWarner {
     }
 
     /// Take the pending batch and claim the interval covering it, or return
-    /// zero and leave the batch pending.
+    /// `None` with the batch left pending.
     ///
     /// The swap happens before the claim so that a concurrent [`Self::flush`]
     /// can never empty a batch whose interval this call has already claimed:
@@ -217,30 +222,35 @@ impl RateLimitedWarner {
     /// was reported for it. A flush that wins the swap race instead takes the
     /// batch and this call finds nothing to report, so it claims nothing.
     ///
-    /// A refused claim returns the batch with an atomic add, which can only
-    /// merge with drops recorded in the meantime; it cannot drop or duplicate
-    /// one. The caller reports nothing in that case, because another caller has
-    /// just reported and the interval it opened must be respected.
-    fn claim_due_batch(&self) -> u64 {
+    /// The returned guard owns the batch. It puts the batch back if either
+    /// clock sample panics, and it is discharged only once the callback is
+    /// invoked, so an abandoned report cannot silently lose drops.
+    fn claim_due_batch(&self) -> Option<PendingBatch<'_>> {
         let batch = self.dropped.swap(0, Ordering::Relaxed);
         if batch == 0 {
-            return 0;
+            return None;
         }
-        let Some(claimed_at) = self.claim_interval() else {
-            self.dropped.fetch_add(batch, Ordering::Relaxed);
-            return 0;
+        // From here the batch is out of the counter, so the guard restores it
+        // on every early return and on unwind.
+        let pending = PendingBatch {
+            warner: self,
+            count: batch,
         };
-        self.publish_report_time(claimed_at);
-        batch
+        let claimed_at = self.claim_interval()?;
+        if !self.publish_report_time(claimed_at) {
+            // A later interval was published while this caller was delayed, so
+            // that report supersedes this one; the guard restores the batch
+            // for the next due call instead of emitting two warnings together.
+            return None;
+        }
+        Some(pending)
     }
 
     /// Claim the warning interval, returning the timestamp published, if any.
     ///
     /// The clock is sampled immediately before the compare-exchange, with no
-    /// lock or wait in between, and then the published time is corrected
-    /// forward once the claim is won. Between those two samples the caller can
-    /// only be pre-empted: there is no lock to queue behind, so the correction
-    /// bounds how stale a published interval start can be.
+    /// lock or wait in between. A refused claim samples the clock but touches
+    /// neither counter.
     fn claim_interval(&self) -> Option<u64> {
         let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
@@ -252,24 +262,30 @@ impl RateLimitedWarner {
         try_claim_interval(&self.last_warn, prev, now).then_some(now)
     }
 
-    /// Move the published interval start forward to the moment of publication.
+    /// Publish the report time, reporting whether this caller still owns the
+    /// interval it claimed.
     ///
-    /// The claim's sample was taken before the compare-exchange, so a caller
-    /// pre-empted between the two would otherwise start the interval in the
-    /// past and let the very next caller warn inside it. Only a later sample is
-    /// published, so a clock that steps backwards cannot shorten an interval,
-    /// and a compare-exchange failure means a concurrent claim already
-    /// published a later time, which this call must leave alone.
-    fn publish_report_time(&self, claimed_at: u64) {
-        let reported_at = self.clock.now_millis();
-        if reported_at > claimed_at {
-            let _ = self.last_warn.compare_exchange(
+    /// The claim's sample was taken before the compare-exchange, so this sample
+    /// moves the published start forward to the moment of publication; a clock
+    /// that steps backwards cannot shorten an interval because the value never
+    /// moves back.
+    ///
+    /// The same exchange is the liveness check for the claim. It fails when
+    /// another caller has already published a later interval - possible only
+    /// while this caller was delayed between its claim and this sample - and
+    /// that caller's report supersedes this one. Emitting here would place two
+    /// warnings back to back even though each is inside its own interval, so a
+    /// false result means the caller must not report.
+    fn publish_report_time(&self, claimed_at: u64) -> bool {
+        let reported_at = self.clock.now_millis().max(claimed_at);
+        self.last_warn
+            .compare_exchange(
                 claimed_at,
                 reported_at,
                 Ordering::Relaxed,
                 Ordering::Relaxed,
-            );
-        }
+            )
+            .is_ok()
     }
 
     /// Immediately warn about any dropped records.
@@ -323,6 +339,41 @@ fn try_claim_interval(last_warn: &AtomicU64, prev: u64, now: u64) -> bool {
         .is_ok()
 }
 
+/// A drained batch that is put back unless it is handed to a callback.
+///
+/// A due call removes the batch from the counter before it samples the clock
+/// and claims the interval, so every path that gives up between those steps
+/// must restore it. Owning the count in a guard makes that the default: the
+/// early returns and any unwind both put the count back.
+///
+/// [`Self::take`] disarms the guard, so the count is restored only when the
+/// report was abandoned. It is called immediately before invoking the callback,
+/// which keeps the "handed off once" guarantee: a callback that panics has been
+/// given the count, so re-adding it could report the same count twice.
+struct PendingBatch<'a> {
+    /// Warner whose counter the batch came from and may return to.
+    warner: &'a RateLimitedWarner,
+    /// Count still owned by this guard; zero once it is handed off.
+    count: u64,
+}
+
+impl PendingBatch<'_> {
+    /// Disarm the guard and return the count it owned.
+    fn take(mut self) -> u64 {
+        let count = self.count;
+        self.count = 0;
+        count
+    }
+}
+
+impl Drop for PendingBatch<'_> {
+    fn drop(&mut self) {
+        if self.count > 0 {
+            self.warner.dropped.fetch_add(self.count, Ordering::Relaxed);
+        }
+    }
+}
+
 impl Default for RateLimitedWarner {
     fn default() -> Self {
         Self::new(DEFAULT_WARN_INTERVAL)
@@ -336,6 +387,10 @@ mod tests;
 #[cfg(test)]
 #[path = "rate_limited_warner_claim_tests.rs"]
 mod claim_tests;
+
+#[cfg(test)]
+#[path = "rate_limited_warner_panic_tests.rs"]
+mod panic_tests;
 
 #[cfg(test)]
 #[path = "rate_limited_warner_concurrency_tests.rs"]

@@ -40,7 +40,7 @@ impl Clock for ScriptedClock {
     }
 }
 
-/// Scenario: a due caller samples the clock, is pre-empted, and only wins its
+/// Scenario: a due caller samples the clock, is delayed, and only wins its
 /// claim once the clock has moved a whole interval past that sample.
 ///
 /// Invariant: the interval starts when the report is published, not when it was
@@ -136,6 +136,99 @@ fn a_refused_claim_returns_the_batch() {
         warner.pending_drops(),
         1,
         "the refused caller must return the batch it drained"
+    );
+
+    warner.flush(|count| warnings.push(count));
+    assert_eq!(warnings, vec![1], "the returned batch is still reportable");
+}
+
+/// A clock that lets another caller publish a later interval inside this
+/// caller's own report-time sample.
+struct SupersedingClock {
+    /// Timestamp returned before the clock moves on.
+    claimed_at: u64,
+    /// Timestamp returned once the clock has moved a whole interval forward.
+    superseded_at: u64,
+    /// Samples taken so far, so the superseding call lands on ours.
+    samples: AtomicU64,
+    /// Warner the superseding call is made on, set once it exists.
+    warner: OnceLock<Arc<RateLimitedWarner>>,
+    /// Counts reported by the superseding caller.
+    reported: Mutex<Vec<u64>>,
+}
+
+impl Clock for SupersedingClock {
+    fn now_millis(&self) -> u64 {
+        // Sample zero is the due pre-check and sample one the claim. The
+        // report-time sample is sample two, and the superseding caller runs
+        // inside it: by then this caller has claimed the interval but has not
+        // yet published a report time, exactly the window in which a real
+        // caller would be delayed.
+        if self.samples.fetch_add(1, Ordering::Relaxed) < 2 {
+            return self.claimed_at;
+        }
+        if self.samples.load(Ordering::Relaxed) == 3
+            && let Some(warner) = self.warner.get()
+        {
+            warner.record_drop();
+            // Neither guard-holding nor re-entrancy: the callback takes the
+            // lock itself, so this clock holds none while the warner runs.
+            let reported = &self.reported;
+            warner.warn_if_due(|count| {
+                reported.lock().expect("superseding reports").push(count);
+            });
+        }
+        self.superseded_at
+    }
+}
+
+/// Scenario: a due caller claims the interval, is delayed before it
+/// publishes the report time, and a second caller claims and warns meanwhile.
+///
+/// Invariant: the superseded claim must not warn. Its report-time
+/// compare-exchange fails because a later interval is already published, so it
+/// restores its batch for the next due call instead of emitting a second
+/// warning immediately after the first.
+#[test]
+fn a_superseded_claim_restores_its_batch_without_warning() {
+    let clock = Arc::new(SupersedingClock {
+        claimed_at: 0,
+        superseded_at: 1000,
+        samples: AtomicU64::new(0),
+        warner: OnceLock::new(),
+        reported: Mutex::new(Vec::new()),
+    });
+    let warner = Arc::new(RateLimitedWarner::with_clock(
+        Duration::from_millis(500),
+        Arc::clone(&clock) as Arc<dyn Clock>,
+    ));
+    assert!(
+        clock.warner.set(Arc::clone(&warner)).is_ok(),
+        "the clock's warner is set once, before any sample"
+    );
+    warner.record_drop();
+
+    let mut warnings = Vec::new();
+    warner.warn_if_due(|count| warnings.push(count));
+
+    assert!(
+        warnings.is_empty(),
+        "a claim superseded before it published must not warn"
+    );
+    assert_eq!(
+        *clock.reported.lock().expect("superseding reports"),
+        vec![1],
+        "the superseding caller reports the drop it drained"
+    );
+    assert_eq!(
+        warner.last_warn.load(Ordering::Relaxed),
+        1000,
+        "the superseding caller's interval is the published one"
+    );
+    assert_eq!(
+        warner.pending_drops(),
+        1,
+        "the superseded caller must return the batch it drained"
     );
 
     warner.flush(|count| warnings.push(count));

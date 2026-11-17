@@ -1497,6 +1497,20 @@ into the warner. Every path that might be the last chance to speak uses it:
 - `Drop`, which reports records refused after an earlier `close()` even though
   no worker handle is left to report them.
 
+Each consumer owns the warners and flush points its own shape requires. The
+stream handler shares one warner across its writer path and reports through
+`warn_dropped`; its `Drop` reports whatever the interval is still holding. The
+logger keeps a warner per logger for records dropped on the logging path, and
+`flush_handlers()` walks them through `flush_drop_warners`, so a shutdown or an
+explicit flush does not depend on a warning interval that may never elapse. A
+failed context capture is counted in its own logger-side warner and reported as
+`FemtoLogger: dropped 3 records after context capture failed`, which
+`flush_handlers()` also drains. The HTTP and socket handlers each keep the
+handler-side and worker-side warners described above, with the handler
+reporting through `warn_drops_naming_cause` and `flush_drops_naming_cause` and
+the worker reporting through the same pair; each half flushes only the warner
+it owns.
+
 The warner takes no lock at all. A due call swaps its batch out of the counter
 and only then claims the interval with a compare-exchange, returning the batch
 if the claim is refused. A flush that wins the swap race leaves the due call
@@ -1505,6 +1519,20 @@ batch keeps it, so a flush cannot claim an interval that no report covers. The
 claim samples the clock immediately before the compare-exchange and then
 republishes a later sample once the claim is won, so a caller delayed between
 the two starts the interval when it actually reported rather than in the past.
+
+That second exchange is also the ownership check. A caller can be delayed
+between winning its claim and publishing its report time; if another caller
+claims and reports in that window, the first caller's exchange fails because a
+later interval is already published. It then restores its batch and reports
+nothing, so the interval belongs to the caller that actually emitted the
+warning and two warnings cannot land back to back. The batch travels in a guard
+that adds it back on unwind, and the guard is disarmed only immediately before
+the callback: a `Clock` that panics therefore costs a retry rather than the
+count, while a callback that panics has already been handed the count and so
+abandons it, which keeps the "handed off once" guarantee. A panic in the
+publication sample can leave its interval claimed, because that sample is the
+only thing that would move it forward; the count, which is what must survive,
+is restored.
 
 The helpers live beside the modules that own the wording, not on the warner.
 HTTP keeps `warn_drops`, `flush_drops`, `warn_drops_naming_cause`,
@@ -1535,10 +1563,16 @@ The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
 (carry-forward, flush inside the window, empty calls),
 `rust_extension/src/rate_limited_warner_claim_tests.rs` (scripted and stealing
 clocks: a delayed publication sample, a refused claim returning its batch, a
-paused callback not blocking a flush) and
+superseded claim restoring its batch without warning, a paused callback not
+blocking a flush), `rust_extension/src/rate_limited_warner_panic_tests.rs` (a
+clock that panics at either sampling point) and
 `rust_extension/src/rate_limited_warner_concurrency_tests.rs` (racing callers
-conserve every drop, a flush cannot take a drained batch, re-entrant clocks),
-and by each handler's `drop_reporting_tests.rs`, worker tests and
+conserve every drop, a flush cannot take a drained batch, re-entrant clocks).
+Each handler's `drop_reporting_tests.rs` drives a manual clock through a
+suppression window, and `drop_race_tests.rs` in the HTTP and socket modules
+parks the losing caller inside its report-time sample so the winner of a
+mixed-cause race is chosen by the test; both handler modules also cover their
+worker exit, close and destruction paths in their worker tests and
 `close_tests.rs`.
 
 ## Configuration transaction

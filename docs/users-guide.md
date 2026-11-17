@@ -69,16 +69,20 @@ your process exits.
   previous report*, not the number caused by the current event: a suppressed
   interval carries its drops into the next report, so the reported counts add
   up to the records actually lost. HTTP and socket warnings also name the cause
-  whose refusal triggered the report, as in
-  `FemtoHTTPHandler dropped 3 records since the last
-  report; triggering cause: permanent error`;
-  the earlier drops in that count may have had another cause, and a drop
+  whose refusal triggered the report:
+
+  ```text
+  FemtoHTTPHandler dropped 3 records since the last report; triggering cause: permanent error
+  ```
+
+  The earlier drops in that count may have had another cause, and a drop
   recorded concurrently may be more recent than the one named. `flush()` and
   `close()` report any count still pending rather than waiting for the next
-  interval, and destroying a handler that has already been closed reports the
-  records it refused after that close. A file handler whose policy is `"block"`
-  waits for room instead of dropping; with `"timeout:N"` it waits for room only
-  until its deadline, then drops the record.
+  interval, a worker reports what it is still holding before it acknowledges
+  shutdown and exits, and destroying a handler that has already been closed
+  reports the records it refused after that close. A file handler whose policy
+  is `"block"` waits for room instead of dropping; with `"timeout:N"` it waits
+  for room only until its deadline, then drops the record.
 - Record metadata tracks the logger name, level, message text, timestamps,
   thread identity, optional structured exception (`exc_info`) and call stack
   (`stack_info`) payloads, and validated inline structured fields (`extra`).
