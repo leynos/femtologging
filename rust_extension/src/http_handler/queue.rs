@@ -54,8 +54,39 @@ pub(crate) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
 /// never comes.
 pub(crate) fn flush_drops(warner: &RateLimitedWarner) {
     warner.flush(|count| {
-        log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
+        log::warn!("FemtoHTTPHandler dropped {count} records since the last report");
     });
+}
+
+/// Record a drop and report the cumulative count, naming this drop's cause as
+/// the latest rather than as the reason for the whole count.
+///
+/// The handler and the worker share one counter for every drop they see, so a
+/// due warning can carry drops from several causes. Saying the count happened
+/// for this call's reason would misattribute the earlier ones; the wording
+/// therefore names only the most recent cause.
+pub(crate) fn warn_drops_naming_latest(warner: &RateLimitedWarner, cause: &str) {
+    warn_drops(warner, |count| warn_cumulative_drops(count, cause));
+}
+
+/// Report the pending cumulative count now, naming the most recent cause.
+///
+/// The flush equivalent of [`warn_drops_naming_latest`], for paths that cannot
+/// wait for the interval and whose count may still hold drops from earlier
+/// causes.
+pub(crate) fn flush_drops_naming_latest(warner: &RateLimitedWarner, cause: &str) {
+    warner.flush(|count| warn_cumulative_drops(count, cause));
+}
+
+/// Render the one cumulative drop warning the naming helpers emit.
+fn warn_cumulative_drops(count: u64, cause: &str) {
+    warn!(
+        concat!(
+            "FemtoHTTPHandler dropped {} records since the last report; ",
+            "latest cause: {}"
+        ),
+        count, cause
+    );
 }
 
 /// Throw away everything left in the queue, without touching the network.
@@ -112,15 +143,11 @@ pub fn enqueue_record(
     match tx.try_send(HTTPCommand::Record(record)) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
-            warn_drops(warner, |count| {
-                warn!("FemtoHTTPHandler queue full; dropped {count} records");
-            });
+            warn_drops_naming_latest(warner, "queue full");
             Err(HandlerError::QueueFull)
         }
         Err(TrySendError::Disconnected(_)) => {
-            warn_drops(warner, |count| {
-                warn!("FemtoHTTPHandler disconnected; dropped {count} records");
-            });
+            warn_drops_naming_latest(warner, "worker disconnected");
             Err(HandlerError::Closed)
         }
     }

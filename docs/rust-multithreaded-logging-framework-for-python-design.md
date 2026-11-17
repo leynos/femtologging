@@ -193,7 +193,18 @@ The logging process will follow these steps:
    reads account for every lost record rather than only those recorded since
    the most recent suppressed attempt. An explicit flush reports the pending
    count immediately, whatever the interval says, so shutdown and flush paths
-   cannot lose the last batch.
+   cannot lose the last batch. A handler's enqueue path and its worker count
+   into one counter, so a report carries the cumulative count and names only
+   the most recent cause rather than attributing the whole count to it.
+
+   Warning emission and draining serialize on a small per-warner lock, which
+   must survive `fork`. A parking-lot mutex cannot: `multiprocessing` children
+   inherit the handlers, and a child forked while another parent thread held
+   the lock would wait forever on a word no thread in that child can release.
+   The lock therefore records the owning process ID, treats a foreign ID as an
+   inherited reservation it may clear, and releases only a word that still
+   carries its own ID, so a parent guard dropped after the child reclaimed the
+   lock cannot free it under the child.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.

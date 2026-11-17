@@ -43,3 +43,18 @@ mod tests;
 
 pub use config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
 pub use handler::FemtoHTTPHandler;
+
+/// What asking the worker to stop established about joining it.
+///
+/// The handler's close path lives in `handler.rs`; this verdict is shared
+/// vocabulary for that decision rather than part of the public surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ShutdownOutcome {
+    /// The worker acknowledged, or had already left its loop. The join is
+    /// bounded and worth doing, because it is also what surfaces a panic.
+    Finished,
+    /// The command could not be queued, or no acknowledgement arrived, within
+    /// `flush_timeout`. The worker is busy on something whose length
+    /// `flush_timeout` does not describe.
+    TimedOut,
+}

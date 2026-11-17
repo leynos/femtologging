@@ -65,9 +65,19 @@ your process exits.
 - When any queue is full under the default policy, the record is dropped. Each
   component emits rate-limited warnings and maintains drop counters
   (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
-  monitor pressure. A file handler whose policy is `"block"` waits for room
-  instead of dropping; with `"timeout:N"` it waits for room only until its
-  deadline, then drops the record.
+  monitor pressure. A warning reports the number of records dropped *since the
+  previous report*, not the number caused by the current event: a suppressed
+  interval carries its drops into the next report, so the reported counts add
+  up to the records actually lost. HTTP and socket warnings also name the most
+  recent cause, as in
+  `FemtoHTTPHandler dropped 3 records since the last
+  report; latest cause: permanent error`;
+  the earlier drops in that count may have had another cause. `flush()` and
+  `close()` report any count still pending rather than waiting for the next
+  interval, and destroying a handler that has already been closed reports the
+  records it refused after that close. A file handler whose policy is `"block"`
+  waits for room instead of dropping; with `"timeout:N"` it waits for room only
+  until its deadline, then drops the record.
 - Record metadata tracks the logger name, level, message text, timestamps,
   thread identity, optional structured exception (`exc_info`) and call stack
   (`stack_info`) payloads, and validated inline structured fields (`extra`).
@@ -1246,7 +1256,9 @@ is reported.
   the enqueue. `"timeout:N"` bounds that wait but still drops the record when
   the deadline expires, so it is not a no-drop choice. When
   `get_disabled_drops()` increases, either stop logging through that logger or
-  name it in the configuration to re-enable it.
+  name it in the configuration to re-enable it. A drop warning that appears
+  during `flush()` or `close()` may report drops recorded earlier, which the
+  warning interval was holding back; it is not necessarily a new burst.
 - File-based handlers count `flush_interval` in *records*. If you need
   time-based flushing, add a periodic `handler.flush()` in your application.
 - Blocking overflow policies slow whichever thread ends up waiting, and which

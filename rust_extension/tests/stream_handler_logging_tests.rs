@@ -146,14 +146,14 @@ fn stream_handler_reports_dropped_records() {
 /// names the one message under test.
 ///
 /// This duplicates the wording of `warn_dropped` in
-/// `src/stream_handler.rs`, which an integration test cannot import. The two
-/// must change together.
-const DROPPED_RECORD_WARNING: &str = "log records dropped in the last interval";
+/// `src/stream_handler/warning.rs`, which an integration test cannot import.
+/// The two must change together.
+const DROPPED_RECORD_WARNING: &str = "log records dropped since the last report";
 
 /// The count a dropped-record warning reports.
 ///
-/// The message reads `FemtoStreamHandler: {count} log records dropped in the
-/// last interval`, so the count is the last token before the shared suffix, not
+/// The message reads `FemtoStreamHandler: {count} log records dropped since the
+/// last report`, so the count is the last token before the shared suffix, not
 /// the first token of the message: the handler's own name leads it. Reading
 /// [`DROPPED_RECORD_WARNING`] back off the end keeps this parse tied to the same
 /// text the filter selects on.

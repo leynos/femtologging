@@ -105,7 +105,7 @@ fn expired_connect_budget_counts_the_current_record_as_a_shutdown_drop() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
+            .contains("FemtoSocketHandler dropped 1 records since the last report; latest cause: abandoned retry during shutdown")
     }));
 }
 
@@ -128,7 +128,7 @@ fn expired_write_budget_counts_the_current_record_as_a_shutdown_drop() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
+            .contains("FemtoSocketHandler dropped 1 records since the last report; latest cause: abandoned retry during shutdown")
     }));
 }
 
@@ -149,8 +149,50 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
+            .contains("FemtoSocketHandler dropped 1 records since the last report; latest cause: abandoned retry during shutdown")
     }));
+}
+
+/// A flush command reports worker drops the interval is holding back.
+///
+/// The worker's warner is shared across causes, so a drop arriving inside the
+/// interval is only counted, not reported. Without this flush the count would
+/// wait for the next elapse - or never be seen, once the worker is gone. The
+/// handler treats the acknowledgement as "reporting finished", so the warning
+/// must be emitted before it.
+#[test]
+#[serial_test::serial]
+fn the_flush_command_reports_drops_held_by_the_interval() {
+    crate::handlers::file::test_support::install_test_logger();
+    let mut worker = Worker::new(
+        SocketHandlerConfig::default(),
+        Arc::new(ShutdownSignal::new()),
+    );
+    // Open the interval with a reported drop, then record one that the
+    // interval suppresses.
+    worker.warner.record_drop();
+    worker.warner.warn_if_due(|_| {});
+    worker.warner.record_drop();
+    assert_eq!(worker.warner.pending_drops(), 1);
+
+    let (ack_tx, ack_rx) = bounded(1);
+    worker.handle_flush_command(ack_tx);
+    ack_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the flush command must be acknowledged");
+
+    let messages = crate::handlers::file::test_support::take_logged_messages();
+    assert!(
+        messages.iter().any(|entry| {
+            entry.message == "FemtoSocketHandler dropped 1 records since the last report"
+        }),
+        "the flush must report the count the interval was holding back: {messages:?}"
+    );
+    assert_eq!(
+        worker.warner.pending_drops(),
+        0,
+        "the flush must swap the count out, not merely read it"
+    );
 }
 
 /// A flush spends one budget across both halves, not one on each.

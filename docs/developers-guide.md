@@ -474,10 +474,12 @@ no such promise.
 
 `discard_rest` in each worker's module is the record of what that bound costs.
 Records still queued at the deadline are dropped and counted rather than sent,
-and `warn_discarded` emits one rate-limited warning naming the count. The same
-accounting covers the write path, where a frame that runs out of budget
-mid-write reports how many of its bytes were sent, so a collector that is slow
-can be told apart from one that has stopped reading.
+and `warn_discarded` emits one unconditional warning naming the count. It is
+not routed through the warning interval: the worker is exiting, so a suppressed
+report would never have a later chance to be made. The same accounting covers
+the write path, where a frame that runs out of budget mid-write reports how
+many of its bytes were sent, so a collector that is slow can be told apart from
+one that has stopped reading.
 
 Detaching is not draining to completion. `abandon_worker`
 (`rust_extension/src/http_handler/handler.rs`, and the socket handler's
@@ -1439,6 +1441,67 @@ The counters are diagnostic signals, not error rates:
 `wait_outcomes.rs` owns the classification these counters rely on, so adding a
 new outcome is a single match arm plus one key, and the fixed-key test fails
 until the Python surface and its stub agree.
+
+## Drop reporting and the warning interval
+
+Every drop counted by a handler or a logger goes through `RateLimitedWarner`
+(`rust_extension/src/rate_limited_warner.rs`). The warner holds one counter of
+drops not yet reported. `record_drop()` increments it. `warn_if_due()` swaps
+the counter to zero and hands the count to a reporting closure only when the
+warning interval has elapsed; a suppressed call leaves the count in place, so
+the next warning reports every drop since the previous report rather than only
+those the current call saw. That carry-forward is the conservation invariant:
+no drop is discarded and none is handed to a callback twice. A call with
+nothing pending does not start an interval, so an idle poller cannot delay the
+next real warning.
+
+The counter is per warner, not per cause. The HTTP and socket handlers each own
+one warner that both the enqueue path (queue full, worker disconnected, handler
+closed) and their worker thread (serialization, connect, write, retry
+exhaustion) count into. A warning raised by one cause can therefore carry drops
+from another, so those messages report the cumulative count and name only the
+latest cause:
+
+```text
+FemtoHTTPHandler dropped 3 records since the last report; latest cause: permanent error
+```
+
+The stream handler and the logger report the same count without a cause:
+`FemtoStreamHandler: 3 log records dropped since the last report`. The phrase
+is "since the last report", not "in the last interval", because a suppressed
+interval carries its drops forward and one report can cover several intervals.
+
+`flush()` is unconditional. It swaps whatever is pending to zero and reports it
+without consulting the interval, and it neither consumes nor restarts one. The
+drain lock is released before the callback runs, so a reporting closure can
+safely call back into the warner. Every path that might be the last chance to
+speak uses it:
+
+- an explicit `flush()` on a handler or logger;
+- `close()` and `take_shutdown()`, which report the handler-side count before
+  shutting the worker down, so a count suppressed inside the interval is not
+  left waiting for a warning that never comes;
+- the worker's flush command, which reports worker-side drops before sending
+  the acknowledgement the handler waits on;
+- `Drop`, which reports records refused after an earlier `close()` even though
+  no worker handle is left to report them.
+
+The drain lock is `ForkSafeDrainLock`, which stores the owning process ID
+rather than parking a futex. A child created by `fork` while another thread
+held the lock inherits a locked word that no thread in the child will ever
+release; the PID tag shows it is not a live thread of this process, so the
+child clears it and proceeds. The critical section is short enough to spin on.
+Releasing uses a compare-exchange against the guard's own PID, so a parent
+guard dropped after the child reclaimed the lock cannot free it under the
+child. Drops the parent recorded before the fork are part of the copied counter
+and are reported by whichever process drains first; drops either process
+records afterwards are visible only to that process, as with any other
+process-local counter.
+
+The contracts are covered by
+`rust_extension/src/rate_limited_warner_concurrency_tests.rs` (interval claims,
+concurrent conservation, fork-safe ownership) and by each handler's
+`drop_reporting_tests.rs` and `close_tests.rs`.
 
 ## Configuration transaction
 

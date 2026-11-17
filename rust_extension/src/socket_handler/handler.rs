@@ -1,4 +1,10 @@
-//! Public handler type exported by the crate.
+//! The public socket handler.
+//!
+//! [`FemtoSocketHandler`] owns the command channel to the worker built in
+//! `worker.rs`, and the shutdown signal, deadline and join policy for that
+//! thread. Both halves count drops on a [`RateLimitedWarner`], and the wording
+//! they report through lives in `warning.rs` so a drop refused at the queue and
+//! one abandoned mid-delivery cannot drift apart.
 
 use std::{
     sync::Arc,
@@ -25,6 +31,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
+    warning::{flush_drops, warn_drops_naming_latest},
     worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
 };
 
@@ -53,24 +60,6 @@ pub struct FemtoSocketHandler {
     /// completion, and joining would put the unbounded wait back.
     #[cfg(test)]
     abandoned: Mutex<Option<thread::JoinHandle<()>>>,
-}
-
-/// Record a drop and emit the callback only when the warning interval permits.
-pub(super) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
-    warner.record_drop();
-    warner.warn_if_due(log);
-}
-
-/// Report pending drops without waiting for the warning interval.
-///
-/// Both the handler (a refused queue) and its worker (serialization,
-/// connection or write failures) count drops, so both use this one report.
-/// A suppression window must not carry a count past the last chance to say it:
-/// on close, flush, or worker exit there is no later warning.
-pub(super) fn flush_drops(warner: &RateLimitedWarner) {
-    warner.flush(|count| {
-        log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
-    });
 }
 
 impl FemtoSocketHandler {
@@ -307,10 +296,7 @@ impl FemtoSocketHandler {
 impl FemtoHandlerTrait for FemtoSocketHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                log::warn!("FemtoSocketHandler dropped {count} records after shutdown");
-            });
+            warn_drops_naming_latest(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         enqueue_record(&tx, record, &self.warner)
@@ -345,6 +331,9 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
 #[cfg(not(loom))]
 impl Drop for FemtoSocketHandler {
     fn drop(&mut self) {
+        // Report drops refused after an earlier close before releasing the
+        // warner: no worker is left to flush them and no later warning comes.
+        flush_drops(&self.warner);
         if self.handle.lock().is_none() {
             return;
         }

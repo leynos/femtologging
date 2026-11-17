@@ -41,7 +41,10 @@ use crate::{
 
 use super::{
     config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
-    queue::{HTTPCommand, discard_rest, flush_drops, warn_discarded, warn_drops},
+    queue::{
+        HTTPCommand, discard_rest, flush_drops, flush_drops_naming_latest, warn_discarded,
+        warn_drops_naming_latest,
+    },
     request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
@@ -270,9 +273,7 @@ impl Worker {
             return false;
         }
         let Some(delay) = self.backoff.next_sleep(now) else {
-            warn_drops(&self.warner, |count| {
-                warn!("FemtoHTTPHandler dropped {count} records after exhausting retry deadline");
-            });
+            warn_drops_naming_latest(&self.warner, "retry deadline exhaustion");
             return false;
         };
         match self.signal.wait(delay) {
@@ -286,24 +287,18 @@ impl Worker {
 
     /// Count a serialization drop; invalid input increments the drop count.
     fn warn_serialization_drops(&self) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
-        });
+        warn_drops_naming_latest(&self.warner, "serialization failure");
     }
 
     /// Count a permanent failure; a non-retryable 4xx increments the drop count.
     fn warn_permanent_drops(&self) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
-        });
+        warn_drops_naming_latest(&self.warner, "permanent error");
     }
 
     /// Count an abandoned retry; close increments the shutdown drop count.
     fn warn_shutdown_drops(&self) {
         self.warner.record_drop();
-        self.warner.flush(|count| {
-            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
-        });
+        flush_drops_naming_latest(&self.warner, "abandoned retry during shutdown");
     }
 
     /// Handles a flush command by immediately acknowledging completion.
@@ -347,9 +342,7 @@ impl Worker {
             }
         }
         warn_discarded(discarded);
-        self.warner.flush(|count| {
-            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
-        });
+        flush_drops(&self.warner);
         acknowledge_shutdowns(shutdown_acks, shutdown_ack);
     }
 

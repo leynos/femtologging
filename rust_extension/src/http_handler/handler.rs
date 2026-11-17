@@ -1,4 +1,12 @@
-//! Public handler type exported by the crate.
+//! The public HTTP handler and the worker lifecycle it owns.
+//!
+//! [`FemtoHTTPHandler`] is the caller-facing half of the HTTP backend. It
+//! validates and enqueues records through the command channel in `queue.rs`,
+//! and owns the shutdown signal, deadline and join policy for the worker
+//! thread spawned from `worker.rs`. A record the handler cannot enqueue is
+//! counted on its [`RateLimitedWarner`] and reported through the same
+//! `warn_drops`/`flush_drops` helpers the worker uses, so drops stay visible
+//! whether they were refused at the queue or abandoned in flight.
 
 use std::{
     sync::Arc,
@@ -23,8 +31,9 @@ use crate::{
 };
 
 use super::{
+    ShutdownOutcome,
     config::HTTPHandlerConfig,
-    queue::{HTTPCommand, enqueue_record, flush_drops, flush_queue},
+    queue::{HTTPCommand, enqueue_record, flush_drops, flush_queue, warn_drops_naming_latest},
     worker::spawn_worker,
 };
 
@@ -263,18 +272,6 @@ impl FemtoHTTPHandler {
     }
 }
 
-/// What asking the worker to stop established about joining it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShutdownOutcome {
-    /// The worker acknowledged, or had already left its loop. The join is
-    /// bounded and worth doing, because it is also what surfaces a panic.
-    Finished,
-    /// The command could not be queued, or no acknowledgement arrived, within
-    /// `flush_timeout`. The worker is busy on something whose length
-    /// `flush_timeout` does not describe.
-    TimedOut,
-}
-
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoHTTPHandler {
@@ -335,10 +332,7 @@ impl FemtoHTTPHandler {
 impl FemtoHandlerTrait for FemtoHTTPHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                log::warn!("FemtoHTTPHandler dropped {count} records after shutdown");
-            });
+            warn_drops_naming_latest(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         // Intentional suppression, not a drop: queueing one of our own
@@ -379,6 +373,9 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
 #[cfg(not(loom))]
 impl Drop for FemtoHTTPHandler {
     fn drop(&mut self) {
+        // Report drops refused after an earlier close before releasing the
+        // warner: no worker is left to flush them and no later warning comes.
+        flush_drops(&self.warner);
         if self.handle.lock().is_none() {
             return;
         }

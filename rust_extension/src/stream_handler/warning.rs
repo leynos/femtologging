@@ -16,11 +16,13 @@ use log::warn;
 /// [`FemtoHandlerTrait::handle`], [`FemtoHandlerTrait::flush`], and
 /// [`super::FemtoStreamHandler::take_shutdown`].
 ///
-/// The rendered text ends with `log records dropped in the last interval`,
+/// The rendered text ends with `log records dropped since the last report`,
 /// which `tests/stream_handler_logging_tests.rs` strips to read the count back.
 /// That test cannot import this function, so it holds its own copy of the
 /// suffix: changing the wording here means changing it there too, or the count
-/// the test asserts will silently stop being parsed.
+/// the test asserts will silently stop being parsed. "Since the last report"
+/// rather than "in the last interval" because a suppressed interval carries
+/// its drops into the next report, which can cover more than one interval.
 ///
 /// # Examples
 ///
@@ -33,7 +35,7 @@ use log::warn;
 /// [`RateLimitedWarner::warn_if_due`]: crate::rate_limited_warner::RateLimitedWarner::warn_if_due
 /// [`RateLimitedWarner::flush`]: crate::rate_limited_warner::RateLimitedWarner::flush
 pub(super) fn warn_dropped(count: u64) {
-    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
+    warn!("FemtoStreamHandler: {count} log records dropped since the last report");
 }
 
 #[cfg(test)]

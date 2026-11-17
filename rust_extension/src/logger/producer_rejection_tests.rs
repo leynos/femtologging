@@ -1,4 +1,16 @@
-//! Tests for rejecting handler filters on the logger producer path.
+//! Contracts for rejecting records on the logger's producer path.
+//!
+//! A logger decides what each shard receives before any handler runs. These
+//! tests pin the two ways that decision loses a record: a handler filter that
+//! declines it must not enqueue an empty job for the worker, and a shard that
+//! refuses admission must count the record as dropped and report it through the
+//! logger's warner.
+//!
+//! The rest of the file covers the reporting half of that contract. Drops the
+//! warning interval holds back must still be reported by a flush - both for a
+//! count that is already pending when the flush starts, and for drops recorded
+//! while the queue drains - because a logger being shut down may have no due
+//! moment left.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

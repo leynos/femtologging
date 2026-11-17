@@ -5,7 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS
+Status: IN PROGRESS — implementation complete on draft PR #613; CodeRabbit
+review convergence in progress.
 
 ## Purpose / big picture
 
@@ -239,7 +240,10 @@ suite that fails if any drop is discarded or handed off more than once.
       (`/tmp/test-lane-tracing-compat-issue-440-20261031T195137Z.out`), and
       heavy test-util, python, log-compat and python+log-compat all `EXIT=0`
       (`/tmp/heavy-*-issue-440-2026103*.out`).
-- [ ] (2026-10-31) Whole-suite pytest passed 826 and skipped 5 but failed 3
+- [x] (2026-10-31) Resolved on 2026-11-01 by the rebase onto `6180cd5`, whose
+      build-standard test neutralizes the host Cargo wrapper (see the entry
+      below). Original report: whole-suite pytest passed 826 and skipped 5 but
+      failed 3
       cases, all in `tests/test_build_standard_contract.py`
       (`/tmp/test-pytest-issue-440-20261031T202924Z.out`). This is a host
       configuration conflict, not a candidate defect: the test's
@@ -295,7 +299,26 @@ suite that fails if any drop is discarded or handed off more than once.
       the `http_handler/worker.rs` and `socket_handler/worker.rs` layout; the
       handler file is now 346 lines.
 - [ ] Obtain a clean CodeRabbit review on the exact candidate.
-- [ ] Pushed and draft PR opened.
+- [x] (2026-11-17) Draft PR #613 is open on the rebased candidate.
+- [x] (2026-11-17) CodeRabbit's saved pre-merge check and assessment raised two
+      blocking findings, both fixed on the branch: HTTP and socket warnings
+      attributed a whole cumulative count to the cause that happened to trigger
+      them, and the handler and worker destructors returned before flushing the
+      drops refused after an earlier `close()`. The HTTP and socket helpers now
+      report "since the last report; latest cause: …" (with a cause-neutral
+      flush wording), and `Drop` flushes before its early return in HTTP,
+      socket and stream handlers.
+- [x] (2026-11-17) Added the regression tests the review asked for:
+      `http_handler/drop_reporting_tests.rs`, `socket_handler/drop_reporting_tests.rs`
+      (cumulative-cause wording, cause-neutral flush, refused-after-close
+      reported by flush, by a second close, and by `Drop`), worker flush-command
+      tests in both worker suites, and a stream-handler `Drop` test in
+      `stream_handler/shutdown.rs`.
+- [x] (2026-11-17) Expanded the four module docs the saved check named
+      (`http_handler`, `socket_handler`, `rate_limited_warner_concurrency_tests`,
+      `logger/producer_rejection_tests`) and documented the contract for users
+      and developers, including the fork-safe drain lock rationale in the design
+      document.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
@@ -534,8 +557,28 @@ have passed the full deterministic and ignored-heavy gate suites. The fixes
 serialize the due-path recheck, claim and drain against flush, keep callbacks
 outside the mutex, and include deterministic race and CAS evidence. Suppressed
 calls return on a lock-free read of the last-warning timestamp, so the refusal
-path does not contend for the shared mutex. The candidate is committed; the
-remaining work is to obtain a clean review and publish the draft PR.
+path does not contend for the shared mutex.
+
+The first formal review round found the reporting contract was still incomplete
+at the consumer boundary, in two ways. First, the HTTP and socket handlers and
+their workers share one counter per handler, so a warning raised by one cause
+could report a cumulative count while implying that the whole count shared that
+cause. The wording now reports the count "since the last report" and names only
+the latest cause, and the flush wording stays cause-neutral. Second, a handler
+closed before being destroyed reported only up to the moment of `close()`;
+records refused afterwards were counted but never reported, because the
+destructor returned as soon as it found no worker handle. The destructors in
+the HTTP, socket and stream handlers now flush the warner before that check, so
+the last counts are reported whatever route the object took to destruction.
+
+Both findings are covered by regression tests that fail without the fixes:
+`drop_reporting_tests.rs` in the HTTP and socket handler modules drives a
+manual clock through a suppression window, then exercises flush, a second
+`close()` and `Drop`; each worker suite proves its flush command reports
+suppressed worker-side drops before acknowledging; and the stream handler's
+`Drop` has its own test in `stream_handler/shutdown.rs`. The user and developer
+guides now state the carry-forward and reporting rules, and the design document
+records why the drain lock is process-tagged.
 
 ## Context and orientation
 

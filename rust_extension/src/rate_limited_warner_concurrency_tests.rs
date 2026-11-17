@@ -1,4 +1,16 @@
-//! Tests for atomic interval claims and synchronized warning drains.
+//! Concurrency contracts for `RateLimitedWarner`'s interval and drain lock.
+//!
+//! One warner is shared by producers recording drops, a flush draining the
+//! count, and the thread that wins the next warning interval. These tests hold
+//! the interleavings that sharing must survive: a flush that drains a due call
+//! does not claim its interval, a suppressed call returns without waiting for a
+//! drain in progress, only one racer reports an interval, and racers recording
+//! and draining conserve every drop - none lost, none counted twice. The last
+//! pair covers the drain lock's fork safety: a child process that inherits the
+//! lock held must be able to reclaim it, while the owning process keeps it.
+//!
+//! The fixtures synchronize with barriers and channels rather than sleeping, so
+//! a failure names the interleaving under test rather than the host's load.
 
 use super::tests::FakeClock;
 use super::{Clock, ForkSafeDrainLock, RateLimitedWarner};

@@ -198,7 +198,7 @@ fn close_returns_within_its_budget_when_the_queue_is_full(tcp_listener: io::Resu
 /// The message `abandon_worker` logs; the stalled and healthy close tests use it.
 const ABANDON_MARKER: &str = "abandoning it rather than blocking the caller";
 /// The warning emitted when an in-flight request ends after shutdown begins.
-const SHUTDOWN_DROP_MARKER: &str = "FemtoHTTPHandler dropped 1 records during shutdown";
+const SHUTDOWN_DROP_MARKER: &str = "FemtoHTTPHandler dropped 1 records since the last report; latest cause: abandoned retry during shutdown";
 
 /// Scenario: the worker answers the shutdown request promptly.
 ///
