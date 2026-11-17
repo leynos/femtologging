@@ -1,5 +1,7 @@
 //! Admission-bound tests for shared logger dispatch shards.
 
+use crate::logger::dispatcher::AdmissionRefusal;
+
 use super::*;
 
 /// One logger's budget refuses another record when its own limit is reached.
@@ -34,15 +36,18 @@ fn one_shard_refuses_records_beyond_the_logger_budget() {
         shard.wait_for_drain(),
         "the worker should drain after release"
     );
-    let refused = refused.expect_err("the logger's full budget must refuse another record");
-    assert_eq!(refused.record.message(), "refused");
+    let refusal = refused.expect_err("the logger's full budget must refuse another record");
+    let AdmissionRefusal::Record(refused_record) = refusal else {
+        panic!("a refused record should come back to its caller");
+    };
+    assert_eq!(refused_record.record.message(), "refused");
 }
 
 /// A logger at its own limit leaves capacity for another logger on a deep shard.
 #[test]
 fn one_stuck_logger_does_not_take_another_logger_s_slot() {
     let shard = Shard::start(0, 2).expect("a test shard should start");
-    let stuck_budget = shard.budget_with_limit_for_test(1);
+    let stuck_budget = Shard::budget_with_limit_for_test(1);
     let other_budget = shard.budget();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -103,8 +108,8 @@ fn one_stuck_logger_does_not_take_another_logger_s_slot() {
 #[test]
 fn shard_permit_exhaustion_rolls_back_the_logger_charge() {
     let shard = Shard::start(0, 1).expect("a test shard should start");
-    let occupying_budget = shard.budget_with_limit_for_test(1);
-    let refused_budget = shard.budget_with_limit_for_test(1);
+    let occupying_budget = Shard::budget_with_limit_for_test(1);
+    let refused_budget = Shard::budget_with_limit_for_test(1);
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     let handler = Arc::new(HeldHandler {

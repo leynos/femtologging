@@ -54,7 +54,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
     let logger =
-        FemtoLogger::new("producer".to_string()).expect("test logger should be constructible");
+        FemtoLogger::new("producer".to_owned()).expect("test logger should be constructible");
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
     let third_calls = Arc::new(AtomicUsize::new(0));
@@ -87,8 +87,11 @@ fn apply_filters_merges_enrichment_and_short_circuits(
         assert_eq!(result.as_deref(), Some("producer [INFO] hello"));
         wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
         let collected = collecting_handler.collected();
+        let record = collected
+            .first()
+            .expect("the handler should collect one record");
         assert_eq!(
-            collected[0]
+            record
                 .metadata()
                 .key_values
                 .get("request_id")
@@ -96,7 +99,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
             Some("req-123")
         );
         assert_eq!(
-            collected[0]
+            record
                 .metadata()
                 .key_values
                 .get("user_id")
@@ -104,7 +107,7 @@ fn apply_filters_merges_enrichment_and_short_circuits(
             Some("alice")
         );
         assert_eq!(
-            collected[0]
+            record
                 .metadata()
                 .key_values
                 .get("ignored")
@@ -122,7 +125,7 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
     let logger =
-        FemtoLogger::new("producer".to_string()).expect("test logger should be constructible");
+        FemtoLogger::new("producer".to_owned()).expect("test logger should be constructible");
     let first_calls = Arc::new(AtomicUsize::new(0));
     let second_calls = Arc::new(AtomicUsize::new(0));
 
@@ -151,8 +154,11 @@ fn apply_filters_conflicting_enrichment_prefers_later() {
     assert_eq!(first_calls.load(Ordering::SeqCst), 1);
     assert_eq!(second_calls.load(Ordering::SeqCst), 1);
     assert_eq!(collected.len(), 1);
+    let record = collected
+        .first()
+        .expect("the handler should collect one record");
     assert_eq!(
-        collected[0]
+        record
             .metadata()
             .key_values
             .get("request_id")
@@ -214,7 +220,7 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     let (collecting_handler, signalling_handler, record_rx) =
         SignallingCollectingHandler::with_signal();
     let logger =
-        FemtoLogger::new("producer".to_string()).expect("test logger should be constructible");
+        FemtoLogger::new("producer".to_owned()).expect("test logger should be constructible");
     logger
         .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
         .expect("native test handler should register");
@@ -224,8 +230,11 @@ fn dispatch_to_handlers_enqueues_record_for_local_handlers() {
     wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
     let collected = collecting_handler.collected();
     assert_eq!(collected.len(), 1);
-    assert_eq!(collected[0].logger(), "producer");
-    assert_eq!(collected[0].message(), "queued");
+    let record = collected
+        .first()
+        .expect("the handler should collect one record");
+    assert_eq!(record.logger(), "producer");
+    assert_eq!(record.message(), "queued");
 }
 
 /// Injectable context source that counts captures and can return a Python error.

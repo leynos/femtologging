@@ -117,11 +117,10 @@ impl FemtoLogger {
     /// mid-call.
     fn wait_for_dispatch_to_drain(&self) -> DrainOutcome {
         #[cfg(not(loom))]
-        let (shard, budget) = match self.dispatch_state() {
-            Ok(dispatch) => dispatch,
+        let Ok((shard, budget)) = self.dispatch_state() else {
             // A logger whose pool cannot be reached has no shard to drain, so
             // its barrier can never be answered.
-            Err(_) => return DrainOutcome::QueueClosed,
+            return DrainOutcome::QueueClosed;
         };
         #[cfg(not(loom))]
         if budget.in_flight() == 0 {
