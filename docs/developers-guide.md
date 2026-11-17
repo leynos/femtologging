@@ -44,6 +44,41 @@ version-policy change therefore belongs in the development group only:
 - `pyyaml` is bounded to `>=6.0.3,<7` because the lint contract tests parse
   the CI workflow files.
 
+### Stack-info snapshot normalization
+
+`stack_info=True` records capture the whole Python call stack, so a snapshot
+would otherwise record pytest, pluggy and interpreter frames alongside this
+project's. `normalize_traceback_output()` alone cannot make that stable: it
+masks paths and line numbers but keeps each frame's source text, and an
+upstream release may wrap a call across lines. The snapshot step therefore
+calls `strip_external_stack_frames()` in `tests/steps/stack_frames.py` first.
+
+Stripping has a deliberately narrow scope. It acts only inside a
+`Stack (most recent call last):` section, up to the next
+`Traceback (most recent call last):` heading or the end of the output, so an
+exception traceback is never edited. A frame is external when its filename is a
+`<frozen …>` pseudo-file or resolves beneath one of the `stdlib`, `platstdlib`,
+`purelib`, `platlib` or `scripts` entries of `sysconfig.get_paths()`. A removed
+frame takes its whole block with it: every source line of a wrapped statement
+and every caret line. Relative and unrecognized filenames are kept, because
+they cannot be attributed to installed code reliably.
+
+The function is pure and idempotent, and it deletes whole lines only: each
+surviving line keeps the terminator it already had. An output that uses
+`\r\n` is returned with `\r\n`, so a traceback stays byte-identical. The
+launcher-frame rule in `tests/steps/traceback_normalization.py` is separate and
+runs after stripping; a `runpy.py` counts as launcher code only when its own
+directory is an interpreter directory inside `lib` or `lib64`, or a `Lib`
+directory one level above one, so a project's own `runpy.py` keeps its frame.
+
+`tests/steps/test_external_stack_frames.py` pins the named cases, including
+CRLF preservation, and `tests/steps/test_stack_frames_properties.py` states the
+invariants as Hypothesis properties: stripping removes only whole lines, is
+idempotent, preserves an exception tail byte for byte, removes a frame beneath
+any supplied root and keeps a relative frame. The stack-info feature scenario
+also asserts that the raw output contains the `log_with_stack_info` frame, so a
+stripping rule that emptied the snapshot could not pass silently.
+
 ### Docstring examples
 
 `make test` runs pytest with `--doctest-modules`, so every `>>>` example in a
