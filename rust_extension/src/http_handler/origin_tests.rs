@@ -69,6 +69,10 @@ fn origin_record(message: &str, origin: RecordOrigin) -> FemtoLogRecord {
 }
 
 /// A marked record is accepted and silently discarded, without enqueueing.
+///
+/// The drop accounting is asserted before the flush, because the flush clears
+/// the pending figure: a mutant that counted the suppression as a drop would
+/// otherwise look identical to the correct code.
 #[rstest]
 fn marked_records_are_suppressed_before_enqueueing() {
     let (handler, records) = handler_with_fake_worker();
@@ -79,6 +83,11 @@ fn marked_records_are_suppressed_before_enqueueing() {
             RecordOrigin::HttpTransport
         )),
         Ok(())
+    );
+    assert_eq!(
+        handler.warner.pending_drops(),
+        0,
+        "a suppressed transport diagnostic was never queued, so it is not a drop"
     );
     assert!(handler.flush(), "flush should be acknowledged");
 

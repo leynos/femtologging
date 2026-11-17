@@ -40,7 +40,7 @@ pub struct FemtoHTTPHandler {
     /// Owns the worker until it finishes or is detached after a timeout.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
     /// Counts dropped records and limits warning frequency.
-    warner: RateLimitedWarner,
+    pub(crate) warner: RateLimitedWarner,
     /// The shutdown signal shared with the worker.
     ///
     /// `Some` for as long as the handler is open. `None` once `close` has
