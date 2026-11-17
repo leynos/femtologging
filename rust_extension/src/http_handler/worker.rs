@@ -37,7 +37,6 @@ use crate::{
     shutdown_ack::acknowledge_shutdowns,
     shutdown_signal::{ShutdownSignal, WaitOutcome},
     socket_handler::backoff::BackoffState,
-    transport_origin::enter_http_transport,
 };
 
 use super::{
@@ -46,6 +45,7 @@ use super::{
     request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
+    transport_origin::enter_http_transport,
 };
 
 /// Spawns a background worker thread to process HTTP commands.

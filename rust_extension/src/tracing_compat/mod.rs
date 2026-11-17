@@ -16,10 +16,10 @@ use tracing::{Event, Level, Subscriber, span::Attributes, span::Id, span::Record
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
+use crate::http_handler::transport_origin;
 use crate::level::FemtoLevel;
-use crate::log_record::RecordMetadata;
+use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
-use crate::transport_origin;
 
 pub mod python;
 
@@ -269,15 +269,10 @@ where
             }
 
             let metadata = Self::build_record_metadata(event, ctx, captured.key_values);
-            let _ =
-                logger
-                    .borrow(py)
-                    .log_with_metadata_and_origin(crate::logger::OriginLogRequest {
-                        level,
-                        message: &message,
-                        metadata,
-                        origin,
-                    });
+            let guarded = logger.borrow(py);
+            let record = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
+                .with_origin(origin);
+            let _ = guarded.log_prebuilt(record);
         });
     }
 }

@@ -22,7 +22,7 @@ proptest! {
         ),
         origin in prop_oneof![
             Just(RecordOrigin::Application),
-            Just(RecordOrigin::HttpTransport),
+            Just(RecordOrigin::SelfDiagnostic),
         ],
     ) {
         let base_record = FemtoLogRecord::new("producer", FemtoLevel::Info, "property")

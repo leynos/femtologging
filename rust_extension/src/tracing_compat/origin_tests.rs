@@ -17,10 +17,10 @@ use tracing_subscriber::prelude::*;
 
 use super::FemtoTracingLayer;
 use crate::handler::FemtoHandlerTrait;
+use crate::http_handler::transport_origin::{enter_http_transport, is_http_transport_active};
 use crate::log_record::{FemtoLogRecord, RecordOrigin};
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
-use crate::transport_origin::{enter_http_transport, is_http_transport_active};
 
 /// A debug-rendered field that records the transport state it observed.
 struct ScopeProbe {
@@ -74,7 +74,7 @@ fn an_event_inside_transport_work_keeps_the_marker() {
 
     let records = drain(logger_name, &handler);
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
+    assert_eq!(records[0].origin(), RecordOrigin::SelfDiagnostic);
 }
 
 /// An ordinary event remains application-origin.
@@ -123,6 +123,6 @@ fn event_fields_are_captured_while_the_scope_is_suspended() {
 
     let records = drain(logger_name, &handler);
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].origin(), RecordOrigin::HttpTransport);
+    assert_eq!(records[0].origin(), RecordOrigin::SelfDiagnostic);
     assert_eq!(records[0].metadata().key_values["probe"], "probe");
 }

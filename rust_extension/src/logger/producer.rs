@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
-use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
+use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::manager;
 
 mod admission;
@@ -24,23 +24,18 @@ mod handler_filters;
 use super::HandlerAttachment;
 use super::{FemtoLogger, QueuedRecord};
 
-/// A log request whose transport origin the caller has already decided.
-///
-/// Bundling the fields keeps the origin-aware entry point within the project's
-/// parameter-count budget and makes the origin an explicit part of the request
-/// rather than an easy-to-forget trailing argument.
-pub(crate) struct OriginLogRequest<'a> {
-    /// Severity the producer should apply.
-    pub(crate) level: FemtoLevel,
-    /// Rendered message to attach to the record.
-    pub(crate) message: &'a str,
-    /// Metadata captured by the caller.
-    pub(crate) metadata: RecordMetadata,
-    /// Origin to attach before producer filters run.
-    pub(crate) origin: RecordOrigin,
-}
-
 impl FemtoLogger {
+    /// Returns the logger's name.
+    ///
+    /// The bridge adapters build their own records so the core logger never has
+    /// to name a record's origin; building one needs the name the producer
+    /// would otherwise apply. Only those adapters ask, so a build with neither
+    /// bridge would otherwise carry this as dead code under `-D warnings`.
+    #[inline]
+    #[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
     /// Core logging logic shared between Python and Rust APIs.
     ///
     /// Checks level threshold and filters, formats the record, and dispatches
@@ -105,36 +100,26 @@ impl FemtoLogger {
         message: &str,
         metadata: RecordMetadata,
     ) -> Option<String> {
-        self.log_with_metadata_and_origin(OriginLogRequest {
-            level,
-            message,
-            metadata,
-            origin: RecordOrigin::Application,
-        })
+        self.log_prebuilt(FemtoLogRecord::with_metadata(
+            &self.name, level, message, metadata,
+        ))
     }
 
-    /// Log a message with metadata and an explicit origin.
+    /// Log a record the caller has already assembled.
     ///
-    /// The bridge entry points use this to carry a transport-origin marker on
-    /// records produced by an HTTP worker. The origin is attached before
-    /// filtering so the marker survives every later stage of the record's
-    /// journey, including handler-filter snapshots and parent propagation.
-    pub(crate) fn log_with_metadata_and_origin(
-        &self,
-        request: OriginLogRequest<'_>,
-    ) -> Option<String> {
-        let OriginLogRequest {
-            level,
-            message,
-            mut metadata,
-            origin,
-        } = request;
+    /// The bridge adapters build their records themselves, which keeps any
+    /// record-origin vocabulary out of this module: a record's origin is
+    /// attached before it arrives, and every stage from here on carries it
+    /// unchanged through filtering, the handler-filter snapshot and parent
+    /// propagation.
+    pub(crate) fn log_prebuilt(&self, mut record: FemtoLogRecord) -> Option<String> {
         if self.refuse_if_disabled() {
             return None;
         }
         // Context admission runs before the level gate so a reserved or
         // over-limit field is counted even when the record's level is disabled.
-        let merged_key_values = match log_context::merge_context_values(&metadata.key_values) {
+        let merged_key_values = match log_context::merge_context_values(&record.metadata().key_values)
+        {
             Ok(merged_key_values) => merged_key_values,
             Err(err) => {
                 self.context_dropped_records
@@ -143,12 +128,10 @@ impl FemtoLogger {
                 return None;
             }
         };
-        if !self.is_enabled_for(level) {
+        if !self.is_enabled_for(record.level()) {
             return None;
         }
-        metadata.key_values = merged_key_values;
-        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata)
-            .with_origin(origin);
+        record.metadata_mut().key_values = merged_key_values;
         self.log_record(record)
     }
 

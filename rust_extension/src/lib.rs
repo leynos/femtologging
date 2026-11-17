@@ -23,7 +23,6 @@ mod shutdown_signal;
 mod socket_handler;
 mod stream_handler;
 mod sync;
-mod transport_origin;
 
 // Feature-gated shutdown visibility: the heavy Loom lane schedules the
 // completion signal directly, which the ordinary API never returns.

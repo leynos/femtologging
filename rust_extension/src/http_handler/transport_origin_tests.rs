@@ -89,7 +89,7 @@ fn captured_origin_follows_the_marker() {
     assert_eq!(capture_record_origin(), RecordOrigin::Application);
 
     let scope = enter_http_transport();
-    assert_eq!(capture_record_origin(), RecordOrigin::HttpTransport);
+    assert_eq!(capture_record_origin(), RecordOrigin::SelfDiagnostic);
 
     let suspended = suspend_http_transport();
     assert_eq!(
@@ -99,7 +99,7 @@ fn captured_origin_follows_the_marker() {
     );
 
     drop(suspended);
-    assert_eq!(capture_record_origin(), RecordOrigin::HttpTransport);
+    assert_eq!(capture_record_origin(), RecordOrigin::SelfDiagnostic);
     drop(scope);
 }
 

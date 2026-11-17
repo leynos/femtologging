@@ -64,19 +64,22 @@ impl Default for RecordMetadata {
     }
 }
 
-/// Where a record was produced, for keeping transport feedback out of itself.
+/// Where a record came from, for keeping the logger's own reports out of them.
 ///
 /// The marker is carried on the record rather than read from the dispatching
-/// thread because dispatch is asynchronous: a record accepted by an HTTP
-/// handler's queue is delivered by a different thread, and that thread is the
-/// transport worker the marker is meant to describe.
+/// thread because dispatch is asynchronous: a record accepted by a handler's
+/// queue is delivered by a different thread, which cannot describe where the
+/// record came from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum RecordOrigin {
     /// Application code, or an ordinary bridge or logger entry point.
     #[default]
     Application,
-    /// A diagnostic produced while an HTTP transport worker was running.
-    HttpTransport,
+    /// A diagnostic the logging system produced about its own work.
+    ///
+    /// Named for the relationship rather than for the component that emits it,
+    /// so this core type stays independent of any one adapter.
+    SelfDiagnostic,
 }
 
 /// A single log event: its logger, level, message, metadata, and any exception or stack payload.
@@ -96,7 +99,7 @@ pub struct FemtoLogRecord {
     exception_payload: Option<ExceptionPayload>,
     /// Structured stack trace payload (when `stack_info=True`).
     stack_payload: Option<StackTracePayload>,
-    /// Origin used by HTTP handlers to reject their own transport diagnostics.
+    /// Where this record came from, for keeping self-reports out of handlers.
     origin: RecordOrigin,
 }
 
@@ -164,8 +167,12 @@ impl FemtoLogRecord {
     }
 
     /// Attach an origin, replacing the application default.
+    ///
+    /// Only the bridges attach one; a library build with neither bridge and no
+    /// tests would otherwise carry this as dead code under `-D warnings`.
     #[inline]
     #[must_use]
+    #[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
     pub(crate) fn with_origin(mut self, origin: RecordOrigin) -> Self {
         self.origin = origin;
         self

@@ -17,7 +17,7 @@ use crate::http_handler::FemtoHTTPHandler;
 use crate::http_handler::queue::HTTPCommand;
 use crate::level::FemtoLevel;
 use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
-use crate::logger::{FemtoLogger, OriginLogRequest};
+use crate::logger::FemtoLogger;
 use crate::shutdown_signal::ShutdownSignal;
 use crate::test_utils::collecting_handler::CollectingHandler;
 
@@ -80,7 +80,7 @@ fn marked_records_are_suppressed_before_enqueueing() {
     assert_eq!(
         handler.handle(origin_record(
             "delivery diagnostic",
-            RecordOrigin::HttpTransport
+            RecordOrigin::SelfDiagnostic
         )),
         Ok(())
     );
@@ -125,7 +125,7 @@ fn a_closed_handler_rejects_marked_records() {
     assert_eq!(
         handler.handle(origin_record(
             "late diagnostic",
-            RecordOrigin::HttpTransport
+            RecordOrigin::SelfDiagnostic
         )),
         Err(HandlerError::Closed)
     );
@@ -157,19 +157,22 @@ fn marked_records_reach_only_the_non_http_handler() {
         .add_handler(Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>)
         .expect("collector registers");
 
-    logger.log_with_metadata_and_origin(OriginLogRequest {
-        level: FemtoLevel::Info,
-        message: "marked",
-        metadata: RecordMetadata::default(),
-        origin: RecordOrigin::HttpTransport,
-    });
+    logger.log_prebuilt(
+        FemtoLogRecord::with_metadata(
+            "origin.http.fanout",
+            FemtoLevel::Info,
+            "marked",
+            RecordMetadata::default(),
+        )
+        .with_origin(RecordOrigin::SelfDiagnostic),
+    );
     assert!(logger.flush_handlers(), "dispatch should drain");
     assert!(first.flush(), "first worker should acknowledge");
     assert!(second.flush(), "second worker should acknowledge");
 
     let collected = collector.collected();
     assert_eq!(collected.len(), 1, "the collector keeps the diagnostic");
-    assert_eq!(collected[0].origin(), RecordOrigin::HttpTransport);
+    assert_eq!(collected[0].origin(), RecordOrigin::SelfDiagnostic);
     assert!(
         first_records.lock().expect("first records").is_empty(),
         "the originating handler must not enqueue its own diagnostic"
@@ -179,12 +182,12 @@ fn marked_records_reach_only_the_non_http_handler() {
         "another HTTP handler must not continue the cycle"
     );
 
-    logger.log_with_metadata_and_origin(OriginLogRequest {
-        level: FemtoLevel::Info,
-        message: "application",
-        metadata: RecordMetadata::default(),
-        origin: RecordOrigin::Application,
-    });
+    logger.log_prebuilt(FemtoLogRecord::with_metadata(
+        "origin.http.fanout",
+        FemtoLevel::Info,
+        "application",
+        RecordMetadata::default(),
+    ));
     assert!(logger.flush_handlers(), "dispatch should drain");
     assert!(first.flush(), "first worker should acknowledge");
     assert!(second.flush(), "second worker should acknowledge");

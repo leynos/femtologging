@@ -338,10 +338,10 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
             });
             return Err(HandlerError::Closed);
         };
-        // Intentional suppression, not a drop: queueing this transport record
-        // would let a delivery manufacture the next one, and counting it would
-        // misreport a connected worker. Other sinks still receive it.
-        if record.origin() == RecordOrigin::HttpTransport {
+        // Intentional suppression, not a drop: queueing one of our own
+        // diagnostics would let a delivery manufacture the next, and counting
+        // it would misreport a connected worker. Other sinks still receive it.
+        if record.origin() == RecordOrigin::SelfDiagnostic {
             return Ok(());
         }
         enqueue_record(&tx, record, &self.warner)

@@ -46,7 +46,7 @@ pub(crate) fn is_http_transport_active() -> bool {
 #[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
 pub(crate) fn capture_record_origin() -> RecordOrigin {
     if is_http_transport_active() {
-        RecordOrigin::HttpTransport
+        RecordOrigin::SelfDiagnostic
     } else {
         RecordOrigin::Application
     }

@@ -66,7 +66,7 @@ fn handler_filter_snapshot_preserves_the_transport_origin() {
         FemtoLevel::Info,
         "delivery diagnostic",
     )
-    .with_origin(RecordOrigin::HttpTransport);
+    .with_origin(RecordOrigin::SelfDiagnostic);
 
     let selected = FemtoLogger::filter_handlers_for_test(&mut record, vec![attachment]);
     assert_eq!(
@@ -86,7 +86,7 @@ fn handler_filter_snapshot_preserves_the_transport_origin() {
     assert_eq!(collected.len(), 1);
     assert_eq!(
         collected[0].origin(),
-        RecordOrigin::HttpTransport,
+        RecordOrigin::SelfDiagnostic,
         "the snapshot clone must keep the transport marker"
     );
 }

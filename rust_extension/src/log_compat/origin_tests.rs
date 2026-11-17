@@ -20,12 +20,12 @@ use serial_test::serial;
 use super::FemtoLogAdapter;
 use super::test_support::{log_max_level, unique_logger_name};
 use crate::handler::FemtoHandlerTrait;
+use crate::http_handler::transport_origin::{
+    enter_http_transport, is_http_transport_active, suspend_http_transport,
+};
 use crate::log_record::{FemtoLogRecord, RecordOrigin};
 use crate::manager::{self, MAX_LOGGERS};
 use crate::test_utils::collecting_handler::CollectingHandler;
-use crate::transport_origin::{
-    enter_http_transport, is_http_transport_active, suspend_http_transport,
-};
 
 /// A lazily formatted argument that records the transport state it observed.
 struct ScopeProbe {
@@ -96,7 +96,7 @@ fn assert_marked_route(route: MarkedRoute<'_>) {
     let _scope = enter_http_transport();
     log_info_record(route.target);
     let records = flushed_records(route.sink, &handler);
-    assert_single_record(&records, RecordOrigin::HttpTransport);
+    assert_single_record(&records, RecordOrigin::SelfDiagnostic);
     assert_eq!(records[0].logger(), route.expected_logger);
 }
 
@@ -172,7 +172,7 @@ fn lazily_formatted_arguments_observe_a_suspended_scope(
     drop(scope);
 
     let records = flushed_records(&unique_logger_name, &handler);
-    assert_single_record(&records, RecordOrigin::HttpTransport);
+    assert_single_record(&records, RecordOrigin::SelfDiagnostic);
 }
 
 /// An invalid target falls back to root and keeps the marker.

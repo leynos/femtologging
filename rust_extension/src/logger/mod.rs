@@ -18,11 +18,6 @@ pub(crate) mod flush_test;
 mod pid_reservation;
 mod producer;
 
-// The origin-aware request is only named outside the producer module by a
-// bridge entry point or its tests, so a library build with neither bridge
-// would otherwise carry an unused import under `-D warnings`.
-#[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
-pub(crate) use producer::OriginLogRequest;
 mod py_handler;
 mod python_api;
 mod python_helpers;

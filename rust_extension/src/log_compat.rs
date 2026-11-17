@@ -17,11 +17,11 @@ use std::sync::{Arc, OnceLock, atomic::AtomicU8};
 use log::{Metadata, Record};
 use pyo3::prelude::*;
 
+use crate::http_handler::transport_origin;
 use crate::level::FemtoLevel;
-use crate::log_record::RecordMetadata;
+use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::manager;
-use crate::transport_origin;
 
 mod diagnostics;
 use diagnostics::{mirror_ignored_warning, resolve_logger, should_ignore_target};
@@ -200,15 +200,10 @@ impl log::Log for FemtoLogAdapter {
             };
 
             let message = record.args().to_string();
-            let _ =
-                logger
-                    .borrow(py)
-                    .log_with_metadata_and_origin(crate::logger::OriginLogRequest {
-                        level,
-                        message: &message,
-                        metadata,
-                        origin,
-                    });
+            let guarded = logger.borrow(py);
+            let record = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
+                .with_origin(origin);
+            let _ = guarded.log_prebuilt(record);
         });
     }
 
