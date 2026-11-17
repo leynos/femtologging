@@ -204,6 +204,65 @@ fn the_flush_command_reports_drops_before_acknowledging() {
     );
 }
 
+/// Worker exit reports the drops the interval was holding back.
+///
+/// Scenario: a worker-side drop is recorded inside the interval, then the
+/// worker drains a queue holding only its shutdown command. Invariant: the
+/// held-back count is reported before the shutdown acknowledgement and nothing
+/// is left pending. The worker is exiting, so a suppressed count has no later
+/// reader and no later warning.
+///
+/// The acknowledgement channel is a rendezvous here, so capturing the warning
+/// before the test receives proves the order rather than assuming it.
+#[test]
+#[serial_test::serial]
+fn worker_exit_reports_drops_the_interval_held_back() {
+    use crate::handlers::file::test_support::{install_test_logger, wait_for_message};
+
+    install_test_logger();
+    let mut worker = Worker::new(
+        SocketHandlerConfig::default(),
+        Arc::new(ShutdownSignal::new()),
+    );
+    // Open the interval with a reported drop, then record one it suppresses.
+    worker.warner.record_drop();
+    worker.warner.warn_if_due(|_| {});
+    worker.warner.record_drop();
+    assert_eq!(worker.warner.pending_drops(), 1);
+
+    let (command_tx, command_rx) = bounded(1);
+    let (shutdown_tx, shutdown_rx) = bounded(0);
+    command_tx
+        .send(SocketCommand::Shutdown(shutdown_tx))
+        .expect("queue the shutdown command");
+
+    thread::scope(|scope| {
+        let worker = &mut worker;
+        scope.spawn(move || worker.drain_pending(&command_rx, None));
+        let messages = wait_for_message(
+            "dropped 1 records since the last report",
+            Duration::from_secs(5),
+        );
+        // Release the worker before asserting: an assertion that fails while
+        // the worker is blocked in a rendezvous acknowledgement send would
+        // leave `thread::scope` joining a thread this test can no longer
+        // release.
+        let acknowledged = shutdown_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        assert!(acknowledged, "the queued shutdown must be acknowledged");
+        assert!(
+            messages.iter().any(|entry| {
+                entry.message == "FemtoSocketHandler dropped 1 records since the last report"
+            }),
+            "worker exit must report the held-back count before acknowledging: {messages:?}"
+        );
+    });
+    assert_eq!(
+        worker.warner.pending_drops(),
+        0,
+        "worker exit must leave nothing pending"
+    );
+}
+
 /// A flush spends one budget across both halves, not one on each.
 ///
 /// The wait for queue space and the acknowledgement wait used to be given the

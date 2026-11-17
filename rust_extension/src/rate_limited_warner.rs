@@ -10,9 +10,16 @@
 //! every lost record. An explicit [`RateLimitedWarner::flush`] reports the
 //! pending total immediately, whatever the clock says, which is what makes it
 //! safe to rely on during shutdown.
+//!
+//! The warner takes no lock. Draining is one atomic swap and claiming an
+//! interval is one compare-exchange, so a `fork` copies plain counters and can
+//! never strand a child on a lock word some parent thread held at the moment of
+//! the fork. A child does inherit the pending count, so it may report a
+//! pre-fork batch the parent also reports; that is two reports of one count,
+//! not two drains of one counter.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Source of time for [`RateLimitedWarner`] and the stream handler's flush deadline.
@@ -44,99 +51,6 @@ impl Clock for SystemClock {
 /// How often to emit warnings about dropped log records by default.
 pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Mutual exclusion for the drain path that survives `fork`.
-///
-/// A parking-lot mutex cannot be recovered by a forked child: when the parent
-/// forks while a *different* thread holds the lock, the child inherits the
-/// locked word with no thread that will ever release it, so the child's first
-/// warning would wait forever. Loggers are routinely inherited by
-/// `multiprocessing` children, so the drain lock records the owning process
-/// instead: only a live thread of *this* process can hold it, and a word
-/// holding another process ID is the parent's copy, which the child may clear.
-///
-/// The critical section is two atomic reads, a compare-exchange and a swap, so
-/// waiters spin with a yield rather than parking. Parking would reintroduce the
-/// fork problem in a different form: a child cannot wake a parked waiter.
-struct ForkSafeDrainLock {
-    /// Owning process ID, or zero when the lock is free.
-    owner_process: AtomicU32,
-}
-
-impl ForkSafeDrainLock {
-    /// Create a free lock.
-    const fn new() -> Self {
-        Self {
-            owner_process: AtomicU32::new(0),
-        }
-    }
-
-    /// Take the lock, waiting for a live thread of this process to release it.
-    fn lock(&self) -> DrainGuard<'_> {
-        let process_id = std::process::id();
-        loop {
-            if let Some(guard) = self.try_lock(process_id) {
-                return guard;
-            }
-            std::hint::spin_loop();
-            std::thread::yield_now();
-        }
-    }
-
-    /// Take the lock for `process_id` unless a live thread of that process
-    /// holds it. Returns `None` when the caller must retry.
-    fn try_lock(&self, process_id: u32) -> Option<DrainGuard<'_>> {
-        loop {
-            let owner = self.owner_process.load(Ordering::Relaxed);
-            if owner == process_id {
-                return None;
-            }
-            if owner != 0 {
-                // A different PID cannot be a live thread of this process, so
-                // the owner did not survive into it: this is a reservation
-                // copied by `fork`. Clear it and try again for the free word;
-                // a failed clear is harmless because the next pass re-reads it.
-                let _ = self.owner_process.compare_exchange(
-                    owner,
-                    0,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                );
-                continue;
-            }
-            return self
-                .owner_process
-                .compare_exchange(0, process_id, Ordering::Acquire, Ordering::Relaxed)
-                .ok()
-                .map(|_| DrainGuard {
-                    lock: self,
-                    process_id,
-                });
-        }
-    }
-}
-
-/// Exclusive access to a [`ForkSafeDrainLock`], released on drop.
-struct DrainGuard<'a> {
-    /// Lock this guard took.
-    lock: &'a ForkSafeDrainLock,
-    /// Process ID this guard wrote into the lock.
-    process_id: u32,
-}
-
-impl Drop for DrainGuard<'_> {
-    fn drop(&mut self) {
-        // Release only a word this guard still owns. A forked child that
-        // reclaimed an inherited guard has a different owner by now, and this
-        // guard must not free the lock out from under it.
-        let _ = self.lock.owner_process.compare_exchange(
-            self.process_id,
-            0,
-            Ordering::Release,
-            Ordering::Relaxed,
-        );
-    }
-}
-
 /// Helper that rate limits dropped-record warnings.
 ///
 /// The caller increments the drop counter via [`record_drop`]. The next call to
@@ -152,35 +66,39 @@ impl Drop for DrainGuard<'_> {
 /// does not discard it. A drop recorded while another thread is warning belongs to
 /// that batch or to the next one, not to both.
 ///
-/// A short per-instance lock serializes the counter recheck, interval claim and
-/// drain against [`flush`]. It is owned by a process ID rather than a parking
-/// lot futex, so a child created by `fork` clears a lock inherited from a parent
-/// thread that no longer exists instead of deadlocking on it.
-/// [`record_drop`] remains an atomic increment and does not take that lock, and
-/// a [`warn_if_due`] call whose interval is still open returns on a lock-free
-/// read of the last-warning timestamp. Neither the clock nor the callbacks are
-/// called while the lock is held: the clock is a caller-supplied seam, so a
-/// clock that re-enters the warner must not find the claim's lock taken, and
-/// callbacks are **not** serialized against one another and may re-enter the
-/// warner. At most one [`warn_if_due`] caller claims an
-/// interval: the claim uses compare-exchange, and a caller that loses it
-/// returns without draining.
-/// Concurrent callbacks therefore receive disjoint batches. A callback that
-/// panics abandons the batch it was handed; the counter is not restored, which
-/// keeps the "handed off once" guarantee rather than trading it for a
+/// A due call takes its batch with an atomic swap and only then claims the
+/// interval, restoring the batch if the claim is refused. Draining first means
+/// a concurrent [`flush`] cannot empty a batch this call has already claimed an
+/// interval for, so a flush never leaves the next warning suppressed for a
+/// whole interval; restoring on a refused claim means a lost race costs the
+/// caller nothing but a retry on its next due moment. At most one
+/// [`warn_if_due`] caller claims an interval: the claim uses compare-exchange,
+/// and a caller that loses it returns without reporting. Concurrent callbacks
+/// therefore receive disjoint batches.
+///
+/// Neither the clock nor the callbacks run under any lock, because the warner
+/// takes none. The clock is a caller-supplied seam, so a clock that re-enters
+/// the warner is safe, and callbacks are **not** serialized against one another
+/// and may re-enter the warner. A callback that panics abandons the batch it
+/// was handed, as does a `Clock` whose sample panics: the count is not restored,
+/// which keeps the "handed off once" guarantee rather than trading it for a
 /// possibly-repeated callback.
+///
+/// An interval starts when a report is *published*, not when its caller first
+/// read the clock. The claim publishes its sample, then corrects it forward if
+/// the clock has moved on by the time the claim was won, so a caller delayed
+/// between sampling and publishing cannot start the interval in the past and
+/// let the next caller warn immediately afterwards.
 ///
 /// The counter and timestamp use [`Ordering::Relaxed`], which is sound because
 /// they publish only their own values and carry no data other than the count.
-/// The lock uses acquire and release, so a forked child that reclaims it sees a
-/// fully released critical section rather than a torn one.
+/// Nothing is held across a thread boundary, so `fork` copies only these plain
+/// counters.
 ///
 /// [`record_drop`]: RateLimitedWarner::record_drop
 /// [`warn_if_due`]: RateLimitedWarner::warn_if_due
 /// [`flush`]: RateLimitedWarner::flush
 pub struct RateLimitedWarner {
-    /// Serializes due-window claims and counter drains against explicit flushes.
-    drain_lock: ForkSafeDrainLock,
     /// Millisecond timestamp of the last warning, updated atomically by emitters.
     last_warn: AtomicU64,
     /// Number of dropped records waiting for the next warning emission.
@@ -201,7 +119,6 @@ impl RateLimitedWarner {
     pub fn with_clock(interval: Duration, clock: Arc<dyn Clock>) -> Self {
         let interval_ms = interval.as_millis() as u64;
         Self {
-            drain_lock: ForkSafeDrainLock::new(),
             last_warn: AtomicU64::new(u64::MAX),
             dropped: AtomicU64::new(0),
             interval_ms,
@@ -233,23 +150,23 @@ impl RateLimitedWarner {
     /// arrives inside the interval leaves the pending count untouched for the
     /// next due call or for [`flush`].
     ///
-    /// The counter is checked before sampling the clock and rechecked under the
-    /// drain lock before the interval claim and drain. This serializes the due
-    /// claim and drain against [`flush`], so a flush that drains the last
-    /// pending batch cannot leave an empty interval claimed. At most one caller
-    /// emits per interval; callers that lose the compare-exchange return without
-    /// draining. The lock is released before the callback runs, so a slow or
-    /// re-entrant callback does not hold up another caller or a flush. The clock
-    /// is sampled before the lock is taken, so a re-entrant clock cannot wait
-    /// for the claim it is timing.
+    /// The counter is checked before sampling the clock and rechecked by the
+    /// claim itself. A call that takes a batch and then loses the interval
+    /// restores the batch, so the drops stay pending for the next due call.
+    /// At most one caller emits per interval; callers that lose the
+    /// compare-exchange return without reporting. Nothing is held while the
+    /// callback runs, so a slow or re-entrant callback does not hold up
+    /// another caller or a flush, and a re-entrant clock cannot wait for the
+    /// claim it is timing.
     ///
-    /// A call whose interval is still open returns before taking the lock. The
-    /// refusal paths call this method for every dropped record, so under
-    /// sustained overload the suppressed calls are the common case and must not
-    /// contend for the shared lock. The pre-check reads `last_warn` without the
-    /// lock, which is sound because the timestamp only moves forward: a stale
-    /// read can only *over*-report that a warning is due, and the locked recheck
-    /// corrects that; it can never hide a due warning.
+    /// A call whose interval is still open returns after one clock read and one
+    /// atomic load, without touching the counter. The refusal paths call this
+    /// method for every dropped record, so under sustained overload the
+    /// suppressed calls are the common case and must stay cheap. The pre-check
+    /// reads `last_warn` without any synchronization, which is sound because
+    /// the timestamp only moves forward: a stale read can only *over*-report
+    /// that a warning is due, and the claim's own recheck corrects that; it can
+    /// never hide a due warning.
     ///
     /// # Examples
     ///
@@ -275,14 +192,13 @@ impl RateLimitedWarner {
         }
     }
 
-    /// Report whether a warning could be due, without taking the drain lock.
+    /// Report whether a warning could be due, without touching the counter.
     ///
     /// Avoids clock reads for the common empty case, then compares the stale
-    /// `last_warn` read against the interval. Suppressed calls are the common
-    /// case on the refusal paths, so they must return before touching the
-    /// shared lock. The read is sound without the lock because the timestamp
-    /// only moves forward: a stale read can only claim a warning is due when it
-    /// is not, and [`Self::claim_due_batch`] decides that under the lock.
+    /// `last_warn` read against the interval. The read is unsynchronized
+    /// because the timestamp only moves forward: a stale read can only claim a
+    /// warning is due when it is not, and [`Self::claim_due_batch`] decides
+    /// that again before it publishes anything.
     fn is_warning_due(&self) -> bool {
         if self.dropped.load(Ordering::Relaxed) == 0 {
             return false;
@@ -292,40 +208,68 @@ impl RateLimitedWarner {
         observed == u64::MAX || now.saturating_sub(observed) >= self.interval_ms
     }
 
-    /// Claim this interval and take the batch it covers, or return zero.
+    /// Take the pending batch and claim the interval covering it, or return
+    /// zero and leave the batch pending.
     ///
-    /// The lock covers the recheck, the claim and the swap, so a concurrent
-    /// [`Self::flush`] can neither empty a due batch after its interval has
-    /// been claimed nor take the batch this call observes as pending. The
-    /// caller re-reads nothing after this returns, and the callback runs with
-    /// the lock released.
+    /// The swap happens before the claim so that a concurrent [`Self::flush`]
+    /// can never empty a batch whose interval this call has already claimed:
+    /// that would suppress the next warning for a whole interval while nothing
+    /// was reported for it. A flush that wins the swap race instead takes the
+    /// batch and this call finds nothing to report, so it claims nothing.
     ///
-    /// The clock is sampled *before* the lock is taken. [`Clock`] is a seam the
-    /// caller supplies, so a clock that re-enters the warner — a test clock
-    /// that flushes, say — would otherwise wait forever for the lock this very
-    /// call already holds. Sampling first is sound because the timestamp is
-    /// only compared and then published: a caller that loses the interval to a
-    /// concurrent claim observes a `last_warn` at or after its own sample and
-    /// is refused by the locked recheck, and a caller whose sample is slightly
-    /// stale claims at most a moment early, which the next call corrects.
+    /// A refused claim returns the batch with an atomic add, which can only
+    /// merge with drops recorded in the meantime; it cannot drop or duplicate
+    /// one. The caller reports nothing in that case, because another caller has
+    /// just reported and the interval it opened must be respected.
     fn claim_due_batch(&self) -> u64 {
-        let now = self.clock.now_millis();
-        let _drain_guard = self.drain_lock.lock();
-        // A concurrent flush may have taken the observed batch while the clock
-        // was sampled, so do not claim an interval with nothing to report.
-        if self.dropped.load(Ordering::Relaxed) == 0 {
+        let batch = self.dropped.swap(0, Ordering::Relaxed);
+        if batch == 0 {
             return 0;
         }
+        let Some(claimed_at) = self.claim_interval() else {
+            self.dropped.fetch_add(batch, Ordering::Relaxed);
+            return 0;
+        };
+        self.publish_report_time(claimed_at);
+        batch
+    }
+
+    /// Claim the warning interval, returning the timestamp published, if any.
+    ///
+    /// The clock is sampled immediately before the compare-exchange, with no
+    /// lock or wait in between, and then the published time is corrected
+    /// forward once the claim is won. Between those two samples the caller can
+    /// only be pre-empted: there is no lock to queue behind, so the correction
+    /// bounds how stale a published interval start can be.
+    fn claim_interval(&self) -> Option<u64> {
+        let now = self.clock.now_millis();
         let prev = self.last_warn.load(Ordering::Relaxed);
         if prev != u64::MAX && now.saturating_sub(prev) < self.interval_ms {
-            return 0;
+            return None;
         }
-        // `compare_exchange` ensures callers using the same observed timestamp
+        // `compare_exchange` ensures callers that observed the same timestamp
         // cannot both claim this warning interval.
-        if !try_claim_interval(&self.last_warn, prev, now) {
-            return 0;
+        try_claim_interval(&self.last_warn, prev, now).then_some(now)
+    }
+
+    /// Move the published interval start forward to the moment of publication.
+    ///
+    /// The claim's sample was taken before the compare-exchange, so a caller
+    /// pre-empted between the two would otherwise start the interval in the
+    /// past and let the very next caller warn inside it. Only a later sample is
+    /// published, so a clock that steps backwards cannot shorten an interval,
+    /// and a compare-exchange failure means a concurrent claim already
+    /// published a later time, which this call must leave alone.
+    fn publish_report_time(&self, claimed_at: u64) {
+        let reported_at = self.clock.now_millis();
+        if reported_at > claimed_at {
+            let _ = self.last_warn.compare_exchange(
+                claimed_at,
+                reported_at,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
         }
-        self.dropped.swap(0, Ordering::Relaxed)
     }
 
     /// Immediately warn about any dropped records.
@@ -335,8 +279,8 @@ impl RateLimitedWarner {
     /// on flush and shutdown paths, where the caller needs the count now rather
     /// than at the next due moment.
     ///
-    /// The counter drain is serialized against the due check and interval
-    /// claim. The lock is released before the callback runs.
+    /// The drain is one atomic swap, so it cannot interleave with a due call's
+    /// batch and no lock is held while the callback runs.
     ///
     /// # Examples
     ///
@@ -352,10 +296,7 @@ impl RateLimitedWarner {
     /// assert_eq!(reported, vec![2]);
     /// ```
     pub fn flush(&self, mut warn: impl FnMut(u64)) {
-        let count = {
-            let _drain_guard = self.drain_lock.lock();
-            self.dropped.swap(0, Ordering::Relaxed)
-        };
+        let count = self.dropped.swap(0, Ordering::Relaxed);
         if count > 0 {
             warn(count);
         }
@@ -391,6 +332,10 @@ impl Default for RateLimitedWarner {
 #[cfg(test)]
 #[path = "rate_limited_warner_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rate_limited_warner_claim_tests.rs"]
+mod claim_tests;
 
 #[cfg(test)]
 #[path = "rate_limited_warner_concurrency_tests.rs"]

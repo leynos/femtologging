@@ -337,7 +337,9 @@ fields with safe defaults does not require a version bump.
   after `fork`.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
-  dispatch-admission refusals.
+  dispatch-admission refusals. Their warnings are rate-limited like the others,
+  and `logger.flush_handlers()` reports a count the interval is still holding
+  back instead of leaving it for a warning the logger may never get to emit.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.

@@ -9,8 +9,8 @@
 
 use super::*;
 use rstest::*;
+use std::sync::Barrier;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Barrier, Mutex, mpsc};
 use std::thread;
 
 /// A test clock that advances only when the test requests it.
@@ -242,72 +242,4 @@ fn compare_exchange_rejects_the_other_same_timestamp_claims() {
 
     assert_eq!(successful_claims.load(Ordering::Relaxed), 1);
     assert_eq!(last_warn.load(Ordering::Relaxed), 1000);
-}
-
-/// A flush does not wait for a paused warning callback.
-///
-/// The callback only reaches its barriers if it runs after the drain lock is
-/// released; a callback that held the lock would make the flush below wait out
-/// its timeout.
-#[test]
-fn callback_runs_after_releasing_the_drain_lock() {
-    let warner = Arc::new(RateLimitedWarner::new(Duration::from_secs(3600)));
-    warner.record_drop();
-
-    let callback_entered = Arc::new(Barrier::new(2));
-    let callback_resume = Arc::new(Barrier::new(2));
-    let second_attempt_started = Arc::new(Barrier::new(2));
-    let warning_counts = Arc::new(Mutex::new(Vec::new()));
-    let (second_done_tx, second_done_rx) = mpsc::channel();
-
-    let second_attempt_finished_while_callback_paused = thread::scope(|scope| {
-        let first_warner = Arc::clone(&warner);
-        let first_callback_entered = Arc::clone(&callback_entered);
-        let first_callback_resume = Arc::clone(&callback_resume);
-        let first_counts = Arc::clone(&warning_counts);
-        scope.spawn(move || {
-            first_warner.warn_if_due(|count| {
-                first_counts
-                    .lock()
-                    .expect("warning counts lock")
-                    .push(count);
-                first_callback_entered.wait();
-                first_callback_resume.wait();
-            });
-        });
-        callback_entered.wait();
-
-        let second_warner = Arc::clone(&warner);
-        let worker_attempt_started = Arc::clone(&second_attempt_started);
-        let second_counts = Arc::clone(&warning_counts);
-        scope.spawn(move || {
-            second_warner.record_drop();
-            worker_attempt_started.wait();
-            // Flush rather than warn: the interval is open, so `warn_if_due`
-            // would return at the suppression pre-check without ever testing
-            // whether the paused callback still holds the drain lock.
-            second_warner.flush(|count| {
-                second_counts
-                    .lock()
-                    .expect("warning counts lock")
-                    .push(count);
-            });
-            second_done_tx.send(()).expect("second attempt receiver");
-        });
-        second_attempt_started.wait();
-        let finished_early = second_done_rx.recv_timeout(Duration::from_secs(1)).is_ok();
-        callback_resume.wait();
-        finished_early
-    });
-
-    assert!(
-        second_attempt_finished_while_callback_paused,
-        "a flush must not wait for a paused warning callback"
-    );
-    assert_eq!(
-        *warning_counts.lock().expect("warning counts lock"),
-        vec![1, 1],
-        "the paused warning and the flush each report their own drop"
-    );
-    assert_eq!(warner.pending_drops(), 0);
 }

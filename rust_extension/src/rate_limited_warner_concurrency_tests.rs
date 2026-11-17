@@ -1,20 +1,18 @@
-//! Concurrency contracts for `RateLimitedWarner`'s interval and drain lock.
+//! Concurrency contracts for `RateLimitedWarner`'s interval claim.
 //!
 //! One warner is shared by producers recording drops, a flush draining the
 //! count, and the thread that wins the next warning interval. These tests hold
 //! the interleavings that sharing must survive: a flush that drains a due call
-//! does not claim its interval, a suppressed call returns without waiting for a
-//! drain in progress, a clock that re-enters the warner does not deadlock its
-//! own claim, only one racer reports an interval, and racers recording and
-//! draining conserve every drop - none lost, none counted twice. The last pair
-//! covers the drain lock's fork safety: a child process that inherits the lock
-//! held must be able to reclaim it, while the owning process keeps it.
+//! does not claim its interval, a flush cannot take a batch a due call has
+//! already drained, a clock that re-enters the warner does not deadlock its own
+//! claim, and racers recording and draining conserve every drop - none lost,
+//! none counted twice.
 //!
 //! The fixtures synchronize with barriers and channels rather than sleeping, so
 //! a failure names the interleaving under test rather than the host's load.
 
 use super::tests::FakeClock;
-use super::{Clock, ForkSafeDrainLock, RateLimitedWarner};
+use super::{Clock, RateLimitedWarner};
 use rstest::rstest;
 use std::sync::Arc;
 use std::sync::Barrier;
@@ -25,33 +23,27 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-/// A clock whose timestamp never moves during a test.
-struct FixedClock(u64);
-
-impl Clock for FixedClock {
-    fn now_millis(&self) -> u64 {
-        self.0
-    }
-}
-
-/// A clock that pauses the first warning caller inside its time sample.
+/// A clock that pauses one chosen sample so the test can interleave with it.
 struct PausingClock {
-    /// Timestamp returned after the test releases the warning caller.
+    /// Timestamp every sample returns.
     now_ms: u64,
-    /// Pauses only the first clock sample.
-    should_pause: AtomicBool,
-    /// Synchronizes the warning caller with the test before it pauses.
+    /// Samples taken so far, so the pause lands on the chosen one.
+    samples: AtomicU64,
+    /// Zero-based index of the sample that pauses.
+    pause_on_sample: u64,
+    /// Synchronizes the pausing caller with the test.
     entered: Barrier,
-    /// Prevents the warning caller from sampling time until released.
+    /// Prevents the pausing caller from continuing until released.
     resume: Barrier,
 }
 
 impl PausingClock {
-    /// Create the two-party barriers used by the race test.
-    fn new(now_ms: u64) -> Self {
+    /// Build a clock that pauses its `pause_on_sample`-th sample.
+    fn new(now_ms: u64, pause_on_sample: u64) -> Self {
         Self {
             now_ms,
-            should_pause: AtomicBool::new(true),
+            samples: AtomicU64::new(0),
+            pause_on_sample,
             entered: Barrier::new(2),
             resume: Barrier::new(2),
         }
@@ -60,7 +52,7 @@ impl PausingClock {
 
 impl Clock for PausingClock {
     fn now_millis(&self) -> u64 {
-        if self.should_pause.swap(false, Ordering::Relaxed) {
+        if self.samples.fetch_add(1, Ordering::Relaxed) == self.pause_on_sample {
             self.entered.wait();
             self.resume.wait();
         }
@@ -68,10 +60,15 @@ impl Clock for PausingClock {
     }
 }
 
-/// A flush winning the race does not leave an empty interval claimed.
+/// A flush draining a due call does not leave an empty interval claimed.
+///
+/// The warning caller is paused inside its due pre-check, before it drains
+/// anything. The flush takes and reports the only pending drop, so the resumed
+/// caller finds nothing to report and must claim nothing: a claimed interval
+/// with no report behind it would suppress the next drop for a whole interval.
 #[test]
 fn flush_draining_a_due_call_does_not_claim_its_interval() {
-    let clock = Arc::new(PausingClock::new(1000));
+    let clock = Arc::new(PausingClock::new(1000, 0));
     let warner = Arc::new(RateLimitedWarner::with_clock(
         Duration::from_secs(1),
         Arc::clone(&clock) as Arc<dyn Clock>,
@@ -123,46 +120,54 @@ fn flush_draining_a_due_call_does_not_claim_its_interval() {
     );
 }
 
-/// A suppressed call returns without contending for the drain lock.
+/// A flush cannot take a batch a due call has already drained.
 ///
-/// Every refused record calls `warn_if_due` while the interval is still open.
-/// That path must not serialize over the mutex that also guards flushes: here
-/// the test holds the lock, and the suppressed call still completes and leaves
-/// the pending count untouched.
+/// The due caller has swapped the batch out and is paused before its claim, so
+/// no interval is claimed yet when the flush runs. The flush must find nothing,
+/// and the resumed caller must still claim the interval and report the batch it
+/// holds: draining first is what keeps a flush from claiming an interval that
+/// no report covers.
 #[test]
-fn suppressed_call_does_not_wait_for_the_drain_lock() {
+fn flush_cannot_take_a_batch_a_due_call_already_drained() {
+    let clock = Arc::new(PausingClock::new(1000, 1));
     let warner = Arc::new(RateLimitedWarner::with_clock(
-        Duration::from_secs(60),
-        Arc::new(FixedClock(1_000)) as Arc<dyn Clock>,
+        Duration::from_secs(1),
+        Arc::clone(&clock) as Arc<dyn Clock>,
     ));
     warner.record_drop();
-    warner.warn_if_due(|_| {});
-    warner.record_drop();
 
-    let warned = Arc::new(AtomicBool::new(false));
-    let (done_tx, done_rx) = mpsc::channel();
-    let lock = warner.drain_lock.lock();
-    let caller = {
-        let warner = Arc::clone(&warner);
-        let warned = Arc::clone(&warned);
-        thread::spawn(move || {
-            warner.warn_if_due(|_| warned.store(true, Ordering::Relaxed));
-            let _ = done_tx.send(());
-        })
-    };
-    let completed = done_rx.recv_timeout(Duration::from_secs(10));
-    drop(lock);
-    completed.expect("a suppressed call must not wait for the drain lock");
-    caller.join().expect("the suppressed caller should finish");
+    let warning_counts = Arc::new(Mutex::new(Vec::new()));
+    thread::scope(|scope| {
+        let warning_warner = Arc::clone(&warner);
+        let warning_counts = Arc::clone(&warning_counts);
+        scope.spawn(move || {
+            warning_warner.warn_if_due(|count| {
+                warning_counts
+                    .lock()
+                    .expect("warning counts lock")
+                    .push(count);
+            });
+        });
+        clock.entered.wait();
 
-    assert!(
-        !warned.load(Ordering::Relaxed),
-        "the call arrived inside the interval and must not warn"
-    );
+        let mut flush_counts = Vec::new();
+        warner.flush(|count| flush_counts.push(count));
+        clock.resume.wait();
+        assert!(
+            flush_counts.is_empty(),
+            "the batch belongs to the due caller that drained it"
+        );
+    });
+
     assert_eq!(
-        warner.pending_drops(),
-        1,
-        "a suppressed call must leave the count pending"
+        *warning_counts.lock().expect("warning counts lock"),
+        vec![1]
+    );
+    assert_eq!(warner.pending_drops(), 0);
+    assert_eq!(
+        warner.last_warn.load(Ordering::Relaxed),
+        1000,
+        "the caller that reported the batch is the one that claimed the interval"
     );
 }
 
@@ -185,9 +190,8 @@ struct ReentrantClock {
 
 impl Clock for ReentrantClock {
     fn now_millis(&self) -> u64 {
-        // Sample zero is the lock-free pre-check, which holds nothing. Sample
-        // one is the claim's; the previous implementation sampled it under the
-        // drain lock, so the flush below could never take that lock.
+        // Sample zero is the lock-free pre-check. Sample one is the claim's,
+        // taken after the caller has already drained its batch.
         if self.samples.fetch_add(1, Ordering::Relaxed) == 1
             && let Some(warner) = self.warner.get()
         {
@@ -199,13 +203,13 @@ impl Clock for ReentrantClock {
     }
 }
 
-/// A clock that re-enters the warner must not deadlock the interval claim.
+/// A clock that re-enters the warner must not deadlock or lose the batch.
 ///
-/// The re-entrant flush drains the only pending drop, so the claim that follows
-/// finds nothing left to report. What this pins is that it returns at all: a
-/// claim that sampled its clock under the drain lock would wait forever for a
-/// lock its own clock needs, and the timeout below fails the test rather than
-/// hanging the suite.
+/// The warner holds nothing while sampling the clock, so the re-entrant flush
+/// runs to completion. It finds the caller's batch already drained and reports
+/// nothing; the caller then claims its interval and reports that batch itself.
+/// The timeout below fails the test rather than hanging the suite if the
+/// re-entry ever waits for state its own sample is needed to release.
 #[test]
 fn reentrant_clock_does_not_deadlock_the_interval_claim() {
     let clock = Arc::new(ReentrantClock {
@@ -236,66 +240,19 @@ fn reentrant_clock_does_not_deadlock_the_interval_claim() {
     };
     done_rx
         .recv_timeout(Duration::from_secs(10))
-        .expect("the due claim must not wait for a lock its own clock re-entry needs");
+        .expect("the due claim must not wait for state its own clock re-entry needs");
     caller.join().expect("the warning caller should finish");
 
     assert_eq!(
         clock.flushed.load(Ordering::Relaxed),
-        1,
-        "the re-entrant flush should report the drop recorded before the claim"
+        0,
+        "the re-entrant flush must find the batch already drained"
     );
     assert!(
-        !warned.load(Ordering::Relaxed),
-        "the claim found the batch already drained and must not warn"
+        warned.load(Ordering::Relaxed),
+        "the caller that drained the batch must report it"
     );
     assert_eq!(warner.pending_drops(), 0);
-}
-
-/// A live thread of the same process keeps the drain lock held.
-#[test]
-fn drain_lock_is_held_against_the_owning_process() {
-    let lock = ForkSafeDrainLock::new();
-    let guard = lock.try_lock(7).expect("a free lock should be takeable");
-    assert!(
-        lock.try_lock(7).is_none(),
-        "a second caller in the same process must not take the lock",
-    );
-    drop(guard);
-    assert!(
-        lock.try_lock(7).is_some(),
-        "dropping the guard must release the lock",
-    );
-}
-
-/// A forked child reclaims the drain lock instead of deadlocking on it.
-///
-/// The parent can fork while another thread holds the lock. That thread does
-/// not exist in the child, but a parking-lot mutex would stay locked forever;
-/// the lock records its owner so a child can tell the difference.
-#[test]
-fn drain_lock_inherited_from_another_process_is_reclaimed() {
-    let lock = ForkSafeDrainLock::new();
-    let parent_guard = lock
-        .try_lock(41)
-        .expect("the parent should take the free lock");
-
-    let child_guard = lock
-        .try_lock(42)
-        .expect("a child process should reclaim an inherited lock");
-    // The parent's guard object survives into the child too. Dropping it there
-    // must not release the lock the child now owns: its stored owner is the
-    // parent's process ID, which no longer matches the word.
-    drop(parent_guard);
-    assert!(
-        lock.try_lock(42).is_none(),
-        "the stale guard must not free the child's lock",
-    );
-
-    drop(child_guard);
-    assert!(
-        lock.try_lock(42).is_some(),
-        "dropping the child's guard must release the lock",
-    );
 }
 
 /// Shared state every conservation worker reads and updates.

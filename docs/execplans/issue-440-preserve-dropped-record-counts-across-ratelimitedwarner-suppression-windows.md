@@ -55,9 +55,12 @@ suite that fails if any drop is discarded or handed off more than once.
   that happened to trigger it. The HTTP and socket texts therefore became
   `... dropped N records since the last report; triggering cause: <cause>`,
   with a cause-neutral `... dropped N records since the last report` for
-  flushes. The stream-handler, logger and shutdown-discard texts are unchanged.
-  The change and its reason are in `Decision log`; every in-repo matcher was
-  updated with it, and the user and developer guides quote the new wording.
+  flushes. The stream handler's `... in the last interval` became
+  `... since the last report` for the same reason; its leading
+  `FemtoStreamHandler:` prefix and `log records dropped` stem are unchanged.
+  The logger and shutdown-discard texts are unchanged. The change and its
+  reason are in `Decision log`; every in-repo matcher was updated with it, and
+  the user and developer guides quote the new wording.
 - At most one `warn_if_due()` emission per interval, and only one caller may
   claim an interval. Racing callers must not both warn.
 - No `Drop` hook is added to any consumer that does not already have one, apart
@@ -72,16 +75,23 @@ suite that fails if any drop is discarded or handed off more than once.
   generated artefacts), stop and escalate.
 
   *Reached and recorded 2026-11-17.* Measured against `origin/main` at
-  `2dc7b4e2`, the branch changes 34 files for `+2517/-293` lines (2224 net),
+  `2dc7b4e2`, the branch changes 36 files for `+3087/-288` lines (2799 net),
   excluding the plan itself. The excess is not one large edit: it is the
   consumer wiring the issue's acceptance criteria require — four handler
   families, their workers, the logger producer, shared warning modules, the
-  fork-safe drain lock, the new regression suites and the heavy property suite
-  — plus the documentation those contracts need. The CodeRabbit completeness
-  assessment directed that the deviation be recorded here rather than silently
-  accepted, so it is recorded with the same evidence as the gates. No further
-  scope growth is planned; a new file beyond this set is a reason to stop and
-  re-plan.
+  lock-free interval claim, the new regression suites and the heavy property
+  suite — plus the documentation those contracts need. The CodeRabbit
+  completeness assessment directed that the deviation be recorded here rather
+  than silently accepted, so it is recorded with the same evidence as the
+  gates. No further scope growth is planned; a new file beyond this set is a
+  reason to stop and re-plan. Owner acceptance: neither exception is a
+  discretionary expansion. The scope implements the issue's own acceptance
+  criteria for all four consumer families, and the wording change was required
+  by review of a contract those criteria created; the owner's instruction for
+  this task is to action every review finding and merge the result. Both are
+  therefore authorized and recorded here, and no exception is awaiting a
+  decision. The `Decision log` names every changed string and matcher should
+  the owner later wish to revert the wording.
 - Interface: any change to the public signature of an existing item stops the
   work for confirmation. A new `#[cfg(feature = "test-util")]` accessor is
   inside tolerance, and is recorded in `Decision log`.
@@ -295,7 +305,8 @@ suite that fails if any drop is discarded or handed off more than once.
       lock-free suppression pre-check so a refused record inside the interval no
       longer contends for the drain mutex.
 - [x] (2026-10-31) The pre-check and its new
-      `suppressed_call_does_not_wait_for_the_drain_lock` test pushed
+      `suppressed_call_does_not_wait_for_the_drain_lock` test (later removed
+      with the lock) pushed
       `rate_limited_warner.rs` past the 400-line limit, so the concurrency cases
       moved to `rate_limited_warner_concurrency_tests.rs` behind the same
       `#[path]` pattern as the unit tests.
@@ -310,7 +321,10 @@ suite that fails if any drop is discarded or handed off more than once.
       rather than at least one, and
       `callback_runs_after_releasing_the_drain_lock` now has its second caller
       flush instead of warn, because the suppression pre-check would otherwise
-      return before the drain lock was ever tested.
+      return before the drain lock was ever tested. (Both tests named in this
+      entry were removed on 2026-11-17 with the lock itself; their replacements
+      are `flush_does_not_wait_for_a_paused_warning_callback` and the
+      lock-free flush tests in the concurrency module.)
 - [x] (2026-11-01) Rebased the twelve issue commits onto `origin/main` at
       `6180cd5`, whose new build-standard test neutralizes the host Cargo
       wrapper and therefore unblocks the three pytest cases recorded above.
@@ -347,8 +361,9 @@ suite that fails if any drop is discarded or handed off more than once.
 - [x] (2026-11-17) Expanded the four module docs the saved check named
       (`http_handler`, `socket_handler`, `rate_limited_warner_concurrency_tests`,
       `logger/producer_rejection_tests`) and documented the contract for users
-      and developers, including the fork-safe drain lock rationale in the design
-      document.
+      and developers, including the then-current fork-safe drain lock rationale
+      in the design document. (Superseded 2026-11-17: the lock was removed
+      outright — see the entry recording the lock-free claim below.)
 - [x] (2026-11-17) All four deterministic gates passed on the candidate at
       `e364345c`, run once each and strictly sequentially: `make check-fmt`,
       `make test` (four Rust feature configurations, 1209 pytest tests, 66
@@ -365,8 +380,10 @@ suite that fails if any drop is discarded or handed off more than once.
 - [x] (2026-11-17) The CodeRabbit completeness assessment (Assessment-ID
       `issue440-20261117-922a9e3e-completeness`) judged the core fix sound and
       named six reporting and record-keeping gaps. All are addressed: the due
-      claim now samples the clock before taking the drain lock, with a
-      re-entrant-clock regression; HTTP and socket warnings say "triggering
+      claim now samples the clock before taking the then-current drain lock,
+      with a re-entrant-clock regression (the lock itself was removed later the
+      same day; see the entry recording the lock-free claim); HTTP and socket
+      warnings say "triggering
       cause" and a controlled two-thread race proves the report names the
       trigger's own cause; the scope deviation and the deliberate message-text
       change are recorded under `Tolerances` and `Constraints`; INV-1 counts
@@ -398,6 +415,59 @@ suite that fails if any drop is discarded or handed off more than once.
       `/tmp/gates-issue-440-20261117-r4-{check-fmt,test}.out`,
       `/tmp/gates-issue-440-20261117-r3-{typecheck,lint}.out` and
       `/tmp/gates-issue-440-20261117-r7-{check-fmt,markdownlint,nixie}.out`.
+- [x] (2026-11-17) Removed the drain lock entirely rather than correcting it
+      again. Two defects survived the previous round: a delayed clock sample
+      between the claim and the compare-exchange could start the interval in
+      the past, and a child forked while another thread held the lock still
+      depended on the process-tagged reclaim path. The warner now drains with
+      `dropped.swap(0)`, claims with one compare-exchange on `last_warn`, and
+      restores the batch with `fetch_add` when the claim is refused; the clock
+      is sampled immediately before the exchange and the winning caller then
+      republishes a later sample, so the interval starts when it actually
+      reported. Nothing is held across a thread boundary, so `fork` copies
+      plain counters and re-entrant callbacks cannot deadlock.
+      `ForkSafeDrainLock`, `DrainGuard`, their field and their tests are gone.
+- [x] (2026-11-17) New and rewritten concurrency evidence for the lock-free
+      claim: `a_delayed_claim_sample_cannot_start_the_interval_in_the_past`
+      (scripted clock holds the state after the sample, advances, and proves
+      the next warning is still suppressed), `a_refused_claim_returns_the_batch`
+      (a clock that claims the interval underneath the caller proves the batch
+      is restored and reachable through `flush`), and rewritten
+      `flush_draining_a_due_call_does_not_claim_its_interval`,
+      `flush_cannot_take_a_batch_a_due_call_already_drained` and
+      `reentrant_clock_does_not_deadlock_the_interval_claim`. The two
+      clock-double cases moved to a new
+      `rate_limited_warner_claim_tests.rs` (included through the same
+      `#[path]` pattern) once the unit-test file would otherwise pass the
+      400-line cap.
+- [x] (2026-11-17) Strengthened the mixed-cause race tests in both handler
+      drop-reporting modules: the drops are recorded through the production
+      naming helper inside a real opened interval, and the test identifies the
+      winning caller and asserts its exact count and cause instead of accepting
+      either label.
+- [x] (2026-11-17) Added worker-exit regressions to both worker suites
+      (`worker_exit_reports_drops_the_interval_held_back`). Each records a
+      suppressed worker-side drop, drains a queue holding only the shutdown
+      command, and proves over a rendezvous acknowledgement that
+      `drain_pending` reported the count before exiting and left nothing
+      pending. Both fail with the exit `flush_drops` call removed (empty
+      captured messages) and pass with it restored.
+- [x] (2026-11-17) Added
+      `flush_reports_context_capture_drops_held_back_by_the_interval`
+      (`feature = "python"`): two failed captures leave one suppressed warning
+      pending, and `flush_handlers()` reports it exactly once and empties the
+      warner. It fails with `1` pending left and passes with the flush restored.
+- [x] (2026-11-17) Corrected the guide text and this plan for the lock-free
+      design: the developer guide now describes drain-then-claim,
+      restore-on-refusal and publication-time correction, names the per-module
+      helper pairs and their import paths (`http_handler/queue.rs`,
+      `socket_handler/warning.rs`, `stream_handler/warning.rs`, logger
+      `flush_drop_warners`), and states per-process fork conservation without a
+      lock; the user guide records that `logger.flush_handlers()` reports a
+      pending context-capture warning. This plan's tolerance figures are
+      `+3087/-288` (2799 net) over 36 files, the stream wording exception is
+      recorded, and the capture-logger command names
+      `stream_handler_logging_tests`.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
@@ -509,8 +579,10 @@ pending action.
   dependency edge rather than through `cfg(test)`.
 - Observation: the stream handler's dropped-record warning does **not** lead
   with its count; the message is
-  `FemtoStreamHandler: {count} log records dropped in the last interval`, so
-  the count is the last token before the shared suffix. Evidence: the first
+  `FemtoStreamHandler: {count} log records dropped in the last interval` at the
+  time this was observed, so the count is the last token before the shared
+  suffix. (The suffix later became `since the last report`, per the amended
+  non-goal above; the position of the count did not move.) Evidence: the first
   version of the updated integration test parsed the first whitespace token and
   failed with `ParseIntError { kind: InvalidDigit }` on `FemtoStreamHandler:`.
   Impact: the count is now read by stripping the shared suffix and taking the
@@ -595,7 +667,9 @@ pending action.
   despite no warning being emitted. Sampling the clock before taking the mutex
   avoids calling the public clock seam while holding an internal lock; the due
   path rechecks the counter under the mutex and does not claim an empty window.
-  Date/Author: 2026-10-26, agent, following CodeRabbit review.
+  Date/Author: 2026-10-26, agent, following CodeRabbit review. Superseded
+  2026-11-17 by the lock-free drain-then-claim decision below; the empty-window
+  requirement it protected is now met by ordering the swap before the claim.
 - Decision: make the clock-before-lock rule hold in the claim *and* label the
   HTTP and socket cause as "triggering cause" rather than "latest cause".
   Rationale: the clock is a public seam a caller may implement by re-entering
@@ -608,6 +682,18 @@ pending action.
   trigger label on the flush paths, and a controlled two-thread race pins it.
   Date/Author: 2026-11-17, agent, following the CodeRabbit completeness
   assessment.
+- Decision: remove the drain lock entirely and make the due path drain before
+  claiming. Rationale: the clock is a public seam, so any lock held across a
+  sample is re-entrancy risk, and a process-tagged lock is still a lock word a
+  forked child must reclaim. `dropped.swap(0)` followed by one compare-exchange
+  on `last_warn` orders the two so a flush cannot empty a batch a claim already
+  covers and a due call cannot claim an interval no report fills; a refused
+  claim restores the batch with `fetch_add`. The claiming sample is taken
+  immediately before the exchange and the winner republishes a later sample
+  afterwards, so a caller delayed between them still starts the interval when
+  it reported rather than in the past. Fork safety follows from the absence of
+  shared lock state: a child inherits counters, not ownership. Date/Author:
+  2026-11-17, agent, following the second CodeRabbit completeness assessment.
 - Decision: add a `#[cfg(any(test, feature = "test-util"))] pending_drops()`
   accessor. Rationale: the acceptance criteria ask for an assertion that
   "reported plus pending equals recorded". The in-module stress test can read
@@ -672,7 +758,8 @@ manual clock through a suppression window, then exercises flush, a second
 suppressed worker-side drops before acknowledging; and the stream handler's
 `Drop` has its own test in `stream_handler/shutdown.rs`. The user and developer
 guides now state the carry-forward and reporting rules, and the design document
-records why the drain lock is process-tagged.
+records why the warner takes no lock at all: fork safety follows from having no
+shared lock state to inherit, and conservation is therefore per process.
 
 ## Context and orientation
 
@@ -749,7 +836,9 @@ Trace links:
 issue-440 AC1 (remove the suppressed-path reset)        -> EP-M1 -> rate_limited_warner::tests::suppressed_attempts_carry_drops_forward
 issue-440 AC2 (flush is an unconditional swap)          -> EP-M1 -> rate_limited_warner::tests::flush_reports_inside_the_suppression_window
 issue-440 AC3/AC4 (concurrency contract, no loss)       -> EP-M1 -> rate_limited_warner::tests::compare_exchange_rejects_the_other_same_timestamp_claims
-issue-440 AC3 (clock sampled outside the drain lock)    -> EP-M1 -> rate_limited_warner::concurrency_tests::reentrant_clock_does_not_deadlock_the_interval_claim
+issue-440 AC3 (clock sampled without a lock held)       -> EP-M1 -> rate_limited_warner::concurrency_tests::reentrant_clock_does_not_deadlock_the_interval_claim
+issue-440 AC3 (no start in the past after delay)        -> EP-M1 -> rate_limited_warner::claim_tests::a_delayed_claim_sample_cannot_start_the_interval_in_the_past
+issue-440 AC3 (refused claim keeps its batch)           -> EP-M1 -> rate_limited_warner::claim_tests::a_refused_claim_returns_the_batch
 issue-440 AC8 (a cumulative warning names its trigger)  -> EP-M3 -> http_handler/socket_handler drop_reporting_tests::racing_causes_report_both_drops_and_name_the_trigger
 issue-440 AC8 (report precedes the worker ack)          -> EP-M3 -> http_handler/socket_handler worker::tests::the_flush_command_reports_drops_before_acknowledging
 issue-440 AC5/AC6/AC7 (regression and stress tests)     -> EP-M2 -> rate_limited_warner::tests::*, tests/heavy/prop_rate_limited_warner.rs
@@ -873,7 +962,7 @@ design-doc statement (rate-limited warning totals)      -> EP-M1/EP-M2 -> docs/r
   `rust_extension/tests/stream_handler_logging_tests.rs`, plus the existing
   handler suites in `rust_extension/tests/` and the in-module tests. Evidence:
   `cargo test --manifest-path rust_extension/Cargo.toml
-  --no-default-features --test stream_handler_tests -- --ignored`
+  --no-default-features --test stream_handler_logging_tests -- --ignored`
   (the ignored capture-logger binary). Non-vacuity: the updated integration
   test fails against the old suppression behaviour, which reported one drop
   where four were lost.
@@ -986,7 +1075,7 @@ Capture-logger integration suite:
 
 ```shell
 cargo test --manifest-path rust_extension/Cargo.toml \
-  --no-default-features --test stream_handler_tests -- --ignored
+  --no-default-features --test stream_handler_logging_tests -- --ignored
 ```
 
 Full gates, delegated to `scrutineer`: `make fmt`, `make check-fmt`,
@@ -1225,7 +1314,9 @@ findings, all accepted and fixed in `c4d3758`:
   excludes another. Guards release with a compare-exchange against their own
   process ID, so a stale inherited guard cannot free a lock its child has since
   taken. Acquire and release orderings carry the handoff; the counter and
-  timestamp stay `Relaxed`.
+  timestamp stay `Relaxed`. (Superseded 2026-11-17: the lock was removed
+  altogether, so there is no inherited lock word to reclaim; see the lock-free
+  drain-then-claim decision in `Decision log`.)
 - `run_stream_worker` signalled completion before its implicit function-end
   drops, so the signal could arrive while the writer and formatter were still
   alive. Both are now dropped before the send. The accompanying test blocks
@@ -1270,8 +1361,9 @@ semantics re-applied to the new homes:
   that fires completion only after they are dropped. The branch's own worker
   split (`5d8cdbc`) was therefore skipped as redundant, and its drop-order test
   was ported to main's `ShutdownCompletion` API.
-- The fork-safe `ForkSafeDrainLock` rebased without semantic change; only main's
-  `SystemClock` rename touched the same file.
+- The then-fork-safe `ForkSafeDrainLock` rebased without semantic change; only
+  main's `SystemClock` rename touched the same file. The type was removed on
+  2026-11-17, so this records history rather than current code.
 
 The rebased `stream_handler.rs` came out at 423 lines, over the repository's
 400-line limit. `bcfa1b6` moves the shared `warn_dropped` helper and this

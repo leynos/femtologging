@@ -195,16 +195,21 @@ The logging process will follow these steps:
    count immediately, whatever the interval says, so shutdown and flush paths
    cannot lose the last batch. A handler's enqueue path and its worker count
    into one counter, so a report carries the cumulative count and names only
-   the most recent cause rather than attributing the whole count to it.
+   the cause whose refusal triggered it rather than attributing the whole count
+   to that cause.
 
-   Warning emission and draining serialize on a small per-warner lock, which
-   must survive `fork`. A parking-lot mutex cannot: `multiprocessing` children
-   inherit the handlers, and a child forked while another parent thread held
-   the lock would wait forever on a word no thread in that child can release.
-   The lock therefore records the owning process ID, treats a foreign ID as an
-   inherited reservation it may clear, and releases only a word that still
-   carries its own ID, so a parent guard dropped after the child reclaimed the
-   lock cannot free it under the child.
+   Warning emission and draining take no lock at all. A due warning first swaps
+   the pending count to zero and then claims the interval with a single
+   compare-exchange, restoring the batch if the claim is refused; a flush swaps
+   and reports without touching the interval. Ordering the swap before the
+   claim means a flush cannot empty a batch a warning already covers, and a
+   refused claim cannot leave an interval claimed with nothing reported. The
+   claiming sample is taken immediately before the exchange and the winner
+   republishes a later sample, so a delayed caller starts the interval when it
+   actually reported. Nothing is held across a thread boundary, which is what
+   makes `fork` safe: `multiprocessing` children inherit plain counters rather
+   than a lock word some parent thread held, so a child has nothing to reclaim
+   and cannot block on it.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.

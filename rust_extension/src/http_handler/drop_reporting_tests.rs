@@ -10,7 +10,7 @@
 //! fixture and helpers in that file stay in scope.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -95,60 +95,89 @@ fn a_cumulative_warning_names_only_the_triggering_cause() {
     );
 }
 
-/// Two threads reporting different causes race for one interval.
+/// Two threads reporting different causes race for one expired interval.
 ///
-/// Scenario: two drops from different causes are pending when the interval
-/// expires, and both threads report at the same moment. Invariant: exactly one
-/// report is emitted, it carries the count of both drops, and the cause it
-/// names is the triggering caller's own — a shared "most recent cause" slot
-/// would let the losing caller relabel a report it did not make.
+/// Scenario: one drop opens a real interval, two further drops from different
+/// causes are recorded while it is open and therefore suppressed, the clock
+/// then passes the interval, and both causes' reporters run at the same
+/// instant. Invariant: exactly one report is emitted, it carries both pending
+/// drops, and the cause it names belongs to the caller whose callback actually
+/// ran — a shared "most recent cause" slot would let the losing caller relabel
+/// a report it did not make.
+///
+/// The two reporters spell out the closure `warn_drops_naming_cause` passes to
+/// `warn_if_due`, because the test must see which closure ran to identify the
+/// winner. They record nothing themselves: both drops were already recorded
+/// through the production helper inside the suppression window.
 #[test]
 #[serial_test::serial]
 fn racing_causes_report_both_drops_and_name_the_trigger() {
     install_test_logger();
     let clock = Arc::new(ManualClock::default());
-    let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock);
-    // Both drops are pending before either reporter runs, so whichever caller
-    // wins the interval reports the other's drop as well as its own.
-    warner.record_drop();
-    warner.record_drop();
+    let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone());
 
+    // The first report opens a real interval; the next two are suppressed and
+    // stay pending, each recorded with the cause it will be reported under.
+    warn_drops_naming_cause(&warner, "queue full");
+    warn_drops_naming_cause(&warner, "queue full");
+    warn_drops_naming_cause(&warner, "worker disconnected");
+    let opening: Vec<_> = take_logged_messages()
+        .into_iter()
+        .map(|entry| entry.message)
+        .collect();
+    assert_eq!(
+        opening,
+        vec![
+            concat!(
+                "FemtoHTTPHandler dropped 1 records since the last report; ",
+                "triggering cause: queue full"
+            )
+            .to_owned()
+        ],
+        "only the first report should escape the interval"
+    );
+    clock.elapse_interval();
+
+    let reports = Mutex::new(Vec::new());
     let start = Arc::new(Barrier::new(2));
     thread::scope(|scope| {
         for cause in ["queue full", "worker disconnected"] {
             let warner = &warner;
+            let reports = &reports;
             let start = Arc::clone(&start);
             scope.spawn(move || {
                 start.wait();
-                warner.warn_if_due(|count| warn_cumulative_drops(count, cause));
+                warner.warn_if_due(|count| {
+                    reports.lock().expect("reports lock").push((cause, count));
+                    warn_cumulative_drops(count, cause);
+                });
             });
         }
     });
 
+    let reports = reports.into_inner().expect("reports lock");
+    assert_eq!(
+        reports.len(),
+        1,
+        "only the caller whose callback ran is the interval winner"
+    );
+    let (cause, count) = reports[0];
     let messages: Vec<_> = take_logged_messages()
         .into_iter()
         .map(|entry| entry.message)
         .collect();
     assert_eq!(
-        messages.len(),
-        1,
-        "only the interval winner may report: {messages:?}"
+        messages,
+        vec![format!(
+            concat!(
+                "FemtoHTTPHandler dropped {} records since the last report; ",
+                "triggering cause: {}"
+            ),
+            count, cause
+        )],
+        "the report must be the winner's own count and cause"
     );
-    let expected = [
-        concat!(
-            "FemtoHTTPHandler dropped 2 records since the last report; ",
-            "triggering cause: queue full"
-        ),
-        concat!(
-            "FemtoHTTPHandler dropped 2 records since the last report; ",
-            "triggering cause: worker disconnected"
-        ),
-    ];
-    assert!(
-        expected.contains(&messages[0].as_str()),
-        "the report must carry both drops and name the trigger's own cause: {:?}",
-        messages[0]
-    );
+    assert_eq!(count, 2, "both suppressed drops must be in the report");
     assert_eq!(warner.pending_drops(), 0);
 }
 

@@ -1448,7 +1448,7 @@ Every drop counted by a handler or a logger goes through `RateLimitedWarner`
 (`rust_extension/src/rate_limited_warner.rs`). The warner holds one counter of
 drops not yet reported. `record_drop()` increments it. `warn_if_due()` swaps
 the counter to zero and hands the count to a reporting closure only when the
-warning interval has elapsed; a suppressed call leaves the count in place, so
+warning interval has elapsed; a suppressed call puts back the count it took, so
 the next warning reports every drop since the previous report rather than only
 those the current call saw. That carry-forward is the conservation invariant:
 no drop is discarded and none is handed to a callback twice. A call with
@@ -1482,10 +1482,9 @@ is "since the last report", not "in the last interval", because a suppressed
 interval carries its drops forward and one report can cover several intervals.
 
 `flush()` is unconditional. It swaps whatever is pending to zero and reports it
-without consulting the interval, and it neither consumes nor restarts one. The
-drain lock is released before the callback runs, so a reporting closure can
-safely call back into the warner. Every path that might be the last chance to
-speak uses it:
+without consulting the interval, and it neither consumes nor restarts one. No
+lock is held while a callback runs, so a reporting closure can safely call back
+into the warner. Every path that might be the last chance to speak uses it:
 
 - an explicit `flush()` on a handler or logger;
 - `close()` and `take_shutdown()`, which report the handler-side count before
@@ -1493,29 +1492,54 @@ speak uses it:
   left waiting for a warning that never comes;
 - the worker's flush command, which reports worker-side drops before sending
   the acknowledgement the handler waits on;
+- the worker's exit drain, which reports whatever is still pending before the
+  worker acknowledges its shutdown and disappears;
 - `Drop`, which reports records refused after an earlier `close()` even though
   no worker handle is left to report them.
 
-The drain lock is `ForkSafeDrainLock`, which stores the owning process ID
-rather than parking a futex. A child created by `fork` while another thread
-held the lock inherits a locked word that no thread in the child will ever
-release; the PID tag shows it is not a live thread of this process, so the
-child clears it and proceeds. The critical section is short enough to spin on.
-Releasing uses a compare-exchange against the guard's own PID, so a parent
-guard dropped after the child reclaimed the lock cannot free it under the child.
+The warner takes no lock at all. A due call swaps its batch out of the counter
+and only then claims the interval with a compare-exchange, returning the batch
+if the claim is refused. A flush that wins the swap race leaves the due call
+nothing to report, so it claims nothing; a due call that has already taken its
+batch keeps it, so a flush cannot claim an interval that no report covers. The
+claim samples the clock immediately before the compare-exchange and then
+republishes a later sample once the claim is won, so a caller delayed between
+the two starts the interval when it actually reported rather than in the past.
 
-The drop counter itself is copied by `fork`, so a count the parent recorded
-before forking exists twice afterwards: parent and child each own a copy and
-each may report it, and a child can therefore repeat a report the parent has
-already made. That duplication is accepted — avoiding it would need shared
-memory and a cross-process lock for a diagnostic counter — so the conservation
-guarantee is per process. Within one process no drop is lost or reported twice;
-neither process can report a drop the other recorded after the fork.
+The helpers live beside the modules that own the wording, not on the warner.
+HTTP keeps `warn_drops`, `flush_drops`, `warn_drops_naming_cause`,
+`flush_drops_naming_cause` and the renderer `warn_cumulative_drops` in
+`rust_extension/src/http_handler/queue.rs`, which is a private module of
+`http_handler` that its handler and worker reach as
+`crate::http_handler::queue::…`. The socket handler keeps the same set in
+`rust_extension/src/socket_handler/warning.rs`, declared as a private module of
+`socket_handler` and reached by both halves as
+`crate::socket_handler::warning::…`; its helpers are `pub(super)`, the HTTP ones
+`pub(crate)`. The stream handler needs only one renderer, `warn_dropped` in
+`rust_extension/src/stream_handler/warning.rs`, which every stream refusal path
+and explicit report passes to the warner. Each handler module therefore owns
+its own pair rather than sharing one across transports: the two halves of one
+handler — the enqueue path and the worker — must report the same count, and
+they can only do that through one pair per module.
 
-The contracts are covered by
-`rust_extension/src/rate_limited_warner_concurrency_tests.rs` (interval claims,
-concurrent conservation, fork-safe ownership) and by each handler's
-`drop_reporting_tests.rs` and `close_tests.rs`.
+The drop counter is a plain atomic, so `fork` copies it rather than leaving a
+lock word behind. A count the parent recorded before forking then exists twice:
+parent and child each own a copy and each may report it, and a child can
+therefore repeat a report the parent has already made. That duplication is
+accepted — avoiding it would need shared memory and a cross-process lock for a
+diagnostic counter — so the conservation guarantee is per process. Within one
+process no drop is lost or reported twice; neither process can report a drop
+the other recorded after the fork.
+
+The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
+(carry-forward, flush inside the window, empty calls),
+`rust_extension/src/rate_limited_warner_claim_tests.rs` (scripted and stealing
+clocks: a delayed publication sample, a refused claim returning its batch, a
+paused callback not blocking a flush) and
+`rust_extension/src/rate_limited_warner_concurrency_tests.rs` (racing callers
+conserve every drop, a flush cannot take a drained batch, re-entrant clocks),
+and by each handler's `drop_reporting_tests.rs`, worker tests and
+`close_tests.rs`.
 
 ## Configuration transaction
 
