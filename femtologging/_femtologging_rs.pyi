@@ -571,12 +571,24 @@ def cancel_flush_wait_for_test(logger: FemtoLogger) -> None:
     """Wake a pending test-only flush-entry wait during cleanup."""
     ...
 
-def wait_for_gil_release_for_test(timeout_ms: int) -> bool:
-    """Wait for the test-only signal raised where a wait releases the GIL."""
+def note_python_thread_ran_for_test() -> bool:
+    """Count this thread's interpreter time if a wait is detached.
+
+    Returns whether the observation counted. It is ``False`` when no
+    Python-facing wait has the interpreter detached.
+    """
     ...
 
-def drain_gil_release_signals_for_test() -> None:
-    """Clear stale test-only GIL-release signals before arming a gate."""
+def gil_release_observations_for_test() -> int:
+    """Return how many observations were counted since the last reset."""
+    ...
+
+def reset_gil_release_observations_for_test() -> None:
+    """Forget observations from earlier calls before a new measurement."""
+    ...
+
+def wait_for_wait_in_flight_for_test(timeout_ms: int) -> bool:
+    """Wait for a Python-facing wait to detach, releasing the GIL to do so."""
     ...
 
 setup_rust_logging: Callable[[], None]

@@ -52,8 +52,8 @@ mod convenience_functions;
 mod file_config;
 #[cfg(feature = "python")]
 mod frame_filter_py;
-// Test-only signal raised where a Python-facing wait releases the GIL, so the
-// GIL regression tests can gate their own releases on it.
+// Test-only record of Python threads running while a Python-facing wait has
+// the interpreter detached, so the GIL regression tests can measure the wait.
 #[cfg(all(feature = "python", feature = "test-util"))]
 mod gil_release_test;
 #[cfg(feature = "python")]

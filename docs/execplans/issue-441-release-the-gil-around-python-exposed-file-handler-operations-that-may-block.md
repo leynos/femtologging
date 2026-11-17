@@ -2136,7 +2136,7 @@ pytest reported 1234 passed and 5 skipped, up from 1203 because main's #616
 added tests of the documented-example loader. The logs carry the `-rebased`
 suffix under `/tmp`.
 
-### The formatter release is gated on a native-wait signal
+### The formatter release is gated on a wait the extension has in flight
 
 The next review round accepted the call-instruction keying but raised a second
 window. `py_flush_handlers` wraps the entire `flush_handlers()` call in
@@ -2148,46 +2148,62 @@ already flushed. A measured pre-wait bound was tried first and rejected: it
 bounds a different invocation, and no timing argument excludes an arbitrary
 scheduler pause in the window.
 
-The tests now take their evidence from a runtime signal instead of a clock. A
-test-only module, `rust_extension/src/gil_release_test.rs`, holds a one-slot
-channel behind a process-wide gate. Each detach site raises it as the last
-statement executed while the GIL is still held, immediately before
-`Python::detach`:
+The next round accepted the signal but raised a third window. The signal is
+buffered: `wait_for_gil_release_for_test` consumes it while detached, so a call
+that still held the GIL could deliver it, and the observer's Python-side
+baseline would then be taken after the call had returned and reacquired the
+GIL. Ticks counted in that handover could be read as progress during the wait,
+and `started` before the call let a scheduling delay into `elapsed`.
+
+The evidence therefore moved to the Rust side, where it cannot be separated
+from the wait it describes. A test-only module,
+`rust_extension/src/gil_release_test.rs`, holds a process-wide count.
+`WaitInFlight::enter()` is taken in `detach_for_wait` while the GIL is held and
+dropped after `Python::detach` returns — still holding the GIL, and before any
+Python code can run. `note_python_thread_ran_for_test()` needs the GIL and
+advances the count only while one of those guards is alive, so the two cannot
+overlap: an observation is recorded only between the detach and the reattach.
+Nothing that runs before the wait can be counted, including the outer detached
+section `py_flush_handlers` keeps around the whole call; nothing after the call
+returns can be counted, because the guard has already been dropped.
+`gil_release_observations_for_test` reads the count and
+`reset_gil_release_observations_for_test` re-arms it. Every detach site reaches
+the guard through the one helper:
 
 - `flush_native` in `rust_extension/src/logger/py_handler/native_handler.rs`,
   which covers every built-in handler reached through `flush_handlers()`;
 - `FemtoSocketHandler::py_flush`/`py_close` and
-  `FemtoHTTPHandler::py_flush`/`py_close`, which detach directly.
+  `FemtoHTTPHandler::py_flush`/`py_close`, which detach through the same helper.
 
-`wait_for_gil_release_for_test` detaches while it waits, so a thread that
-consumes the signal has proved the call under test gave the interpreter up: it
-could not run otherwise. `drain_gil_release_signals_for_test` re-arms the gate
-before each measured call. The signal is compiled only with the `test-util`
-feature, so production builds carry no branch.
+The guard is compiled only with the `test-util` feature, so production builds
+carry no branch.
 
-The blocked-formatter script releases the formatter only after that signal.
-`ticks_at_release` is read at the signal, so ticks counted before the native
-wait are excluded, and the signal cannot be raised in front of it. To make that
-schedule forced rather than argued, a second handler registered ahead of the
-file handler pauses in its own flush for 0.6 s — longer than the 0.5 s release
-delay — in the detached section in front of the native wait. A release timed
-from the start of the call would fire inside that pause; the release here
-cannot, because the signal it waits for is raised only at the native flush.
+The blocked-formatter script releases only once
+`wait_for_wait_in_flight_for_test` reports that a wait has detached; that hook
+polls the in-flight count while detached, and the release thread then sleeps
+the release delay before releasing. `PausingHandler` and its 0.6 s pause are
+gone: they existed to defeat a release timed from the start of the call, and a
+count that advances only inside the wait cannot be inflated by any pre-wait
+pause, so the extra handler was proving a schedule that can no longer matter.
 
-The network test uses the same gate as its wait-boundary witness, replacing the
-frame observation entirely. The observer takes its tick baseline when it
-consumes the signal, so the pre-call gap and the post-return eval-breaker
-handover can neither inflate nor be mistaken for a wait, and a wait that held
-the GIL leaves the ticker at zero.
+Both tests read the count from the extension, so there is no Python baseline
+left to race. In the network test, `_ticks_during` resets the count, calls, and
+reads it; `elapsed` remains only as a stall sanity check, and the tick count is
+the load-bearing assertion.
 
-The mutation was rebuilt with `py.detach` removed from `flush_native`,
-`FemtoSocketHandler::py_flush`/`py_close` and `FemtoHTTPHandler::py_flush`/
-`py_close`. All five GIL tests fail: the two flush modes with
-`flush_handlers() stalled behind the GIL`, and the three network cases with
-`another thread ran only 0 times during 0.300s of flush()/close(), so the wait
-held the GIL`
-(one socket case reported a single tick). With the detaches restored, the two
-files pass all 14 tests.
+Two mutations were rebuilt and run against the focused files:
+
+- with `py.detach` replaced by a direct call to the wait in `detach_for_wait`,
+  all five GIL tests fail — both flush modes with
+  `flush_handlers() stalled behind the GIL`, and the three network cases with
+  `another thread ran only 0 times during 0.300s of flush()/close(), so the
+  wait held the GIL`;
+- with the in-flight guard removed while the detach stays, the same five tests
+  fail with the same messages, so the guard is load-bearing and the detach
+  alone is not what the tests observe.
+
+With both restored the two files pass all 14 tests, five consecutive runs, and
+the module's three unit tests pass under `--features python,test-util`.
 
 The release delay stays at half a second because the file handler's flush has a
 one-second deadline of its own; an earlier attempt to double it made the
@@ -2224,6 +2240,43 @@ The chain then reran green: `make test` reported 1234 passed and 5 skipped, and
 caught one missing numpy-style `Returns` section in the new helper; with that
 added, the rerun passed.
 
+The next review round found the same class of confusion inside that fix.
+`handle()` raises the file family's `waits_in_flight` gauge too: `py_handle`
+holds a `WaitScope` across its detached enqueue, and the worker starts the
+formatter inside exactly that window. The poll could therefore be satisfied by
+the record's own delivery rather than by the close. The formatter now waits on
+an event the test sets only after `handle()` returns, and only then polls for
+the close wait. Both halves are load-bearing: with the poll removed and a 0.2 s
+pause between `handle()` and `close()`, all four handler kinds fail with
+`['accepted', 'Handler error: handler is closed']`, so the event alone does not
+pin the schedule and the poll alone does not exclude the enqueue's gauge.
+
+### The in-flight record and the reentry gate are green on the full chain
+
+The close-reentry test was then rewritten to satisfy the lint chain as well:
+the outcomes and the handler reference live in a `_ReentryProbe` dataclass with
+`slots=True`, which keeps the formatter helper within the four-argument limit
+and answers the `prefer-slots-for-dataclass` rule. The network test's hook
+check was split into one assertion per hook, because the composite form is
+rejected by `pytest-composite-assertion`.
+
+The final chain on the working tree was:
+
+- `make check-fmt` — exit 0, 258 Python files and 74 Markdown files unchanged;
+- `make lint` — exit 0, all five Python stages plus every clippy feature lane;
+- `make typecheck` — exit 0;
+- `make markdownlint` — exit 0, 67 files and 0 issues;
+- `make test` — every lane and the pytest step passed with no failures: 1001
+  passed in each of the three Rust lanes, 1054 in `tracing-compat`, 14 loom
+  tests, and 1234 passed with 5 skipped under `pytest -v --doctest-modules`;
+- the focused GIL selection passed 18 tests.
+
+`make test` has no single exit code for this run. The harness stopped two
+invocations at its 70-minute and 2-hour caps, so the verdict composes the
+interrupted run's first three lanes with direct runs of the fourth lane and the
+pytest step — the recipe's own commands, run sequentially with no overlap.
+`make nixie` was not run because the change adds no Mermaid diagram.
+
 ## Decision log
 
 - **Detach in the `#[pymethods]` shims, not the core.** The core
@@ -2254,13 +2307,14 @@ added, the rerun passed.
   joined. That passes for a GIL-holding binding whenever the wait ends on its
   own deadline (`"timeout:N"`, `close()`), so the bounded scenarios now count
   watchdog records that land strictly inside the call's own window.
-- **Gate the GIL regression tests on a runtime signal, not a bound.** No clock
-  or frame observation can distinguish a wait from a detached section in front
-  of it, so the extension raises a `test-util`-only signal at each detach site
-  as its last action while the GIL is held. A test that consumes the signal has
-  proved the GIL was released; a build that removed the detach never delivers
-  it. The signal costs production nothing: it is compiled out without
-  `test-util`.
+- **Gate the GIL regression tests on an in-flight record on the Rust side, not
+  on a signal or a bound.** No clock or frame observation can distinguish a
+  wait from a detached section in front of it, and a signal is buffered, so
+  consuming one does not say *when* it was consumed. `detach_for_wait` marks
+  the span in flight while the GIL is held and clears it before returning, and
+  an observation is counted only inside that span, so the count cannot include
+  time outside the wait and a wait that kept the GIL counts nothing. It costs
+  production nothing: the guard is compiled out without `test-util`.
 - **Wait on the handler's in-flight counter, not on time, in the reentry test.**
   The counter is raised inside `close()` after the shutdown state has been
   taken, so it identifies the exact transition that test needs. A sleep, a

@@ -1,19 +1,20 @@
 //! Detaching the interpreter for a Python-facing wait.
 //!
 //! Every wait a Python binding performs on a worker goes through here, so the
-//! test-only GIL-release signal has exactly one place to be raised from and a
+//! test-only in-flight record has exactly one place to be entered from and a
 //! new wait cannot silently omit it. See [`crate::gil_release_test`] for what
-//! the tests do with that signal.
+//! the tests do with that record.
 
 use pyo3::marker::Ungil;
 use pyo3::prelude::*;
 
-/// Run `wait` with the interpreter detached, reporting the release in tests.
+/// Run `wait` with the interpreter detached, recording the span in tests.
 ///
-/// The signal is raised while the GIL is still held, immediately before the
-/// detach, which is what lets a test tell a wait apart from a detached section
-/// in front of it. Production builds compile the signal out, so this is
-/// `Python::detach` and nothing else.
+/// The in-flight guard is entered while the GIL is still held and dropped
+/// after `Python::detach` returns, so a test thread's observation can only be
+/// counted between the two. That is what lets a test tell the native wait
+/// apart from a detached section in front of it. Production builds compile the
+/// guard out, so this is `Python::detach` and nothing else.
 ///
 /// # Examples
 ///
@@ -30,6 +31,6 @@ where
     T: Ungil,
 {
     #[cfg(all(feature = "python", feature = "test-util"))]
-    crate::gil_release_test::signal_gil_release();
+    let _in_flight = crate::gil_release_test::WaitInFlight::enter();
     py.detach(wait)
 }

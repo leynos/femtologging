@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import threading
 import time
 import typing as typ
 
@@ -62,8 +64,10 @@ def _close_is_waiting(handler: _ClosableHandler, handler_kind: str) -> bool:
     """Report whether ``close()`` has taken the shutdown state and is waiting.
 
     Taking the shutdown state is the same transition that makes a re-entrant
-    ``handle`` observe the closed state, and both counters are raised only
-    after it, so a formatter that waits for one cannot race the close.
+    ``handle`` observe the closed state. The file family's counter is also
+    raised while ``handle()`` and ``flush()`` wait, so the formatter waits for
+    the initial ``handle()`` to return before it polls; the stream counter
+    counts only flush and close.
 
     Returns
     -------
@@ -82,7 +86,8 @@ def _await_close(handler: _ClosableHandler, handler_kind: str) -> None:
     Without this wait the worker can format the queued record before
     ``close()`` runs, and the re-entrant ``handle`` is then legitimately
     accepted: the test observes an ordinary enqueue rather than the closed
-    state it exists to check.
+    state it exists to check. The caller must have seen the initial ``handle()``
+    return first, or that call's own wait would satisfy the poll.
     """
     deadline = time.monotonic() + _CLOSE_ENTRY_TIMEOUT_SECONDS
     while not _close_is_waiting(handler, handler_kind):
@@ -93,32 +98,58 @@ def _await_close(handler: _ClosableHandler, handler_kind: str) -> None:
         time.sleep(_CLOSE_ENTRY_POLL_SECONDS)
 
 
-def _make_reentrant_formatter(
-    handler_ref: list[_ClosableHandler],
-    handler_kind: str,
-    handle_outcomes: list[str],
-    flush_outcomes: list[bool | str],
-) -> cabc.Callable[[cabc.Mapping[str, object]], str]:
-    """Build a formatter that re-enters the handler once close is waiting."""
+@dataclasses.dataclass(slots=True)
+class _ReentryProbe:
+    """Collect what the worker's formatter observes when it re-enters a handler.
 
-    def format_record(record: cabc.Mapping[str, object]) -> str:
-        """Re-enter the handler from the formatter and record each outcome."""
-        if handler_ref:
-            _await_close(handler_ref[0], handler_kind)
-            try:
-                handler_ref[0].handle("callback", "INFO", "during-close")
-            except (RuntimeError, ValueError) as error:
-                handle_outcomes.append(str(error))
-            else:
-                handle_outcomes.append("accepted")
+    The formatter runs on the handler's worker thread, so its outcomes are
+    recorded here instead of being returned to the test, and the handler is
+    published after it exists because the formatter needs to call it.
+    """
 
-            try:
-                flush_outcomes.append(handler_ref[0].flush())
-            except RuntimeError as error:
-                flush_outcomes.append(str(error))
-        return str(record.get("message", ""))
+    handler_kind: str
+    handle_returned: threading.Event = dataclasses.field(
+        default_factory=threading.Event
+    )
+    handler_ref: list[_ClosableHandler] = dataclasses.field(default_factory=list)
+    handle_outcomes: list[str] = dataclasses.field(default_factory=list)
+    flush_outcomes: list[bool | str] = dataclasses.field(default_factory=list)
 
-    return format_record
+    def formatter(self) -> cabc.Callable[[cabc.Mapping[str, object]], str]:
+        """Build a formatter that re-enters the handler once close is waiting."""
+
+        def format_record(record: cabc.Mapping[str, object]) -> str:
+            """Re-enter the handler from the formatter and record each outcome."""
+            self._reenter_while_closing()
+            return str(record.get("message", ""))
+
+        return format_record
+
+    def _reenter_while_closing(self) -> None:
+        """Call ``handle`` and ``flush`` once the handler is closing."""
+        # ``handle()`` raises the same in-flight gauge ``close()`` raises, and
+        # its guard is held across the detached enqueue -- which is exactly the
+        # moment this formatter starts. Waiting for that call to return keeps
+        # the gate keyed to ``close()`` rather than to the record's own
+        # delivery.
+        if not self.handle_returned.wait(timeout=_CLOSE_ENTRY_TIMEOUT_SECONDS):
+            self.handle_outcomes.append("handle() never returned")
+            return
+        if not self.handler_ref:
+            return
+        handler = self.handler_ref[0]
+        _await_close(handler, self.handler_kind)
+        try:
+            handler.handle("callback", "INFO", "during-close")
+        except (RuntimeError, ValueError) as error:
+            self.handle_outcomes.append(str(error))
+        else:
+            self.handle_outcomes.append("accepted")
+
+        try:
+            self.flush_outcomes.append(handler.flush())
+        except RuntimeError as error:
+            self.flush_outcomes.append(str(error))
 
 
 def _build_handler(
@@ -161,24 +192,23 @@ def test_close_allows_worker_formatter_to_reach_closed_state(
     handler_kind: str,
 ) -> None:
     """Worker callbacks can reach closed-state handling while close waits."""
-    handler_ref: list[_ClosableHandler] = []
-    handle_outcomes: list[str] = []
-    flush_outcomes: list[bool | str] = []
+    probe = _ReentryProbe(handler_kind=handler_kind)
     log_path = tmp_path / f"{handler_kind}.log"
-    formatter = _make_reentrant_formatter(
-        handler_ref,
-        handler_kind,
-        handle_outcomes,
-        flush_outcomes,
-    )
-    handler = _build_handler(handler_kind, log_path, formatter)
-    handler_ref.append(handler)
+    handler = _build_handler(handler_kind, log_path, probe.formatter())
+    probe.handler_ref.append(handler)
     try:
         handler.handle("initial", "INFO", "queued")
+    finally:
+        # Released only once the enqueue has returned, so the formatter cannot
+        # mistake that call's own wait for the close it is meant to observe.
+        probe.handle_returned.set()
+    try:
         handler.close()
     finally:
         handler.close()
 
-    assert len(handle_outcomes) == 1, "worker formatter should re-enter handle once"
-    assert "handler is closed" in handle_outcomes[0], handle_outcomes[0]
-    assert flush_outcomes == [False], flush_outcomes
+    assert len(probe.handle_outcomes) == 1, (
+        "worker formatter should re-enter handle once"
+    )
+    assert "handler is closed" in probe.handle_outcomes[0], probe.handle_outcomes[0]
+    assert probe.flush_outcomes == [False], probe.flush_outcomes

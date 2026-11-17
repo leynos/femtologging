@@ -17,16 +17,18 @@ import pytest
 from femtologging import HTTPHandlerBuilder, SocketHandlerBuilder
 from femtologging import _femtologging_rs as rust
 
-# Both hooks exist only when the extension was built with the Rust `test-util`
+# These hooks exist only when the extension was built with the Rust `test-util`
 # feature, which the test builds enable.
-_drain_gil_release_signals = getattr(rust, "drain_gil_release_signals_for_test", None)
-_wait_for_gil_release = getattr(rust, "wait_for_gil_release_for_test", None)
-GIL_RELEASE_SIGNAL_AVAILABLE = callable(_drain_gil_release_signals) and callable(
-    _wait_for_gil_release
+_note_python_thread_ran = getattr(rust, "note_python_thread_ran_for_test", None)
+_read_observations = getattr(rust, "gil_release_observations_for_test", None)
+_reset_observations = getattr(rust, "reset_gil_release_observations_for_test", None)
+GIL_RELEASE_OBSERVATION_AVAILABLE = all(
+    callable(hook)
+    for hook in (_note_python_thread_ran, _read_observations, _reset_observations)
 )
 
 pytestmark = pytest.mark.skipif(
-    not GIL_RELEASE_SIGNAL_AVAILABLE,
+    not GIL_RELEASE_OBSERVATION_AVAILABLE,
     reason="requires Rust extension built with the 'test-util' feature",
 )
 
@@ -51,9 +53,6 @@ WRITE_TIMEOUT_MS = 300
 MINIMUM_WAIT_SECONDS = 0.15
 MINIMUM_TICKS = 5
 TICK_SECONDS = 0.005
-# How long each wait for the call's GIL-release signal blocks before the
-# observer checks whether the call has finished.
-WAIT_ENTRY_POLL_MS = 50
 # Enough data to overflow loopback TCP buffers, so the socket worker blocks in
 # its write rather than finishing before the wait under test begins.
 LARGE_MESSAGE = "x" * (256 * 1024)
@@ -99,24 +98,23 @@ class _WaitMeasurement(typ.NamedTuple):
     """What other threads observed while a measured wait was running."""
 
     ticks: int
-    """Ticks counted from the moment the call reported releasing the GIL."""
+    """Observations recorded while the call had the interpreter detached."""
 
     elapsed: float
     """How long the measured call took, in seconds."""
 
 
 class _Ticker:
-    """Count how often its thread gets to run."""
+    """Record each moment its thread holds the interpreter."""
 
     def __init__(self) -> None:
-        """Start with nothing counted and a thread that is not yet running."""
-        self.ticks = 0
+        """Start with a thread that is not yet running."""
         self._is_finished = threading.Event()
         self._has_ticked = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
-        """Start counting, and wait until the counter has moved once."""
+        """Start recording, and wait until one observation was made."""
         self._thread.start()
         assert self._has_ticked.wait(timeout=5), "the ticker thread never started"
 
@@ -126,37 +124,20 @@ class _Ticker:
         self._thread.join()
 
     def _run(self) -> None:
-        """Increment the count, giving the GIL up between increments."""
+        """Record an observation, giving the GIL up between observations.
+
+        The recording call needs the GIL, and the extension counts it only
+        while the measured call has the interpreter detached. The count is
+        therefore the wait's own witness: it can include neither time before
+        the wait nor the handover after the call returns, and a wait that kept
+        the GIL counts nothing, because this thread could not run at all.
+        """
+        note = _note_python_thread_ran
+        assert note is not None, "the test-util hooks are missing"
         while not self._is_finished.is_set():
-            self.ticks += 1
+            note()
             self._has_ticked.set()
             time.sleep(TICK_SECONDS)
-
-
-class _WaitEntryObserver:
-    """Record the tick count as soon as the measured call releases the GIL."""
-
-    def __init__(self, ticker: _Ticker, is_call_finished: threading.Event) -> None:
-        """Watch for the call's own GIL-release signal."""
-        self.baseline: int | None = None
-        self._ticker = ticker
-        self._is_call_finished = is_call_finished
-
-    def watch_until_finished(self) -> None:
-        """Take the baseline once the call reports that it released the GIL.
-
-        The extension raises that signal as the last thing it does while still
-        holding the GIL, immediately before detaching. Consuming it therefore
-        proves the call has given the interpreter up: a wait that held the GIL
-        would never let this thread run, so its signal could not be received
-        until after the call had already returned.
-        """
-        wait_for_release = _wait_for_gil_release
-        assert wait_for_release is not None, "the test-util hooks are missing"
-        while not self._is_call_finished.is_set():
-            if wait_for_release(WAIT_ENTRY_POLL_MS):
-                self.baseline = self._ticker.ticks
-                return
 
 
 def _ticks_during(
@@ -168,47 +149,35 @@ def _ticks_during(
     already running, and hands back the wait to measure. Setting up inside the
     timed region would let the setup hide the very stall under test.
 
-    The count starts when an observer receives the call's GIL-release signal,
-    which the extension raises immediately before detaching. Ticks before that
-    signal, and ticks after the call returns while the caller holds the GIL
-    again, cannot be counted, so neither a slow schedule nor a GIL-holding wait
-    can produce a false pass.
+    The count is kept by the extension and advanced only while the measured
+    call has the interpreter detached, so neither a slow schedule nor a
+    GIL-holding wait can produce a false pass.
 
     Returns
     -------
     The ticks another thread completed while the call waited with the GIL
     released, and how long the call took.
     """
+    reset = _reset_observations
+    read = _read_observations
+    assert reset is not None, "the reset hook is missing"
+    assert read is not None, "the read hook is missing"
     ticker = _Ticker()
-    is_call_finished = threading.Event()
-    observer = _WaitEntryObserver(ticker, is_call_finished)
     ticker.start()
     try:
         call = prepare()
-        # Arm the gate on a clean channel: a signal left by an earlier call
-        # belongs to that call, not this one.
-        drain_signals = _drain_gil_release_signals
-        assert drain_signals is not None, "the test-util hooks are missing"
-        drain_signals()
-        watcher = threading.Thread(
-            target=observer.watch_until_finished,
-            daemon=True,
-        )
-        watcher.start()
+        # Forget observations made while the handler was being built, so only
+        # the measured call's own wait is counted.
+        reset()
         started = time.monotonic()
         try:
             call()
         finally:
             elapsed = time.monotonic() - started
-            # Read the count before releasing the GIL, so no tick after the
-            # call can be mistaken for one the call let through.
-            baseline = observer.baseline
-            counted = 0 if baseline is None else ticker.ticks - baseline
-            is_call_finished.set()
-            watcher.join(timeout=5)
-        return _WaitMeasurement(counted, elapsed)
+        counted = read()
     finally:
         ticker.stop()
+    return _WaitMeasurement(counted, elapsed)
 
 
 def _stalled_socket_handler(server: _SilentServer) -> _NetworkHandler:

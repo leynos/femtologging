@@ -28,14 +28,20 @@ from tests.flush_gil_scripts import (
     FLUSH_HANDLERS_SCRIPT,
 )
 
-# Both hooks exist only when the extension was built with the Rust `test-util`
+# These hooks exist only when the extension was built with the Rust `test-util`
 # feature, which the test builds enable.
-GIL_RELEASE_SIGNAL_AVAILABLE = callable(
-    getattr(rust, "wait_for_gil_release_for_test", None)
-) and callable(getattr(rust, "drain_gil_release_signals_for_test", None))
+GIL_RELEASE_OBSERVATION_AVAILABLE = all(
+    callable(getattr(rust, name, None))
+    for name in (
+        "note_python_thread_ran_for_test",
+        "gil_release_observations_for_test",
+        "reset_gil_release_observations_for_test",
+        "wait_for_wait_in_flight_for_test",
+    )
+)
 
-requires_gil_release_signal = pytest.mark.skipif(
-    not GIL_RELEASE_SIGNAL_AVAILABLE,
+requires_gil_release_observation = pytest.mark.skipif(
+    not GIL_RELEASE_OBSERVATION_AVAILABLE,
     reason="requires Rust extension built with the 'test-util' feature",
 )
 
@@ -126,7 +132,7 @@ def _run_flush_formatter_script(tmp_path: Path, mode: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
-@requires_gil_release_signal
+@requires_gil_release_observation
 def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     tmp_path: Path,
 ) -> None:
@@ -134,17 +140,15 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
 
     The handler is registered from Python, so ``flush_handlers()`` reaches it
     through ``PyHandler::flush()``. Its worker is parked in a Python formatter
-    that only another Python thread can release, and that thread waits for the
-    extension's test-only GIL-release signal. The extension raises it as the
-    last thing it does while still holding the GIL, immediately before the
-    native wait detaches, so the release cannot land in front of the wait --
-    not even in the detached section ``flush_handlers()`` keeps around the
-    whole call. A handler registered ahead of the file handler pauses there for
-    longer than the release delay, which makes that schedule forced rather than
-    argued. A flush that kept the GIL would block the release, time the
-    formatter out, and leave the ticker silent. The ticker counts the time
-    another Python thread got during the wait, measured from the signal, so a
-    pause before it cannot be counted. The file is read before ``close()``, so
+    that only another Python thread can release, and that thread waits until a
+    wait has the interpreter detached. The extension marks that span in flight
+    and records an observation only while it lasts, so the release cannot land
+    in front of the native wait -- not even in the detached section
+    ``flush_handlers()`` keeps around the whole call -- and a flush that kept
+    the GIL would block the release, time the formatter out, and record no
+    observations at all. The count is kept on the Rust side and advanced only
+    during that span, so neither time before the wait nor the handover after
+    the call returns can be counted. The file is read before ``close()``, so
     the record can be there only because the flush waited for the handler. A
     fresh interpreter keeps the logger's dispatch shard idle, so the record is
     admitted rather than refused behind earlier tests' work.
@@ -156,7 +160,7 @@ def test_flush_handlers_releases_the_gil_for_a_python_formatter(
     _run_flush_formatter_script(tmp_path, "dispatched")
 
 
-@requires_gil_release_signal
+@requires_gil_release_observation
 def test_flush_handlers_native_wait_releases_the_gil(
     tmp_path: Path,
 ) -> None:
@@ -167,7 +171,7 @@ def test_flush_handlers_native_wait_releases_the_gil(
     wait that held it. Queuing the record on the handler directly leaves the
     logger's shard with nothing in flight, so the drain returns at once and the
     only wait left is the one that reaches the handler: if that wait held the
-    GIL, the release could not land and the assertions would fail.
+    GIL, the release could not land and no observation would be recorded.
     """
     _run_flush_formatter_script(tmp_path, "direct")
 
