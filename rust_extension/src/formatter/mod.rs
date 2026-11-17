@@ -11,6 +11,9 @@ use crate::log_record::FemtoLogRecord;
 
 mod escape;
 mod exception;
+#[cfg(test)]
+mod exception_marker_tests;
+mod exception_markers;
 #[cfg(feature = "python")]
 mod percent;
 

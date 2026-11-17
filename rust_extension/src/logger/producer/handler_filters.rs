@@ -49,9 +49,21 @@ pub(super) fn apply_filter_chain(
     record: &mut FemtoLogRecord,
     filters: &[Arc<dyn FemtoFilter>],
 ) -> FilterChainOutcome {
-    let mut context = FilterContext::default();
+    apply_filter_segment(record, filters, &mut FilterContext::default())
+}
+
+/// Apply one contiguous segment of a filter chain, reusing `context`.
+///
+/// The deferred-capture split evaluates two segments of the same chain around
+/// the capture hook, so both must share one [`FilterContext`]: a Python record
+/// view built for one filter stays available to the next.
+pub(super) fn apply_filter_segment(
+    record: &mut FemtoLogRecord,
+    filters: &[Arc<dyn FemtoFilter>],
+    context: &mut FilterContext,
+) -> FilterChainOutcome {
     for filter in filters {
-        let decision = filter.decision(record, &mut context);
+        let decision = filter.decision(record, context);
         if decision.callback_failed {
             return FilterChainOutcome::CallbackFailed;
         }

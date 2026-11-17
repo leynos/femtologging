@@ -2,9 +2,11 @@
 
 Femtologging hands its handlers plain dictionaries; stdlib handlers expect
 ``LogRecord`` instances.  This module owns the schema for those dictionaries,
-the femtologging-to-stdlib level mapping, and the translation itself.  The
-adapter in :mod:`femtologging.adapter` supplies the handler-protocol plumbing
-and the severity gate that decides whether a translated record is dispatched.
+the femtologging-to-stdlib level mapping, and the translation itself.  Payload
+text rendering, including any capture-omission markers, lives in
+:mod:`femtologging._payload_formatting`.  The adapter in
+:mod:`femtologging.adapter` supplies the handler-protocol plumbing and the
+severity gate that decides whether a translated record is dispatched.
 """
 
 from __future__ import annotations
@@ -15,8 +17,8 @@ import time
 import types
 import typing as typ
 
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
+from ._exception_rendering import _format_exc_text
+from ._payload_formatting import _format_stack_text
 
 # -- Record schema TypedDicts ---------------------------------------------
 
@@ -34,6 +36,14 @@ class Frame(typ.TypedDict):
         Name of the function executing in the frame.
     source_line : str, optional
         Source text for the frame when it was available during capture.
+    end_lineno : int, optional
+        Last source line the statement spans (Python 3.11+).
+    colno : int, optional
+        Zero-based column offset of the statement (Python 3.11+).
+    end_colno : int, optional
+        Zero-based end column offset of the statement (Python 3.11+).
+    locals : dict of str to str, optional
+        Local bindings as rendered strings, when capture collected them.
 
     """
 
@@ -41,6 +51,10 @@ class Frame(typ.TypedDict):
     lineno: int
     function: str
     source_line: typ.NotRequired[str]
+    end_lineno: typ.NotRequired[int]
+    colno: typ.NotRequired[int]
+    end_colno: typ.NotRequired[int]
+    locals: typ.NotRequired[dict[str, str]]
 
 
 class Metadata(typ.TypedDict, total=False):
@@ -71,6 +85,52 @@ class Metadata(typ.TypedDict, total=False):
     key_values: dict[str, object]
 
 
+class PayloadTruncation(typ.TypedDict, total=False):
+    """Fixed-size counts and flags describing omitted payload components.
+
+    Attributes
+    ----------
+    message_truncated : bool, optional
+        Whether the exception message was shortened.
+    args_omitted : int, optional
+        Number of argument representations that were dropped.
+    args_truncated : bool, optional
+        Whether any retained argument representation was shortened.
+    notes_omitted : int, optional
+        Number of exception notes that were dropped.
+    notes_truncated : bool, optional
+        Whether any retained note was shortened.
+    frames_omitted : int, optional
+        Number of stack frames that were dropped.
+    cause_omitted : bool, optional
+        Whether an exception cause link was dropped.
+    context_omitted : bool, optional
+        Whether an exception context link was dropped.
+    exceptions_omitted : int, optional
+        Number of exception-group members that were dropped.
+    members_truncated : bool, optional
+        Whether any exception-group member was shortened or dropped.
+    failed_elements : int, optional
+        Number of elements dropped after a conversion failure.
+    budget_exhausted : bool, optional
+        Whether the aggregate capture budget ran out.
+
+    """
+
+    message_truncated: bool
+    args_omitted: int
+    args_truncated: bool
+    notes_omitted: int
+    notes_truncated: bool
+    frames_omitted: int
+    cause_omitted: bool
+    context_omitted: bool
+    exceptions_omitted: int
+    members_truncated: bool
+    failed_elements: int
+    budget_exhausted: bool
+
+
 class ExcInfo(typ.TypedDict, total=False):
     """The optional ``exc_info`` sub-dictionary of a femtologging record.
 
@@ -80,17 +140,49 @@ class ExcInfo(typ.TypedDict, total=False):
         Required version used to interpret the exception payload.
     type_name : str, optional
         Name of the captured exception type.
+    module : str, optional
+        Module path of the exception class, when it has one.
     message : str, optional
         Text of the captured exception message.
+    args_repr : list of str, optional
+        String forms of the constructor arguments, when retained.
+    notes : list of str, optional
+        Exception notes added with ``add_note``, when retained.
     frames : list of Frame, optional
         Stack frames captured for the exception.
+    cause : ExcInfo, optional
+        Explicit cause from ``raise ... from ...``.
+    context : ExcInfo, optional
+        Implicit context from an exception handled while this one was
+        raised.
+    suppress_context : bool, optional
+        Whether display suppresses the implicit context.
+    exceptions : list of ExcInfo, optional
+        Members of an exception group.
+    truncation : PayloadTruncation, optional
+        Capture omissions, present only when something was shortened or
+        dropped.
+
+    Notes
+    -----
+    Cause, context, and group members are the same shape as this dictionary.
+    Capture bounds their depth, width and total size, so a consumer may walk
+    them freely without needing its own recursion limit.
 
     """
 
     schema_version: typ.Required[int]
     type_name: str
+    module: str
     message: str
+    args_repr: list[str]
+    notes: list[str]
     frames: list[Frame]
+    cause: ExcInfo
+    context: ExcInfo
+    suppress_context: bool
+    exceptions: list[ExcInfo]
+    truncation: PayloadTruncation
 
 
 class StackInfo(typ.TypedDict, total=False):
@@ -100,10 +192,14 @@ class StackInfo(typ.TypedDict, total=False):
     ----------
     frames : list of Frame, optional
         Stack frames captured for the current call stack.
+    truncation : PayloadTruncation, optional
+        Capture omissions, present only when something was shortened or
+        dropped.
 
     """
 
     frames: list[Frame]
+    truncation: PayloadTruncation
 
 
 class FemtoRecord(typ.TypedDict, total=False):
@@ -196,83 +292,6 @@ def _stdlib_levelno(record: FemtoRecord) -> int:
         return _FEMTO_LEVEL_NAMES[name]
 
     return logging.WARNING
-
-
-def _format_frames(frames: list[Frame]) -> cabc.Iterator[str]:
-    """Render a list of stack frame dicts as human-readable text lines.
-
-    Parameters
-    ----------
-    frames
-        Frame dictionaries with ``filename``, ``lineno``, ``function``,
-        and optionally ``source_line`` keys.
-
-    Yields
-    ------
-    str
-        Lines describing each frame.
-
-    """
-    for frame in frames:
-        filename = frame.get("filename", "<unknown>")
-        lineno = frame.get("lineno", 0)
-        function = frame.get("function", "<unknown>")
-        yield f'  File "{filename}", line {lineno}, in {function}'
-        source = frame.get("source_line")
-        if source:
-            yield f"    {source}"
-
-
-def _format_exc_text(exc_info: ExcInfo) -> str:
-    """Render a femtologging exception payload as human-readable text.
-
-    Parameters
-    ----------
-    exc_info
-        The ``exc_info`` sub-dictionary from a femtologging record.
-
-    Returns
-    -------
-    str
-        A multi-line traceback string similar to stdlib's formatting.
-
-    Examples
-    --------
-    >>> payload = {"type_name": "ValueError", "message": "bad",
-    ...            "frames": [{"filename": "a.py", "lineno": 1,
-    ...                        "function": "f"}]}
-    >>> text = _format_exc_text(payload)
-    >>> "ValueError: bad" in text
-    True
-
-    """
-    lines: list[str] = ["Traceback (most recent call last):"]
-    lines.extend(_format_frames(exc_info.get("frames", [])))
-
-    type_name = exc_info.get("type_name", "Exception")
-    message = exc_info.get("message", "")
-    lines.append(f"{type_name}: {message}" if message else type_name)
-
-    return "\n".join(lines)
-
-
-def _format_stack_text(stack_info: StackInfo) -> str:
-    """Render a femtologging stack payload as human-readable text.
-
-    Parameters
-    ----------
-    stack_info
-        The ``stack_info`` sub-dictionary from a femtologging record.
-
-    Returns
-    -------
-    str
-        A multi-line stack trace string.
-
-    """
-    lines: list[str] = ["Stack (most recent call last):"]
-    lines.extend(_format_frames(stack_info.get("frames", [])))
-    return "\n".join(lines)
 
 
 def _populate_thread_info(

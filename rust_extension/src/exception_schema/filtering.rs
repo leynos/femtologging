@@ -15,6 +15,9 @@ impl StackTracePayload {
         Self {
             schema_version: self.schema_version,
             frames: transform(&self.frames),
+            // Post-capture filtering is not a capture omission, so the marker
+            // is carried through untouched.
+            truncation: self.truncation,
         }
     }
 
@@ -173,6 +176,9 @@ impl ExceptionPayload {
                 .iter()
                 .map(|e| e.apply_frame_transform(transform))
                 .collect(),
+            // Post-capture filtering is not a capture omission, so the marker
+            // is carried through untouched.
+            truncation: self.truncation,
         }
     }
 

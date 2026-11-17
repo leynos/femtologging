@@ -90,9 +90,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod filtering;
+mod truncation;
 mod version_validation;
 mod versioning;
 
+pub use self::truncation::PayloadTruncation;
 pub use versioning::{SchemaVersionError, SchemaVersioned, validate_schema_version};
 
 #[cfg(test)]
@@ -170,12 +172,17 @@ pub struct StackTracePayload {
     pub schema_version: u16,
     /// Stack frames from innermost to outermost.
     pub frames: Vec<StackFrame>,
+    /// Bounded record of omitted or shortened components, absent when capture
+    /// retained everything it saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<PayloadTruncation>,
 }
 
-/// Complete structured representation of a Python exception.
+/// Bounded structured representation of a Python exception.
 ///
-/// Captures all relevant data from `traceback.TracebackException` including
-/// exception chaining (`__cause__`, `__context__`) and exception groups.
+/// Captures selected data from real Python exception instances, including
+/// chaining (`__cause__`, `__context__`) and exception groups, within the
+/// resource limits recorded by [`PayloadTruncation`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExceptionPayload {
     /// Schema version for forward compatibility.
@@ -208,6 +215,10 @@ pub struct ExceptionPayload {
     /// Nested exceptions (for `ExceptionGroup`, Python 3.11+).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exceptions: Vec<ExceptionPayload>,
+    /// Bounded record of omitted or shortened components, absent when capture
+    /// retained everything it saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<PayloadTruncation>,
 }
 
 impl StackFrame {
@@ -251,6 +262,7 @@ impl StackTracePayload {
         Self {
             schema_version: EXCEPTION_SCHEMA_VERSION,
             frames,
+            truncation: None,
         }
     }
 }
@@ -339,6 +351,30 @@ impl ExceptionPayload {
     #[must_use]
     pub fn with_frames(mut self, frames: Vec<StackFrame>) -> Self {
         self.frames = frames;
+        self
+    }
+
+    /// Attach a bounded truncation marker.
+    ///
+    /// An empty marker is dropped rather than stored, so `truncation` is `Some`
+    /// exactly when capture omitted something.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use _femtologging_rs::exception_schema::{ExceptionPayload, PayloadTruncation};
+    ///
+    /// let payload = ExceptionPayload::new("Error", "msg")
+    ///     .with_truncation(PayloadTruncation { frames_omitted: 2, ..Default::default() });
+    /// assert_eq!(payload.truncation.expect("marker retained").frames_omitted, 2);
+    ///
+    /// let clean = ExceptionPayload::new("Error", "msg")
+    ///     .with_truncation(PayloadTruncation::default());
+    /// assert!(clean.truncation.is_none());
+    /// ```
+    #[must_use]
+    pub fn with_truncation(mut self, truncation: PayloadTruncation) -> Self {
+        self.truncation = truncation.into_option();
         self
     }
 }

@@ -1964,14 +1964,19 @@ marked as far as the HTTP handler's admission check.
 
 The private `femtologging._adapter_record` module owns the adapter record
 schema and conversion to `logging.LogRecord`. `femtologging.adapter` remains
-the public import site and re-exports those record types. `FemtoLogger` applies
-its logger-level threshold before dispatch. Once the worker dispatches a record
-to the adapter, `handle_record()` calls `_make_log_record()`, compares the
-mapped level with the wrapped handler's current `level`, then calls
-`handler.handle()` exactly once when the record meets that threshold. This
-handler-level comparison happens before the handler filter chain. With base
-`Handler.handle()` behaviour, accepted records follow its existing filter and
-lock path; a subclass overriding `handle()` owns its internal dispatch path.
+the public import site and re-exports those record types.
+`femtologging._exception_rendering` turns a captured exception payload into
+`LogRecord.exc_text`, rendering chained causes, implicit contexts and
+exception-group members through one path so each reports its own frames,
+message and omission markers; `femtologging._payload_formatting` owns the
+marker helpers and live-stack text. `FemtoLogger` applies its logger-level
+threshold before dispatch. Once the worker dispatches a record to the adapter,
+`handle_record()` calls `_make_log_record()`, compares the mapped level with
+the wrapped handler's current `level`, then calls `handler.handle()` exactly
+once when the record meets that threshold. This handler-level comparison
+happens before the handler filter chain. With base `Handler.handle()`
+behaviour, accepted records follow its existing filter and lock path; a
+subclass overriding `handle()` owns its internal dispatch path.
 
 With the `tracing-compat` feature enabled, trace events mark producer context
 capture, handler-filter-chain evaluation, queue dispatch, worker handler

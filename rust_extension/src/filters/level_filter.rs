@@ -22,6 +22,11 @@ impl FemtoFilter for LevelFilter {
     ) -> crate::filters::FilterDecision {
         crate::filters::FilterDecision::accept(record.level() <= self.max_level)
     }
+
+    /// A level filter reads only the record's level, so capture can wait.
+    fn inspects_traceback(&self) -> bool {
+        false
+    }
 }
 
 /// Builder for [`LevelFilter`].

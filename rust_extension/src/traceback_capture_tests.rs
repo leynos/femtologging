@@ -12,7 +12,9 @@ use crate::exception_schema::EXCEPTION_SCHEMA_VERSION;
 use crate::test_utils::traceback_test_helpers::{
     builtin_type, create_builtin_exception, create_value_error,
 };
-use crate::traceback_capture::{capture_exception, capture_stack};
+use crate::traceback_capture::{
+    capture_count, capture_exception, capture_stack, reset_capture_count,
+};
 
 /// Python source that raises a nested `ValueError`, then clears the
 /// exception's `__traceback__` while retaining the traceback separately.
@@ -195,16 +197,21 @@ fn capture_exception_with_chained_cause() {
 }
 
 #[rstest]
-fn capture_stack_returns_frames() {
+fn capture_stack_from_rust_reports_no_frames() {
     Python::attach(|py| {
+        // A Rust test thread has no Python frames above the extension, so there
+        // is no stack to capture. Reporting an empty stack is the honest answer;
+        // the alternative is to describe `traceback.extract_stack`'s own
+        // internal frame, which is what a summary-based implementation returned.
         let payload = capture_stack(py).expect("capture_stack should succeed");
-        assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
-        assert!(!payload.frames.is_empty(), "Stack should have frames");
 
-        // Check that frames have required fields
-        let frame = &payload.frames[0];
-        assert!(!frame.filename.is_empty());
-        assert!(!frame.function.is_empty());
+        assert_eq!(payload.schema_version, EXCEPTION_SCHEMA_VERSION);
+        assert!(
+            payload.frames.is_empty(),
+            "a Rust caller has no Python frames to report, got {:?}",
+            payload.frames
+        );
+        assert!(payload.truncation.is_none(), "nothing was omitted");
     });
 }
 
@@ -330,6 +337,33 @@ exc = CustomError('test')
             Some("custom_mod"),
             "custom module exception should report its module"
         );
+    });
+}
+
+#[rstest]
+fn the_capture_counter_observes_exactly_one_traversal() {
+    Python::attach(|py| {
+        // The counter is the instrument the deferred-capture tests measure with.
+        // An instrument that under-counts makes "a rejected record captured
+        // nothing" vacuous, so it is pinned here on the simplest possible case:
+        // one accepted exception, one traversal, no stack.
+        reset_capture_count();
+        let exception = create_value_error(py, "counted").expect("exception should build");
+        capture_exception(py, &exception)
+            .expect("capture should not raise")
+            .expect("payload should be present");
+
+        assert_eq!(capture_count(), 1);
+    });
+}
+
+#[rstest]
+fn the_capture_counter_counts_a_stack_traversal() {
+    Python::attach(|py| {
+        reset_capture_count();
+        capture_stack(py).expect("stack capture should not raise");
+
+        assert_eq!(capture_count(), 1);
     });
 }
 

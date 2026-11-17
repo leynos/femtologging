@@ -1,208 +1,342 @@
 //! Python traceback capture utilities.
 //!
-//! This module provides functions to extract exception and stack trace data
-//! from Python and convert them to the Rust schema types defined in
-//! [`crate::exception_schema`]. All capture happens on the caller thread
-//! while the GIL is held, ensuring worker threads remain GIL-free.
+//! This module extracts exception and stack-trace data from Python and converts
+//! it to the schema types in [`crate::exception_schema`]. All capture happens on
+//! the caller thread while the GIL is held, ensuring worker threads stay
+//! GIL-free.
+//!
+//! # Bounded capture
+//!
+//! Capture is a robustness boundary: the values being captured come from
+//! application code, and rendering them runs that code's `__str__`, `__repr__`
+//! and attribute lookups. Every traversal is therefore bounded by
+//! [`CaptureLimits`], and every conversion is contained, so a hostile or merely
+//! pathological exception costs a predictable amount of work instead of
+//! whatever its object graph happens to demand.
+//!
+//! Two failure families are deliberately kept apart:
+//!
+//! - **Input resolution** — an `exc_info` argument that is not a bool, an
+//!   exception instance or a 3-tuple — still raises `TypeError`, because the
+//!   caller made a programming error.
+//! - **Traversal** — anything that goes wrong once a real exception has been
+//!   accepted — degrades to a type-only payload carrying `budget_exhausted`
+//!   rather than propagating, because logging must not fail on the way out of a
+//!   failure.
+//!
+//! The second family includes a panic. Capture runs user code, so a panic here
+//! would otherwise escape into the logging call and, from a `#[pymethods]`
+//! entry point, into Python as a `PanicException`.
 //!
 //! # Usage
 //!
 //! The primary entry points are [`capture_exception`] for `exc_info` handling
 //! and [`capture_stack`] for `stack_info=True` support.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyTuple};
+use pyo3::types::{PyBool, PyTuple};
 
-use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, StackTracePayload};
-use crate::traceback_frames::extract_frames_from_stack_summary;
+use crate::exception_schema::{
+    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, PayloadTruncation, StackTracePayload,
+};
 
-mod traceback_payload;
-use self::traceback_payload::build_payload_from_traceback_exception;
+// The traversal is an implementation detail of this module; only the entry
+// points and the limit types are reachable from elsewhere in the crate.
+mod attrs;
+mod fallback;
+mod frames;
+mod limits;
+mod message;
+mod notes;
+mod recursion;
+mod types;
+mod values;
+mod walker;
 
-/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
+pub(crate) use self::limits::{CaptureBudget, CaptureLimits};
+
+#[cfg(test)]
+pub(crate) use self::counter::{capture_count, reset_capture_count};
+
+/// Increment the test-only traversal counter when running under test.
+#[cfg(test)]
+fn note_capture() {
+    counter::record_capture();
+}
+
+/// Compile the traversal counter away in production builds.
+#[cfg(not(test))]
+#[inline]
+fn note_capture() {}
+
+/// How `exc_info` was supplied by the caller.
 enum ExcInfoKind {
-    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-    BoolTrue,
-    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-    BoolFalse,
-    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
+    /// `exc_info=True`: use the currently handled exception.
+    Current,
+    /// `exc_info=False` or `None`: capture nothing.
+    Nothing,
+    /// An explicit `(type, value, traceback)` triple.
     Tuple(Py<PyTuple>),
-    /// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-    Exception,
+    /// An exception instance.
+    Instance,
 }
 
-/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-fn is_py_bool_true(exc_info: &Bound<'_, PyAny>) -> bool {
-    exc_info
-        .cast::<PyBool>()
-        .is_ok_and(|bool_value| bool_value.is_true())
-}
-
-/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-fn is_py_bool_false(exc_info: &Bound<'_, PyAny>) -> bool {
-    exc_info
-        .cast::<PyBool>()
-        .is_ok_and(|bool_value| !bool_value.is_true())
-}
-
-/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-fn extract_exc_tuple(exc_info: &Bound<'_, PyAny>) -> Option<Py<PyTuple>> {
-    let tuple = exc_info.cast::<PyTuple>().ok()?;
-    if tuple.len() == 3 {
-        Some(tuple.clone().unbind())
-    } else {
-        None
-    }
-}
-
-/// Classifies Python exception state while keeping the GIL-bound payload and graceful-degradation paths explicit.
-fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<ExcInfoKind> {
-    if is_py_bool_true(exc_info) {
-        return Ok(ExcInfoKind::BoolTrue);
-    }
-
-    if is_py_bool_false(exc_info) {
-        return Ok(ExcInfoKind::BoolFalse);
-    }
-
-    if let Some(tuple) = extract_exc_tuple(exc_info) {
-        return Ok(ExcInfoKind::Tuple(tuple));
-    }
-
-    if is_exception_instance(py, exc_info)? {
-        return Ok(ExcInfoKind::Exception);
-    }
-
-    Err(pyo3::exceptions::PyTypeError::new_err(
-        "exc_info must be True, an exception instance, or a 3-tuple (type, value, traceback)",
-    ))
-}
-
-/// Capture exception information from Python `exc_info` argument.
+/// Capture exception information from Python's `exc_info` argument.
 ///
-/// Handles the various forms of `exc_info` accepted by Python's logging:
-/// - `True`: Use `sys.exc_info()` to get the current exception
-/// - Exception instance: Wrap in a traceback context
-/// - 3-tuple `(type, value, traceback)`: Use directly
+/// Handles the forms Python's `logging` accepts:
 ///
-/// Returns `None` if `exc_info=True` but no exception is active.
+/// - `True`: use `sys.exc_info()` for the exception being handled
+/// - an exception instance: capture it, together with its own `__traceback__`
+/// - a 3-tuple `(type, value, traceback)`: use the value and traceback given
+///
+/// Returns `None` when `exc_info=True` but no exception is being handled.
 ///
 /// # Errors
 ///
-/// Returns an error if Python calls fail or the exc_info format is invalid.
+/// Returns [`pyo3::exceptions::PyTypeError`] when `exc_info` is none of the
+/// accepted forms. Traversal failures never propagate: they degrade to a
+/// type-only payload instead.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// Python::attach(|py| {
+///     let exc = py.eval(c"ValueError('bad input')", None, None)?;
+///     let payload = capture_exception(py, &exc)?.expect("exception captured");
+///     assert_eq!(payload.type_name, "ValueError");
+///     Ok::<_, PyErr>(())
+/// })?;
+/// ```
 pub fn capture_exception(
     py: Python<'_>,
     exc_info: &Bound<'_, PyAny>,
 ) -> PyResult<Option<ExceptionPayload>> {
+    capture_exception_with_limits(py, exc_info, &CaptureLimits::default())
+}
+
+/// Validate `exc_info` without capturing any exception data.
+///
+/// Callers that defer capture until after a filter prefix has run use this to
+/// report an invalid `exc_info` argument before filtering, so a filter can
+/// never suppress the caller's programming error. Capture itself re-runs the
+/// same classification and cannot fail for a shape this accepts.
+///
+/// # Errors
+///
+/// Returns [`pyo3::exceptions::PyTypeError`] when `exc_info` is none of the
+/// accepted forms.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// Python::attach(|py| {
+///     let flag = py.True();
+///     validate_exc_info(py, flag.as_any()).expect("True is valid");
+///     Ok::<_, PyErr>(())
+/// })?;
+/// ```
+pub fn validate_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<()> {
+    classify_exc_info(py, exc_info).map(|_| ())
+}
+
+/// Capture exception information under explicit `limits`.
+///
+/// The entry point tests use to force truncation with small ceilings; the public
+/// [`capture_exception`] applies [`CaptureLimits::default`].
+///
+/// # Errors
+///
+/// As for [`capture_exception`].
+pub fn capture_exception_with_limits(
+    py: Python<'_>,
+    exc_info: &Bound<'_, PyAny>,
+    limits: &CaptureLimits,
+) -> PyResult<Option<ExceptionPayload>> {
     match classify_exc_info(py, exc_info)? {
-        ExcInfoKind::BoolTrue => capture_from_sys_exc_info(py),
-        ExcInfoKind::BoolFalse => Ok(None),
-        ExcInfoKind::Tuple(tuple) => capture_from_exception_tuple(py, tuple.bind(py)),
-        ExcInfoKind::Exception => capture_from_exception_instance(py, exc_info),
+        ExcInfoKind::Current => capture_current_exception(py, limits),
+        ExcInfoKind::Nothing => Ok(None),
+        ExcInfoKind::Tuple(tuple) => capture_from_tuple(py, tuple.bind(py), limits),
+        ExcInfoKind::Instance => {
+            let traceback = optional_attr(exc_info, "__traceback__");
+            Ok(Some(capture_with_fallback(
+                py,
+                exc_info,
+                traceback.as_ref(),
+                limits,
+            )))
+        }
     }
 }
 
 /// Capture the current call stack for `stack_info=True`.
 ///
-/// Uses `traceback.extract_stack()` to get the current stack frames.
-/// The full call stack is returned; frame filtering (e.g., to remove
-/// logging infrastructure frames) is left to the caller or formatter.
+/// Frames are ordered oldest first, matching both the text formatter's
+/// expectations and the order `traceback.extract_stack()` produces. Filtering
+/// infrastructure frames is left to the caller's frame filter, which is
+/// configured separately from the capture limits.
 ///
 /// # Errors
 ///
-/// Returns an error if Python traceback calls fail.
+/// Returns an error only if the interpreter's own inspection modules cannot be
+/// imported; an unusable frame is skipped rather than failing the capture.
 pub fn capture_stack(py: Python<'_>) -> PyResult<StackTracePayload> {
-    let traceback = py.import("traceback")?;
-    // extract_stack() returns a StackSummary (list of FrameSummary)
-    let stack_summary = traceback.call_method0("extract_stack")?;
-    let frames = extract_frames_from_stack_summary(&stack_summary)?;
+    capture_stack_with_limits(py, &CaptureLimits::default())
+}
+
+/// Capture the current call stack under explicit `limits`.
+///
+/// The entry point tests use to force truncation with small ceilings; the public
+/// [`capture_stack`] applies [`CaptureLimits::default`].
+///
+/// # Errors
+///
+/// As for [`capture_stack`].
+pub fn capture_stack_with_limits(
+    py: Python<'_>,
+    limits: &CaptureLimits,
+) -> PyResult<StackTracePayload> {
+    note_capture();
+    let mut budget = CaptureBudget::new(limits);
+    let mut marker = PayloadTruncation::default();
+    let frames = frames::collect_stack_frames(py, limits, &mut budget, &mut marker)?;
+    if budget.is_exhausted() {
+        marker.budget_exhausted = true;
+    }
 
     Ok(StackTracePayload {
         schema_version: EXCEPTION_SCHEMA_VERSION,
         frames,
+        truncation: marker.into_option(),
     })
 }
 
-/// Capture exception from `sys.exc_info()`.
-fn capture_from_sys_exc_info(py: Python<'_>) -> PyResult<Option<ExceptionPayload>> {
-    let sys = py.import("sys")?;
-    let exc_info = sys.call_method0("exc_info")?;
-    let tuple = exc_info.cast::<PyTuple>()?;
-
-    // exc_info returns (type, value, traceback), all None if no exception
-    let exc_value = tuple.get_item(1)?;
-    if exc_value.is_none() {
-        return Ok(None);
-    }
-
-    capture_from_exception_tuple(py, tuple)
-}
-
-/// Capture exception from a 3-tuple (type, value, traceback).
-fn capture_from_exception_tuple(
-    py: Python<'_>,
-    tuple: &Bound<'_, PyTuple>,
-) -> PyResult<Option<ExceptionPayload>> {
-    let exc_value = tuple.get_item(1)?;
-    if exc_value.is_none() {
-        return Ok(None);
-    }
-
-    let exc_tb = tuple.get_item(2)?;
-    let tb_arg = if exc_tb.is_none() {
-        None
-    } else {
-        Some(&exc_tb)
-    };
-
-    build_exception_payload(py, &exc_value, tb_arg)
-}
-
-/// Capture exception from an exception instance.
-fn capture_from_exception_instance(
-    py: Python<'_>,
-    exc: &Bound<'_, PyAny>,
-) -> PyResult<Option<ExceptionPayload>> {
-    // Get the traceback from __traceback__ attribute
-    let tb = exc.getattr("__traceback__").ok();
-    let tb_ref = tb.as_ref().filter(|t| !t.is_none());
-
-    build_exception_payload(py, exc, tb_ref)
-}
-
-/// Build an `ExceptionPayload` from a Python exception value and optional traceback.
+/// Capture `exc_value` with `traceback`, degrading on traversal failure.
 ///
-/// When `traceback` is provided, it takes precedence over `exc_value.__traceback__`.
-/// This is important for exc_info tuples where the exception's `__traceback__` may
-/// have been cleared but a valid traceback was passed explicitly.
-fn build_exception_payload(
+/// The walker is written not to fail, but it converts values from application
+/// code, where any conversion can raise or panic. Falling back to a type-only
+/// payload keeps the logging call alive, which matters more here than
+/// completeness: capture is what happens on the way out of a failure.
+fn capture_with_fallback(
     py: Python<'_>,
     exc_value: &Bound<'_, PyAny>,
     traceback: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<ExceptionPayload>> {
-    let traceback_mod = py.import("traceback")?;
-    let tb_exc_class = traceback_mod.getattr("TracebackException")?;
-    let kwargs = PyDict::new(py);
-    kwargs.set_item("capture_locals", false)?;
-
-    // When we have an explicit traceback (e.g., from exc_info tuple), use the
-    // TracebackException constructor directly to preserve it. Otherwise, use
-    // from_exception which reads exc_value.__traceback__.
-    let tb_exc = if let Some(tb) = traceback {
-        // Get the exception type from the value
-        let exc_type = exc_value.get_type();
-        // TracebackException(exc_type, exc_value, exc_traceback, capture_locals=False)
-        tb_exc_class.call((exc_type, exc_value, tb), Some(&kwargs))?
-    } else {
-        // TracebackException.from_exception(exc, capture_locals=False)
-        tb_exc_class.call_method("from_exception", (exc_value,), Some(&kwargs))?
-    };
-
-    build_payload_from_traceback_exception(py, &tb_exc, Some(exc_value))
+    limits: &CaptureLimits,
+) -> ExceptionPayload {
+    note_capture();
+    let captured = catch_unwind(AssertUnwindSafe(|| {
+        walker::capture_exception_payload(py, exc_value, traceback, limits)
+    }));
+    match captured {
+        Ok(payload) => payload,
+        Err(_) => {
+            // A panic can leave an exception indicator set; clearing it stops a
+            // later Python call from reporting an unrelated failure.
+            let _ = PyErr::take(py);
+            fallback::minimal_payload(exc_value, limits)
+        }
+    }
 }
 
-/// Check if an object is an exception instance.
+/// Capture the exception currently being handled, if any.
+fn capture_current_exception(
+    py: Python<'_>,
+    limits: &CaptureLimits,
+) -> PyResult<Option<ExceptionPayload>> {
+    let sys = py.import("sys")?;
+    let current = sys.call_method0("exc_info")?;
+    let tuple = current.cast::<PyTuple>()?;
+    // `exc_info()` returns `(type, value, traceback)`, each `None` when no
+    // exception is being handled.
+    if tuple.get_item(1)?.is_none() {
+        return Ok(None);
+    }
+    capture_from_tuple(py, tuple, limits)
+}
+
+/// Capture `(type, value, traceback)` from an `exc_info` triple.
+fn capture_from_tuple(
+    py: Python<'_>,
+    tuple: &Bound<'_, PyTuple>,
+    limits: &CaptureLimits,
+) -> PyResult<Option<ExceptionPayload>> {
+    let exc_value = tuple.get_item(1)?;
+    if exc_value.is_none() {
+        return Ok(None);
+    }
+    let exc_tb = tuple.get_item(2)?;
+    let traceback = (!exc_tb.is_none()).then_some(&exc_tb);
+
+    Ok(Some(capture_with_fallback(
+        py, &exc_value, traceback, limits,
+    )))
+}
+
+/// Decide how `exc_info` was supplied, rejecting anything unrecognized.
+fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<ExcInfoKind> {
+    if let Ok(flag) = exc_info.cast::<PyBool>() {
+        return Ok(if flag.is_true() {
+            ExcInfoKind::Current
+        } else {
+            ExcInfoKind::Nothing
+        });
+    }
+    if exc_info.is_none() {
+        return Ok(ExcInfoKind::Nothing);
+    }
+    if let Ok(tuple) = exc_info.cast::<PyTuple>()
+        && tuple.len() == 3
+    {
+        return Ok(ExcInfoKind::Tuple(tuple.clone().unbind()));
+    }
+    if is_exception_instance(py, exc_info)? {
+        return Ok(ExcInfoKind::Instance);
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "exc_info must be True, an exception instance, or a 3-tuple (type, value, traceback)",
+    ))
+}
+
+/// Check whether `obj` is an exception instance.
 fn is_exception_instance(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     let base_exception = py.import("builtins")?.getattr("BaseException")?;
     obj.is_instance(&base_exception)
+}
+
+/// Read an attribute, treating a missing attribute or `None` as absent.
+fn optional_attr<'py>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<Bound<'py, PyAny>> {
+    obj.getattr(attr).ok().filter(|value| !value.is_none())
+}
+
+#[cfg(test)]
+mod counter {
+    //! Test-only capture counter.
+    //!
+    //! The decisive property of the deferred-capture design is that some records
+    //! are logged *without* any traversal running. Asserting that needs a count
+    //! of traversals, which the payloads themselves cannot show: an uncaptured
+    //! record and a record whose exception had nothing to record look identical.
+
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Traversals performed by the current thread.
+        static CAPTURES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Record one traversal.
+    pub(crate) fn record_capture() {
+        CAPTURES.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Return how many traversals the current thread has performed.
+    pub(crate) fn capture_count() -> usize {
+        CAPTURES.with(Cell::get)
+    }
+
+    /// Reset the current thread's traversal count to zero.
+    pub(crate) fn reset_capture_count() {
+        CAPTURES.with(|count| count.set(0));
+    }
 }

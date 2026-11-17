@@ -123,9 +123,9 @@ providing output aligned with standard logging behaviour.
   `exc_info` and `stack_info` parameters.
 - Accept `exc_info` values matching standard logging behaviour: `True` to use
   `sys.exc_info()`, an exception instance, or a three-item exception tuple.
-- Use Python's `traceback` helpers to collect a structured representation of
-  the exception and stack, preserving frames, code context, and exception
-  chaining where available.
+- Walk real exception and frame objects through public Python APIs, collecting
+  a bounded structured representation of messages, frames, arguments, notes,
+  exception chains, and exception groups.
 - Add optional structured fields to `FemtoLogRecord` for exception and stack
   payloads, plus a `schema_version` marker to allow evolution.
 - Extend the default Rust formatter and the Python formatter adapter to render
@@ -188,93 +188,64 @@ Adding optional fields with `#[serde(default)]` does not require a version bump.
 
 ## Graceful degradation rules
 
-The capture logic intentionally degrades gracefully when Python objects are
-malformed, missing attributes, or contain values that cannot be extracted to
-the expected Rust types. This design ensures the logging system remains
-operational even when tracebacks have unusual shapes.
+Input resolution and traversal have different failure contracts. For a record
+that passes the logger threshold, invalid `exc_info` forms still raise
+`TypeError` before filters run. Once the input is resolved, missing, malformed,
+or raising Python attributes degrade to absent fields or counted omissions. An
+unexpected internal traversal failure produces a minimal type-only payload with
+`budget_exhausted`; it does not fail the logging call.
 
-### Required vs optional extraction
+Individual argument `repr()` failures are skipped and counted. An exception's
+failed `str()` uses `<exception str() failed>`. Notes must be strings; other
+items are skipped. Exception-group children that are not exceptions or cannot
+be inspected are skipped and counted. Missing frame positions and source lines
+remain `None`. Descendants keep empty `args_repr` and `notes`, matching the
+formatter contract. Traceback suggestions are not computed.
 
-Fields fall into two categories:
+### Bounded capture and truncation markers
 
-**Required fields** cause extraction to fail if missing or malformed. The
-entire frame or exception capture aborts with an error:
+The walker replaces `TracebackException` traversal and applies these defaults
+to each capture:
 
-- Stack frame: `filename`, `lineno`, `name` (function name).
-- Exception: `exc_type.__name__` (for the type name string).
+| Component                         | Default ceiling             |
+| --------------------------------- | --------------------------: |
+| Exception message                 | 4,096 UTF-8 bytes           |
+| Argument representations          | 32 items, 512 bytes each    |
+| Notes                             | 32 items, 512 bytes each    |
+| Frames                            | 64 per traceback or stack   |
+| Filename / function / source line | 512 / 256 / 512 UTF-8 bytes |
+| Cause or context links            | 32 levels                   |
+| Exception-group nesting / width   | 10 levels / 15 children     |
+| Exception nodes / aggregate text  | 256 nodes / 256 KiB         |
 
-**Optional fields** degrade silently to `None` or an empty collection when
-missing, `None`, or the wrong type:
+The ASCII `...` suffix fits inside each text limit. A fixed-size optional
+`truncation` marker records shortened messages, argument representations, and
+notes; omitted arguments, notes, frames, links, or group members; failed
+elements; and aggregate-budget exhaustion. Identifiers that are shortened
+already carry a visible `...` suffix. The schema remains version 1 because the
+marker is optional and defaults to absent. Absent markers leave existing
+formatter output unchanged.
 
-- Stack frame: `end_lineno`, `colno`, `end_colno`, `line` (source line),
-  `locals` (disabled as of 0.1.0; see
-  [Known risks and limitations](#known-risks-and-limitations))
-- Exception: `module`, `args`, `__notes__`, `__cause__`, `__context__`,
-  `exceptions` (for `ExceptionGroup`)
+Built-in strings, bytes, and bytearrays are sliced or escaped from bounded
+prefixes before capture retains them. General user-defined `str()` and `repr()`
+calls still execute on the caller thread. Their *number* is bounded by the item
+and traversal limits, and their failures are contained, but a single user
+conversion can take arbitrary time or allocate internally before it returns.
 
-### The `get_optional_attr` helper
-
-The `get_optional_attr<T>` function encapsulates the degradation logic for
-optional attributes. It returns `None` in all the following cases:
-
-1. The attribute does not exist on the Python object.
-2. The attribute value is Python `None`.
-3. The attribute exists but cannot be extracted to type `T`.
-
-This single helper eliminates repetitive error handling and guarantees
-consistent behaviour across all optional field extractions.
-
-### Partial extraction for collections
-
-When extracting collection fields, individual entries that fail are skipped
-rather than aborting the entire collection:
-
-- **`locals` dictionary:** Entries with non-string keys or values whose
-  `repr()` fails are skipped. Valid entries are preserved. An empty result
-  becomes `None`. Note: locals capture is disabled as of 0.1.0 (see
-  [Known risks and limitations](#known-risks-and-limitations)); these rules
-  apply only when it is enabled.
-- **`args_repr` list:** If `.args` is missing, `None`, or not a tuple, the
-  result is an empty vector. Individual elements that fail `repr()` extraction
-  are skipped.
-- **`notes` list:** If `__notes__` is missing or `None`, the result is an empty
-  vector. Individual elements that are not strings are skipped.
-- **`exceptions` list (ExceptionGroup):** Individual nested exceptions that
-  fail to convert are skipped from the result vector.
-
-### Design rationale
-
-This approach was chosen for several reasons:
-
-1. **Python version compatibility:** Enhanced traceback fields (`end_lineno`,
-   `colno`, `end_colno`) were added in Python 3.11. Graceful degradation allows
-   the same code to work on older Python versions without version checks.
-
-2. **Partial data over total failure:** When capturing diagnostic information,
-   having some data is better than none. A traceback with missing column
-   numbers is still useful; a completely failed capture is not.
-
-3. **Resilience to unusual objects:** Exception subclasses may override
-   attributes in unexpected ways. Defensive extraction prevents edge cases from
-   crashing the logger.
-
-4. **Logging must not fail:** The logging system is the last line of defence
-   for diagnostics. If capturing exception details fails, the original error
-   context is lost entirely. Graceful degradation ensures the log record is
-   still emitted with whatever data was recoverable.
+Capture spends the aggregate budget in this order: type, message, frames,
+arguments, notes, cause, context, and group children. It keeps the innermost
+frames in a fixed-capacity ring, limits chain and group depth, caps group width
+and total nodes, and detects identity cycles. These limits bound retained data
+and the number of user conversions; they cannot pre-empt a conversion already
+running in Python.
 
 ## Known risks and limitations
 
 ### Local variable capture is disabled (as of 0.1.0)
 
-The schema and extraction logic for local variables are fully implemented
-(`extract_locals_dict` in `traceback_frames.rs` and the `locals` field on
-`StackFrame`), but locals capture is disabled as of version 0.1.0. The
-`TracebackException` constructor is called with `capture_locals=False`, so
-Python does not populate `.locals` on frame summaries and the extraction
-function always returns `None`. In practice this means the `locals` field is
-absent from serialized exception payloads, and Python formatters or handlers
-that inspect `exc_info` frames in the record dict will never see a `locals` key.
+The `StackFrame` schema retains a `locals` field, but the bounded walker always
+records it as `None`. It builds frames directly from public frame and
+code-position APIs instead of `TracebackException` summaries.
 
 This is intentional. Enabling locals capture carries three concerns that have
 not yet been addressed:
@@ -297,10 +268,8 @@ not yet been addressed:
    with many locals, this adds non-trivial latency to the caller thread — the
    exact path the library is designed to keep fast.
 
-The infrastructure to support locals capture remains in place so that a future
-release can enable it behind an opt-in configuration flag once a filtering or
-redaction mechanism has been designed to mitigate the security concern. No
-timeline is committed for this work.
+Enabling locals capture would require a separate opt-in and redaction design.
+No timeline is committed for this work.
 
 ## Consequences
 

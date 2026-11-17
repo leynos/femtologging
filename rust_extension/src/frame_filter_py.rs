@@ -190,6 +190,11 @@ fn filter_stack_payload(
 }
 
 /// Filter frames on one payload while preserving all of its other keys.
+///
+/// The whole-dict copy is deliberate: a `truncation` marker describes capture,
+/// not filtering, so dropping or recomputing it here would misreport the
+/// payload the consumer finally sees. Every payload in an exception graph is
+/// copied this way, so the marker survives at every level.
 fn filter_payload_frames<'py>(
     py: Python<'py>,
     payload: &Bound<'py, PyDict>,

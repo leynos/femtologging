@@ -11,6 +11,7 @@
 #[cfg(feature = "python")]
 mod context_snapshot;
 mod convenience_methods;
+mod deferred_capture;
 mod dispatcher;
 mod flush;
 mod flush_clock;

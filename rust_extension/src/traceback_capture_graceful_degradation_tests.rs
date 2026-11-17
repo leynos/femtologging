@@ -4,11 +4,13 @@
 //! such as missing attributes, empty args, chained exceptions, and malformed notes.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyTuple};
 use rstest::rstest;
 
 use crate::exception_schema::ExceptionPayload;
-use crate::test_utils::traceback_test_helpers::{create_base_exception, create_value_error};
+use crate::test_utils::traceback_test_helpers::{
+    builtin_type, create_base_exception, create_value_error,
+};
 use crate::traceback_capture::capture_exception;
 
 // --------------------------------
@@ -46,10 +48,10 @@ fn assert_outer_exception(payload: &ExceptionPayload, outer_type: &str) {
     );
 }
 
-/// Assert that a chained cause has the expected type and no instance-derived data.
+/// Assert that a chained cause has the expected type and no descendant-only data.
 ///
-/// Notes and `args_repr` require the original exception instance, which is
-/// unavailable for chained exceptions reached through `TracebackException`.
+/// The payload contract leaves notes and `args_repr` empty on descendants, even
+/// though the walker has access to their original exception instances.
 #[track_caller]
 fn assert_chained_cause(cause: &ExceptionPayload, cause_type: &str) {
     assert_eq!(
@@ -58,11 +60,11 @@ fn assert_chained_cause(cause: &ExceptionPayload, cause_type: &str) {
     );
     assert!(
         cause.notes.is_empty(),
-        "chained exception notes should be empty (no instance access)"
+        "chained exception notes should be empty on descendants"
     );
     assert!(
         cause.args_repr.is_empty(),
-        "chained exception args_repr should be empty (no instance access)"
+        "chained exception args_repr should be empty on descendants"
     );
 }
 
@@ -103,6 +105,10 @@ fn capture_exception_without_notes_returns_empty_notes() {
             "notes should be empty when __notes__ is missing/None/empty"
         );
         assert_eq!(payload.type_name, "ValueError");
+        assert!(
+            payload.truncation.is_none(),
+            "a missing __notes__ attribute is not a capture failure"
+        );
     });
 }
 
@@ -128,8 +134,8 @@ fn capture_exception_with_empty_args_tuple() {
 
 #[rstest]
 fn capture_exception_chained_cause_has_empty_notes_and_args() {
-    // Chained exceptions (where we only have TracebackException, not the instance)
-    // should have empty notes and args_repr because those require the original instance.
+    // Descendant payloads omit notes and args_repr by contract, despite access
+    // to the original exception instances.
     Python::attach(|py| {
         // Skip test if Python version doesn't support add_note()
         if !supports_add_note(py).expect("capability check should succeed") {
@@ -298,6 +304,47 @@ class BadRepr:
             payload.args_repr,
             vec!["'valid arg'", "42"],
             "only valid repr strings should survive; failing repr elements should be skipped"
+        );
+        let marker = payload
+            .truncation
+            .as_ref()
+            .expect("a failed conversion should be recorded");
+        assert_eq!(marker.failed_elements, 1);
+        assert_eq!(
+            marker.args_omitted, 0,
+            "a failed conversion is not also an argument dropped by the ceiling"
+        );
+    });
+}
+
+#[rstest]
+fn a_lookalike_traceback_yields_no_frames() {
+    Python::attach(|py| {
+        let exc_type = builtin_type(py, "ValueError").expect("ValueError should exist");
+        let exc_value = create_value_error(py, "fake traceback").expect("exception should build");
+        let fake = py
+            .eval(
+                c"type('Fake', (), {'tb_frame': object(), 'tb_next': None})()",
+                None,
+                None,
+            )
+            .expect("fake traceback should build");
+        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value.as_any(), fake.as_any()])
+            .expect("tuple creation should succeed");
+
+        let payload = capture_exception(py, tuple.as_any())
+            .expect("capture should not fail")
+            .expect("payload should be present");
+
+        // An `exc_info` tuple is caller-supplied, so its traceback may be any
+        // object. One that is neither a real traceback nor a frame ends the
+        // walk: it contributes no frames, and because nothing was dropped it is
+        // not reported as an omission either.
+        assert!(payload.frames.is_empty());
+        assert!(
+            payload.truncation.is_none(),
+            "a lookalike traceback should not be reported as omitted: {:?}",
+            payload.truncation
         );
     });
 }

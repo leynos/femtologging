@@ -78,6 +78,9 @@ def _run_lint_gate(manifest: Path) -> subprocess.CompletedProcess[str]:
     environment["CARGO_TARGET_DIR"] = str(
         _REPO_ROOT / "target" / "private-docs-policy-clippy"
     )
+    # The production gate exercises every feature lane. This fixture has no
+    # feature-gated items, so one standard lane keeps the policy contract
+    # focused and avoids repeating the full matrix for each fixture version.
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed Make target and manifest arguments
         [
             make_executable,

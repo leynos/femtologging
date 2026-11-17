@@ -19,6 +19,7 @@ from ._adapter_record import (
     FemtoRecord,
     Frame,
     Metadata,
+    PayloadTruncation,
     StackInfo,
     _ensure_trace_level,
     _make_log_record,
@@ -30,6 +31,7 @@ __all__ = [
     "FemtoRecord",
     "Frame",
     "Metadata",
+    "PayloadTruncation",
     "StackInfo",
     "StdlibHandlerAdapter",
 ]

@@ -5,6 +5,9 @@
 //! provides a unified interface for formatting, while free functions maintain
 //! backward compatibility.
 
+use super::exception_markers::{
+    format_exception_summary, format_omitted_links, push_frame_omission,
+};
 use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 
 // ============================================================================
@@ -88,6 +91,7 @@ fn build_column_underline(
 impl ExceptionFormat for StackTracePayload {
     fn format_exception(&self) -> String {
         let mut output = String::from("Stack (most recent call last):\n");
+        push_frame_omission(&mut output, self.truncation.as_ref());
         for frame in &self.frames {
             output.push_str(&frame.format_exception());
         }
@@ -105,7 +109,10 @@ impl ExceptionFormat for ExceptionPayload {
         output.push_str(&format_exception_notes(&self.notes));
 
         // Handle exception groups
-        output.push_str(&format_exception_group(&self.exceptions));
+        output.push_str(&format_exception_group(self));
+
+        // Summarise omissions that the structural markers above cannot show.
+        output.push_str(&format_exception_summary(self.truncation.as_ref()));
 
         output
     }
@@ -136,22 +143,49 @@ pub fn format_exception_payload(payload: &ExceptionPayload) -> String {
 // ============================================================================
 
 /// Format exception chaining (cause or context) if present.
+///
+/// Omitted links are reported whether or not a link was retained. A retained
+/// context can coexist with a dropped cause, and that cause is still missing
+/// from the text, so the marker cannot live in the no-link branch alone. Each
+/// link is reported only when it was not displayed: a retained cause silences
+/// the cause marker, and a retained, unsuppressed context silences the context
+/// marker, while the other link's marker is unaffected.
 fn format_exception_chain(payload: &ExceptionPayload) -> String {
+    let mut output = format_retained_link(payload);
+    output.push_str(&format_omitted_links(
+        payload.truncation.as_ref(),
+        payload.cause.is_some(),
+        displays_context(payload),
+    ));
+    output
+}
+
+/// Format the retained cause or context, if the payload carries one.
+fn format_retained_link(payload: &ExceptionPayload) -> String {
     if let Some(ref cause) = payload.cause {
         let mut output = cause.format_exception();
         output
             .push_str("\nThe above exception was the direct cause of the following exception:\n\n");
-        output
-    } else if let Some(ref context) = payload.context
-        && !payload.suppress_context
-    {
-        let mut output = context.format_exception();
-        output
-            .push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
-        output
-    } else {
-        String::new()
+        return output;
     }
+    let Some(ref context) = payload.context else {
+        return String::new();
+    };
+    if !displays_context(payload) {
+        return String::new();
+    }
+    let mut output = context.format_exception();
+    output.push_str("\nDuring handling of the above exception, another exception occurred:\n\n");
+    output
+}
+
+/// Report whether the retained context is the link the text formatter shows.
+///
+/// The cause takes precedence over the context, and `__suppress_context__`
+/// hides the context outright, so a retained context is displayed only when
+/// neither applies.
+fn displays_context(payload: &ExceptionPayload) -> bool {
+    payload.cause.is_none() && payload.context.is_some() && !payload.suppress_context
 }
 
 /// Format the exception header line (module, type, and message).
@@ -173,13 +207,16 @@ fn format_exception_notes(notes: &[String]) -> String {
 }
 
 /// Format exception groups with indentation.
-fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
-    if exceptions.is_empty() {
+fn format_exception_group(payload: &ExceptionPayload) -> String {
+    let omitted = payload
+        .truncation
+        .map_or(0, |marker| marker.exceptions_omitted);
+    if payload.exceptions.is_empty() && omitted == 0 {
         return String::new();
     }
 
     let mut output = String::from("  |\n");
-    for (i, nested) in exceptions.iter().enumerate() {
+    for (i, nested) in payload.exceptions.iter().enumerate() {
         output.push_str(&format!("  +---- [{}] ", i + 1));
         let nested_str = nested.format_exception();
         // Indent nested exception output
@@ -187,12 +224,16 @@ fn format_exception_group(exceptions: &[ExceptionPayload]) -> String {
             output.push_str(&format!("  |     {}\n", line));
         }
     }
+    if omitted > 0 {
+        output.push_str(&format!("  ... and {omitted} more exceptions ...\n"));
+    }
     output
 }
 
 /// Format the traceback header, frames, and exception header.
 fn format_exception_body(payload: &ExceptionPayload) -> String {
     let mut output = String::from("Traceback (most recent call last):\n");
+    push_frame_omission(&mut output, payload.truncation.as_ref());
     for frame in &payload.frames {
         output.push_str(&frame.format_exception());
     }

@@ -243,6 +243,48 @@ finally:
     handler.close()
 ```
 
+### Bounded exception and stack capture
+
+Exception and stack capture runs on the logging caller thread. The walker
+retains a bounded payload, with these default ceilings:
+
+| Component                         | Limit                       |
+| --------------------------------- | --------------------------: |
+| Exception message                 | 4,096 UTF-8 bytes           |
+| Argument representations          | 32 items, 512 bytes each    |
+| Notes                             | 32 items, 512 bytes each    |
+| Frames per traceback or stack     | 64                          |
+| Filename / function / source line | 512 / 256 / 512 UTF-8 bytes |
+| Cause or context links            | 32 levels                   |
+| Exception-group nesting / width   | 10 levels / 15 children     |
+| Exception nodes / aggregate text  | 256 nodes / 256 KiB         |
+
+Text cut at a byte limit ends with `...` when the limit permits it. Large
+built-in strings, bytes, and bytearrays are sliced or escaped from a bounded
+prefix before capture retains them. User-defined `str()` and `repr()` failures
+are contained. Their call count is bounded by the item and traversal limits,
+but one user conversion can take arbitrary time or allocate internally before
+returning.
+
+When capture omits or shortens data, the structured payload includes an
+optional fixed-size `truncation` mapping. It reports shortened messages,
+arguments, or notes; omitted arguments, notes, frames, causes, contexts, and
+exception-group members; failed elements; and aggregate-budget exhaustion. For
+example, text formatters can show `... 2 earlier frames omitted ...` before
+retained frames. Payloads without omissions do not include the marker, and
+existing formatted output is unchanged.
+
+The logger threshold is checked before record construction or exception/stack
+capture. Native level and name filters can also reject without capture when
+they form the leading filter prefix. If that prefix accepts, capture runs
+before the remaining filters so callback filters can inspect the same bounded
+payload in their configured order. Filters are never reordered; a callback
+filter that comes first receives the payload before any later native filter.
+
+The Python frame-filtering API applies its `max_depth` option after capture.
+The capture frame limit bounds the original payload; `max_depth` can shorten
+the retained frames further and does not alter the capture omission marker.
+
 ### Exception schema versioning
 
 Structured `exc_info` and `stack_info` payloads carry a `schema_version` field.

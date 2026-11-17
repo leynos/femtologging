@@ -11,6 +11,8 @@ mod compatibility;
 mod exception_graph;
 #[path = "frame_filter_py_test_helpers.rs"]
 mod test_helpers;
+#[path = "frame_filter_truncation_tests.rs"]
+mod truncation;
 
 use self::test_helpers::{TestFilterOptions, filter_frames_with_defaults};
 

@@ -4,6 +4,9 @@
 //! used by multiple test modules to keep individual test files focused and
 //! below the repository line-length limit.
 
+/// Arrangements that drive bounded capture against real Python exceptions.
+#[cfg(feature = "python")]
+pub mod capture_limit_helpers;
 pub mod collecting_handler;
 pub(crate) mod flush_budget;
 /// Assertions for extracted traceback frame fields and local variables.

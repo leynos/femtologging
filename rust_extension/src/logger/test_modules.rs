@@ -13,6 +13,12 @@ use super::*;
 
 // These tests use real threads and `crossbeam_channel`; the heavy lane's models
 // cover the Loom-specific synchronization paths.
+#[cfg(all(not(loom), feature = "python"))]
+#[path = "deferred_capture_py_tests.rs"]
+mod deferred_capture_py_tests;
+#[cfg(not(loom))]
+#[path = "deferred_capture_tests.rs"]
+mod deferred_capture_tests;
 #[cfg(not(loom))]
 #[path = "logger_tests.rs"]
 mod logger_tests;
