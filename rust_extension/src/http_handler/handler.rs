@@ -1,4 +1,12 @@
-//! Public handler type exported by the crate.
+//! Public HTTP handler exported by the crate.
+//!
+//! `FemtoHTTPHandler` forwards records to an HTTP endpoint through a worker
+//! spawned by `spawn_worker` from an `HTTPHandlerConfig`. `flush` forms its
+//! own deadline from the configured timeout and hands it to `flush_by`,
+//! which samples time from a `FlushContext` before `flush_by_at` spends what
+//! remains on each queue wait; `FemtoHandlerTrait::flush_until` is the
+//! barrier entry point over the same wait. `close` and `Drop` own the
+//! shutdown stage implemented in the `lifecycle` child module.
 
 use std::{
     sync::Arc,

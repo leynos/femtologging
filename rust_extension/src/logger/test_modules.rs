@@ -1,4 +1,12 @@
 //! Test module declarations for logger dispatch and producer paths.
+//!
+//! The `logger` module declares this file under `#[cfg(all(test, not(loom)))]`
+//! so its sibling test sources need only one `#[path]` surface. Each entry
+//! maps a `logger_tests*`, `producer_*` or `producer_tracing_*` file into
+//! the module tree, which keeps `logger/mod.rs` readable while the
+//! `#[cfg(not(loom))]` and feature gates apply uniformly. The
+//! `logger_tests_flush*` variants stay separate because they time queue
+//! barriers, which Loom's channels cannot model.
 
 #[cfg(not(loom))]
 use super::*;

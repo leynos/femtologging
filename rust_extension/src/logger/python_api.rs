@@ -1,4 +1,12 @@
 //! Python methods exposed by the `FemtoLogger` PyO3 class.
+//!
+//! This `#[pymethods]` block adds the constructor `new`, the `level` and
+//! `propagate` accessors with `set_level`, handler and filter management
+//! through `py_add_handler`, `py_remove_handler`, `py_clear_handlers` and
+//! `py_clear_filters`, the `get_dropped` and `get_disabled_drops` counters,
+//! and `py_flush_handlers`, which releases the GIL while the barrier runs.
+//! Fallible entry points return `PyResult`; `log` lives in
+//! `convenience_methods` and flush diagnostics in `flush_diagnostics_api`.
 
 use std::sync::{Arc, atomic::Ordering};
 

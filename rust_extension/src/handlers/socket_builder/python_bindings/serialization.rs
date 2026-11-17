@@ -1,4 +1,12 @@
 //! Python dictionary serialization for the socket handler builder.
+//!
+//! `SocketHandlerBuilder::extend_dict` renders the builder's capacity,
+//! timeouts, backoff and filter settings into the dict returned by the
+//! `as_dict` method and the `AsPyDict` implementation. Transport helpers do
+//! the same for each endpoint: `extend_dict_with_tcp` writes the host, port
+//! and TLS options, `extend_dict_with_unix` writes the socket path, and both
+//! are reached through `extend_dict_with_transport`, so a builder with no
+//! transport configured adds no transport keys at all.
 
 use std::path::Path;
 

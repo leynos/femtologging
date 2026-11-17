@@ -1,4 +1,12 @@
 //! Regression coverage for worker-owned flush snapshots and GIL boundaries.
+//!
+//! `BlockingDropFlushHandler` and `BlockingFlushUntilHandler` stall the single
+//! shard worker so each test can observe where a flush snapshot is owned.
+//! `flush_handler_destruction_does_not_extend_the_caller_wait` keeps a
+//! handler's `Drop` on the worker; the full-marker-queue test checks admission
+//! holds no handler-list guard; the concurrent-stalled-flush test checks
+//! timed-out callers start no second callback. The `python`-gated
+//! `native_flush_does_not_attach_to_the_gil` checks a flush under a held GIL.
 
 use std::any::Any;
 use std::sync::Arc;

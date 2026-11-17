@@ -1,4 +1,11 @@
-//! GIL and deadline behavior of the manager's logger flush bridge.
+//! GIL and deadline behaviour of the manager's logger flush bridge.
+//!
+//! `flush_all_handlers_releases_the_gil_for_a_queued_python_handler` queues a
+//! record for a Python handler whose `handle` blocks on an event, then asserts
+//! that `flush_all_handlers` returns only after the callback finishes and that
+//! the manager released the GIL meanwhile. `ManagerFlushCleanup` releases the
+//! event and calls `reset_manager` on unwind, so a failed assertion cannot
+//! leave the manager holding a stuck worker.
 
 use std::ffi::CString;
 use std::time::Duration;

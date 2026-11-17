@@ -1,4 +1,12 @@
 //! Tests that handler flushes share the logger barrier's absolute deadline.
+//!
+//! `WaitingFlushHandler` records the wait each deadline-aware `flush_until`
+//! receives and may spend part of it.
+//! `flush_handlers_hands_each_handler_the_barriers_remaining_budget` bounds a
+//! handler willing to outlast `LOGGER_FLUSH_TIMEOUT_MS`;
+//! `flush_handlers_shares_one_deadline_across_every_handler` shows the second
+//! handler gets the remainder, not a fresh budget, while smaller cases pin
+//! `capped_deadline` and the built-in handlers' fail-closed `flush`.
 
 use std::any::Any;
 use std::sync::Arc;

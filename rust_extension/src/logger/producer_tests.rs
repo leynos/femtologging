@@ -1,4 +1,12 @@
 //! Focused unit tests for logger producer-path helpers.
+//!
+//! `TestFilter` implements `FemtoFilter` so the `rstest`
+//! `apply_filters_merges_enrichment_and_short_circuits` (accept and reject
+//! cases) and `apply_filters_conflicting_enrichment_prefers_later` can pin
+//! filter ordering and enrichment merging. A second, `python`-gated block
+//! reuses `TestContextSnapshotProvider`, `ContextAwareTestHandler` and
+//! `ContextCaptureFixture` to cover context capture, and the file includes
+//! `producer_snapshot_property_tests.rs` via `#[path]` to share these helpers.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

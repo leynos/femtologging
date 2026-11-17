@@ -1,5 +1,11 @@
 //! Tests for the default `FemtoHandler` and for trait-object dispatch of
 //! `FemtoHandlerTrait` methods onto user-supplied implementations.
+//!
+//! These integration tests import `_femtologging_rs` as an external crate.
+//! `DummyHandler` checks that `flush_until` fails closed without calling
+//! `flush`, and the `python`-gated `DefaultDispatchHandler` covers
+//! `handle_with_context`, `MissingContextDispatch` rejection at registration,
+//! and the native direct-dispatch default.
 
 use _femtologging_rs::{FemtoHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerError};
 #[cfg(feature = "python")]

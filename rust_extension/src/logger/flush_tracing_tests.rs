@@ -1,4 +1,12 @@
 //! Assertions for bounded flush-barrier tracing events.
+//!
+//! `assert_unconfirmed_flush_trace` runs an `UnconfirmedFlushHandler` through
+//! `FemtoLogger::flush_handlers` and checks the exact field set of each event,
+//! so a logger name or record payload cannot leak into a trace.
+//! `worker_events_reach_the_callers_thread_local_subscriber` proves the worker
+//! reaches a dispatcher installed only on the calling thread, and
+//! `enqueue_failure_is_traced_on_the_caller_side` parks the worker with a
+//! `StallingHandler` until a one-slot `Shard` refuses the second marker.
 
 use std::any::Any;
 use std::collections::BTreeSet;

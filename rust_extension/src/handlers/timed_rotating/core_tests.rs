@@ -1,4 +1,12 @@
 //! Tests for timed rotation core logic.
+//!
+//! `rotation_and_pruning_behavior` drives `TimedFileRotationStrategy` with a
+//! `SequenceClock` to check that backup retention prunes only real backups,
+//! and the remaining cases pin the schedule: `midnight_schedule_is_preserved`
+//! and `seed_rollover_from_overrides_initial_rollover` cover
+//! `TimedRotationSchedule::next_rollover`, while
+//! `production_handler_seeds_rollover_from_file_mtime` exercises the shipped
+//! `FemtoTimedRotatingFileHandler` and its seeding from the file's mtime.
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};

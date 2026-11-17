@@ -1,5 +1,12 @@
 //! Behavioural tests for `FemtoLogger`: message formatting, level filtering,
 //! handler attachment and removal, and the thread-safety of both.
+//!
+//! Compiled as an external crate against `_femtologging_rs`, this suite drives
+//! `FemtoLogger` with `FemtoStreamHandler` and `DefaultFormatter` over an
+//! in-memory `SharedBuf`. It pins formatting (`log_formats_message`), name
+//! validation (`an_empty_logger_name_is_refused`) plus filtering and
+//! concurrency cases (`logger_filters_levels`, `add_handler_is_thread_safe`,
+//! `logging_during_level_change`); `handler_removal` covers detachment.
 
 use std::collections::BTreeSet;
 

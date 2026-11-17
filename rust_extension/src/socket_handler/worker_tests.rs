@@ -1,4 +1,12 @@
 //! Tests for socket-worker shutdown command ordering.
+//!
+//! `queued_shutdown_ack_waits_for_records_after_it` checks that a
+//! `SocketCommand::Shutdown` acknowledgement follows the records queued
+//! behind it, using `Worker::drain_pending` against a stalled TLS handshake.
+//! The expired-budget cases show that a connect or write whose
+//! `ShutdownSignal` budget has already run out drops the current record rather
+//! than starting work. `shutdown_drop_is_logged_inside_the_warning_interval`
+//! covers the warning path in `Worker::warn_shutdown_drops`.
 
 use super::*;
 use std::{

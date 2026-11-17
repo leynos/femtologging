@@ -1,4 +1,12 @@
 //! Unit tests for FemtoLogger.
+//!
+//! `CollectingHandler` from `logger_tests_helpers` records what each test
+//! dispatches. `clear_handlers_removes_all` covers handler management and
+//! `multiple_filters_must_all_pass` the filter chain, which
+//! `logger_dispatches_through_its_shard` exercises end to end. Fault isolation
+//! is covered by `a_panicking_handler_does_not_silence_later_records` and
+//! `a_handler_error_does_not_skip_later_handlers`, and attaching mid-flush by
+//! `a_handler_flush_may_attach_another_handler`.
 
 use super::*;
 use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};

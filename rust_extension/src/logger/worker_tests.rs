@@ -1,4 +1,11 @@
 //! Regression tests for dispatch state reserved across a fork rebind.
+//!
+//! After a fork a child must replace the pool it inherited, which means
+//! rebinding `FemtoLogger::dispatch` exactly once even when two callers race.
+//! `a_flush_reuses_state_published_before_its_reservation` holds a
+//! `PidReservation` claimed first, simulates a caller that observed a stale
+//! process id, and checks `dispatch_state_reserved_until` returns the shard
+//! the winner published rather than rebinding a second time.
 
 use std::time::Duration;
 

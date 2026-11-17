@@ -535,7 +535,12 @@ than at whatever instant the host's scheduler supplies.
 `monotonic_clock::MonotonicClock` (`rust_extension/src/monotonic_clock.rs`)
 supplies "now" to the deadline queries. Production uses `SystemClock`, which is
 `Instant::now`; tests construct a `ShutdownSignal::with_clock` around a
-`ManualClock`, which moves only when told to. This is deliberately not
+`ManualClock`, which moves only when told to. Both `MonotonicClock` and
+`SharedClock` are public API, `pub` and re-exported from
+`rust_extension/src/lib.rs`, because the injection point is the public
+`FlushContext::with_clock`: a test or an embedder outside the crate implements
+the trait to drive a custom handler across a deadline transition
+deterministically instead of waiting on the real clock. This is deliberately not
 `rate_limited_warner::Clock`: that trait reports milliseconds since its own
 construction and so cannot express an absolute `Instant` deadline. The stream
 handler's flush deadline is a relative budget expressed in milliseconds, so it
@@ -581,7 +586,12 @@ reading.
 URL, authentication header and custom headers are built from the handler
 configuration, apart from `worker.rs`, the loop that owns retries and timing.
 The split keeps the wire shape reviewable on its own and keeps the worker
-module within the repository's file-size limit.
+module within the repository's file-size limit. The Python builder's
+`with_auth` mapping is validated earlier, in
+`rust_extension/src/handlers/http_builder/python_bindings/auth.rs`:
+`parse_auth_spec` turns it into an `AuthSpec` naming either a bearer token or a
+user name and password pair, and rejects a mapping that mixes the two shapes or
+leaves one of them incomplete.
 
 Detaching is not draining to completion. `abandon_worker`
 (`rust_extension/src/http_handler/handler.rs`, and the socket handler's
@@ -1657,6 +1667,16 @@ waits consume the remaining time. A handler removed after the snapshot remains
 alive until the worker releases it. Built-in handlers retain their shorter
 configured timeouts.
 
+`rust_extension/src/logger/dispatcher/shard/drain.rs` owns the shard side of
+the barrier. `flush_handlers_until` inserts the flush marker behind the work
+already queued, transfers the handler snapshot, and waits on the queue and the
+acknowledgement against the barrier's one deadline.
+`rust_extension/src/logger/flush_snapshot.rs` owns the handler half:
+`clone_handler_snapshot` clones the handler owners while the registry read lock
+is held, so the lock is released before the wait and no handler callback runs
+under it, and `flush_handler_snapshot_until` flushes the snapshot in order
+against that same deadline.
+
 Dispatch-state resolution has the same deadline. `Dispatcher::shared_until` in
 `rust_extension/src/logger/dispatcher.rs` serves the dispatcher-resolution
 step: it returns the process-wide dispatcher without waiting past the caller's
@@ -1718,6 +1738,14 @@ another thread's flush. The stream, socket and HTTP handlers call
 because its budget is fixed and it has no drops to carry. Production passes
 `Instant::now` as the clock, while tests pass a scripted source so the budget
 handed to each wait can be shown to shrink deterministically.
+
+The file handler's composition is `rust_extension/src/handlers/file/flush.rs`.
+A file-handler flush travels the same queue as a record, so its acknowledgement
+proves the worker handled everything buffered ahead of it. `flush_outcome()`
+forms a deadline from the handler's fixed one-second budget, `flush_by` caps
+the barrier's deadline at that budget instead, and both classify the attempt as
+a `FlushOutcome` the Python binding records, so a timed-out flush is
+distinguishable from the flush of an already-closed handler.
 
 `PendingDrops` groups the two halves of the drop hand-off for the same reason
 the rotation strategy groups its clock and store: they describe one thing — a
@@ -1902,6 +1930,13 @@ assertions reusable without expanding the runtime API:
 - `traceback_test_helpers.rs` builds Python-like frame and exception objects,
   arranges extraction cases, and re-exports the frame assertion helpers. It is
   also limited to Python-enabled unit tests.
+- `flush_budget.rs` provides the scripted clocks for handler flush-deadline
+  tests: `ScriptedClock` and the lock-backed `SharedScriptedClock` return a
+  fixed sequence of samples, and `WarningClock` is advanced by hand so a
+  rate-limited warning interval can expire without sleeping.
+- `test_worker.rs` provides `TestWorker`, a worker thread paired with the
+  `ShutdownSignal` that reaches it, for handler tests that supply their own
+  worker.
 
 The reusable integration-test support is owned by
 `rust_extension/tests/test_utils/`. It consists of four focused components:

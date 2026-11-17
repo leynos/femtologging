@@ -1,4 +1,12 @@
 //! Tests for rejecting handler filters on the logger producer path.
+//!
+//! `RejectingFilter` implements `FemtoFilter` to reject every record, and
+//! `BlockingHandler` implements `FemtoHandlerTrait` to hold the worker inside
+//! `handle`. That lets `rejected_handler_filters_do_not_enqueue_empty_jobs`
+//! assert no dispatch permit is reserved for a filtered record, while the
+//! serialised `refused_shard_admission_counts_and_warns_about_the_drop` drives
+//! a full `Shard` to show a refused record reaching `get_dropped` and emitting
+//! one rate-limited capacity warning.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

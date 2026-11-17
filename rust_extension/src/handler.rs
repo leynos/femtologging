@@ -1,5 +1,10 @@
-//! Core handler trait and error types shared by every handler
-//! implementation.
+//! Core handler trait, error types and deadline-bounded flush contract.
+//!
+//! `FemtoHandlerTrait` is the interface every handler implements and
+//! `HandlerError` the failure it reports. `FlushContext` carries the
+//! `SharedClock` the logger formed a deadline from, with `deadline_after`,
+//! `remaining` and `capped_deadline` as the shared clock helpers; the
+//! default `flush_until` opts out by returning `false` without flushing.
 
 use crate::log_record::FemtoLogRecord;
 use crate::monotonic_clock::{SharedClock, system_clock};
@@ -18,9 +23,8 @@ pub(crate) use flush_command::{
 
 /// The flush budget of a handler that does not configure one of its own.
 ///
-/// The file handler is the only user: it documents a fixed one-second flush
-/// and has no configuration to override it with. The stream, socket and HTTP
-/// handlers each hold a configured timeout of their own.
+/// The file handler is the only user, having no configuration to override its
+/// fixed one-second flush; the stream, socket and HTTP handlers hold their own.
 pub(crate) const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Time left before `deadline` at `now`, or zero when it has already passed.
@@ -308,10 +312,9 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// An implementation that opts into this method must not block past
     /// [`FlushContext::deadline`], and must not report success after it. It must
     /// sample time through [`FlushContext::now`] rather than [`Instant::now`],
-    /// so a barrier test can control the deadline transition. Synchronous
-    /// arbitrary handler code cannot be preempted, so this is an implementation
-    /// contract. [`FemtoLogger::flush_handlers`] advertises one timeout for the
-    /// whole barrier — snapshotting the handler list, enqueueing the marker,
+    /// so a barrier test can control the deadline transition.
+    /// [`FemtoLogger::flush_handlers`] advertises one timeout for the whole
+    /// barrier — snapshotting the handler list, enqueueing the marker,
     /// waiting for its acknowledgement, and flushing every handler. Each
     /// built-in implementation still caps its wait at its own configured
     /// timeout, so the deadline can shorten that wait without lengthening it.
@@ -329,9 +332,8 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
     /// bounded drain timeout for that logger's in-flight records; it does not
     /// join the shared worker. A callback that violates this deadline contract
     /// can keep that worker occupied after the caller returns `false` and after
-    /// the logger is dropped. The snapshot keeps the handler alive until the
-    /// callback returns. Loom models instead join their logger-owned worker.
-    /// Synchronous arbitrary code cannot be preempted.
+    /// the logger is dropped. Loom models join their logger-owned worker, and
+    /// synchronous arbitrary code cannot be preempted.
     ///
     /// A handler whose flush has no observable completion — a user-defined
     /// Python handler, for example — may confirm that the barrier delivered

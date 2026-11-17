@@ -1,4 +1,12 @@
 //! Tests for rate-limited warning emission.
+//!
+//! A `FakeClock` fixture drives `RateLimitedWarner` deterministically. The
+//! `rstest` cases check `record_drop` accumulation, interval suppression,
+//! the `take_due` and `restore_drops` retry path, and `flush`. The proptest
+//! `every_drop_is_pending_in_flight_or_emitted_once` and
+//! `failed_flush_enqueue_restores_the_due_drop_count` extend the same ledger
+//! to `flush_handler_until` and `FlushCap`, so every drop is pending, in
+//! flight or emitted exactly once.
 
 use super::*;
 use proptest::prelude::*;

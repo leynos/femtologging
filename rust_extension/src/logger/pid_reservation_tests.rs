@@ -1,4 +1,12 @@
 //! Tests for local reservation ownership and stale parent recovery.
+//!
+//! These tests drive `PidReservation::wait_or_clear_stale` and its
+//! deadline-aware sibling `wait_or_clear_stale_until` against a raw
+//! `AtomicU32`. `SequenceClock` implements `MonotonicClock` to feed scripted
+//! `Instant` samples, so `a_local_owner_keeps_its_reservation`,
+//! `a_fork_child_clears_its_parent_reservation` and
+//! `a_flush_stops_waiting_for_a_local_owner_at_its_deadline` pin ownership and
+//! stale-recovery rules without sleeping.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};

@@ -1,4 +1,12 @@
 //! Shared field collection and assertions for producer tracing tests.
+//!
+//! The helpers here back `producer_tracing_tests`. `CapturedEvent`,
+//! `EventFieldCollector` and `collect_fields` turn a `tracing` event into
+//! inspectable fields; `ExpectedEvent`, `EXPECTED_EVENTS` and
+//! `EXPECTED_FILTER_OUTCOMES` describe the outcomes that `assert_event`,
+//! `assert_events` and `assert_filter_events` compare. The `emit_*` family
+//! includes `emit_python_handler_dispatch`, `emit_capture_failure` and
+//! `emit_rejected_native_dispatch`, which drive `FemtoLogger` per outcome.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

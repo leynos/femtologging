@@ -1,4 +1,12 @@
 //! Helpers for running Rust tests in a clean child process.
+//!
+//! `run_isolated_test` re-executes the current test binary with `--ignored`,
+//! the caller's filter and `--nocapture`, so a test that needs a pristine
+//! process can run alone; `run_isolated_test_in` adds a working directory for
+//! tests that resolve relative paths. `isolated_command` clears the
+//! environment and forwards only the loader search path from
+//! `cargo_loader_search_path`, because Cargo supplies the variable that lets
+//! the child load the same Python shared library.
 
 use std::io;
 use std::path::Path;

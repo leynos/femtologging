@@ -1,4 +1,12 @@
 //! Native dispatch for built-in handlers registered through Python.
+//!
+//! `NativeHandlerKind::from_object` recognises each wrapped built-in — the
+//! stream, file, rotating, timed-rotating, socket and HTTP handlers — so
+//! `handle` can extract the native recipient with `PyRef` and deliver the
+//! complete `FemtoLogRecord` rather than a lossy Python view. `flush` and
+//! `flush_until` reach the native flush through `flush_native` and
+//! `flush_detached`, releasing the interpreter so a handler's queue wait
+//! does not block other Python threads.
 
 use log::warn;
 use pyo3::PyClass;

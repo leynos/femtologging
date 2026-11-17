@@ -1,4 +1,11 @@
 //! Test the tracing event emitted when native dispatch admission is refused.
+//!
+//! `emit_rejected_native_dispatch` fills the single permit of a `Shard` with
+//! a `QueuedRecord`, then logs through `FemtoLogger::assembled_for_test` so
+//! the producer must refuse admission. `BlockingNativeTestHandler` implements
+//! `FemtoHandlerTrait` to hold the worker inside `handle` until the assertion
+//! completes, keeping the shard full while the refused dispatch event is
+//! captured by the caller.
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};

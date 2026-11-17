@@ -1,4 +1,11 @@
 //! Regression coverage for legacy custom handler flush compatibility.
+//!
+//! `LegacyBlockingFlushHandler` implements only `FemtoHandlerTrait::flush`,
+//! which cannot be preempted.
+//! `flush_handlers_fails_closed_for_a_blocking_legacy_flush` proves
+//! `FemtoLogger::flush_handlers` reports failure without invoking that method,
+//! and `repeated_legacy_flush_failures_start_no_background_work` shows 16
+//! failed calls spawn no work and stay inside the shard's bounded queue.
 
 use std::any::Any;
 use std::sync::Arc;

@@ -1,4 +1,9 @@
 //! Producer and worker tracing tests for bounded context-dispatch events.
+//!
+//! `context_dispatch_tracing_reports_bounded_outcomes` installs an
+//! `InternalEventCollector` layer and drives `FemtoLogger` through
+//! `emit_python_handler_dispatch`, `emit_capture_failure`,
+//! `emit_rejected_native_dispatch` and `emit_handler_filter_chain`.
 
 use std::any::Any;
 use std::ffi::CString;
@@ -105,12 +110,8 @@ impl InternalEventCollector {
         }
     }
 
-    /// Wait until a captured event satisfies `is_match`, or time out.
-    ///
-    /// A count cannot express "the event I need": the collector may already
-    /// hold unrelated events, and a caller that returned on the acknowledgement
-    /// timeout can still observe the worker's late trace. Matching the event
-    /// itself waits for that trace instead of racing it.
+    /// Wait until a captured event satisfies `is_match`, or time out; matching
+    /// the event itself avoids racing a worker's late trace.
     fn wait_for_event(&self, is_match: impl Fn(&CapturedEvent) -> bool) -> Result<(), String> {
         let events = self
             .events

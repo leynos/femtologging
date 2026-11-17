@@ -1,4 +1,12 @@
-//! Public handler type exported by the crate.
+//! Public socket handler exported by the crate.
+//!
+//! `FemtoSocketHandler` forwards MessagePack-framed records to a transport
+//! through a worker spawned by `spawn_worker` from a `SocketHandlerConfig`.
+//! `flush` forms a deadline from the configured timeout, `flush_by` samples
+//! time from a `FlushContext` and `flush_by_at` spends what remains on each
+//! queue wait; `FemtoHandlerTrait::flush_until` is the barrier entry point
+//! over that wait. `close` owns the shutdown stage through
+//! `request_shutdown`, `join_worker` and `abandon_worker`.
 
 use std::{
     sync::Arc,

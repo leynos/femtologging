@@ -1,4 +1,12 @@
-//! Queue payloads and handler attachments used by logger dispatch.
+//! Producer-side queue payloads and handler attachments for logger dispatch.
+//!
+//! `QueuedRecord` is the job `Shard::admit` sends through the bounded queue:
+//! the record, the handlers captured when it was logged, and the Python
+//! `contextvars` snapshot. `HandlerAttachment` pairs a handler with the ordered
+//! `FemtoFilter` chain run before work reaches the worker, and
+//! `HandlerRecordSnapshot` gives the worker the copy those filters accepted.
+//! A full queue, or an empty `Permit` in its `LoggerBudget`, returns the boxed
+//! record to `FemtoLogger::admit_local_record` to be counted as dropped.
 
 use std::{any::Any, sync::Arc};
 

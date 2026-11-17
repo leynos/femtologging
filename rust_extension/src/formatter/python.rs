@@ -1,4 +1,12 @@
 //! Helpers for adapting Python callables into [`FemtoFormatter`] instances.
+//!
+//! `formatter_from_py` validates a Python object with
+//! `PythonFormatter::try_new` and returns it as a `SharedFormatter`, so the
+//! logger can call a Python function or a `format(record)` method without
+//! knowing it is Python. `record_to_dict` is the conversion both that adapter
+//! and Python handlers share: it renders a `FemtoLogRecord` and its
+//! `RecordMetadata` as a dict and attaches the exception and stack payloads
+//! through `exception_payload_to_py` and `stack_payload_to_py`.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

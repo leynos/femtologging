@@ -1,4 +1,12 @@
 //! Regression coverage for producer-side Python context snapshots.
+//!
+//! Gated on the `python` feature, these tests inject
+//! `TestContextSnapshotProvider` (a `ContextSnapshotProvider`) with a
+//! `ContextAwareTestHandler`. `ContextCaptureFixture` bundles logger and
+//! counters so `injected_context_snapshot_provider_supplies_queued_context`
+//! proves captured context reaches the queue, while
+//! `context_capture_failures_have_a_separate_counter_from_queue_drops` keeps
+//! capture failures out of `get_dropped`.
 
 use std::sync::{
     Arc,

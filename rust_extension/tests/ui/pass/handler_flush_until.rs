@@ -1,4 +1,11 @@
 //! Compile-pass coverage for the deadline-aware `FemtoHandlerTrait::flush_until`.
+//!
+//! This is a `trybuild` pass case driven by the `compile_time_ui` test in
+//! `tests/compile_tests.rs`. It asserts that the `FlushContext`-based
+//! `flush_until` signature compiles for both a `LegacyHandler` relying on
+//! the fail-closed default and a `DeadlineAwareHandler` overriding it. The
+//! `flush_before_deadline` helper shows the trait object call the logger's
+//! worker makes, including `FlushContext::new` and `deadline`.
 
 use std::any::Any;
 use std::time::{Duration, Instant};

@@ -1,4 +1,12 @@
 //! Creates and reconciles the Python `LogRecord` view used by callback filters.
+//!
+//! `get_or_create_filter_record` caches one view per filter chain in
+//! `FilterContext`, and `create_filter_record` builds it from
+//! `record_to_dict` and `logging.makeLogRecord`. `snapshot_record_attrs` and
+//! `restore_record_attrs` let the chain discard a rejected callback's changes,
+//! while `extract_enrichment` and `apply_enrichment_to_record_view` turn the
+//! surviving attributes into the `SerializedEnrichment` carried by
+//! `FilterDecision` and the `TypedEnrichment` copied onto the record view.
 
 use std::collections::BTreeMap;
 

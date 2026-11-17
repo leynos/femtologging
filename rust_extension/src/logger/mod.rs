@@ -1,5 +1,12 @@
 //! Core [`FemtoLogger`] implementation for filtering and asynchronous dispatch
 //! through the process-wide shard pool, including rebinding after `fork`.
+//!
+//! A record enters through `log`, passes the `FemtoFilter` chain and each
+//! `HandlerAttachment`'s producer-side filters, and is boxed for
+//! `Shard::admit`. `producer`, `queue`, `worker` and `dispatcher` carry
+//! dispatch; `flush`, `flush_clock` and `flush_diagnostics` the barrier;
+//! `python_api` and `py_handler` the PyO3 surface. The re-exports here are the
+//! crate-internal API: `QueuedRecord`, `DispatcherError` and `Shard`.
 
 #[cfg(feature = "python")]
 mod context_snapshot;

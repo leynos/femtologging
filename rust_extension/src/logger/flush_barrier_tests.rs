@@ -1,4 +1,12 @@
 //! Generated-time and diagnostic tests for the logger flush barrier.
+//!
+//! `generated_handler_sequences_cannot_extend_the_absolute_deadline` sweeps
+//! snapshots through `flush_handler_snapshot_at` with `FixedClock` and
+//! `SequenceClock` samples, asserting no sequence outlives the barrier.
+//! `flush_outcome_requires_success_before_both_deadline_checks` drives
+//! `BarrierOutcome::finish_at`; plain tests pin `deadline_after`, `remaining`,
+//! `confirm_by_deadline` and `elapsed_bucket`, and the `FlushDiagnostics`
+//! counters that `FemtoLogger::flush_handlers` records.
 
 use std::any::Any;
 use std::collections::VecDeque;
