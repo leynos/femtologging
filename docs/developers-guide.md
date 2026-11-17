@@ -920,10 +920,11 @@ The workflow readers divide the same way.
 discovers and parses the documents, checks that every locally reusable workflow
 a job calls exists, and offers the job and step accessors.
 [`tests/workflow_command_helpers.py`](../tests/workflow_command_helpers.py)
-reads a `run` body's shell text, and
+reads a `run` body's shell text, with
+[`tests/workflow_shell_helpers.py`](../tests/workflow_shell_helpers.py) holding
+the quoting scan both readers share;
 [`tests/workflow_heredoc_helpers.py`](../tests/workflow_heredoc_helpers.py)
-states what a here-document operator opens and skips the body, so only an
-operator the shell reads outside quotes is honoured;
+finds the operators that scan leaves unquoted and skips their bodies;
 [`tests/workflow_runner_helpers.py`](../tests/workflow_runner_helpers.py)
 classifies runners; and
 [`tests/workflow_contract_helpers.py`](../tests/workflow_contract_helpers.py)

@@ -1,4 +1,4 @@
-"""Read a here-document operator and skip the body it hands to the shell.
+"""Read here-document operators and skip the bodies they hand to the shell.
 
 A here-document hands the shell the lines that follow it verbatim, up to a
 delimiter line. Those lines are data, not shell, so a quote inside one must
@@ -7,9 +7,9 @@ here-document body would open a single quote that swallows every line below
 it, including a later `cargo test` the provisioning contract has to see.
 
 Only an operator the shell reads opens a here-document: a `<<` inside a quoted
-word is part of that word. This module therefore reads an operator at a given
-offset rather than searching for one, and its caller supplies the offsets that
-its own quoting scan found unquoted. One approximation remains: the scan does
+word is part of that word, so `echo '<<EOF'` opens nothing. The operators are
+therefore found with the quoting scan the line reader already uses, and the
+skip then consumes only real bodies. One approximation remains: the scan does
 not look inside a command substitution that is itself quoted, so a
 here-document opened there is not seen.
 """
@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import re
 import typing as typ
+
+from tests.workflow_shell_helpers import scan_step
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -34,6 +36,29 @@ class HereDocument(typ.NamedTuple):
 
     delimiter: str
     strips_leading_tabs: bool
+
+
+def _operator_offsets(command: str) -> cabc.Iterator[int]:
+    """Yield where an unquoted `<<` starts in `command`, in order.
+
+    The shell reads a here-document operator only outside quotes, so a `<<`
+    inside a quoted word is data. A comment ends the scan, since nothing after
+    it is shell.
+
+    Yields
+    ------
+    int
+        The offset of each operator, in the order the shell reads them.
+    """
+    index = 0
+    quote: str | None = None
+    while index < len(command):
+        if quote is None and command.startswith("<<", index):
+            yield index
+            index += 2
+            continue
+        step = scan_step(command, index, quote)
+        index, quote = step.index, step.quote
 
 
 def here_document_at(command: str, at: int) -> HereDocument | None:
@@ -69,10 +94,35 @@ def here_document_at(command: str, at: int) -> HereDocument | None:
     )
 
 
-def skip_here_documents(
-    lines: list[str], start: int, documents: cabc.Sequence[HereDocument]
-) -> int:
-    """Return the index of the first line after `documents`' bodies.
+def here_documents(command: str) -> list[HereDocument]:
+    """Return the here-documents the shell would read in `command`.
+
+    Parameters
+    ----------
+    command
+        One joined shell command.
+
+    Returns
+    -------
+    list[HereDocument]
+        One entry per operator the shell reads, in order. An operator inside a
+        quoted word contributes nothing.
+
+    Examples
+    --------
+    >>> here_documents("cat <<'EOF' && echo '<<EOF'")
+    [HereDocument(delimiter='EOF', strips_leading_tabs=False)]
+    """
+    return [
+        document
+        for at in _operator_offsets(command)
+        for document in (here_document_at(command, at),)
+        if document is not None
+    ]
+
+
+def skip_here_documents(lines: list[str], start: int, command: str) -> int:
+    """Return the index of the first line after `command`'s here-documents.
 
     A here-document whose delimiter never appears is malformed shell, and the
     shell takes every remaining line as data. The same skip applies here.
@@ -83,9 +133,8 @@ def skip_here_documents(
         Every physical line of the step's ``run`` body.
     start
         Index of the first line a here-document body may occupy.
-    documents
-        The here-documents the command opens, in the order the shell reads
-        them.
+    command
+        The joined command whose here-documents are being read.
 
     Returns
     -------
@@ -95,14 +144,12 @@ def skip_here_documents(
     Examples
     --------
     >>> skip_here_documents(
-    ...     ["cat <<'EOF'", "Don't", "EOF", "cargo test"],
-    ...     0,
-    ...     [HereDocument(delimiter="EOF", strips_leading_tabs=False)],
+    ...     ["cat <<'EOF'", "Don't", "EOF", "cargo test"], 0, "cat <<'EOF'"
     ... )
     3
     """
     index = start
-    for document in documents:
+    for document in here_documents(command):
         while index < len(lines):
             candidate = lines[index]
             index += 1
