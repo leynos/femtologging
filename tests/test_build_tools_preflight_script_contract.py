@@ -328,8 +328,8 @@ def test_a_failed_listing_is_reported_as_a_probe_failure(tmp_path: Path) -> None
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
 
     assert result.returncode == 1, result.stderr
-    assert "rustup could not list installed toolchains" in result.stderr
-    assert "is not installed" not in result.stderr
+    assert "rustup could not list installed toolchains" in result.stderr, result.stderr
+    assert "is not installed" not in result.stderr, result.stderr
 
 
 def test_a_failed_show_is_named_with_the_bare_channel(tmp_path: Path) -> None:
@@ -342,5 +342,5 @@ def test_a_failed_show_is_named_with_the_bare_channel(tmp_path: Path) -> None:
     result = _run_preflight(_preflight_environment(bin_dir, host_os="Linux"))
 
     assert result.returncode == 0, result.stderr
-    assert "rustup show failed" in result.stderr
-    assert f"toolchain {channel} available" in result.stderr
+    assert "rustup show failed" in result.stderr, result.stderr
+    assert f"toolchain {channel} available" in result.stderr, result.stderr
