@@ -3,10 +3,12 @@
 //! `LogContextError` is the single error the `log_context` module returns when
 //! it validates or mutates a context payload: popping an empty stack, too many
 //! keys, a key or value past its byte-length limit, or an aggregate payload past
-//! the total budget. Deriving `thiserror` gives every variant a message that
-//! names the offending key and the limit it broke, which is what callers show.
-//! The payload details are structured fields rather than a flattened string, so
-//! the Python bindings can convert the error without parsing it.
+//! the total budget. Deriving `thiserror` gives every variant a message for the
+//! caller, naming the offending key, count or total and the limit that was
+//! broken wherever the variant carries one; `EmptyContextStack` carries neither,
+//! so its message states only that the stack was empty. The payload details are
+//! structured fields rather than a flattened string, so the Python bindings can
+//! convert the error without parsing it.
 
 use thiserror::Error;
 
