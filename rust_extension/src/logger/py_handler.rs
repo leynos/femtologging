@@ -228,9 +228,15 @@ impl FemtoHandlerTrait for PyHandler {
     /// the duration of the handler's own `flush` call, which runs to
     /// completion on the shard worker.
     fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
-        Python::attach(|py| match self.native_handler {
-            Some(native_handler) => native_handler.flush_until(py, self.obj.bind(py), context),
-            None => self.call_python_flush(py),
+        // The barrier path keeps the diagnostics the legacy `flush` path has:
+        // one span around the wait, and an interpreter that cannot be attached
+        // reported as a failed flush rather than panicking across the FFI
+        // boundary during finalisation.
+        self.flush_with_interpreter(|| {
+            Python::try_attach(|py| match self.native_handler {
+                Some(native_handler) => native_handler.flush_until(py, self.obj.bind(py), context),
+                None => self.call_python_flush(py),
+            })
         })
     }
 

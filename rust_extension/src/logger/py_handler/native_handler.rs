@@ -248,5 +248,7 @@ where
 {
     let handler = obj.extract::<PyRef<'_, T>>()?;
     let handler_ref: &T = &handler;
-    Ok(py.detach(|| FemtoHandlerTrait::flush_until(handler_ref, context)))
+    Ok(crate::py_detach::detach_for_wait(py, || {
+        FemtoHandlerTrait::flush_until(handler_ref, context)
+    }))
 }
