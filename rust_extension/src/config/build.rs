@@ -92,7 +92,7 @@ impl ConfigBuilder {
             let plans = targets
                 .map(|(name, config)| self.prepare_logger_plan(name, config, &components))
                 .collect::<Result<Vec<_>, _>>()?;
-            let loggers = self.pair_plans_with_loggers(py, plans)?;
+            let loggers = Self::pair_plans_with_loggers(py, plans)?;
 
             let displaced = manager::commit_configuration(
                 py,
@@ -116,7 +116,7 @@ impl ConfigBuilder {
 
     /// Names targeted by the configuration, with the root logger first.
     fn configured_logger_names(&self) -> Vec<String> {
-        std::iter::once("root".to_string())
+        std::iter::once("root".to_owned())
             .chain(self.logger_builders().keys().cloned())
             .collect()
     }
@@ -126,7 +126,6 @@ impl ConfigBuilder {
     /// This reads the registry without changing it. If another caller
     /// registers a name before commit, the manager adopts that live logger.
     fn pair_plans_with_loggers(
-        &self,
         py: Python<'_>,
         plans: Vec<ConfiguredLoggerPlan>,
     ) -> Result<Vec<manager::PreparedLogger>, ConfigError> {
@@ -164,7 +163,7 @@ impl ConfigBuilder {
             .logger_builders()
             .keys()
             .cloned()
-            .chain(std::iter::once("root".to_string()))
+            .chain(std::iter::once("root".to_owned()))
             .collect();
         self.extend_keep_names_with_ancestors(&mut names);
         names
@@ -175,7 +174,7 @@ impl ConfigBuilder {
         for name in self.logger_builders().keys() {
             let mut current = name.as_str();
             while let Some((parent, _)) = current.rsplit_once('.') {
-                keep_names.insert(parent.to_string());
+                keep_names.insert(parent.to_owned());
                 current = parent;
             }
         }
@@ -191,12 +190,12 @@ impl ConfigBuilder {
         F: FnMut(&B) -> Result<O, E>,
         G: Fn(String, E) -> ConfigError,
     {
-        let mut built = BTreeMap::new();
+        let mut registry = BTreeMap::new();
         for (id, builder) in items {
             let object = build(builder).map_err(|error| wrap_err(id.clone(), error))?;
-            built.insert(id.clone(), object);
+            registry.insert(id.clone(), object);
         }
-        Ok(built)
+        Ok(registry)
     }
 
     /// Resolve resource references once and reject duplicate or unknown IDs.
@@ -231,12 +230,12 @@ impl ConfigBuilder {
     }
 
     /// Convert repeated handler references into a configuration error.
-    fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
+    const fn duplicate_handler_ids(ids: Vec<String>) -> ConfigError {
         ConfigError::DuplicateHandlerIds(ids)
     }
 
     /// Convert repeated filter references into a configuration error.
-    fn duplicate_filter_ids(ids: Vec<String>) -> ConfigError {
+    const fn duplicate_filter_ids(ids: Vec<String>) -> ConfigError {
         ConfigError::DuplicateFilterIds(ids)
     }
 
@@ -280,12 +279,12 @@ impl ConfigBuilder {
             Self::duplicate_filter_ids,
         )?;
         Ok(ConfiguredLoggerPlan {
-            name: name.to_string(),
+            name: name.to_owned(),
             handler_ids: config.handler_ids().to_vec(),
             filter_ids: config.filter_ids().to_vec(),
             handlers,
             filters,
-            level: config.level_opt().or(self.default_level()),
+            level: config.level_opt().or_else(|| self.default_level()),
             propagate: config.propagate_opt(),
         })
     }
@@ -299,7 +298,7 @@ impl ConfigBuilder {
             .collect::<BTreeMap<_, _>>();
         let built_filters = Self::build_map(
             self.filter_builders(),
-            |builder| builder.build(),
+            crate::filters::FilterBuilder::build,
             |id, source| ConfigError::FilterBuild { id, source },
         )?;
         // Resolve handler filters before constructors can open files or start workers.

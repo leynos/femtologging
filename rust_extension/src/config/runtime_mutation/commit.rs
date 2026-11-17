@@ -105,7 +105,6 @@ impl RuntimeConfigBuilder {
 
     /// Assemble a pruned commit from the validated plan and built definitions.
     pub(crate) fn assemble_commit(
-        &self,
         py: Python<'_>,
         inputs: CommitInputs,
     ) -> Result<RuntimeCommit, ConfigError> {
@@ -133,10 +132,7 @@ impl RuntimeConfigBuilder {
         let impacted_loggers = plan
             .impacted_loggers
             .into_iter()
-            .map(|name| {
-                self.fetch_impacted_logger(py, &name)
-                    .map(|logger| (name, logger))
-            })
+            .map(|name| Self::fetch_impacted_logger(py, &name).map(|logger| (name, logger)))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(RuntimeCommit {
@@ -150,11 +146,7 @@ impl RuntimeConfigBuilder {
         })
     }
     /// Looks up an impacted Python logger without mutating it, mapping lookup failures to `LoggerInit`.
-    fn fetch_impacted_logger(
-        &self,
-        py: Python<'_>,
-        name: &str,
-    ) -> Result<Py<FemtoLogger>, ConfigError> {
+    fn fetch_impacted_logger(py: Python<'_>, name: &str) -> Result<Py<FemtoLogger>, ConfigError> {
         manager::get_logger(py, name)
             .map_err(|err| ConfigError::LoggerInit(format!("{name}: {err}")))
     }
@@ -196,12 +188,12 @@ fn build_registry<Builder, Value, BuildError>(
     mut build: impl FnMut(&Builder) -> Result<Value, BuildError>,
     mut map_error: impl FnMut(String, BuildError) -> ConfigError,
 ) -> Result<BTreeMap<String, Value>, ConfigError> {
-    let mut built = BTreeMap::new();
+    let mut registry = BTreeMap::new();
     for (id, builder) in items {
         let value = build(builder).map_err(|source| map_error(id.clone(), source))?;
-        built.insert(id.clone(), value);
+        registry.insert(id.clone(), value);
     }
-    Ok(built)
+    Ok(registry)
 }
 
 /// Publishes live logger attachments and the registry snapshot after validation succeeds.

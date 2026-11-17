@@ -16,10 +16,10 @@ use super::types::HandlerBuilder;
 use crate::config::ConfigError;
 
 /// Converts a borrowed Python handler builder to its Rust enum variant when types match.
-type HandlerBuilderExtractor = for<'a, 'py> fn(&Borrowed<'a, 'py, PyAny>) -> Option<HandlerBuilder>;
+type HandlerBuilderExtractor = for<'a, 'py> fn(Borrowed<'a, 'py, PyAny>) -> Option<HandlerBuilder>;
 
 /// Attempt extraction as one concrete builder type, returning `None` on mismatch.
-fn try_extract_builder<T>(obj: &Borrowed<'_, '_, PyAny>) -> Option<HandlerBuilder>
+fn try_extract_builder<T>(obj: Borrowed<'_, '_, PyAny>) -> Option<HandlerBuilder>
 where
     T: for<'a, 'py> FromPyObject<'a, 'py> + Into<HandlerBuilder>,
 {
@@ -42,9 +42,9 @@ impl From<ConfigError> for PyErr {
             ConfigError::UnknownIds(ids) => {
                 use pyo3::types::PyTuple;
                 Python::attach(|py| match PyTuple::new(py, ids) {
-                    Ok(tup) => PyErr::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
+                    Ok(tup) => Self::new::<PyKeyError, _>(Py::<PyTuple>::from(tup)),
                     Err(cause) => {
-                        let key_err = PyErr::new::<PyKeyError, _>("unknown handler identifiers");
+                        let key_err = Self::new::<PyKeyError, _>("unknown handler identifiers");
                         key_err.set_cause(py, Some(cause));
                         key_err
                     }
@@ -62,7 +62,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for HandlerBuilder {
     fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
         HANDLER_BUILDER_EXTRACTORS
             .iter()
-            .find_map(|extract| extract(&obj))
+            .find_map(|extract| extract(obj))
             .ok_or_else(|| {
                 let fq = fq_py_type(&obj.to_owned());
                 pyo3::exceptions::PyTypeError::new_err(format!(
