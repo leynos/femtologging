@@ -54,6 +54,49 @@ impl HttpSerializableRecord<'_> {
             + usize::from(self.exc_info.is_some())
             + usize::from(self.stack_info.is_some())
     }
+
+    /// Write the fixed wire fields that every payload carries.
+    ///
+    /// Keeping the fixed prefix separate from the conditional suffix makes it
+    /// clear which entries a downstream consumer can always expect.
+    fn serialize_core_fields<M>(&self, map: &mut M) -> Result<(), M::Error>
+    where
+        M: SerializeMap,
+    {
+        map.serialize_entry("name", self.name)?;
+        map.serialize_entry("levelname", self.levelname)?;
+        map.serialize_entry("msg", self.msg)?;
+        map.serialize_entry("created", &self.created)?;
+        map.serialize_entry("filename", self.filename)?;
+        map.serialize_entry("lineno", &self.lineno)?;
+        map.serialize_entry("module", self.module)?;
+        map.serialize_entry("thread", &format_args!("{:?}", self.thread_id))?;
+        Ok(())
+    }
+
+    /// Write the optional entries appended after the fixed prefix.
+    ///
+    /// The thread name, structured key-values, exception data, and stack data
+    /// appear only when the source record captured them, so a consumer must
+    /// not assume these keys are present.
+    fn serialize_optional_fields<M>(&self, map: &mut M) -> Result<(), M::Error>
+    where
+        M: SerializeMap,
+    {
+        if let Some(name) = self.thread_name {
+            map.serialize_entry("threadName", name)?;
+        }
+        for (k, v) in self.key_values {
+            map.serialize_entry(k, v)?;
+        }
+        if let Some(exc) = self.exc_info {
+            map.serialize_entry("exc_info", exc)?;
+        }
+        if let Some(stack) = self.stack_info {
+            map.serialize_entry("stack_info", stack)?;
+        }
+        Ok(())
+    }
 }
 
 impl<'a> From<&'a FemtoLogRecord> for HttpSerializableRecord<'a> {
@@ -90,26 +133,8 @@ impl Serialize for HttpSerializableRecord<'_> {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(self.count_fields()))?;
-        map.serialize_entry("name", self.name)?;
-        map.serialize_entry("levelname", self.levelname)?;
-        map.serialize_entry("msg", self.msg)?;
-        map.serialize_entry("created", &self.created)?;
-        map.serialize_entry("filename", self.filename)?;
-        map.serialize_entry("lineno", &self.lineno)?;
-        map.serialize_entry("module", self.module)?;
-        map.serialize_entry("thread", &format_args!("{:?}", self.thread_id))?;
-        if let Some(name) = self.thread_name {
-            map.serialize_entry("threadName", name)?;
-        }
-        for (k, v) in self.key_values {
-            map.serialize_entry(k, v)?;
-        }
-        if let Some(exc) = self.exc_info {
-            map.serialize_entry("exc_info", exc)?;
-        }
-        if let Some(stack) = self.stack_info {
-            map.serialize_entry("stack_info", stack)?;
-        }
+        self.serialize_core_fields(&mut map)?;
+        self.serialize_optional_fields(&mut map)?;
         map.end()
     }
 }

@@ -266,12 +266,12 @@ impl Worker {
             warn!("FemtoSocketHandler dropped {count} records during shutdown");
         });
         self.flush_silently();
-        // Keep every shutdown acknowledgement behind the last request and
-        // cleanup. The final send is the worker's final action.
-        for ack in shutdown_acks {
-            let _ = ack.send(());
-        }
-        if let Some(ack) = shutdown_ack {
+        Self::send_shutdown_acks(shutdown_acks, shutdown_ack);
+    }
+
+    /// Send each queued acknowledgement, ending with `final_ack` after cleanup.
+    fn send_shutdown_acks(acks: Vec<Sender<()>>, final_ack: Option<Sender<()>>) {
+        for ack in acks.into_iter().chain(final_ack) {
             let _ = ack.send(());
         }
     }

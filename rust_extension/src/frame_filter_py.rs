@@ -63,42 +63,77 @@ where
     }
 }
 
+/// Extract a required frame field, reporting a missing key by name.
+///
+/// The key name is repeated in the error so a caller can tell which entry of
+/// the frame dict was absent without inspecting the payload.
+fn required_field<'py, T>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<T>
+where
+    T: for<'a> pyo3::FromPyObject<'a, 'py, Error = pyo3::PyErr>,
+{
+    dict.get_item(key)?
+        .ok_or_else(|| PyTypeError::new_err(format!("frame dict missing '{key}' key")))?
+        .extract()
+}
+
 /// Extract a StackFrame from a Python dict.
 fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
-    let filename: String = dict
-        .get_item("filename")?
-        .ok_or_else(|| PyTypeError::new_err("frame dict missing 'filename' key"))?
-        .extract()?;
+    let mut frame = required_frame_fields(dict)?;
+    add_optional_frame_fields(dict, &mut frame)?;
+    Ok(frame)
+}
 
-    let lineno: u32 = dict
-        .get_item("lineno")?
-        .ok_or_else(|| PyTypeError::new_err("frame dict missing 'lineno' key"))?
-        .extract()?;
-
-    let function: String = dict
-        .get_item("function")?
-        .ok_or_else(|| PyTypeError::new_err("frame dict missing 'function' key"))?
-        .extract()?;
-
-    let end_lineno: Option<u32> = extract_optional(dict, "end_lineno")?;
-    let colno: Option<u32> = extract_optional(dict, "colno")?;
-    let end_colno: Option<u32> = extract_optional(dict, "end_colno")?;
-    let source_line: Option<String> = extract_optional(dict, "source_line")?;
-
-    // Extract locals if present
-    let locals: Option<std::collections::BTreeMap<String, String>> =
-        extract_optional(dict, "locals")?;
-
+/// Build a frame with its required fields set and its optional fields empty.
+fn required_frame_fields(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
     Ok(StackFrame {
-        filename,
-        lineno,
-        end_lineno,
-        colno,
-        end_colno,
-        function,
-        source_line,
-        locals,
+        filename: required_field(dict, "filename")?,
+        lineno: required_field(dict, "lineno")?,
+        end_lineno: None,
+        colno: None,
+        end_colno: None,
+        function: required_field(dict, "function")?,
+        source_line: None,
+        locals: None,
     })
+}
+
+/// Fill in the optional frame fields, leaving absent keys as `None`.
+fn add_optional_frame_fields(dict: &Bound<'_, PyDict>, frame: &mut StackFrame) -> PyResult<()> {
+    frame.end_lineno = extract_optional(dict, "end_lineno")?;
+    frame.colno = extract_optional(dict, "colno")?;
+    frame.end_colno = extract_optional(dict, "end_colno")?;
+    frame.source_line = extract_optional(dict, "source_line")?;
+    frame.locals = extract_optional(dict, "locals")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod required_field_tests {
+    //! Verify required frame fields report their missing key by name.
+
+    use pyo3::prelude::*;
+    use pyo3::types::PyDict;
+
+    use super::required_field;
+
+    #[test]
+    fn missing_key_names_the_field() {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("filename", "module.py")
+                .expect("set filename");
+            let filename: String = required_field(&dict, "filename").expect("filename present");
+            assert_eq!(filename, "module.py");
+
+            let error = required_field::<u32>(&dict, "lineno").expect_err("lineno is absent");
+            assert!(
+                error
+                    .to_string()
+                    .contains("frame dict missing 'lineno' key"),
+                "unexpected error: {error}"
+            );
+        });
+    }
 }
 
 /// Convert a StackFrame back to a Python dict.

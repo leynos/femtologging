@@ -279,32 +279,14 @@ use py_api::{get_logger, reset_manager_py};
 /// ```
 #[pymodule]
 fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Core classes (always registered)
-    m.add_class::<FemtoLogger>()?;
-    m.add_class::<FemtoHandler>()?;
-    m.add_class::<FemtoStreamHandler>()?;
-    m.add_class::<FemtoFileHandler>()?;
-    m.add(
-        "HandlerConfigError",
-        m.py().get_type::<HandlerConfigError>(),
-    )?;
-    m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
-    m.add("EXCEPTION_SCHEMA_VERSION", EXCEPTION_SCHEMA_VERSION)?;
-
-    // Core functions (always registered)
-    m.add_function(wrap_pyfunction!(hello, m)?)?;
-    m.add_function(wrap_pyfunction!(get_logger, m)?)?;
-    m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
-    #[cfg(feature = "python")]
-    m.add_function(wrap_pyfunction!(runtime_attachment_state_for_test, m)?)?;
+    // Core classes, error types, and functions (always registered)
+    register_core_classes(m)?;
+    register_core_error_types(m)?;
+    register_core_functions(m)?;
 
     // Python-only classes, builders, and functions
     #[cfg(feature = "python")]
-    {
-        python_module::register_python_classes(m)?;
-        python_module::add_python_bindings(m)?;
-        python_module::register_python_functions(m)?;
-    }
+    python_module::register_python_bindings(m)?;
 
     // Log-compat functions (requires both python and log-compat features)
     #[cfg(all(feature = "python", feature = "log-compat"))]
@@ -312,6 +294,36 @@ fn _femtologging_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(all(feature = "python", feature = "tracing-compat"))]
     python_module::register_tracing_compat_functions(m)?;
 
+    Ok(())
+}
+
+/// Register the core classes always exposed by the extension module.
+fn register_core_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<FemtoLogger>()?;
+    m.add_class::<FemtoHandler>()?;
+    m.add_class::<FemtoStreamHandler>()?;
+    m.add_class::<FemtoFileHandler>()?;
+    Ok(())
+}
+
+/// Register the exception types and schema version always exposed.
+fn register_core_error_types(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add(
+        "HandlerConfigError",
+        m.py().get_type::<HandlerConfigError>(),
+    )?;
+    m.add("HandlerIOError", m.py().get_type::<HandlerIOError>())?;
+    m.add("EXCEPTION_SCHEMA_VERSION", EXCEPTION_SCHEMA_VERSION)?;
+    Ok(())
+}
+
+/// Register the Python-callable functions that every build compiles.
+fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(hello, m)?)?;
+    m.add_function(wrap_pyfunction!(get_logger, m)?)?;
+    m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
+    #[cfg(feature = "python")]
+    m.add_function(wrap_pyfunction!(runtime_attachment_state_for_test, m)?)?;
     Ok(())
 }
 
