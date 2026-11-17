@@ -256,18 +256,20 @@ One absolute deadline begins before dispatch-state resolution. Resolving that
 state, marker enqueue, handler-list lock acquisition, worker acknowledgement,
 and every handler flush consume the same budget. Built-in handlers also cap
 their waits at their shorter configured timeout. An empty registry skips the
-marker and waits only for this logger's in-flight work. Otherwise, the marker
-is enqueued before the handler list is cloned under a deadline-bounded read
-lock, so queue backpressure never holds the registry lock or an unqueued
-handler snapshot. A start gate ensures the worker releases the lock before
-callbacks run. Handler changes completed before the snapshot are reflected in
-this barrier; a removal after the snapshot does not cancel it. The marker keeps
-the handler alive until the worker releases it. A late handler destructor runs
-on the worker, not on the flush caller. Additions after the snapshot
-participate in the next barrier. Concurrent calls each use their own deadline
-and bounded queue marker; the logger creates no helper threads or unbounded
-task queue. Once the worker exits, marker insertion fails and the barrier
-returns `false`.
+handler marker. If that logger still has records in flight, it queues a
+shard-wide drain marker instead; because that marker is ordered behind every
+job already on the shard, another logger's queued work delays it and can make
+the flush time out. Otherwise, the handler marker is enqueued before the
+handler list is cloned under a deadline-bounded read lock, so queue
+backpressure never holds the registry lock or an unqueued handler snapshot. A
+start gate ensures the worker releases the lock before callbacks run. Handler
+changes completed before the snapshot are reflected in this barrier; a removal
+after the snapshot does not cancel it. The marker keeps the handler alive until
+the worker releases it. A late handler destructor runs on the worker, not on
+the flush caller. Additions after the snapshot participate in the next barrier.
+Concurrent calls each use their own deadline and bounded queue marker; the
+logger creates no helper threads or unbounded task queue. Once the worker
+exits, marker insertion fails and the barrier returns `false`.
 
 In a normal build, workers belong to the process-wide dispatch pool. Dropping a
 logger waits only for its own in-flight records, up to the bounded drain

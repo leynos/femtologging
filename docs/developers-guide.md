@@ -1179,8 +1179,12 @@ rate-limited warning without waiting. One logger's records remain FIFO on its
 shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
-`flush_handlers()` queues a flush marker when the logger has handlers; with no
-handlers it waits only for that logger's in-flight records. One absolute
+`flush_handlers()` queues a flush marker when the logger has handlers. With no
+handlers it skips that marker, but when the logger still has records in flight
+it queues a shard-wide drain marker on the same dispatch queue. That marker is
+ordered behind every job already queued, so work from other loggers on the
+shard delays it and can make the flush time out; only a logger with no handlers
+and no in-flight records returns without queueing anything. One absolute
 two-second deadline spans dispatch resolution, the marker's admission, the
 handler snapshot, the worker's acknowledgement, and each handler's flush, so
 the call is bounded once rather than once per stage. Built-in handlers keep
