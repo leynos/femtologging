@@ -354,15 +354,16 @@ fields with safe defaults does not require a version bump.
 
 `logger.flush_handlers()` queues a marker behind records the logger has already
 accepted when handlers are attached, then snapshots the handlers before
-allowing the worker to run their flush callbacks. With no handlers, it waits
-only for this logger's in-flight work. Handler additions and removals completed
-before that snapshot are reflected in this barrier; a handler removed
-afterwards remains alive in the snapshot until the worker releases it, and
-later additions participate in the next barrier. One two-second deadline covers
-dispatch resolution, marker insertion, handler-list locking, worker
-acknowledgement and every handler flush. Built-in handlers keep their shorter
-configured timeouts. The Python method releases the GIL while waiting so Python
-handlers can run.
+allowing the worker to run their flush callbacks. With no handlers but records
+in flight, it queues a shard-wide drain marker instead; that marker sits behind
+work other loggers have already queued on the same shard, so that work can
+delay the flush. Handler additions and removals completed before that snapshot
+are reflected in this barrier; a handler removed afterwards remains alive in
+the snapshot until the worker releases it, and later additions participate in
+the next barrier. One two-second deadline covers dispatch resolution, marker
+insertion, handler-list locking, worker acknowledgement and every handler
+flush. Built-in handlers keep their shorter configured timeouts. The Python
+method releases the GIL while waiting so Python handlers can run.
 
 The method returns `False` when a stage is not confirmed by the deadline, the
 worker has exited, or a handler reports failure or lacks deadline support. A

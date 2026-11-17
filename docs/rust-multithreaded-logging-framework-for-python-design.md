@@ -210,16 +210,17 @@ saw the marker but did not answer.
 For screen readers: the following state diagram shows a `flush_handlers()` call
 resolving its dispatch state and checking the handler list. With handlers, it
 queues a marker before taking the flush snapshot, then waits for the worker to
-drain earlier records and flush that snapshot. With no handlers, it waits only
-for this logger's in-flight work. The Python path then reacquires the
-interpreter. It succeeds only when the worker and every deadline-aware handler
-confirm before the shared deadline. It fails if dispatch-state resolution,
-snapshot-lock acquisition, marker enqueue, worker flush, acknowledgement or
-interpreter reacquisition is not confirmed by the shared deadline, if the
-worker has exited, or if a handler reports failure or does not implement the
-deadline-aware contract. PyO3 must reacquire the interpreter before returning
-to Python; CPython controls that handoff, so it can delay the Python return
-beyond the Rust barrier deadline.
+drain earlier records and flush that snapshot. With no handlers but records in
+flight, it queues a shard-wide drain marker instead, so work another logger has
+already queued on the same shard can delay it. The Python path then reacquires
+the interpreter. It succeeds only when the worker and every deadline-aware
+handler confirm before the shared deadline. It fails if dispatch-state
+resolution, snapshot-lock acquisition, marker enqueue, worker flush,
+acknowledgement or interpreter reacquisition is not confirmed by the shared
+deadline, if the worker has exited, or if a handler reports failure or does not
+implement the deadline-aware contract. PyO3 must reacquire the interpreter
+before returning to Python; CPython controls that handoff, so it can delay the
+Python return beyond the Rust barrier deadline.
 
 ```mermaid
 stateDiagram-v2
@@ -227,10 +228,10 @@ stateDiagram-v2
     ResolveDispatchState --> CheckHandlers: state available before deadline
     ResolveDispatchState --> Failed: worker unavailable or deadline expired
     CheckHandlers --> EnqueueMarker: handler attached
-    CheckHandlers --> WaitForLoggerDrain: no handlers, work in flight
-    CheckHandlers --> Succeeded: no handlers or in-flight work
-    WaitForLoggerDrain --> Succeeded: this logger's work completes
-    WaitForLoggerDrain --> Failed: logger drain deadline expires
+    CheckHandlers --> WaitForShardDrain: no handlers, work in flight
+    CheckHandlers --> Succeeded: no handlers and no in-flight work
+    WaitForShardDrain --> Succeeded: shard drain marker acknowledged
+    WaitForShardDrain --> Failed: drain deadline expires
     EnqueueMarker --> SnapshotHandlers: marker admitted
     EnqueueMarker --> Failed: queue full until deadline or worker exited
     SnapshotHandlers --> DrainEarlierRecords: read lock acquired before deadline
