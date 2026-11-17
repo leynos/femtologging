@@ -1,7 +1,8 @@
 //! Helpers for adapting Python callables into [`FemtoFormatter`] instances.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use pyo3::{
     exceptions::PyTypeError,
@@ -10,7 +11,7 @@ use pyo3::{
 };
 
 use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
-use crate::log_record::FemtoLogRecord;
+use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::python::fq_py_type;
 
 use super::{FemtoFormatter, SharedFormatter};
@@ -81,43 +82,90 @@ impl PythonFormatter {
 /// `handle_record` hook for Python handlers.
 pub fn record_to_dict(py: Python<'_>, record: &FemtoLogRecord) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
+    populate_record_scalars(&dict, record)?;
+    dict.set_item("metadata", build_metadata_dict(py, record)?)?;
+    add_exception_payload(py, &dict, record)?;
+    add_stack_payload(py, &dict, record)?;
+    Ok(dict.into())
+}
+
+/// Populate the top-level logger fields shared by every consumer.
+fn populate_record_scalars(dict: &Bound<'_, PyDict>, record: &FemtoLogRecord) -> PyResult<()> {
     dict.set_item("logger", record.logger())?;
     dict.set_item("level", record.level_str())?;
     dict.set_item("message", record.message())?;
     dict.set_item("levelno", u8::from(record.level()))?;
+    Ok(())
+}
 
+/// Build the nested metadata mapping, including structured key-values.
+fn build_metadata_dict<'py>(
+    py: Python<'py>,
+    record: &FemtoLogRecord,
+) -> PyResult<Bound<'py, PyDict>> {
     let rec_metadata = record.metadata();
     let metadata = PyDict::new(py);
+    populate_metadata_scalars(&metadata, rec_metadata)?;
+    metadata.set_item("key_values", key_values_dict(py, &rec_metadata.key_values)?)?;
+    Ok(metadata)
+}
+
+/// Populate the scalar metadata fields.
+fn populate_metadata_scalars(
+    metadata: &Bound<'_, PyDict>,
+    rec_metadata: &RecordMetadata,
+) -> PyResult<()> {
     metadata.set_item("module_path", &rec_metadata.module_path)?;
     metadata.set_item("filename", &rec_metadata.filename)?;
     metadata.set_item("line_number", rec_metadata.line_number)?;
     metadata.set_item("thread_name", &rec_metadata.thread_name)?;
     metadata.set_item("thread_id", format!("{:?}", rec_metadata.thread_id))?;
-    let timestamp = rec_metadata
-        .timestamp
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or_default();
-    metadata.set_item("timestamp", timestamp)?;
+    metadata.set_item("timestamp", timestamp_seconds(rec_metadata.timestamp))?;
+    Ok(())
+}
 
+/// Convert a record timestamp to fractional seconds since the Unix epoch.
+fn timestamp_seconds(timestamp: SystemTime) -> f64 {
+    timestamp
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or_default()
+}
+
+/// Build the structured key-value mapping.
+fn key_values_dict<'py>(
+    py: Python<'py>,
+    key_values: &BTreeMap<String, String>,
+) -> PyResult<Bound<'py, PyDict>> {
     let kv = PyDict::new(py);
-    for (key, value) in &rec_metadata.key_values {
+    for (key, value) in key_values {
         kv.set_item(key, value)?;
     }
-    metadata.set_item("key_values", kv)?;
-    dict.set_item("metadata", metadata)?;
+    Ok(kv)
+}
 
-    // Add exception payload if present
-    if let Some(exc) = record.exception_payload() {
-        dict.set_item("exc_info", exception_payload_to_py(py, exc)?)?;
-    }
+/// Add the exception payload when the record carries one.
+fn add_exception_payload(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    record: &FemtoLogRecord,
+) -> PyResult<()> {
+    let Some(exc) = record.exception_payload() else {
+        return Ok(());
+    };
+    dict.set_item("exc_info", exception_payload_to_py(py, exc)?)
+}
 
-    // Add stack payload if present
-    if let Some(stack) = record.stack_payload() {
-        dict.set_item("stack_info", stack_payload_to_py(py, stack)?)?;
-    }
-
-    Ok(dict.into())
+/// Add the stack payload when the record carries one.
+fn add_stack_payload(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    record: &FemtoLogRecord,
+) -> PyResult<()> {
+    let Some(stack) = record.stack_payload() else {
+        return Ok(());
+    };
+    dict.set_item("stack_info", stack_payload_to_py(py, stack)?)
 }
 
 /// Convert a `StackFrame` to a Python dict.
@@ -197,38 +245,82 @@ fn set_optional_exception_items(
     dict: &Bound<'_, PyDict>,
     payload: &ExceptionPayload,
 ) -> PyResult<()> {
-    if let Some(ref module) = payload.module {
+    set_exception_module(dict, payload)?;
+    set_string_list_item(py, dict, "args_repr", &payload.args_repr)?;
+    set_string_list_item(py, dict, "notes", &payload.notes)?;
+    set_exception_frames(py, dict, payload)?;
+    set_nested_payload_item(py, dict, "cause", payload.cause.as_deref())?;
+    set_nested_payload_item(py, dict, "context", payload.context.as_deref())?;
+    set_exception_suppress_context(dict, payload)?;
+    set_exception_children(py, dict, payload)
+}
+
+/// Set the optional `module` field.
+fn set_exception_module(dict: &Bound<'_, PyDict>, payload: &ExceptionPayload) -> PyResult<()> {
+    if let Some(module) = &payload.module {
         dict.set_item("module", module)?;
     }
+    Ok(())
+}
 
-    if !payload.args_repr.is_empty() {
-        dict.set_item("args_repr", string_vec_to_pylist(py, &payload.args_repr)?)?;
+/// Set a non-empty string list field.
+fn set_string_list_item(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    values: &[String],
+) -> PyResult<()> {
+    if !values.is_empty() {
+        dict.set_item(key, string_vec_to_pylist(py, values)?)?;
     }
+    Ok(())
+}
 
-    if !payload.notes.is_empty() {
-        dict.set_item("notes", string_vec_to_pylist(py, &payload.notes)?)?;
-    }
-
+/// Set the optional `frames` list.
+fn set_exception_frames(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    payload: &ExceptionPayload,
+) -> PyResult<()> {
     if !payload.frames.is_empty() {
         dict.set_item("frames", frames_to_pylist(py, &payload.frames)?)?;
     }
+    Ok(())
+}
 
-    if let Some(ref cause) = payload.cause {
-        dict.set_item("cause", exception_payload_to_py(py, cause)?)?;
+/// Set an optional nested exception payload field.
+fn set_nested_payload_item(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    key: &str,
+    payload: Option<&ExceptionPayload>,
+) -> PyResult<()> {
+    if let Some(payload) = payload {
+        dict.set_item(key, exception_payload_to_py(py, payload)?)?;
     }
+    Ok(())
+}
 
-    if let Some(ref context) = payload.context {
-        dict.set_item("context", exception_payload_to_py(py, context)?)?;
-    }
-
+/// Set the optional `suppress_context` flag.
+fn set_exception_suppress_context(
+    dict: &Bound<'_, PyDict>,
+    payload: &ExceptionPayload,
+) -> PyResult<()> {
     if payload.suppress_context {
         dict.set_item("suppress_context", true)?;
     }
+    Ok(())
+}
 
+/// Set the optional nested exception group members.
+fn set_exception_children(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    payload: &ExceptionPayload,
+) -> PyResult<()> {
     if !payload.exceptions.is_empty() {
         dict.set_item("exceptions", exceptions_to_pylist(py, &payload.exceptions)?)?;
     }
-
     Ok(())
 }
 
@@ -268,4 +360,37 @@ pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<SharedFormatter> {
             context.set_cause(py, Some(err));
             context
         })
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for record conversion helpers.
+
+    use std::collections::BTreeMap;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use pyo3::Python;
+    use pyo3::types::{PyAnyMethods, PyDictMethods};
+
+    use super::{key_values_dict, timestamp_seconds};
+
+    #[test]
+    fn timestamp_seconds_treats_pre_epoch_times_as_zero() {
+        assert_eq!(timestamp_seconds(UNIX_EPOCH - Duration::from_secs(1)), 0.0);
+    }
+
+    #[test]
+    fn key_values_dict_copies_structured_values() {
+        Python::attach(|py| {
+            let values = BTreeMap::from([("request_id".to_owned(), "abc".to_owned())]);
+            let dict = key_values_dict(py, &values).expect("build key-value dict");
+            let request_id: String = dict
+                .get_item("request_id")
+                .expect("lookup")
+                .expect("present")
+                .extract()
+                .expect("string value");
+            assert_eq!(request_id, "abc");
+        });
+    }
 }

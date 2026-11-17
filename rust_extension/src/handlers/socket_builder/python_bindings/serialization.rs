@@ -1,5 +1,7 @@
 //! Python dictionary serialization for the socket handler builder.
 
+use std::path::Path;
+
 use pyo3::{
     Bound, PyResult,
     types::{PyDict, PyDictMethods},
@@ -31,17 +33,30 @@ impl SocketHandlerBuilder {
     fn extend_dict_with_transport(&self, d: &Bound<'_, PyDict>) -> PyResult<()> {
         match &self.transport {
             Some(TransportConfig::Tcp { host, port }) => {
-                d.set_item("transport", "tcp")?;
-                d.set_item("host", host)?;
-                d.set_item("port", *port)?;
-                self.extend_dict_with_tls(d)
+                self.extend_dict_with_tcp_transport(d, host, *port)
             }
-            Some(TransportConfig::Unix { path }) => {
-                d.set_item("transport", "unix")?;
-                d.set_item("path", path.display().to_string())
-            }
+            Some(TransportConfig::Unix { path }) => Self::extend_dict_with_unix_transport(d, path),
             None => Ok(()),
         }
+    }
+
+    /// Serialize a TCP endpoint followed by its TLS options.
+    fn extend_dict_with_tcp_transport(
+        &self,
+        d: &Bound<'_, PyDict>,
+        host: &str,
+        port: u16,
+    ) -> PyResult<()> {
+        d.set_item("transport", "tcp")?;
+        d.set_item("host", host)?;
+        d.set_item("port", port)?;
+        self.extend_dict_with_tls(d)
+    }
+
+    /// Serialize a Unix-domain endpoint.
+    fn extend_dict_with_unix_transport(d: &Bound<'_, PyDict>, path: &Path) -> PyResult<()> {
+        d.set_item("transport", "unix")?;
+        d.set_item("path", path.display().to_string())
     }
 
     /// Serialize the TLS options for a TCP transport into the dict.
@@ -71,5 +86,103 @@ impl SocketHandlerBuilder {
             d.set_item("filters", self.filters.clone())?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for transport serialization in the socket builder dict.
+
+    use pyo3::Python;
+    use pyo3::types::{PyAnyMethods, PyDict, PyDictMethods};
+
+    use super::SocketHandlerBuilder;
+
+    /// Serialize only the transport fields of `builder` into a fresh dict.
+    fn transport_dict<'py>(
+        py: Python<'py>,
+        builder: &SocketHandlerBuilder,
+    ) -> pyo3::Bound<'py, PyDict> {
+        let d = PyDict::new(py);
+        builder
+            .extend_dict_with_transport(&d)
+            .expect("transport serialization must succeed");
+        d
+    }
+
+    /// Read a required string field from `d`.
+    fn string_field(d: &pyo3::Bound<'_, PyDict>, key: &str) -> String {
+        d.get_item(key)
+            .expect("get_item must succeed")
+            .expect("required string field must be present")
+            .extract()
+            .expect("field must extract as a string")
+    }
+
+    #[test]
+    fn tcp_transport_includes_tls_options() {
+        Python::attach(|py| {
+            let builder = SocketHandlerBuilder::new()
+                .with_tcp("localhost", 514)
+                .with_tls(Some("logs.example".to_owned()), true);
+            let d = transport_dict(py, &builder);
+
+            assert_eq!(string_field(&d, "transport"), "tcp");
+            assert_eq!(string_field(&d, "host"), "localhost");
+            let port: u16 = d
+                .get_item("port")
+                .expect("get_item must succeed")
+                .expect("port must be present")
+                .extract()
+                .expect("port must extract");
+            assert_eq!(port, 514);
+            assert_eq!(string_field(&d, "tls_domain"), "logs.example");
+            let insecure: bool = d
+                .get_item("tls_insecure")
+                .expect("get_item must succeed")
+                .expect("tls_insecure must be present")
+                .extract()
+                .expect("tls_insecure must extract");
+            assert!(insecure);
+        });
+    }
+
+    #[test]
+    fn tcp_transport_without_tls_records_disabled_tls() {
+        Python::attach(|py| {
+            let d = transport_dict(py, &SocketHandlerBuilder::new().with_tcp("localhost", 514));
+            let tls: bool = d
+                .get_item("tls")
+                .expect("get_item must succeed")
+                .expect("tls must be present")
+                .extract()
+                .expect("tls must extract");
+            assert!(!tls);
+        });
+    }
+
+    #[test]
+    fn unix_transport_serializes_the_path() {
+        Python::attach(|py| {
+            let d = transport_dict(
+                py,
+                &SocketHandlerBuilder::new().with_unix_path("/tmp/femto.sock"),
+            );
+            assert_eq!(string_field(&d, "transport"), "unix");
+            assert_eq!(string_field(&d, "path"), "/tmp/femto.sock");
+        });
+    }
+
+    #[test]
+    fn absent_transport_serializes_nothing() {
+        Python::attach(|py| {
+            let d = transport_dict(py, &SocketHandlerBuilder::new());
+            assert!(
+                d.get_item("transport")
+                    .expect("get_item must succeed")
+                    .is_none(),
+                "unconfigured transport must not add a transport key"
+            );
+        });
     }
 }

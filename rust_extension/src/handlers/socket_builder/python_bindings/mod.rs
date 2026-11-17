@@ -28,6 +28,34 @@ fn extract_optional_u64(config: &Bound<'_, PyDict>, key: &str) -> PyResult<Optio
     }
 }
 
+/// Reject configuration keys outside the supported backoff set.
+fn validate_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
+    const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
+    for (key_obj, _) in config.iter() {
+        let key_name: &str = key_obj.extract()?;
+        if !ALLOWED_KEYS.contains(&key_name) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown BackoffConfig key {key_name:?}",
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Read the four optional backoff overrides from a validated dictionary.
+fn extract_backoff_overrides(config: &Bound<'_, PyDict>) -> PyResult<BackoffOverrides> {
+    let base_ms = extract_optional_u64(config, "base_ms")?;
+    let cap_ms = extract_optional_u64(config, "cap_ms")?;
+    let reset_after_ms = extract_optional_u64(config, "reset_after_ms")?;
+    let deadline_ms = extract_optional_u64(config, "deadline_ms")?;
+    Ok(BackoffOverrides::from_options(
+        base_ms,
+        cap_ms,
+        reset_after_ms,
+        deadline_ms,
+    ))
+}
+
 #[pymethods]
 impl BackoffOverrides {
     /// Construct `BackoffOverrides` from an optional configuration dictionary.
@@ -45,32 +73,11 @@ impl BackoffOverrides {
     #[new]
     #[pyo3(signature = (config=None))]
     fn py_new(config: Option<Bound<'_, PyDict>>) -> PyResult<Self> {
-        // Fail fast on typos / unsupported keys.
-        const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
         let Some(config_dict) = config else {
             return Ok(Self::default());
         };
-
-        for (key_obj, _) in config_dict.iter() {
-            let key_name: &str = key_obj.extract()?;
-            if !ALLOWED_KEYS.contains(&key_name) {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown BackoffConfig key {key_name:?}",
-                )));
-            }
-        }
-
-        let base_ms = extract_optional_u64(&config_dict, "base_ms")?;
-        let cap_ms = extract_optional_u64(&config_dict, "cap_ms")?;
-        let reset_after_ms = extract_optional_u64(&config_dict, "reset_after_ms")?;
-        let deadline_ms = extract_optional_u64(&config_dict, "deadline_ms")?;
-
-        Ok(Self::from_options(
-            base_ms,
-            cap_ms,
-            reset_after_ms,
-            deadline_ms,
-        ))
+        validate_backoff_keys(&config_dict)?;
+        extract_backoff_overrides(&config_dict)
     }
 }
 
@@ -202,3 +209,44 @@ impl AsPyDict for SocketHandlerBuilder {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod backoff_config_tests {
+    //! Tests for `BackoffOverrides` Python configuration parsing.
+
+    use pyo3::Python;
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    use super::{extract_backoff_overrides, validate_backoff_keys};
+
+    #[test]
+    fn validate_backoff_keys_rejects_unknown_keys() {
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("cap_ms", 5).expect("set cap");
+            validate_backoff_keys(&config).expect("known key must pass");
+            config.set_item("bogus", 5).expect("set bogus");
+            let err = validate_backoff_keys(&config).expect_err("unknown keys must fail");
+            assert_eq!(
+                err.to_string(),
+                "ValueError: unknown BackoffConfig key \"bogus\""
+            );
+        });
+    }
+
+    #[test]
+    fn extract_backoff_overrides_reads_each_field() {
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("base_ms", 1).expect("set base");
+            config.set_item("cap_ms", 2).expect("set cap");
+            config.set_item("reset_after_ms", 3).expect("set reset");
+            config.set_item("deadline_ms", 4).expect("set deadline");
+            let overrides = extract_backoff_overrides(&config).expect("extract overrides");
+            assert_eq!(overrides.base_ms(), Some(1));
+            assert_eq!(overrides.cap_ms(), Some(2));
+            assert_eq!(overrides.reset_after_ms(), Some(3));
+            assert_eq!(overrides.deadline_ms(), Some(4));
+        });
+    }
+}

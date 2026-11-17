@@ -42,44 +42,93 @@ fn create_filter_record<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let record_dict_obj = record_to_dict(py, record)?;
     let record_dict = record_dict_obj.bind(py).cast::<PyDict>()?;
+    let payload = build_log_record_payload(py, record, record_dict)?;
+    let logging = py.import("logging")?;
+    logging.call_method1("makeLogRecord", (payload,))
+}
+
+/// Build the payload passed to `logging.makeLogRecord`.
+fn build_log_record_payload<'py>(
+    py: Python<'py>,
+    record: &FemtoLogRecord,
+    record_dict: &Bound<'py, PyDict>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let (metadata, extra) = record_metadata_view(record_dict)?;
+    let payload = PyDict::new(py);
+    populate_log_record_core(record, &metadata, &payload)?;
+    copy_optional_record_fields(record_dict, &payload)?;
+    copy_extra_fields(&extra, &payload)?;
+    Ok(payload)
+}
+
+/// Return the record's metadata mapping and its structured enrichment values.
+fn record_metadata_view<'py>(
+    record_dict: &Bound<'py, PyDict>,
+) -> PyResult<(Bound<'py, PyDict>, Bound<'py, PyDict>)> {
     let metadata = record_dict
         .get_item("metadata")?
         .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("record dict missing metadata"))?;
-    let metadata = metadata.cast::<PyDict>()?;
-    let extra_binding = metadata.get_item("key_values")?.ok_or_else(|| {
+    let metadata = metadata.cast::<PyDict>()?.clone();
+    let extra = metadata.get_item("key_values")?.ok_or_else(|| {
         pyo3::exceptions::PyRuntimeError::new_err("record dict missing key_values")
     })?;
-    let extra = extra_binding.cast::<PyDict>()?;
+    let extra = extra.cast::<PyDict>()?.clone();
+    Ok((metadata, extra))
+}
 
-    let log_record_payload = PyDict::new(py);
-    log_record_payload.set_item("name", record.logger())?;
-    log_record_payload.set_item("msg", record.message())?;
-    log_record_payload.set_item("levelname", record.level_str())?;
-    log_record_payload.set_item("levelno", u8::from(record.level()))?;
-    log_record_payload.set_item("pathname", &record.metadata().filename)?;
-    log_record_payload.set_item("filename", &record.metadata().filename)?;
-    log_record_payload.set_item("module", &record.metadata().module_path)?;
-    log_record_payload.set_item("lineno", record.metadata().line_number)?;
-    log_record_payload.set_item("logger", record.logger())?;
-    log_record_payload.set_item("level", record.level_str())?;
-    log_record_payload.set_item("message", record.message())?;
-    log_record_payload.set_item("metadata", metadata)?;
-    log_record_payload.set_item("args", PyList::empty(py))?;
-    if let Some(exc_info) = record_dict.get_item("exc_info")? {
-        log_record_payload.set_item("exc_info", exc_info)?;
+/// Populate the core stdlib-compatible fields, including metadata.
+fn populate_log_record_core(
+    record: &FemtoLogRecord,
+    metadata: &Bound<'_, PyDict>,
+    payload: &Bound<'_, PyDict>,
+) -> PyResult<()> {
+    payload.set_item("name", record.logger())?;
+    payload.set_item("msg", record.message())?;
+    payload.set_item("levelname", record.level_str())?;
+    payload.set_item("levelno", u8::from(record.level()))?;
+    payload.set_item("pathname", &record.metadata().filename)?;
+    payload.set_item("filename", &record.metadata().filename)?;
+    payload.set_item("module", &record.metadata().module_path)?;
+    payload.set_item("lineno", record.metadata().line_number)?;
+    payload.set_item("logger", record.logger())?;
+    payload.set_item("level", record.level_str())?;
+    payload.set_item("message", record.message())?;
+    payload.set_item("metadata", metadata)?;
+    payload.set_item("args", PyList::empty(payload.py()))?;
+    Ok(())
+}
+
+/// Copy the optional exception and stack payloads from the converted record.
+fn copy_optional_record_fields(
+    record_dict: &Bound<'_, PyDict>,
+    payload: &Bound<'_, PyDict>,
+) -> PyResult<()> {
+    copy_record_item(record_dict, payload, "exc_info")?;
+    copy_record_item(record_dict, payload, "stack_info")
+}
+
+/// Copy one optional record field when the converted record provides it.
+fn copy_record_item(
+    record_dict: &Bound<'_, PyDict>,
+    payload: &Bound<'_, PyDict>,
+    key: &str,
+) -> PyResult<()> {
+    if let Some(value) = record_dict.get_item(key)? {
+        payload.set_item(key, value)?;
     }
-    if let Some(stack_info) = record_dict.get_item("stack_info")? {
-        log_record_payload.set_item("stack_info", stack_info)?;
-    }
+    Ok(())
+}
+
+/// Merge non-reserved enrichment values into the payload.
+fn copy_extra_fields(extra: &Bound<'_, PyDict>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
     for (key, value) in extra.iter() {
         let key = key.extract::<String>()?;
         if is_reserved_enrichment_key(&key) {
             continue;
         }
-        log_record_payload.set_item(key, value)?;
+        payload.set_item(key, value)?;
     }
-    let logging = py.import("logging")?;
-    logging.call_method1("makeLogRecord", (log_record_payload,))
+    Ok(())
 }
 
 /// Copies current record attributes so rejected callback changes can be discarded.
@@ -240,6 +289,58 @@ pub(super) fn extract_enrichment(
         }
     }
     Ok((enrichment, typed_enrichment))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the log record payload helpers.
+
+    use pyo3::Python;
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    use super::{copy_extra_fields, record_metadata_view};
+
+    #[test]
+    fn record_metadata_view_requires_metadata_and_key_values() {
+        Python::attach(|py| {
+            let record_dict = PyDict::new(py);
+            let err = match record_metadata_view(&record_dict) {
+                Ok(_) => panic!("metadata must be required"),
+                Err(err) => err,
+            };
+            assert_eq!(
+                err.to_string(),
+                "RuntimeError: record dict missing metadata"
+            );
+
+            let metadata = PyDict::new(py);
+            record_dict
+                .set_item("metadata", &metadata)
+                .expect("set metadata");
+            let err = match record_metadata_view(&record_dict) {
+                Ok(_) => panic!("key_values must be required"),
+                Err(err) => err,
+            };
+            assert_eq!(
+                err.to_string(),
+                "RuntimeError: record dict missing key_values"
+            );
+        });
+    }
+
+    #[test]
+    fn copy_extra_fields_skips_reserved_keys() {
+        Python::attach(|py| {
+            let extra = PyDict::new(py);
+            extra.set_item("request_id", "abc").expect("set extra");
+            extra.set_item("message", "ignored").expect("set extra");
+            let payload = PyDict::new(py);
+            copy_extra_fields(&extra, &payload).expect("copy extras");
+
+            assert!(payload.get_item("request_id").expect("lookup").is_some());
+            assert!(payload.get_item("message").expect("lookup").is_none());
+        });
+    }
 }
 
 /// Compares Python values using their native equality semantics.
