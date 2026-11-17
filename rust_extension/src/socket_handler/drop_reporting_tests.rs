@@ -132,6 +132,28 @@ fn closed_handler() -> FemtoSocketHandler {
     handler
 }
 
+/// A closed handler holding one drop the warning interval suppressed.
+///
+/// The first refused record warns and opens the interval; the second is held
+/// back, so whatever reports next must cover that one drop.
+fn closed_handler_holding_one_drop() -> FemtoSocketHandler {
+    let handler = closed_handler();
+    assert!(handler.handle(record("first refusal")).is_err());
+    assert!(handler.handle(record("held back")).is_err());
+    handler
+}
+
+/// Assert exactly one cause-neutral report of the held-back drop was emitted.
+fn assert_held_back_drop_reported(context: &str) {
+    let reported: Vec<_> = take_logged_messages()
+        .into_iter()
+        .filter(|entry| {
+            entry.message == "FemtoSocketHandler dropped 1 records since the last report"
+        })
+        .collect();
+    assert_eq!(reported.len(), 1, "{context}");
+}
+
 /// The handler's own flush reports drops refused after close.
 ///
 /// A closed handler still records refused `handle()` calls. The first refused
@@ -142,10 +164,7 @@ fn closed_handler() -> FemtoSocketHandler {
 #[serial_test::serial]
 fn flush_reports_drops_refused_after_close() {
     install_test_logger();
-    let handler = closed_handler();
-
-    assert!(handler.handle(record("first refusal")).is_err());
-    assert!(handler.handle(record("held back")).is_err());
+    let handler = closed_handler_holding_one_drop();
     let warned: Vec<_> = take_logged_messages()
         .into_iter()
         .filter(|entry| entry.message.contains("latest cause: handler closed"))
@@ -157,16 +176,8 @@ fn flush_reports_drops_refused_after_close() {
     );
 
     assert!(!handler.flush(), "a closed handler's flush reports false");
-    let flushed: Vec<_> = take_logged_messages()
-        .into_iter()
-        .filter(|entry| {
-            entry.message == "FemtoSocketHandler dropped 1 records since the last report"
-        })
-        .collect();
-    assert_eq!(
-        flushed.len(),
-        1,
-        "the flush should report the count the interval was holding back"
+    assert_held_back_drop_reported(
+        "the flush should report the count the interval was holding back",
     );
 
     assert!(!handler.flush());
@@ -181,25 +192,12 @@ fn flush_reports_drops_refused_after_close() {
 #[serial_test::serial]
 fn close_reports_drops_refused_after_an_earlier_close() {
     install_test_logger();
-    let mut handler = closed_handler();
-
-    assert!(handler.handle(record("first refusal")).is_err());
-    assert!(handler.handle(record("held back")).is_err());
+    let mut handler = closed_handler_holding_one_drop();
     let _ = take_logged_messages();
 
     handler.close();
 
-    let reported: Vec<_> = take_logged_messages()
-        .into_iter()
-        .filter(|entry| {
-            entry.message == "FemtoSocketHandler dropped 1 records since the last report"
-        })
-        .collect();
-    assert_eq!(
-        reported.len(),
-        1,
-        "a close must report drops recorded after an earlier close"
-    );
+    assert_held_back_drop_reported("a close must report drops recorded after an earlier close");
 }
 
 /// Destroying a closed handler reports the drops it refused after close.
@@ -210,23 +208,10 @@ fn close_reports_drops_refused_after_an_earlier_close() {
 #[serial_test::serial]
 fn dropping_a_closed_handler_reports_drops_refused_after_close() {
     install_test_logger();
-    let handler = closed_handler();
-
-    assert!(handler.handle(record("first refusal")).is_err());
-    assert!(handler.handle(record("held back")).is_err());
+    let handler = closed_handler_holding_one_drop();
     let _ = take_logged_messages();
 
     drop(handler);
 
-    let reported: Vec<_> = take_logged_messages()
-        .into_iter()
-        .filter(|entry| {
-            entry.message == "FemtoSocketHandler dropped 1 records since the last report"
-        })
-        .collect();
-    assert_eq!(
-        reported.len(),
-        1,
-        "destruction must not discard drops refused after close"
-    );
+    assert_held_back_drop_reported("destruction must not discard drops refused after close");
 }
