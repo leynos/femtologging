@@ -1,4 +1,14 @@
 //! Test-only synchronization hooks for Python handler flush regression tests.
+//!
+//! The flush tests need to observe the moment a worker enters a handler's flush
+//! and hold it there while the caller's deadline expires. `FlushTestHooks`
+//! carries that handshake: a handler signals entry, the test waits for it, and
+//! the test can cancel a wait that nothing will satisfy. The
+//! `wait_for_flush_entry_for_test`, `drain_flush_signals_for_test` and
+//! `cancel_flush_wait_for_test` helpers wire the hooks to a live `FemtoLogger`
+//! for the Python tests, which reach them through the extension module. The
+//! `tests` submodule covers the signal bookkeeping itself, so a stale signal
+//! cannot pass unnoticed.
 
 use std::time::Duration;
 

@@ -1,4 +1,12 @@
 //! Unit tests for the counter table, snapshots, and the wait timer.
+//!
+//! `WaitDiagnostics`, in the sibling `diagnostics` module, owns a fixed table of
+//! wait outcomes and the gauge that counts waits in flight. The tests pin that
+//! every `WaitOutcome` has its own key, that the exposed map keeps a stable key
+//! set, that recording moves only the named counter, and that durations
+//! accumulate while tracking the longest wait. The gauge is checked from the
+//! guard's side, and the timer is checked to record exactly one wait.
+//! `record_with` admits one sample without repeating the setup.
 
 use super::diagnostics::WaitDiagnostics;
 use super::outcome::{OUTCOME_COUNT, WaitOutcome};

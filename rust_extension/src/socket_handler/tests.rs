@@ -1,4 +1,13 @@
 //! Tests for the socket handler implementation.
+//!
+//! `FemtoSocketHandler` in the parent `socket_handler` module owns a worker that
+//! writes framed records to TCP or Unix transports. These scenarios cover
+//! builder validation (a transport is required, capacity must be non-zero, and
+//! TLS is refused over Unix), record delivery, close-driven flushing of pending
+//! records, backoff interrupted by close, and the TLS handshake timeout.
+//! `spawn_single_frame_server`, `read_single_frame` and `arrange_sent_record`
+//! provide the peer, `Payload` is the admitted record, and the `close`, `drain`,
+//! `slow_collector` and `unit` submodules hold the focused suites.
 
 use std::{
     io::{self, Read},

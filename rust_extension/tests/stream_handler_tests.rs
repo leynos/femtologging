@@ -1,4 +1,11 @@
 //! Behavioural tests for the stream handler and its worker thread lifecycle.
+//!
+//! `FemtoStreamHandler` writes records to any `Write` sink from its own worker,
+//! so these tests drive it with writers that misbehave on purpose: `BlockingBuf`
+//! holds a flush open and `FlushFailingBuf` fails one. The scenarios cover
+//! single and repeated writes, explicit and close-driven flushing, flushing
+//! after close, concurrent and trait-object use, a poisoned writer mutex, and
+//! the bounded drop timeout. `test_utils` supplies the shared helpers.
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, PoisonError};
