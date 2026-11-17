@@ -39,7 +39,7 @@ impl EventCollector {
     pub(super) fn captured(&self) -> Vec<CapturedEvent> {
         self.events
             .lock()
-            .unwrap_or_else(|err| panic!("event collector must not be poisoned: {err}"))
+            .expect("event collector must not be poisoned")
             .clone()
     }
 }
@@ -77,7 +77,7 @@ where
         event.record(&mut visitor);
         self.events
             .lock()
-            .unwrap_or_else(|err| panic!("event collector must not be poisoned: {err}"))
+            .expect("event collector must not be poisoned")
             .push(CapturedEvent {
                 target: event.metadata().target().to_owned(),
                 fields: visitor.fields,

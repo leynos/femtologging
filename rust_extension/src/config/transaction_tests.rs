@@ -210,8 +210,7 @@ fn assert_rejected_configuration_changes_nothing(
     root: LoggerConfigBuilder,
     mutate: impl FnOnce(ConfigBuilder) -> ConfigBuilder,
 ) {
-    let before = prepare_rejection_baseline(py, &root)
-        .unwrap_or_else(|err| panic!("baseline logger exists: {err}"));
+    let before = prepare_rejection_baseline(py, &root).expect("baseline logger exists");
 
     let invalid = mutate(transactional_builder(root).with_disable_existing_loggers(true));
     assert!(
@@ -219,8 +218,7 @@ fn assert_rejected_configuration_changes_nothing(
         "the invalid configuration must be rejected",
     );
 
-    let after = capture_transaction_state(py)
-        .unwrap_or_else(|err| panic!("logger survives a rejection: {err}"));
+    let after = capture_transaction_state(py).expect("logger survives a rejection");
     assert_eq!(
         after.loggers, before.loggers,
         "a rejected configuration must leave every pre-existing logger unchanged",

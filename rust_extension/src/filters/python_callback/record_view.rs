@@ -291,6 +291,18 @@ pub(super) fn extract_enrichment(
     Ok((enrichment, typed_enrichment))
 }
 
+/// Compares Python values using their native equality semantics.
+fn python_values_equal(
+    py: Python<'_>,
+    previous: &Py<PyAny>,
+    current: &Bound<'_, PyAny>,
+) -> PyResult<bool> {
+    previous
+        .bind(py)
+        .rich_compare(current, CompareOp::Eq)?
+        .is_truthy()
+}
+
 #[cfg(test)]
 mod tests {
     //! Tests for the log record payload helpers.
@@ -341,16 +353,4 @@ mod tests {
             assert!(payload.get_item("message").expect("lookup").is_none());
         });
     }
-}
-
-/// Compares Python values using their native equality semantics.
-fn python_values_equal(
-    py: Python<'_>,
-    previous: &Py<PyAny>,
-    current: &Bound<'_, PyAny>,
-) -> PyResult<bool> {
-    previous
-        .bind(py)
-        .rich_compare(current, CompareOp::Eq)?
-        .is_truthy()
 }

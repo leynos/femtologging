@@ -117,32 +117,47 @@ pub(super) fn foreign_inclusion(tokens: &TokenStream, including: &Utf8Path) -> O
 /// The attribute's path is compared after normalizing raw identifiers, since
 /// `#[r#path = "..."]` names the same attribute.
 pub(super) fn foreign_module_path(meta: &Meta, referring: &Utf8Path) -> Option<String> {
-    match meta {
-        Meta::NameValue(pair) if render_path(&pair.path) == "path" => {
-            let Expr::Lit(ExprLit {
-                lit: Lit::Str(target),
-                ..
-            }) = &pair.value
-            else {
-                return None;
-            };
-            let reason = unreadable_target(&target.value(), referring)?;
-            Some(format!(
-                "#[path] in {referring}: {reason}; the module's source is \
-                 compiled into this crate and never scanned"
-            ))
-        }
-        Meta::List(list) if render_path(&list.path) == "cfg_attr" => {
-            let nested = list
-                .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-                .ok()?;
-            nested
-                .iter()
-                .skip(1)
-                .find_map(|inner| foreign_module_path(inner, referring))
-        }
-        _ => None,
+    path_attribute_finding(meta, referring).or_else(|| cfg_attr_finding(meta, referring))
+}
+
+/// Judge `#[path = "target"]` itself, ignoring every other attribute.
+fn path_attribute_finding(meta: &Meta, referring: &Utf8Path) -> Option<String> {
+    let Meta::NameValue(pair) = meta else {
+        return None;
+    };
+    if render_path(&pair.path) != "path" {
+        return None;
     }
+    let Expr::Lit(ExprLit {
+        lit: Lit::Str(target),
+        ..
+    }) = &pair.value
+    else {
+        return None;
+    };
+    let reason = unreadable_target(&target.value(), referring)?;
+    Some(format!(
+        "#[path] in {referring}: {reason}; the module's source is \
+         compiled into this crate and never scanned"
+    ))
+}
+
+/// Search the attributes wrapped by a `#[cfg_attr(...)]` for a `#[path]`.
+///
+/// The first argument is the configuration predicate, so only the attributes
+/// after it are examined.
+fn cfg_attr_finding(meta: &Meta, referring: &Utf8Path) -> Option<String> {
+    let Meta::List(list) = meta else {
+        return None;
+    };
+    if render_path(&list.path) != "cfg_attr" {
+        return None;
+    }
+    list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        .ok()?
+        .iter()
+        .skip(1)
+        .find_map(|inner| foreign_module_path(inner, referring))
 }
 
 /// Resolve `target` against the directory holding `including`, lexically.

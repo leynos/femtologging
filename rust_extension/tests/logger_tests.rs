@@ -224,6 +224,34 @@ fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): Handl
     );
 }
 
+/// Spawn one registration thread per handler, releasing them together.
+fn spawn_registration_threads(
+    logger: &Arc<FemtoLogger>,
+    handlers: &[Arc<dyn FemtoHandlerTrait>],
+    start: &Arc<std::sync::Barrier>,
+) -> Vec<std::thread::JoinHandle<()>> {
+    handlers
+        .iter()
+        .cloned()
+        .map(|handler| {
+            let logger = Arc::clone(logger);
+            let barrier = Arc::clone(start);
+            std::thread::spawn(move || {
+                barrier.wait();
+                attach_native_handler(&logger, handler)
+                    .expect("native test handler should register");
+            })
+        })
+        .collect()
+}
+
+/// Join every registration thread, surfacing a panic from any of them.
+fn join_registration_threads(threads: Vec<std::thread::JoinHandle<()>>) {
+    for thread in threads {
+        thread.join().expect("thread panicked");
+    }
+}
+
 #[test]
 fn add_handler_is_thread_safe() {
     let buffer = Arc::new(Mutex::new(Vec::new()));
@@ -237,23 +265,10 @@ fn add_handler_is_thread_safe() {
         .collect();
 
     let start = Arc::new(std::sync::Barrier::new(new_handlers.len() + 1));
-    let worker_threads: Vec<_> = new_handlers
-        .iter()
-        .cloned()
-        .map(|h| {
-            let log_clone = Arc::clone(&logger);
-            let barrier = Arc::clone(&start);
-            std::thread::spawn(move || {
-                barrier.wait();
-                attach_native_handler(&log_clone, h).expect("native test handler should register");
-            })
-        })
-        .collect();
+    let worker_threads = spawn_registration_threads(&logger, &new_handlers, &start);
 
     start.wait();
-    for t in worker_threads {
-        t.join().expect("thread panicked");
-    }
+    join_registration_threads(worker_threads);
 
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);

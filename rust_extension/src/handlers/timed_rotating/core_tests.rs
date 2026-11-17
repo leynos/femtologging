@@ -14,7 +14,7 @@ use crate::handler::FemtoHandlerTrait;
 use crate::handlers::{
     file::{HandlerConfig, OverflowPolicy, RotationStrategy},
     timed_rotating::{
-        TimedRotationConfig, clock::SequenceClock, core::FemtoTimedRotatingFileHandler,
+        FemtoTimedRotatingFileHandler, TimedRotationConfig, clock::SequenceClock,
         schedule::TimedRotationWhen,
     },
 };

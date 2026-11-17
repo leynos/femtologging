@@ -170,29 +170,36 @@ fn queue_overflow_drops_excess_records() {
     );
 }
 
+/// Start one thread that logs `msg{index}` through a shared handler.
+fn spawn_writer_thread(handler: &Arc<FemtoFileHandler>, index: usize) -> thread::JoinHandle<()> {
+    let handle = Arc::clone(handler);
+    thread::spawn(move || {
+        handle.expect_handle(FemtoLogRecord::new(
+            "core",
+            FemtoLevel::Info,
+            &format!("msg{index}"),
+        ));
+    })
+}
+
+/// Join every writer thread, surfacing a panic from any of them.
+fn join_writer_threads(handles: Vec<thread::JoinHandle<()>>) {
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+}
+
 #[test]
 fn file_handler_concurrent_usage() {
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     let handler = Arc::new(FemtoFileHandler::new(&path).expect("Failed to create file handler"));
-    let mut handles = vec![];
-    for i in 0..10 {
-        let h = Arc::clone(&handler);
-        handles.push(thread::spawn(move || {
-            h.expect_handle(FemtoLogRecord::new(
-                "core",
-                FemtoLevel::Info,
-                &format!("msg{}", i),
-            ));
-        }));
-    }
-    for h in handles {
-        h.join().expect("Thread panicked");
-    }
+    let handles: Vec<_> = (0..10).map(|i| spawn_writer_thread(&handler, i)).collect();
+    join_writer_threads(handles);
     drop(handler);
     let output = fs::read_to_string(&path).expect("failed to read log output");
     for i in 0..10 {
-        assert!(output.contains(&format!("core [INFO] msg{}", i)));
+        assert!(output.contains(&format!("core [INFO] msg{i}")));
     }
 }
 #[test]

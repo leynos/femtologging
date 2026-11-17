@@ -232,34 +232,55 @@ pub(crate) fn probe_violations() -> Fallible<Vec<Violation>> {
         .output()
         .map_err(|error| format!("run clippy-driver on {}: {error}", fixture.display()))?;
     let rendered = String::from_utf8(output.stderr)?;
-    let mut found = Vec::new();
-    for line in rendered.lines() {
-        let Ok(diagnostic) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        found.extend(policy_violation(&diagnostic));
-    }
-    Ok(found)
+    Ok(violations_in(&rendered))
+}
+
+/// Collect every policy violation from the probe's JSON diagnostics.
+///
+/// Non-JSON lines are ignored: `clippy-driver` may print progress or warnings
+/// alongside the diagnostics this probe reads.
+fn violations_in(rendered: &str) -> Vec<Violation> {
+    rendered
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|diagnostic| policy_violation(&diagnostic))
+        .collect()
 }
 
 /// Return one diagnostic as a violation, if it is one.
 fn policy_violation(diagnostic: &serde_json::Value) -> Option<Violation> {
-    let code = diagnostic.get("code")?.get("code")?.as_str()?;
-    if code != DISALLOWED_METHODS_LINT {
+    if diagnostic_code(diagnostic)? != DISALLOWED_METHODS_LINT {
         return None;
     }
     let message = diagnostic.get("message")?.as_str()?;
     let method = message.split('`').nth(1)?.to_owned();
-    let notes = diagnostic
+    Some(Violation {
+        method,
+        notes: diagnostic_notes(diagnostic),
+    })
+}
+
+/// The lint code a diagnostic reports, if it reports one.
+fn diagnostic_code(diagnostic: &serde_json::Value) -> Option<&str> {
+    diagnostic.get("code")?.get("code")?.as_str()
+}
+
+/// The child messages a diagnostic carries, in source order.
+fn diagnostic_notes(diagnostic: &serde_json::Value) -> Vec<String> {
+    let Some(children) = diagnostic
         .get("children")
         .and_then(serde_json::Value::as_array)
-        .map(|children| {
-            children
-                .iter()
-                .filter_map(|child| child.get("message")?.as_str())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(Violation { method, notes })
+    else {
+        return Vec::new();
+    };
+    children
+        .iter()
+        .filter_map(child_message)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The message a diagnostic child reports, if it reports one.
+fn child_message(child: &serde_json::Value) -> Option<&str> {
+    child.get("message")?.as_str()
 }

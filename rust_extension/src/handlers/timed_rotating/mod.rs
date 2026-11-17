@@ -7,14 +7,15 @@ mod clock;
 mod core;
 #[cfg(test)]
 mod core_tests;
+mod handler;
 mod schedule;
 #[cfg(test)]
 mod schedule_tests;
 #[cfg(test)]
 mod test_helpers;
 
-pub use core::FemtoTimedRotatingFileHandler;
-pub(crate) use core::TimedRotationConfig;
+pub use handler::FemtoTimedRotatingFileHandler;
+pub(crate) use handler::TimedRotationConfig;
 pub use schedule::{TimedRotationSchedule, TimedRotationWhen};
 
 #[cfg(feature = "python")]
