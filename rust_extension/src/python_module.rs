@@ -107,8 +107,24 @@ fn stream_waiter_count_for_test() -> usize {
 pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_configuration_functions(m)?;
     #[cfg(feature = "test-util")]
-    register_test_util_functions(m)?;
+    {
+        register_flush_wait_functions(m)?;
+        register_gil_release_test_functions(m)?;
+        register_rotation_test_functions(m)?;
+    }
     register_dispatch_functions(m)?;
+    Ok(())
+}
+
+/// Register Python-only classes, builder bindings, and functions.
+///
+/// One helper per registration phase keeps the module initialiser a short,
+/// ordered list of steps, matching the order the bindings have always been
+/// exposed in.
+pub(crate) fn register_python_bindings(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_python_classes(m)?;
+    add_python_bindings(m)?;
+    register_python_functions(m)?;
     Ok(())
 }
 
@@ -120,16 +136,9 @@ fn register_configuration_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Register the test-only entry points that Python fixtures drive.
 #[cfg(feature = "test-util")]
-fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    use crate::gil_release_test::{
-        gil_release_observations_for_test, note_python_thread_ran_for_test,
-        reset_gil_release_observations_for_test, wait_for_wait_in_flight_for_test,
-    };
+fn register_flush_wait_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use crate::handlers::rotating::{
         clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
-    };
-    use crate::handlers::timed_rotating::{
-        clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
     };
     use crate::logger::flush_test::{
         cancel_flush_wait_for_test, drain_flush_signals_for_test, wait_for_flush_entry_for_test,
@@ -139,6 +148,16 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wait_for_flush_entry_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(cancel_flush_wait_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(drain_flush_signals_for_test, m)?)?;
+    Ok(())
+}
+
+/// Register the test-only GIL-release observation hooks.
+#[cfg(feature = "test-util")]
+fn register_gil_release_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::gil_release_test::{
+        gil_release_observations_for_test, note_python_thread_ran_for_test,
+        reset_gil_release_observations_for_test, wait_for_wait_in_flight_for_test,
+    };
     m.add_function(wrap_pyfunction!(note_python_thread_ran_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(gil_release_observations_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(
@@ -146,6 +165,15 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(wait_for_wait_in_flight_for_test, m)?)?;
+    Ok(())
+}
+
+/// Register the test-only timed-rotation control hooks.
+#[cfg(feature = "test-util")]
+fn register_rotation_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use crate::handlers::timed_rotating::{
+        clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
+    };
     m.add_function(wrap_pyfunction!(set_timed_rotation_test_times_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(
         clear_timed_rotation_test_times_for_test,
