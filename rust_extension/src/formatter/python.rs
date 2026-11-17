@@ -226,32 +226,37 @@ fn exceptions_to_pylist(py: Python<'_>, exceptions: &[ExceptionPayload]) -> PyRe
 }
 
 /// Set optional fields on the exception payload dict.
+///
+/// The insertion order is observable: a Python caller may iterate the dict, so
+/// the fields are written in the order the payload has always carried them.
+/// Splitting the writes into helpers must not reorder them.
 fn set_optional_exception_items(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
     payload: &ExceptionPayload,
 ) -> PyResult<()> {
-    set_exception_identity_items(dict, payload)?;
-    set_exception_collection_items(py, dict, payload)?;
-    set_exception_link_items(py, dict, payload)
+    set_exception_module_item(dict, payload)?;
+    set_exception_sequence_items(py, dict, payload)?;
+    set_exception_link_items(py, dict, payload)?;
+    set_exception_suppression_item(dict, payload)?;
+    // Written last so the payload dict keeps the key order it has always had;
+    // callers would otherwise observe `exceptions` before the chained fields.
+    set_exception_member_items(py, dict, payload)
 }
 
-/// Set the payload fields that need no Python conversion.
-fn set_exception_identity_items(
+/// Set the module name, when the exception class carries one.
+fn set_exception_module_item(
     dict: &Bound<'_, PyDict>,
     payload: &ExceptionPayload,
 ) -> PyResult<()> {
     if let Some(ref module) = payload.module {
         dict.set_item("module", module)?;
     }
-    if payload.suppress_context {
-        dict.set_item("suppress_context", true)?;
-    }
     Ok(())
 }
 
-/// Set the payload fields that hold a sequence of nested values.
-fn set_exception_collection_items(
+/// Set the argument renderings, notes and stack frames, when present.
+fn set_exception_sequence_items(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
     payload: &ExceptionPayload,
@@ -264,9 +269,6 @@ fn set_exception_collection_items(
     }
     if !payload.frames.is_empty() {
         dict.set_item("frames", frames_to_pylist(py, &payload.frames)?)?;
-    }
-    if !payload.exceptions.is_empty() {
-        dict.set_item("exceptions", exceptions_to_pylist(py, &payload.exceptions)?)?;
     }
     Ok(())
 }
@@ -282,6 +284,29 @@ fn set_exception_link_items(
     }
     if let Some(ref context) = payload.context {
         dict.set_item("context", exception_payload_to_py(py, context)?)?;
+    }
+    Ok(())
+}
+
+/// Record that the exception suppresses implicit context.
+fn set_exception_suppression_item(
+    dict: &Bound<'_, PyDict>,
+    payload: &ExceptionPayload,
+) -> PyResult<()> {
+    if payload.suppress_context {
+        dict.set_item("suppress_context", true)?;
+    }
+    Ok(())
+}
+
+/// Set the exception-group members, when the exception group has any.
+fn set_exception_member_items(
+    py: Python<'_>,
+    dict: &Bound<'_, PyDict>,
+    payload: &ExceptionPayload,
+) -> PyResult<()> {
+    if !payload.exceptions.is_empty() {
+        dict.set_item("exceptions", exceptions_to_pylist(py, &payload.exceptions)?)?;
     }
     Ok(())
 }
@@ -323,3 +348,7 @@ pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<SharedFormatter> {
             context
         })
 }
+
+#[cfg(test)]
+#[path = "python_tests.rs"]
+mod tests;
