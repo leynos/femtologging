@@ -12,7 +12,7 @@
 use std::{
     fs::{self, OpenOptions},
     io::{BufWriter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use chrono::Duration;
@@ -37,13 +37,18 @@ macro_rules! assert_removals {
     };
 }
 
-/// Timestamped siblings of `app.log` share its name and a dot.
-fn backup(base: &str) -> PathBuf {
-    PathBuf::from(format!("/logs/app.log.{base}"))
+/// Timestamped sibling of `app.log` with `base` as its suffix.
+///
+/// The path is derived from the test's own directory: the scripted store
+/// performs every step it is not told to refuse, so pruning really removes
+/// these paths, and they must not name a location on the host.
+fn backup(directory: &Path, base: &str) -> PathBuf {
+    directory.join(format!("app.log.{base}"))
 }
 
 #[test]
 fn retention_prunes_through_the_injected_store() {
+    let directory = tempdir().expect("tempdir must create a temporary directory");
     let store = ScriptedFileStore::with_listing(&[
         "app.log",
         "app.log.2026-03-12_00-00-00",
@@ -54,7 +59,7 @@ fn retention_prunes_through_the_injected_store() {
     ]);
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
         .expect("seconds schedule must validate");
-    let retention = BackupRetention::new(PathBuf::from("/logs/app.log"), 1);
+    let retention = BackupRetention::new(directory.path().join("app.log"), 1);
 
     retention
         .prune(&store, |suffix| schedule.is_valid_suffix(suffix))
@@ -62,7 +67,10 @@ fn retention_prunes_through_the_injected_store() {
 
     assert_removals!(
         store,
-        vec![backup("2026-03-12_00-00-00"), backup("2026-03-12_00-00-01")],
+        vec![
+            backup(directory.path(), "2026-03-12_00-00-00"),
+            backup(directory.path(), "2026-03-12_00-00-01"),
+        ],
         "only timestamped backups count, and the oldest are pruned first"
     );
 }
