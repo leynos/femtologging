@@ -22,14 +22,14 @@ fn later_logger_resolution_failure_keeps_earlier_logger_unchanged() {
             BTreeMap::new(),
             BTreeMap::new(),
             BTreeMap::new(),
-            BTreeMap::from([("sentinel".to_string(), LoggerAttachmentState::default())]),
+            BTreeMap::from([("sentinel".to_owned(), LoggerAttachmentState::default())]),
         );
         let before = manager::snapshot_runtime_state();
         let mut logger_states = before.logger_states.clone();
-        logger_states.insert("first".to_string(), LoggerAttachmentState::default());
+        logger_states.insert("first".to_owned(), LoggerAttachmentState::default());
         logger_states.insert(
-            "second".to_string(),
-            LoggerAttachmentState::new(vec!["missing".to_string()], Vec::new()),
+            "second".to_owned(),
+            LoggerAttachmentState::new(vec!["missing".to_owned()], Vec::new()),
         );
 
         let commit = RuntimeCommit {
@@ -39,11 +39,11 @@ fn later_logger_resolution_failure_keeps_earlier_logger_unchanged() {
             resolved_handler_filters: BTreeMap::new(),
             filter_registry: before.filter_registry.clone(),
             impacted_loggers: vec![
-                ("first".to_string(), first.clone_ref(py)),
-                ("second".to_string(), second),
+                ("first".to_owned(), first.clone_ref(py)),
+                ("second".to_owned(), second),
             ],
             scalar_mutations: BTreeMap::from([(
-                "first".to_string(),
+                "first".to_owned(),
                 LoggerScalarMutation {
                     level: Some(FemtoLevel::Debug),
                     propagate: None,

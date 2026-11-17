@@ -126,13 +126,15 @@ impl FemtoFilter for ReenteringFilter {
 
 impl Drop for ReenteringFilter {
     fn drop(&mut self) {
-        RuntimeConfigBuilder::new()
+        let reentered = RuntimeConfigBuilder::new()
             .with_logger(
                 "core",
                 LoggerMutationBuilder::new().with_level(FemtoLevel::Warn),
             )
-            .apply()
-            .expect("a drop that re-enters configuration must not deadlock");
+            .apply();
+        if let Err(err) = reentered {
+            panic!("a drop that re-enters configuration must not deadlock: {err}");
+        }
         REENTERED.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -141,10 +143,11 @@ impl Drop for ReenteringFilter {
 ///
 /// Returns the build error rather than panicking: fixture setup is not a
 /// recognised test body, so each consuming test reports a failed build at its
-/// own panic boundary. Depending on [`gil_and_clean_manager`] keeps the manager
-/// reset ahead of the baseline, as the original inline calls did.
+/// own panic boundary. Calling [`gil_and_clean_manager`] first keeps the
+/// manager reset ahead of the baseline, as the original inline calls did.
 #[fixture]
-fn install_baseline(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
+fn install_baseline() -> Result<(), ConfigError> {
+    gil_and_clean_manager();
     ConfigBuilder::new()
         .with_filter(
             "lvl",
@@ -180,12 +183,13 @@ where
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Python::attach(|_| body());
         }));
-        let _ = tx.send(outcome.is_ok());
+        tx.send(outcome.is_ok()).unwrap_or(());
     });
     match rx.recv_timeout(TRANSACTION_TIMEOUT) {
-        Ok(true) => handle
-            .join()
-            .expect("the transaction thread must not panic"),
+        Ok(true) => assert!(
+            handle.join().is_ok(),
+            "the transaction thread must not panic"
+        ),
         Ok(false) => panic!("{what} panicked; see the panic message above"),
         Err(error) => panic!("{what} did not finish within {TRANSACTION_TIMEOUT:?}: {error}"),
     }
