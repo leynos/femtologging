@@ -67,6 +67,25 @@ def test_checked_in_sdist_verification(
         assert expected in result.stderr, "Report the specific archive defect."
 
 
+_UNEXPECTED_DELIVERY = "the delivery check ran before the identity checks passed"
+
+
+def _unexpected_delivery_check() -> list[str]:
+    """Fail a test whose setup must not reach the HTTP delivery check."""
+    raise AssertionError(_UNEXPECTED_DELIVERY)
+
+
+def _stub_production_extension(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the identity checks see a production extension inside ``sys.prefix``."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
+    native = SimpleNamespace(__file__=str(origin))
+    monkeypatch.setattr(
+        release_wheel_probe.importlib, "import_module", lambda _: native
+    )
+    monkeypatch.setattr(femtologging, "_has_test_util", False)
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -90,6 +109,10 @@ def test_release_probe_rejects_invalid_installations(
         release_wheel_probe.importlib, "import_module", lambda _: native
     )
     monkeypatch.setattr(femtologging, "_has_test_util", has_util)
+    # A defective installation must not reach the network at all.
+    monkeypatch.setattr(
+        release_wheel_probe, "http_behaviour_errors", _unexpected_delivery_check
+    )
     assert any(
         expected in error for error in release_wheel_probe.release_wheel_errors()
     ), "Report the specific invalid installation."
@@ -99,20 +122,49 @@ def test_release_probe_accepts_a_production_wheel(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A native extension inside the environment with no hooks passes the probe."""
-    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
-    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
-    native = SimpleNamespace(__file__=str(origin))
+    _stub_production_extension(monkeypatch)
+    deliveries: list[bool] = []
+
+    def record_delivery_check() -> list[str]:
+        """Record that the probe checked delivery, without using the network."""
+        deliveries.append(True)
+        return []
+
     monkeypatch.setattr(
-        release_wheel_probe.importlib, "import_module", lambda _: native
+        release_wheel_probe, "http_behaviour_errors", record_delivery_check
     )
-    monkeypatch.setattr(femtologging, "_has_test_util", False)
 
     assert not release_wheel_probe.release_wheel_errors(), (
         "A production native extension reports no violations."
     )
+    assert deliveries == [True], "The probe must verify delivery as well as location."
     assert release_wheel_probe.main() == 0, "The probe exits successfully."
     assert capsys.readouterr().out == "release wheel probe passed\n", (
         "The probe reports its success on standard output."
+    )
+
+
+def test_release_probe_reports_a_delivery_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A wheel whose native worker cannot deliver a record fails the probe."""
+    _stub_production_extension(monkeypatch)
+    monkeypatch.setattr(
+        release_wheel_probe,
+        "http_behaviour_errors",
+        lambda: ["no HTTP delivery reached http://127.0.0.1:1/probe"],
+    )
+
+    assert release_wheel_probe.main() == 1, "A delivery failure must exit non-zero."
+    assert "no HTTP delivery reached" in capsys.readouterr().err, (
+        "Report the specific delivery failure."
+    )
+
+
+def test_release_probe_delivers_a_record_through_the_native_handler() -> None:
+    """The installed extension's native HTTP worker delivers the probe record."""
+    assert not release_wheel_probe.http_behaviour_errors(), (
+        "The handler built from this installation must deliver its record."
     )
 
 
