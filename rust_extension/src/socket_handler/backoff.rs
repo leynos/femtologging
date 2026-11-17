@@ -25,12 +25,18 @@ pub struct BackoffState {
 impl BackoffState {
     /// Create a new state machine from the supplied policy.
     ///
-    /// The random source is seeded from the operating system through
-    /// [`rand::make_rng`]. That function panics if the OS entropy source is
-    /// unavailable, which preserves the previous `StdRng::from_entropy`
-    /// behaviour and is deliberate: the worker cannot produce unpredictable
-    /// jitter without entropy, and a fixed-seed fallback would make every
-    /// process retry in lockstep.
+    /// The random source is seeded through [`rand::make_rng`]. With rand's
+    /// default `thread_rng` feature that draws a seed from a thread-local
+    /// `ThreadRng`, which is lazily seeded from the operating system and
+    /// reseeded after 64 KiB of output. A fresh OS request therefore happens
+    /// when the thread-local is first used or reseeds, not on every call; an
+    /// already-seeded `ThreadRng` can supply a seed without one. When an OS
+    /// request does fail, both paths panic, which preserves the previous
+    /// `StdRng::from_entropy` behaviour. That is deliberate: the worker cannot
+    /// produce unpredictable jitter without entropy, and a fixed-seed fallback
+    /// would make every process retry in lockstep. Both handlers construct the
+    /// state inside their worker thread, so each worker owns its thread-local
+    /// generator.
     pub fn new(policy: BackoffPolicy) -> Self {
         Self::with_rng(policy, rand::make_rng())
     }

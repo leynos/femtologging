@@ -87,6 +87,51 @@ fn saturating_doubling_survives_very_large_durations() {
     assert!(second >= Duration::from_millis(10));
 }
 
+/// A repeated later timestamp still doubles the bound.
+///
+/// Only the first failure timestamp is remembered. A second call at the same
+/// later timestamp therefore doubles the bound again, so samples above the
+/// first doubled bound become possible. With a base of 10 ms the repeated
+/// call samples `10..=40`; across 64 seeds the chance that every sample stays
+/// at or below 20 ms is negligible, and the test is deterministic for the
+/// chosen seeds within one build.
+#[rstest]
+fn a_repeated_later_timestamp_still_doubles() {
+    let policy = policy(
+        Duration::from_millis(10),
+        Duration::from_secs(60),
+        Duration::from_secs(60),
+    );
+    let start = Instant::now();
+    let later = start + Duration::from_millis(1);
+    let mut saw_above_first_doubling = false;
+
+    for seed in 0..64 {
+        let mut state = BackoffState::with_seed(policy.clone(), seed);
+        assert_eq!(
+            state.next_sleep(start),
+            Some(Duration::from_millis(10)),
+            "the first delay is the base bound"
+        );
+        let first_doubled = state.next_sleep(later).expect("within the deadline");
+        assert!(
+            first_doubled <= Duration::from_millis(20),
+            "the first doubling exceeded the bound: {first_doubled:?}"
+        );
+        let second_doubled = state.next_sleep(later).expect("within the deadline");
+        assert!(
+            (Duration::from_millis(10)..=Duration::from_millis(40)).contains(&second_doubled),
+            "the repeated later timestamp exceeded the second bound: {second_doubled:?}"
+        );
+        saw_above_first_doubling |= second_doubled > Duration::from_millis(20);
+    }
+
+    assert!(
+        saw_above_first_doubling,
+        "a repeated later timestamp must widen the bound again"
+    );
+}
+
 /// The millisecond bound saturates at `u64::MAX`, leaving a valid range.
 #[rstest]
 fn the_millisecond_bound_saturates_at_u64_max() {
