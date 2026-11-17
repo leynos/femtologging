@@ -138,3 +138,85 @@ pub(super) fn extract_naive_time(value: &Bound<'_, PyAny>) -> PyResult<NaiveTime
         Ok,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for Python `datetime.time` extraction and error reporting.
+
+    use chrono::NaiveTime;
+    use pyo3::types::{PyAnyMethods, PyModule};
+    use pyo3::{Bound, Python};
+
+    use super::extract_naive_time_from_py_time;
+
+    /// Attach to the GIL and run `case` with the `datetime` module loaded.
+    fn with_datetime(case: impl FnOnce(&Bound<'_, PyModule>)) {
+        Python::attach(|py| {
+            let datetime = py.import("datetime").expect("import datetime");
+            case(&datetime);
+        });
+    }
+
+    #[test]
+    fn accepts_none_when_allowed() {
+        Python::attach(|py| {
+            let none = py.None();
+            let parsed = extract_naive_time_from_py_time(none.bind(py), "at_time", true)
+                .expect("None must be accepted when allowed");
+            assert!(parsed.is_none());
+        });
+    }
+
+    #[test]
+    fn rejects_none_when_disallowed() {
+        Python::attach(|py| {
+            let none = py.None();
+            let err = extract_naive_time_from_py_time(none.bind(py), "at_time", false)
+                .expect_err("None must be rejected when disallowed");
+            assert_eq!(
+                err.to_string(),
+                "TypeError: at_time must be datetime.time or None"
+            );
+        });
+    }
+
+    #[test]
+    fn extracts_a_timezone_naive_time() {
+        with_datetime(|datetime| {
+            let value = datetime
+                .getattr("time")
+                .expect("datetime.time")
+                .call1((1, 2, 3, 4))
+                .expect("construct time");
+            let parsed = extract_naive_time_from_py_time(&value, "at_time", false)
+                .expect("naive time must parse")
+                .expect("value present");
+            assert_eq!(
+                parsed,
+                NaiveTime::from_hms_micro_opt(1, 2, 3, 4).expect("valid time")
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_timezone_aware_time() {
+        with_datetime(|datetime| {
+            let utc = datetime
+                .getattr("timezone")
+                .expect("datetime.timezone")
+                .getattr("utc")
+                .expect("timezone.utc");
+            let value = datetime
+                .getattr("time")
+                .expect("datetime.time")
+                .call1((1, 2, 3, 4, utc))
+                .expect("construct aware time");
+            let err = extract_naive_time_from_py_time(&value, "at_time", false)
+                .expect_err("aware time must be rejected");
+            assert_eq!(
+                err.to_string(),
+                "ValueError: at_time must be timezone-naive"
+            );
+        });
+    }
+}
