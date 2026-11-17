@@ -81,7 +81,7 @@ fn queued_record(message: &str, handlers: &[Arc<dyn FemtoHandlerTrait>]) -> Box<
 fn shard_with_room(record_count: usize) -> (Shard, Arc<LoggerBudget>) {
     let depth = record_count + 2;
     let shard = Shard::start(0, depth).expect("a test shard should start");
-    let budget = shard.budget_with_limit_for_test(depth);
+    let budget = Shard::budget_with_limit_for_test(depth);
     (shard, budget)
 }
 

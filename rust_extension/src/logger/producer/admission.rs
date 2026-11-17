@@ -4,7 +4,25 @@ use log::warn;
 
 #[cfg(not(loom))]
 use super::super::DispatcherError;
+use super::super::dispatcher::AdmissionRefusal;
 use super::super::{FemtoLogger, QueuedRecord};
+
+/// Report whether a shard admission was accepted.
+///
+/// A refusal hands the record back, so dropping it here is what releases the
+/// record's handlers; the caller then counts and warns about the dropped
+/// record. Taking the record out of the refusal also keeps the payload in use
+/// in the library build, where the dispatch path never inspects it.
+fn is_admitted(admission: Result<(), AdmissionRefusal>) -> bool {
+    match admission {
+        Ok(()) => true,
+        Err(AdmissionRefusal::Record(refused)) => {
+            drop(refused);
+            false
+        }
+        Err(AdmissionRefusal::UnexpectedJob) => false,
+    }
+}
 
 impl FemtoLogger {
     /// Admit one prepared record and report a refused submission as dropped.
@@ -17,14 +35,14 @@ impl FemtoLogger {
         let dispatch_started = std::time::Instant::now();
         #[cfg(not(loom))]
         let accepted = match self.dispatch_state() {
-            Ok((shard, budget)) => shard.admit(queued, budget).is_ok(),
+            Ok((shard, budget)) => is_admitted(shard.admit(queued, budget)),
             Err(error) => {
                 self.record_dispatch_start_failure(&error);
                 return;
             }
         };
         #[cfg(loom)]
-        let accepted = self.shard.admit(queued, &self.budget).is_ok();
+        let accepted = is_admitted(self.shard.admit(queued, &self.budget));
 
         if accepted {
             #[cfg(feature = "tracing-compat")]

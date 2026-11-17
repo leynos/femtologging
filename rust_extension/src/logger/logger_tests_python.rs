@@ -1,4 +1,4 @@
-//! Unit tests for Python integration paths in FemtoLogger.
+//! Unit tests for Python integration paths in `FemtoLogger`.
 //!
 //! These tests require the `python` feature and exercise the PyO3 bindings.
 //! `should_capture_exc_info_cases` covers the `exc_info` truth test over
@@ -72,7 +72,7 @@ enum ExpectedCapture {
     NoCapture,
 }
 
-/// Test inputs for py_log exc_info parameter tests.
+/// Test inputs for `py_log` `exc_info` parameter tests.
 #[derive(Debug)]
 enum PyLogExcInfoInput {
     /// The Python boolean false value.
@@ -127,7 +127,7 @@ fn capture_python_context_uses_queued_handler_snapshot() {
             .call_method1("set", ("request-42",))
             .expect("ContextVar set should succeed");
         let logger =
-            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
+            FemtoLogger::new("test".to_owned()).expect("test logger should be constructible");
         let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(SnapshotPythonHandler);
         logger
             .add_handler(Arc::clone(&handler))
@@ -226,9 +226,8 @@ fn should_capture_exc_info_cases(
             }
         };
 
-        let capture_result = result.expect("should_capture_exc_info should not fail");
         let expected_bool = expected == ExpectedCapture::Capture;
-        assert_eq!(capture_result, expected_bool, "{description}");
+        assert_eq!(result, expected_bool, "{description}");
     });
 }
 
@@ -248,7 +247,7 @@ fn py_log_stack_info_variations(
 ) {
     Python::attach(|py| {
         let logger =
-            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
+            FemtoLogger::new("test".to_owned()).expect("test logger should be constructible");
         let result = logger
             .py_log(py, FemtoLevel::Info, message, None, stack_info, None)
             .expect("py_log should handle stack-info variations");
@@ -256,7 +255,7 @@ fn py_log_stack_info_variations(
         if includes_stack {
             assert_output_contains!(result, &[expected, "Stack"]);
         } else {
-            assert_eq!(result, Some(expected.to_string()));
+            assert_eq!(result, Some(expected.to_owned()));
         }
     });
 }
@@ -265,7 +264,7 @@ fn py_log_stack_info_variations(
 fn py_log_filtered_by_level() {
     Python::attach(|py| {
         let logger =
-            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
+            FemtoLogger::new("test".to_owned()).expect("test logger should be constructible");
         logger.set_level(FemtoLevel::Error);
         let result = logger
             .py_log(py, FemtoLevel::Info, "ignored", None, None, None)
@@ -310,7 +309,7 @@ fn py_log_exc_info_variation_cases(
 ) {
     Python::attach(|py| {
         let logger =
-            FemtoLogger::new("test".to_string()).expect("test logger should be constructible");
+            FemtoLogger::new("test".to_owned()).expect("test logger should be constructible");
         let exc_info: Option<pyo3::Bound<'_, pyo3::PyAny>> = match &input {
             PyLogExcInfoInput::BoolFalse => Some(PyBool::new(py, false).to_owned().into_any()),
             PyLogExcInfoInput::PythonNone => Some(py.None().into_bound(py)),
@@ -334,7 +333,7 @@ fn py_log_exc_info_variation_cases(
         // expected contains newline-separated substrings to check
         let expected_parts: Vec<&str> = expected.split('\n').collect();
         if expected_parts.len() == 1 {
-            assert_eq!(result, Some(expected.to_string()));
+            assert_eq!(result, Some(expected.to_owned()));
         } else {
             assert_output_contains!(result, &expected_parts);
         }

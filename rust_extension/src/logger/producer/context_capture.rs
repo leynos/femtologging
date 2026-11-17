@@ -39,7 +39,7 @@ impl FemtoLogger {
     }
 
     /// Count a failed context snapshot separately from queue-capacity drops.
-    pub(super) fn record_context_capture_failure(&self, error: pyo3::PyErr) {
+    pub(super) fn record_context_capture_failure(&self, error: &pyo3::PyErr) {
         self.context_capture_failures
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.context_capture_warner.record_drop();

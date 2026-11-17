@@ -48,8 +48,18 @@ struct HeldHandler {
 
 impl FemtoHandlerTrait for HeldHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.started.send(());
-        let _ = self.release.lock().recv();
+        // A refused start signal means the test stopped waiting before the
+        // worker got here. There is nobody left to tell, so it is reported and
+        // the handler still blocks below.
+        if self.started.send(()).is_err() {
+            log::trace!("HeldHandler: test left before the handler started");
+        }
+        // A disconnected release sender means the test dropped it without
+        // releasing the handler, so the wait returns at once and the handler
+        // leaves, which is the outcome dropping the sender asks for.
+        if self.release.lock().recv().is_err() {
+            log::trace!("HeldHandler: release sender dropped before the handler finished");
+        }
         Ok(())
     }
 
@@ -71,7 +81,11 @@ struct ReleaseOnDrop(std::sync::mpsc::Sender<()>);
 
 impl Drop for ReleaseOnDrop {
     fn drop(&mut self) {
-        let _ = self.0.send(());
+        // The worker may already have left after its own wait; a refused
+        // release then has nobody to wake, so it is recorded.
+        if self.0.send(()).is_err() {
+            log::trace!("ReleaseOnDrop: worker left before its release arrived");
+        }
     }
 }
 
@@ -79,10 +93,10 @@ impl Drop for ReleaseOnDrop {
 fn a_pool_hands_out_every_shard_in_turn() {
     let dispatcher = pool_with(3);
 
-    let first = dispatcher.assign_shard() as *const Shard;
-    let second = dispatcher.assign_shard() as *const Shard;
-    let third = dispatcher.assign_shard() as *const Shard;
-    let fourth = dispatcher.assign_shard() as *const Shard;
+    let first = std::ptr::from_ref(dispatcher.assign_shard());
+    let second = std::ptr::from_ref(dispatcher.assign_shard());
+    let third = std::ptr::from_ref(dispatcher.assign_shard());
+    let fourth = std::ptr::from_ref(dispatcher.assign_shard());
 
     assert_ne!(first, second, "consecutive loggers must not share a shard");
     assert_ne!(second, third, "consecutive loggers must not share a shard");
@@ -196,7 +210,7 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
         release: parking_lot::Mutex::new(release_rx),
     }) as Arc<dyn FemtoHandlerTrait>;
 
-    let stuck = FemtoLogger::assembled_for_test("stuck".to_string(), shard);
+    let stuck = FemtoLogger::assembled_for_test("stuck".to_owned(), shard);
     stuck
         .add_handler(stuck_handler)
         .expect("native stuck test handler should register");
@@ -209,8 +223,8 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
     // queues a barrier behind the stuck record and then waits out the barrier
     // timeout, so both report a failed flush even though neither had anything
     // to drain.
-    let idle_one = FemtoLogger::assembled_for_test("idle-one".to_string(), shard);
-    let idle_two = FemtoLogger::assembled_for_test("idle-two".to_string(), shard);
+    let idle_one = FemtoLogger::assembled_for_test("idle-one".to_owned(), shard);
+    let idle_two = FemtoLogger::assembled_for_test("idle-two".to_owned(), shard);
     assert!(
         idle_one.flush_handlers() && idle_two.flush_handlers(),
         "a flush with nothing in flight must report that it drained, without \
@@ -221,7 +235,7 @@ fn a_logger_with_nothing_in_flight_does_not_barrier_its_shard() {
     // permit was still free, so this record would be refused and counted as
     // dropped against a shard that had room to take it.
     let collector = Arc::new(CollectingHandler::new());
-    let fresh = FemtoLogger::assembled_for_test("fresh".to_string(), shard);
+    let fresh = FemtoLogger::assembled_for_test("fresh".to_owned(), shard);
     fresh
         .add_handler(Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>)
         .expect("native collecting handler should register");

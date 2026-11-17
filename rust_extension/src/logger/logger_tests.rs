@@ -25,7 +25,10 @@ fn clear_handlers_removes_all() {
         .expect("native test handler should register");
     assert_eq!(logger.handlers_for_test().len(), 1);
     logger.clear_handlers();
-    assert!(logger.handlers_for_test().is_empty());
+    assert!(
+        logger.handlers_for_test().is_empty(),
+        "clearing handlers must leave none attached"
+    );
 }
 
 #[test]
@@ -127,7 +130,9 @@ fn a_panicking_handler_does_not_silence_later_records() {
 
     impl FemtoHandlerTrait for PanickingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-            panic!("handler boom");
+            // The panic is the behaviour under test. `panic_any` keeps it a
+            // panic in a function whose signature must return a `Result`.
+            std::panic::panic_any("handler boom");
         }
 
         fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
@@ -304,12 +309,12 @@ impl FemtoHandlerTrait for AttachingFlushHandler {
             .attached_once
             .swap(true, std::sync::atomic::Ordering::Relaxed)
         {
-            let logger = self
+            let stored_logger = self
                 .logger
                 .lock()
                 .expect("the attach-once logger lock is never poisoned")
                 .clone();
-            if let Some(logger) = logger {
+            if let Some(logger) = stored_logger {
                 logger
                     .add_handler(Arc::clone(&self.attached) as Arc<dyn FemtoHandlerTrait>)
                     .expect("a native handler may be attached during a flush");
@@ -341,7 +346,11 @@ fn a_handler_flush_may_attach_another_handler() {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let flush_logger = Arc::clone(&logger);
     std::thread::spawn(move || {
-        let _ = done_tx.send(flush_logger.flush_handlers());
+        // The test may have given up waiting before the flush finished; with
+        // nobody left to receive the outcome, the refused send is recorded.
+        if done_tx.send(flush_logger.flush_handlers()).is_err() {
+            log::trace!("logger test: flush outcome receiver left before the send");
+        }
     });
     assert!(
         done_rx

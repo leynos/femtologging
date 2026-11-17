@@ -81,9 +81,12 @@ proptest! {
                 .expect("snapshot handler should collect its record");
             let records = collector.collected();
             prop_assert_eq!(records.len(), 1);
-            prop_assert_eq!(&records[0].metadata().key_values, &expected_fields);
+            let collected_record = records
+                .first()
+                .expect("the snapshot handler should collect its record");
+            prop_assert_eq!(&collected_record.metadata().key_values, &expected_fields);
             prop_assert_eq!(
-                records[0].origin(),
+                collected_record.origin(),
                 origin,
                 "the snapshot clone keeps the transport origin whatever the filter chain does"
             );

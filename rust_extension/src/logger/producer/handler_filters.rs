@@ -22,7 +22,7 @@ pub(super) enum FilterChainOutcome {
 impl FilterChainOutcome {
     /// Return the bounded label used in internal trace events.
     #[cfg(feature = "tracing-compat")]
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
@@ -107,13 +107,13 @@ fn filter_handler_attachment(
     };
     let outcome = apply_filter_chain(record, &attachment.filters);
     #[cfg(feature = "tracing-compat")]
-    if let Some(filter_started) = filter_started {
+    if let Some(started_at) = filter_started {
         tracing::trace!(
             target: "femtologging::internal",
             operation = "producer_handler_filter_chain",
             handler_kind,
             filter_outcome = outcome.as_str(),
-            elapsed_us = filter_started.elapsed().as_micros(),
+            elapsed_us = started_at.elapsed().as_micros(),
         );
     }
 

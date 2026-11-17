@@ -50,7 +50,7 @@ mod dispatcher_tests;
 
 #[cfg(not(loom))]
 use super::flush_clock::FlushDeadline;
-pub(crate) use shard::{LoggerBudget, Shard};
+pub(crate) use shard::{AdmissionRefusal, DrainOutcome, LoggerBudget, Shard};
 #[cfg(not(loom))]
 use std::ptr::NonNull;
 #[cfg(not(loom))]
@@ -163,7 +163,7 @@ impl DispatcherError {
     /// refusal this way, so the two paths present one error type to callers.
     /// `started` counts the shards already running: zero for the Loom arm,
     /// which has no pool to have started any.
-    pub(super) fn new(started: usize, total: usize, source: std::io::Error) -> Self {
+    pub(super) const fn new(started: usize, total: usize, source: std::io::Error) -> Self {
         Self {
             started,
             total,
@@ -256,7 +256,11 @@ impl Dispatcher {
     /// without consulting the machine again.
     pub(crate) fn assign_shard(&self) -> &Shard {
         let index = self.next_shard.fetch_add(1, Ordering::Relaxed);
-        &self.shards[index % self.shards.len()]
+        // A started pool always has at least one shard, so the modulo cannot
+        // divide by zero and the index is always in range.
+        self.shards
+            .get(index % self.shards.len())
+            .unwrap_or_else(|| panic!("a started dispatch pool must own at least one shard"))
     }
 
     /// Start one shard per thread the machine can usefully run.
@@ -302,7 +306,11 @@ pub(crate) fn shards_for(available_parallelism: Option<usize>) -> usize {
 /// Number of shards this process should run.
 #[cfg(not(loom))]
 pub(crate) fn shard_count() -> usize {
-    shards_for(std::thread::available_parallelism().ok().map(|n| n.get()))
+    shards_for(
+        std::thread::available_parallelism()
+            .ok()
+            .map(std::num::NonZeroUsize::get),
+    )
 }
 
 /// Return the number of workers actually started by the process-wide pool.

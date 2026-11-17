@@ -43,7 +43,9 @@ impl FlushObserver for RecordingObserver {
     fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
         self.records
             .lock()
-            .expect("the recording observer is not shared with a panicking thread")
+            .unwrap_or_else(|err| {
+                panic!("the recording observer is not shared with a panicking thread: {err}")
+            })
             .push((outcome, elapsed));
     }
 }
@@ -53,7 +55,9 @@ impl RecordingObserver {
     fn taken(&self) -> Vec<(FlushOutcome, Duration)> {
         self.records
             .lock()
-            .expect("the recording observer is not shared with a panicking thread")
+            .unwrap_or_else(|err| {
+                panic!("the recording observer is not shared with a panicking thread: {err}")
+            })
             .drain(..)
             .collect()
     }
@@ -138,8 +142,18 @@ struct HeldHandler {
 
 impl FemtoHandlerTrait for HeldHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.started.send(());
-        let _ = self.release.lock().recv();
+        // A refused start signal means the test stopped waiting before the
+        // worker got here. There is nobody left to tell, so it is reported and
+        // the handler still blocks below.
+        if self.started.send(()).is_err() {
+            log::trace!("HeldHandler: test left before the handler started");
+        }
+        // A disconnected release sender means the test dropped it without
+        // releasing the handler, so the wait returns at once and the handler
+        // leaves, which is the outcome dropping the sender asks for.
+        if self.release.lock().recv().is_err() {
+            log::trace!("HeldHandler: release sender dropped before the handler finished");
+        }
         Ok(())
     }
 
@@ -155,15 +169,16 @@ fn leaked(shard: Shard) -> &'static Shard {
 
 /// Build a logger on a freshly started two-deep shard.
 fn logger_on_test_shard(name: &str) -> FemtoLogger {
-    let shard = leaked(Shard::start(0, 2).expect("test shard should start"));
-    FemtoLogger::assembled_for_test(name.to_string(), shard)
+    let shard =
+        leaked(Shard::start(0, 2).unwrap_or_else(|err| panic!("test shard should start: {err}")));
+    FemtoLogger::assembled_for_test(name.to_owned(), shard)
 }
 
 /// Attach one handler and report the logger.
 fn with_handler(logger: FemtoLogger, handler: Arc<dyn FemtoHandlerTrait>) -> FemtoLogger {
     logger
         .add_handler(handler)
-        .expect("the test handler should register");
+        .unwrap_or_else(|err| panic!("the test handler should register: {err}"));
     logger
 }
 
@@ -275,7 +290,7 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
 fn a_refused_barrier_reports_a_closed_channel() {
     let (shard, worker) = Shard::with_unanswering_worker_for_test(2);
     let logger = with_handler(
-        FemtoLogger::assembled_for_test("flush.closed".to_string(), leaked(shard)),
+        FemtoLogger::assembled_for_test("flush.closed".to_owned(), leaked(shard)),
         Arc::new(PassingHandler),
     );
     // The record stays in the stand-in worker's hands, holding its permit, so

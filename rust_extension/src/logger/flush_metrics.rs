@@ -130,13 +130,26 @@ impl FlushMetrics {
     /// Record one completed flush and emit a warning when it failed.
     pub(crate) fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
         let micros = elapsed_micros(elapsed);
-        self.outcomes[outcome.index()].fetch_add(1, Ordering::Relaxed);
-        for (index, bound) in DURATION_BUCKET_BOUNDS_US.iter().enumerate() {
+        // `FlushOutcome::index` is bounded by `OUTCOME_COUNT`, so the counter
+        // always exists; `get` keeps the metric path free of a panic that could
+        // fire only on a logic error.
+        if let Some(counter) = self.outcomes.get(outcome.index()) {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+        // The finite buckets pair with the finite bounds; the overflow bucket
+        // that follows them is updated separately below.
+        for (bucket, bound) in self
+            .duration_buckets
+            .iter()
+            .zip(DURATION_BUCKET_BOUNDS_US.iter())
+        {
             if micros <= *bound {
-                self.duration_buckets[index].fetch_add(1, Ordering::Relaxed);
+                bucket.fetch_add(1, Ordering::Relaxed);
             }
         }
-        self.duration_buckets[DURATION_BUCKET_BOUNDS_US.len()].fetch_add(1, Ordering::Relaxed);
+        if let Some(overflow) = self.duration_buckets.last() {
+            overflow.fetch_add(1, Ordering::Relaxed);
+        }
         self.duration_count.fetch_add(1, Ordering::Relaxed);
         self.duration_sum_us.fetch_add(micros, Ordering::Relaxed);
         self.warn_at_boundary(outcome);
@@ -183,10 +196,14 @@ impl FlushMetrics {
     #[cfg(test)]
     pub(crate) fn snapshot(&self) -> FlushMetricsSnapshot {
         FlushMetricsSnapshot {
-            outcomes: std::array::from_fn(|index| self.outcomes[index].load(Ordering::Relaxed)),
-            duration_buckets: std::array::from_fn(|index| {
-                self.duration_buckets[index].load(Ordering::Relaxed)
-            }),
+            outcomes: self
+                .outcomes
+                .each_ref()
+                .map(|counter| counter.load(Ordering::Relaxed)),
+            duration_buckets: self
+                .duration_buckets
+                .each_ref()
+                .map(|bucket| bucket.load(Ordering::Relaxed)),
             duration_count: self.duration_count.load(Ordering::Relaxed),
             duration_sum_us: self.duration_sum_us.load(Ordering::Relaxed),
             #[cfg(feature = "log-compat")]

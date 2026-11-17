@@ -144,7 +144,16 @@ pub(super) fn emit_capture_failure(collector: &InternalEventCollector) -> Result
     Ok(())
 }
 
+/// Emit the filter and dispatch events of the four real-handler scenarios.
 pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
+    emit_mixed_filter_dispatch()?;
+    emit_all_rejected_filter_dispatch()?;
+    emit_no_handler_dispatch()?;
+    emit_propagated_filter_dispatch()
+}
+
+/// Dispatch to one accepting and one rejecting handler on a fresh logger.
+fn emit_mixed_filter_dispatch() -> PyResult<()> {
     let mixed_logger = FemtoLogger::new("trace-filter-mixed".to_owned())?;
     let accepted = CollectingHandler::new();
     let rejected = CollectingHandler::new();
@@ -168,7 +177,11 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
     assert!(mixed_logger.flush_handlers());
     assert_eq!(accepted.collected().len(), 1);
     assert!(rejected.collected().is_empty());
+    Ok(())
+}
 
+/// Dispatch to a handler whose whole filter chain rejects the record.
+fn emit_all_rejected_filter_dispatch() -> PyResult<()> {
     let all_rejected_logger = FemtoLogger::new("trace-filter-all-rejected".to_owned())?;
     let all_rejected = CollectingHandler::new();
     all_rejected_logger
@@ -184,7 +197,11 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
     ));
     assert!(all_rejected_logger.flush_handlers());
     assert!(all_rejected.collected().is_empty());
+    Ok(())
+}
 
+/// Dispatch from a logger that has no handlers attached.
+fn emit_no_handler_dispatch() -> PyResult<()> {
     let no_handler_logger = FemtoLogger::new("trace-filter-no-handlers".to_owned())?;
     no_handler_logger.dispatch_to_handlers(FemtoLogRecord::new(
         "trace-filter-no-handlers",
@@ -192,7 +209,11 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
         "no-handler-payload-is-not-traced",
     ));
     assert!(no_handler_logger.flush_handlers());
+    Ok(())
+}
 
+/// Dispatch from a child logger into a handler its root logger owns.
+fn emit_propagated_filter_dispatch() -> PyResult<()> {
     Python::attach(|py| {
         manager::reset_manager();
         let root = manager::get_logger(py, "root")?;
@@ -249,36 +270,42 @@ pub(super) fn assert_event(event: &CapturedEvent, expected: &ExpectedEvent) {
         event.fields
     );
     assert!(
-        event.fields["elapsed_us"].parse::<u128>().is_ok(),
+        event
+            .fields
+            .get("elapsed_us")
+            .is_some_and(|elapsed| elapsed.parse::<u128>().is_ok()),
         "elapsed_us should be numeric: {:?}",
         event.fields
     );
 }
 
 pub(super) fn assert_events(events: &[CapturedEvent], expected: &[ExpectedEvent]) {
-    for expected in expected {
+    for expected_event in expected {
         let matching = events
             .iter()
             .filter(|event| {
-                event.fields.get("operation").map(String::as_str) == Some(expected.operation)
+                event.fields.get("operation").map(String::as_str) == Some(expected_event.operation)
                     && event.fields.get("handler_kind").map(String::as_str)
-                        == Some(expected.handler_kind)
-                    && event.fields.get(expected.outcome_field).map(String::as_str)
-                        == Some(expected.outcome)
+                        == Some(expected_event.handler_kind)
+                    && event
+                        .fields
+                        .get(expected_event.outcome_field)
+                        .map(String::as_str)
+                        == Some(expected_event.outcome)
             })
             .collect::<Vec<_>>();
         assert_eq!(
             matching.len(),
-            expected.count,
+            expected_event.count,
             "expected {} {}/{} {}={} events; got {matching:?} in {events:?}",
-            expected.count,
-            expected.operation,
-            expected.handler_kind,
-            expected.outcome_field,
-            expected.outcome
+            expected_event.count,
+            expected_event.operation,
+            expected_event.handler_kind,
+            expected_event.outcome_field,
+            expected_event.outcome
         );
         for event in matching {
-            assert_event(event, expected);
+            assert_event(event, expected_event);
         }
     }
 }
@@ -322,9 +349,15 @@ pub(super) fn assert_filter_events(events: &[CapturedEvent]) {
                 "filter trace fields must stay bounded: {:?}",
                 event.fields
             );
-            assert_eq!(event.fields["handler_kind"], "native");
+            assert_eq!(
+                event.fields.get("handler_kind").map(String::as_str),
+                Some("native")
+            );
             assert!(
-                event.fields["elapsed_us"].parse::<u128>().is_ok(),
+                event
+                    .fields
+                    .get("elapsed_us")
+                    .is_some_and(|elapsed| elapsed.parse::<u128>().is_ok()),
                 "elapsed_us should be numeric: {:?}",
                 event.fields
             );
