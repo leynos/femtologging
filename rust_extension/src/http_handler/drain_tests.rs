@@ -98,10 +98,19 @@ fn spawn_perpetual_server(
     Ok((addr, answered_rx))
 }
 
-/// Read one request and hold the connection open without answering it.
+/// Hold each connection open without answering it, one at a time.
 ///
-/// The worker's request timeout then keeps the record in flight past the close
-/// deadline, leaving queued records for the worker to count after it aborts.
+/// The worker's request timeout then keeps each attempt in flight for the rest
+/// of the close deadline, leaving queued records for the worker to count after
+/// it aborts.
+///
+/// The listener stays open for the whole test rather than serving a single
+/// connection. Serving one and then dropping the listener turns every later
+/// attempt into an immediate connection refusal, and a worker that refuses
+/// instantly drains the whole backlog inside its deadline instead of leaving
+/// records for the abort to discard. Whether the listener has closed by the
+/// time the next attempt starts is a thread-scheduling matter, so a
+/// single-connection server made the deadline contract pass or fail on load.
 ///
 /// # Examples
 ///
@@ -113,15 +122,14 @@ fn spawn_stalled_server(listener: TcpListener) -> io::Result<(SocketAddr, mpsc::
     let addr = listener.local_addr()?;
     let (request_tx, request_rx) = mpsc::channel();
     thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        if super::read_http_request(&mut stream).is_err() {
-            return;
+        while let Ok((mut stream, _)) = listener.accept() {
+            if super::read_http_request(&mut stream).is_err() {
+                continue;
+            }
+            let _ = request_tx.send(());
+            let mut sink = [0_u8; 1];
+            while matches!(stream.read(&mut sink), Ok(read) if read > 0) {}
         }
-        let _ = request_tx.send(());
-        let mut sink = [0_u8; 1];
-        while matches!(stream.read(&mut sink), Ok(read) if read > 0) {}
     });
     Ok((addr, request_rx))
 }
