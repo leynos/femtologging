@@ -29,7 +29,7 @@ use std::{io, sync::Arc, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
-use ureq::{Agent, tls::RootCerts};
+use ureq::Agent;
 
 use crate::{
     log_record::FemtoLogRecord,
@@ -103,11 +103,7 @@ struct Worker {
 impl Worker {
     /// Create a worker; it starts with the configured HTTP timeouts.
     fn new(config: HTTPHandlerConfig, signal: Arc<ShutdownSignal>) -> Self {
-        let agent = build_agent(
-            config.connect_timeout,
-            config.write_timeout,
-            RootCerts::PlatformVerifier,
-        );
+        let agent = build_agent(config.connect_timeout, config.write_timeout);
         let backoff = BackoffState::new(config.backoff.clone());
         let warner = RateLimitedWarner::new(config.warn_interval);
         Self {
@@ -183,21 +179,16 @@ impl Worker {
     ///
     /// While the signal is running this is the pooled agent, so ordinary
     /// traffic keeps its connection reuse. Once a drain begins, a fresh agent
-    /// is built around the remaining budget instead, because ureq's
-    /// `timeout_connect` takes precedence over the per-request deadline when
-    /// both are set: a pooled agent carrying the configured connect timeout
-    /// would let one attempt run that timeout past the deadline the handler is
-    /// waiting on, however short the request timeout it was handed.
+    /// is built around the remaining budget instead, so no attempt can outlive
+    /// the deadline the handler is waiting on. ureq 3 checks its global timeout
+    /// in every phase, connection establishment included, so passing the budget
+    /// as the global timeout bounds the connect as well as everything after it.
     fn agent_for_attempt(&self) -> Option<Agent> {
         if !self.signal.is_shutting_down() {
             return Some(self.agent.clone());
         }
         let budget = self.signal.remaining()?;
-        Some(build_agent(
-            budget.min(self.config.connect_timeout),
-            budget,
-            RootCerts::PlatformVerifier,
-        ))
+        Some(build_agent(self.config.connect_timeout, budget))
     }
 
     /// Execute one request; HTTP 503 is classified as retryable.

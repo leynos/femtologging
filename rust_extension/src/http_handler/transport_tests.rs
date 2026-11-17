@@ -7,10 +7,36 @@
 //! into the map ureq appends from.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use rstest::rstest;
 
 use super::*;
+
+/// Scenario: an agent is built for a handler with distinct timeouts.
+///
+/// Invariant: the handler's connect timeout and write timeout reach ureq as
+/// its connect and global timeouts, and every other behaviour-relevant setting
+/// ureq 3 defaults differently from ureq 2 is restored explicitly. A change
+/// that no loopback fixture notices - proxy discovery switching on, statuses
+/// raised as errors, the redirect boundary moving - still fails here.
+#[test]
+fn the_agent_restores_the_ureq_2_settings() {
+    let connect = Duration::from_secs(7);
+    let global = Duration::from_secs(11);
+
+    let agent = build_agent(connect, global);
+    let config = agent.config();
+    let timeouts = config.timeouts();
+
+    assert_eq!(timeouts.connect, Some(connect));
+    assert_eq!(timeouts.global, Some(global));
+    assert!(!config.http_status_as_error());
+    assert!(config.proxy().is_none());
+    assert_eq!(config.max_redirects(), MAX_REDIRECTS);
+    assert!(config.max_redirects_will_error());
+    assert_eq!(config.redirect_auth_headers(), RedirectAuthHeaders::Never);
+}
 
 /// Build a configuration whose only interesting parts are the given values.
 fn config(

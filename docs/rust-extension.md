@@ -399,32 +399,47 @@ retains responsibility for importing arbitrary user-defined factories.
 
 ## HTTP transport and TLS
 
-The native HTTP worker uses ureq 3.4 with the `native-tls` feature. The
-migration from ureq 2 keeps the transport's observable behaviour; the contracts
-below are pinned by `rust_extension/src/http_handler/request_shape_tests.rs` and
-`tls_tests.rs`.
+The native HTTP worker uses ureq 3.4 with its default `rustls` and `gzip`
+features. The migration from ureq 2 keeps the transport's observable behaviour;
+the contracts below are pinned by
+`rust_extension/src/http_handler/request_shape_tests.rs` (with
+`request_shape_tests/redirects.rs`) and `tls_tests.rs`.
 
-- **TLS trust.** The agent selects `TlsProvider::NativeTls` with
-  `RootCerts::PlatformVerifier`, so certificates are validated against the
-  host's trust store, as they were under ureq 2. ureq 3 otherwise defaults to
-  Rustls with bundled WebPKI roots, which would silently change which
-  certificates the handler trusts. The dependency disables ureq's default
-  features (keeping only `gzip` and `native-tls`), so that Rustls stack is not
-  compiled at all.
-- **Timeouts.** `connect_timeout` maps to `timeout_connect` and covers TCP
-  connection establishment and the TLS handshake. `write_timeout` maps to
-  `timeout_global`, which bounds the whole attempt: request, response headers,
-  and any body read. A shutdown drain rebuilds the agent around the remaining
-  budget and clamps the connect timeout to it, because a connect timeout takes
-  precedence over the global one.
+- **TLS trust.** The agent selects `TlsProvider::Rustls` with
+  `RootCerts::WebPki`, so certificates are validated against the WebPKI roots
+  compiled into the binary. That is what ureq 2 actually did: enabling its
+  `native-tls` feature only made a native-tls connector available for an
+  `AgentBuilder` to select, and the handler never selected one, so the default
+  Rustls connector with `webpki_roots` validated every request. Naming the
+  provider and the roots keeps that policy explicit instead of inheriting it
+  from whatever the current ureq default happens to be.
+- **Timeouts.** `connect_timeout` maps to `timeout_connect`, which ureq 3
+  applies to connection establishment including the TLS handshake.
+  `write_timeout` maps to `timeout_global`, which bounds the whole attempt:
+  request, response headers, and any body read. ureq 3 checks the global
+  timeout during every phase, so it bounds connection establishment too: a
+  connect may run for at most `min(connect_timeout, write_timeout)`, while the
+  attempt as a whole still ends at `write_timeout`. ureq 2 exempted its connect
+  phase from the overall deadline, so a configuration whose connect timeout is
+  larger than its write timeout now fails sooner. The verdict is unchanged - a
+  connection that outlived the attempt budget could never deliver the record,
+  and both versions report a transport error - and only the time to failure
+  differs. A shutdown drain rebuilds the agent around the remaining budget as
+  its global timeout, so no attempt can outlive the deadline the handler waits
+  on.
 - **Status handling.** `http_status_as_error(false)` leaves every response with
   a status to the retry classifier: 2xx succeeds, 429 and 5xx retry, and other
   4xx responses are permanent. A `StatusCode` error is classified the same way
   if that setting is ever changed.
 - **Proxy discovery.** `proxy(None)` keeps ureq 3's `Proxy::try_from_env`
   default switched off, matching ureq 2 without its `proxy-from-env` feature.
-- **Redirects.** Redirects stop after five hops, and exceeding the limit is a
-  transport error, so the record follows the normal retry policy. The
+- **Redirects.** Four redirects are followed and the fifth redirect response
+  is a transport error, so the record follows the normal retry policy. ureq 2
+  counted the original request against its five-redirect limit, so
+  `max_redirects(4)` in ureq 3 is the same boundary. A 307 or 308 answer to a
+  POST cannot be replayed with its body: ureq 2 returned the response itself,
+  which the classifier treats as permanent, and ureq 3 reports the same refusal
+  as `RedirectFailed`, which the transport maps to that verdict. The
   `Authorization` header is stripped on every redirect
   (`RedirectAuthHeaders::Never`), matching ureq 2. That setting covers
   `Authorization` only: a custom credential header such as `X-Api-Key` is

@@ -5,7 +5,8 @@
 //! produced them. They cover the parts of the ureq 2 to 3 migration that a
 //! compile error cannot: which header value wins, where a GET payload goes, how
 //! long an attempt may last, whether a response body is read, how a server
-//! status is reported, and what a redirect does with the credentials.
+//! status is reported, where the redirect boundary sits, and what a redirect
+//! does with the credentials.
 //!
 //! Nothing here leaves the host, changes the system trust store, or reads the
 //! environment.
@@ -18,7 +19,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use rstest::rstest;
-use ureq::tls::RootCerts;
 
 use super::{CapturedRequest, read_http_request, spawn_mock_server, tcp_listener};
 use crate::http_handler::config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
@@ -27,11 +27,7 @@ use crate::http_handler::transport::{build_agent, execute};
 
 /// An agent with timeouts long enough that only the fixture ends an attempt.
 fn test_agent() -> ureq::Agent {
-    build_agent(
-        Duration::from_secs(5),
-        Duration::from_secs(5),
-        RootCerts::PlatformVerifier,
-    )
+    build_agent(Duration::from_secs(5), Duration::from_secs(5))
 }
 
 /// Every value sent for `name`, in wire order.
@@ -96,29 +92,6 @@ fn spawn_stalled_body_server(
         read_http_request(stream)?;
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n")
     })
-}
-
-/// Spawn a server that answers its one request with a redirect to `location`.
-fn spawn_redirect_server(
-    listener: TcpListener,
-    location: String,
-) -> io::Result<(SocketAddr, mpsc::Receiver<CapturedRequest>)> {
-    let addr = listener.local_addr()?;
-    let (capture_tx, capture_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let Ok(request) = read_http_request(&mut stream) else {
-            return;
-        };
-        let response = format!(
-            "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        );
-        let _ = stream.write_all(response.as_bytes());
-        let _ = capture_tx.send(request);
-    });
-    Ok((addr, capture_rx))
 }
 
 /// Configuration that posts to `url` with the given auth and headers.
@@ -217,11 +190,7 @@ fn the_write_timeout_bounds_an_unanswered_request(tcp_listener: io::Result<TcpLi
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
     let (addr, read, release) = spawn_silent_server(tcp_listener).expect("spawn silent server");
     let write_timeout = Duration::from_millis(150);
-    let agent = build_agent(
-        Duration::from_secs(5),
-        write_timeout,
-        RootCerts::PlatformVerifier,
-    );
+    let agent = build_agent(Duration::from_secs(5), write_timeout);
     let config = post_config(format!("http://{addr}/log"), AuthConfig::None, &[]);
 
     let started = Instant::now();
@@ -290,57 +259,46 @@ fn a_server_error_status_is_a_retryable_verdict(tcp_listener: io::Result<TcpList
     assert_eq!(class, ResponseClass::Retryable);
 }
 
-/// Scenario: the collector redirects to a second listener, and the request
-/// carries both the configured auth and a custom credential header.
+/// Scenario: the connect timeout is far longer than the global timeout and the
+/// peer accepts the TCP connection but never answers the TLS handshake.
 ///
-/// Invariant: the redirect is followed, but the `Authorization` header sent to
-/// the original host is not replayed at the target. ureq 3's
-/// `RedirectAuthHeaders` setting covers only `Authorization`, so a custom
-/// credential header is forwarded; that is also what ureq 2 did, and the
-/// documentation states the distinction rather than claiming every credential
-/// is stripped.
+/// Invariant: the attempt ends near the global timeout. ureq 3 checks its
+/// global timeout in every phase, connection establishment included, so the
+/// handler's `write_timeout` - the global timeout - is what bounds a connect,
+/// not `connect_timeout`. ureq 2 exempted its connect phase from the overall
+/// deadline; the tighter bound is the one this migration accepts, because a
+/// connection that outlives the attempt budget could never deliver the record
+/// and both versions report a transport error.
 #[rstest]
-fn a_redirect_strips_authorization_and_forwards_custom_headers(
-    tcp_listener: io::Result<TcpListener>,
-) {
-    let redirect_listener = tcp_listener.expect("bind ephemeral listener");
-    let target_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind redirect target");
-    let (target_addr, target_requests) =
-        spawn_mock_server(target_listener, 200).expect("spawn redirect target");
-    let (redirect_addr, redirect_requests) =
-        spawn_redirect_server(redirect_listener, format!("http://{target_addr}/collected"))
-            .expect("spawn redirect server");
-    let config = post_config(
-        format!("http://{redirect_addr}/log"),
-        AuthConfig::Bearer {
-            token: "redirect-secret".to_owned(),
-        },
-        &[("x-api-key", "custom-credential")],
-    );
+fn the_global_timeout_bounds_connection_establishment(tcp_listener: io::Result<TcpListener>) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, _read, release) = spawn_held_server(tcp_listener, |_stream: &mut TcpStream| Ok(()))
+        .expect("spawn stalled-handshake server");
+    let connect_timeout = Duration::from_secs(10);
+    let global_timeout = Duration::from_millis(200);
+    let agent = build_agent(connect_timeout, global_timeout);
+    let config = HTTPHandlerConfig {
+        url: format!("https://127.0.0.1:{}/log", addr.port()),
+        ..Default::default()
+    };
 
-    let class = execute(&config, &test_agent(), "msg=redirect").expect("redirect is followed");
+    let started = Instant::now();
+    let result = execute(&config, &agent, "msg=handshake");
+    let elapsed = started.elapsed();
+    let _ = release.send(());
 
-    assert_eq!(class, ResponseClass::Success);
-    let first = redirect_requests
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the first request should carry the configured auth");
-    assert_eq!(
-        header_values(&first, "authorization"),
-        ["Bearer redirect-secret"]
-    );
-    assert_eq!(header_values(&first, "x-api-key"), ["custom-credential"]);
-    let second = target_requests
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the redirect target should be reached");
-    assert_eq!(second.path, "/collected");
     assert!(
-        header_values(&second, "authorization").is_empty(),
-        "a redirect must not replay the Authorization header: {:?}",
-        header_values(&second, "authorization")
+        result.is_err(),
+        "a handshake that never completes must be a transport error: {result:?}"
     );
-    assert_eq!(
-        header_values(&second, "x-api-key"),
-        ["custom-credential"],
-        "a custom header is outside RedirectAuthHeaders and is forwarded"
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "the {global_timeout:?} global timeout must bound a connect, not the {connect_timeout:?} connect timeout: {elapsed:?}"
     );
 }
+
+// Redirect contracts - the follow limit, credential stripping, and the one
+// redirect ureq 3 cannot follow - with their loopback fixtures.
+#[cfg(test)]
+#[path = "request_shape_tests/redirects.rs"]
+mod redirects;

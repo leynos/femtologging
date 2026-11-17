@@ -4,8 +4,8 @@
 //! Split out of `worker.rs`, which owns the clock - the retry deadline and the
 //! shutdown budget - rather than the shape of a request. The settings here
 //! preserve the behaviour the handler had on ureq 2, where ureq 3's defaults
-//! differ: the trust store, proxy discovery, redirect limits, redirect
-//! credential stripping, and how status codes are reported.
+//! differ: the TLS provider and its roots, proxy discovery, redirect limits,
+//! redirect credential stripping, and how status codes are reported.
 
 use std::time::Duration;
 
@@ -25,30 +25,45 @@ use super::{
     response::{ResponseClass, classify_status},
 };
 
-/// Redirect limit retained from ureq 2.12.1, whose agent default was five.
-const MAX_REDIRECTS: u32 = 5;
+/// Redirect limit reproducing ureq 2.12.1's five-redirect boundary.
+///
+/// ureq 2 counted the original request against its limit: configured with
+/// five, it followed four redirects and failed on the fifth redirect response.
+/// ureq 3 counts only the redirects it follows, so four is the same boundary.
+const MAX_REDIRECTS: u32 = 4;
 
 /// A response whose body the worker deliberately never reads.
 pub(super) type HttpResponse = Response<Body>;
 
+/// Build an agent for a production attempt against the bundled WebPKI roots.
+///
+/// The trust choice is fixed here rather than at each call site, so a future
+/// caller cannot select a weaker root by accident. Only the TLS tests vary it,
+/// through the test-only `execute_with_roots`.
+pub(super) fn build_agent(connect_timeout: Duration, global_timeout: Duration) -> Agent {
+    build_agent_with_roots(connect_timeout, global_timeout, RootCerts::WebPki)
+}
+
 /// Build an agent from the handler's timeouts and an explicit TLS trust choice.
 ///
-/// `TlsProvider::NativeTls` with `RootCerts::PlatformVerifier` preserves the
-/// pre-migration behaviour: native-tls validates against the host's trust
-/// store. ureq 3 otherwise defaults to Rustls with bundled WebPKI roots, which
-/// would silently change which certificates are trusted.
+/// `TlsProvider::Rustls` with `RootCerts::WebPki` reproduces what ureq 2
+/// actually used. Enabling ureq 2's `native-tls` feature only made a native-tls
+/// connector available for an `AgentBuilder` to select; the handler never
+/// selected one, so the default Rustls connector validated every request
+/// against the WebPKI roots compiled into the binary. Naming both here keeps
+/// that policy even if ureq changes its own defaults.
 ///
 /// Every other behaviour-relevant ureq 3 default is set to its ureq 2
 /// equivalent here: status codes are classified by the caller rather than
 /// raised as errors, proxy discovery stays off, and redirects keep ureq 2's
-/// five-hop limit, refusal to exceed it, and stripping of credentials.
-pub(super) fn build_agent(
+/// boundary, refusal to exceed it, and stripping of credentials.
+fn build_agent_with_roots(
     connect_timeout: Duration,
     global_timeout: Duration,
     root_certs: RootCerts,
 ) -> Agent {
     let tls_config = TlsConfig::builder()
-        .provider(TlsProvider::NativeTls)
+        .provider(TlsProvider::Rustls)
         .root_certs(root_certs)
         .build();
     let config = Agent::config_builder()
@@ -68,7 +83,9 @@ pub(super) fn build_agent(
 ///
 /// A `StatusCode` error is classified like the matching success response, so a
 /// change to ureq's `http_status_as_error` setting cannot silently turn a
-/// server verdict into a transport failure.
+/// server verdict into a transport failure. A `RedirectFailed` error is the one
+/// redirect outcome ureq 3 reports instead of a response, and it is classified
+/// as the status ureq 2 would have returned.
 pub(super) fn execute(
     config: &HTTPHandlerConfig,
     agent: &Agent,
@@ -85,6 +102,12 @@ pub(super) fn execute(
         Ok(response) => Ok(classify_status(response.status().as_u16())),
         Err(err) => match *err {
             ureq::Error::StatusCode(code) => Ok(classify_status(code)),
+            // ureq 2 returned the 307 or 308 response itself when it could not
+            // replay a request body, and any status outside 2xx, 429 and 5xx is
+            // permanent. ureq 3 reports the same refusal as `RedirectFailed`,
+            // with no response to classify, so restore the verdict rather than
+            // let it become a retryable transport error.
+            ureq::Error::RedirectFailed => Ok(ResponseClass::Permanent),
             other => Err(other.to_string()),
         },
     }
@@ -225,7 +248,7 @@ pub(super) fn execute_with_roots(
     root_certs: RootCerts,
     payload: &str,
 ) -> Result<ResponseClass, String> {
-    let agent = build_agent(config.connect_timeout, config.write_timeout, root_certs);
+    let agent = build_agent_with_roots(config.connect_timeout, config.write_timeout, root_certs);
     execute(config, &agent, payload)
 }
 

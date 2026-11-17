@@ -40,10 +40,12 @@ native-tls = { version = "0.2", features = ["vendored"] }
 rand = "0.10"
 encoding_rs = "0.8"
 ini = { package = "rust-ini", version = "0.21.3" }
-# The HTTP transport always selects native-tls, so ureq's default Rustls stack
-# would be compiled and never used. `gzip` keeps the default decompression and
-# `Accept-Encoding` behaviour the handler had before the migration.
-ureq = { version = "3.4", default-features = false, features = ["gzip", "native-tls"] }
+# ureq 3's default features, `rustls` and `gzip`, are the TLS engine and
+# compression the handler already had: ureq 2's `native-tls` feature only made a
+# native-tls connector available, and the handler never selected one. Keeping
+# the defaults therefore preserves both the trust store and the `Accept-Encoding`
+# behaviour the migration must not change.
+ureq = "3.4"
 percent-encoding = "2.3"
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
