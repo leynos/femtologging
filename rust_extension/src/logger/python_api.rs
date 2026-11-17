@@ -1,4 +1,4 @@
-//! Python methods exposed by the `FemtoLogger` PyO3 class.
+//! Python methods exposed by the `FemtoLogger` `PyO3` class.
 
 use std::sync::{Arc, atomic::Ordering};
 
@@ -26,10 +26,15 @@ impl FemtoLogger {
     ///
     /// Raises
     /// ------
-    /// ValueError
+    /// `ValueError`
     ///     If the name breaks the rules above.
-    /// RuntimeError
+    /// `RuntimeError`
     ///     If the process cannot start the shared dispatch pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValueError` when the name breaks the rules above, and
+    /// `RuntimeError` when the process cannot start the shared dispatch pool.
     #[new]
     #[pyo3(text_signature = "(name)")]
     pub fn new(name: String) -> PyResult<Self> {
@@ -85,6 +90,11 @@ impl FemtoLogger {
     }
 
     /// Attach a handler implemented in Python or Rust.
+    ///
+    /// # Errors
+    ///
+    /// Returns `TypeError` when the object has no callable `handle` method, and
+    /// `RuntimeError` when the logger cannot queue a handler replacement.
     #[pyo3(name = "add_handler", text_signature = "(self, handler)")]
     pub fn py_add_handler(&self, handler: Py<PyAny>) -> PyResult<()> {
         Python::attach(|py| {
@@ -98,23 +108,21 @@ impl FemtoLogger {
 
     /// Remove a handler that was previously attached via `add_handler`.
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
-    pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
-        Python::attach(|py| {
-            let mut handlers = self.handlers.write();
-            let matches_handler = |attachment: &HandlerAttachment| {
-                attachment
-                    .handler
-                    .as_any()
-                    .downcast_ref::<PyHandler>()
-                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
-            };
-            if let Some(pos) = handlers.iter().position(matches_handler) {
-                handlers.remove(pos);
-                true
-            } else {
-                false
-            }
-        })
+    pub fn py_remove_handler(&self, handler: &Bound<'_, PyAny>) -> bool {
+        let py = handler.py();
+        let mut handlers = self.handlers.write();
+        let matches_handler = |attachment: &HandlerAttachment| {
+            attachment
+                .handler
+                .as_any()
+                .downcast_ref::<PyHandler>()
+                .is_some_and(|py_h| py_h.obj.bind(py).is(handler.clone()))
+        };
+        let Some(index) = handlers.iter().position(matches_handler) else {
+            return false;
+        };
+        handlers.remove(index);
+        true
     }
 
     /// Remove all attached handlers.

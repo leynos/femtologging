@@ -57,7 +57,7 @@ fn rejected_handler_filters_do_not_enqueue_empty_jobs() {
     let shard: &'static Shard = Box::leak(Box::new(
         Shard::start(0, 4).expect("a four-record test shard should start"),
     ));
-    let logger = FemtoLogger::assembled_for_test("producer".to_string(), shard);
+    let logger = FemtoLogger::assembled_for_test("producer".to_owned(), shard);
     let (started_tx, started_rx) = bounded(1);
     let (release_tx, release_rx) = bounded(1);
     logger
@@ -114,7 +114,7 @@ fn refused_shard_admission_counts_and_warns_about_the_drop() {
     let shard: &'static Shard = Box::leak(Box::new(
         Shard::start(0, 1).expect("a one-record test shard should start"),
     ));
-    let logger = FemtoLogger::assembled_for_test("producer-drop".to_string(), shard);
+    let logger = FemtoLogger::assembled_for_test("producer-drop".to_owned(), shard);
     let (started_tx, started_rx) = bounded(1);
     let (release_tx, release_rx) = bounded(1);
     logger

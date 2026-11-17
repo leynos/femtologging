@@ -1,4 +1,4 @@
-//! Core logger implementation for the FemtoLogger system.
+//! Core logger implementation for the `FemtoLogger` system.
 //!
 //! This module provides the [`FemtoLogger`] struct, which handles log message
 //! filtering, formatting, and asynchronous output through the process-wide
@@ -184,15 +184,13 @@ impl FemtoLogger {
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
         let mut handlers = self.handlers.write();
-        if let Some(pos) = handlers
+        handlers
             .iter()
             .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
-        {
-            handlers.remove(pos);
-            true
-        } else {
-            false
-        }
+            .is_some_and(|pos| {
+                handlers.remove(pos);
+                true
+            })
     }
 
     /// Remove all handlers from this logger.
@@ -209,12 +207,13 @@ impl FemtoLogger {
     /// Removes the first matching attachment. Returns `true` if one was removed.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
         let mut filters = self.filters.write();
-        if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
-            filters.remove(pos);
-            true
-        } else {
-            false
-        }
+        filters
+            .iter()
+            .position(|f| Arc::ptr_eq(f, filter))
+            .is_some_and(|pos| {
+                filters.remove(pos);
+                true
+            })
     }
 
     /// Remove all filters from this logger, so later records are not filtered by them.
@@ -256,7 +255,7 @@ impl FemtoLogger {
         self.handlers
             .read()
             .iter()
-            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
+            .map(|attachment| Arc::as_ptr(&attachment.handler).cast::<()>() as usize)
             .collect()
     }
 
@@ -265,7 +264,7 @@ impl FemtoLogger {
         self.filters
             .read()
             .iter()
-            .map(|filter| Arc::as_ptr(filter) as *const () as usize)
+            .map(|filter| Arc::as_ptr(filter).cast::<()>() as usize)
             .collect()
     }
 }
