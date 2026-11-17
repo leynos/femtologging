@@ -92,6 +92,20 @@ pub(crate) enum DrainOutcome {
     TimedOut,
 }
 
+/// Why a shard refused a prepared record.
+///
+/// A refusal normally hands the record back so the caller can count the drop
+/// and warn about it. The queue returns only the job it refused, so a job
+/// without a record cannot come back from a send of one; that arm exists to
+/// make the match total, and reports the logic error as a refusal rather than
+/// panicking on it.
+pub(crate) enum AdmissionRefusal {
+    /// The refused record, untouched.
+    Record(Box<QueuedRecord>),
+    /// The queue returned a job that carries no record.
+    UnexpectedJob,
+}
+
 /// One shard's backlog, and the permits bounding what it holds.
 pub(crate) struct Shard {
     /// Queue used by producers to submit records and drain barriers.
@@ -130,7 +144,7 @@ impl Shard {
         // for as long as the worker can be running.
         let _worker =
             crate::sync::spawn_named(format!("femtologging-dispatch-{index}"), move || {
-                run_worker(jobs);
+                run_worker(&jobs);
             })?;
         Ok(Self {
             queue,
@@ -160,7 +174,7 @@ impl Shard {
     pub(crate) fn budget(&self) -> Arc<LoggerBudget> {
         // `max(1)` first: a one-deep shard halves to zero, and a budget of zero
         // would refuse every record on a shard that can still hold one.
-        let share = (self.depth / 2).max(1);
+        let share = self.depth.div_euclid(2).max(1);
         // Then the documented ceiling, which a deep pool shard reaches: the
         // depth is `RECORDS_PER_LOGGER * count`, so half of it exceeds the
         // per-logger figure whenever the pool has more than two shards.
@@ -176,7 +190,7 @@ impl Shard {
     /// shard-wide pool and a logger's own allowance are separate bounds, which
     /// does not depend on either number's magnitude.
     #[cfg(all(test, not(loom)))]
-    pub(crate) fn budget_with_limit_for_test(&self, limit: usize) -> Arc<LoggerBudget> {
+    pub(crate) fn budget_with_limit_for_test(limit: usize) -> Arc<LoggerBudget> {
         Arc::new(LoggerBudget::new(limit))
     }
 
@@ -217,25 +231,29 @@ impl Shard {
         &self,
         queued: Box<QueuedRecord>,
         budget: &Arc<LoggerBudget>,
-    ) -> Result<(), Box<QueuedRecord>> {
+    ) -> Result<(), AdmissionRefusal> {
         let Some(permit) = Permit::take(&self.permits, budget) else {
-            return Err(queued);
+            return Err(AdmissionRefusal::Record(queued));
         };
         match self.queue.try_send(Job::Record { queued, permit }) {
             Ok(()) => Ok(()),
             // The queue filled or went away after a permit was taken. The
             // permit travelled in the rejected job, so unpacking it drops the
             // guard and returns the token; the record goes back to the caller.
-            Err(error) => match error.into_inner() {
-                Job::Record { queued, .. } => Err(queued),
-                Job::Barrier { .. } => unreachable!("only a record job is admitted here"),
-                // `admit` sends nothing but records, so neither of these can
-                // come back. The arm exists only because a `--cfg loom` build
-                // adds `Job::Stop`, and a match over the full enum must name
-                // it.
+            Err(error) => Err(match error.into_inner() {
+                Job::Record {
+                    queued: returned, ..
+                } => AdmissionRefusal::Record(returned),
+                // `admit` sends nothing but records, so the queue cannot
+                // return a barrier or a stop here. Dropping the job returns
+                // the permit, and the refusal is reported rather than
+                // panicked on, so a logic error costs one record instead of
+                // the process.
+                #[cfg(not(loom))]
+                Job::Barrier { .. } => AdmissionRefusal::UnexpectedJob,
                 #[cfg(loom)]
-                Job::Stop => unreachable!("only a record job is admitted here"),
-            },
+                Job::Barrier { .. } | Job::Stop => AdmissionRefusal::UnexpectedJob,
+            }),
         }
     }
 

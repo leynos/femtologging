@@ -46,7 +46,7 @@ fn counting_logger() -> (FemtoLogger, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let filter_calls = Arc::new(AtomicUsize::new(0));
     let format_calls = Arc::new(AtomicUsize::new(0));
     let logger = FemtoLogger::with_formatter_for_test(
-        "counting".to_string(),
+        "counting".to_owned(),
         SharedFormatter::new(CountingFormatter(Arc::clone(&format_calls))),
     );
     logger.add_filter(Arc::new(CountingFilter(Arc::clone(&filter_calls))));

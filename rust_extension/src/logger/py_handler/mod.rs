@@ -1,4 +1,4 @@
-//! Python handler wrapper for FemtoLogger.
+//! Python handler wrapper for `FemtoLogger`.
 //!
 //! This module provides [`PyHandler`], which wraps Python handler objects
 //! to allow them to be used by the Rust logging infrastructure.
@@ -23,7 +23,7 @@ use self::native_handler::NativeHandlerKind;
 mod method_call;
 
 /// Map a Python error to a [`HandlerError`], logging a warning.
-fn map_py_err(py: Python<'_>, err: PyErr, method: &str) -> HandlerError {
+fn map_py_err(py: Python<'_>, err: &PyErr, method: &str) -> HandlerError {
     let message = err.to_string();
     err.print(py);
     warn!("PyHandler: error calling {method}: {message}");
@@ -68,12 +68,10 @@ pub fn validate_handler(obj: &Bound<'_, PyAny>) -> PyResult<()> {
         let attr_type = handle
             .get_type()
             .name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
+            .map_or_else(|_| "<unknown>".to_owned(), |name| name.to_string());
         let handler_repr = obj
             .repr()
-            .map(|r| r.to_string())
-            .unwrap_or_else(|_| "<unrepresentable>".to_string());
+            .map_or_else(|_| "<unrepresentable>".to_owned(), |repr| repr.to_string());
         Err(pyo3::exceptions::PyTypeError::new_err(format!(
             "'handler.handle' is not callable (type: {attr_type}, handler: {handler_repr})",
         )))
@@ -145,8 +143,7 @@ impl PyHandler {
         let native_handler = NativeHandlerKind::from_object(obj.bind(py));
         let has_handle_record = obj
             .getattr(py, "handle_record")
-            .map(|attr| attr.bind(py).is_callable())
-            .unwrap_or(false);
+            .is_ok_and(|attr| attr.bind(py).is_callable());
         Self {
             obj,
             has_handle_record,
@@ -186,9 +183,11 @@ impl FemtoHandlerTrait for PyHandler {
     /// through its own `flush` method when it has a callable one, so a
     /// user-defined Python handler controls its own buffer.
     fn flush(&self) -> bool {
-        Python::attach(|py| match self.native_handler {
-            Some(native_handler) => native_handler.flush(py, self.obj.bind(py)),
-            None => self.call_python_flush(py),
+        Python::attach(|py| {
+            self.native_handler.map_or_else(
+                || self.call_python_flush(py),
+                |native_handler| native_handler.flush(py, self.obj.bind(py)),
+            )
         })
     }
 
@@ -266,7 +265,7 @@ impl FemtoHandlerTrait for PyHandler {
                     (record.logger(), record.level_str(), record.message()),
                 )
                 .map(|_| ())
-                .map_err(|err| map_py_err(py, err, "handle"))
+                .map_err(|err| map_py_err(py, &err, "handle"))
         })
     }
 

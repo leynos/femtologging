@@ -50,7 +50,12 @@ impl SignallingCollectingHandler {
 impl FemtoHandlerTrait for SignallingCollectingHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         self.inner.handle(record)?;
-        let _ = self.record_tx.try_send(());
+        // One outstanding signal already tells the test that a record
+        // arrived, so a full channel drops the duplicate; a disconnected one
+        // means the test stopped listening. Neither is a handler failure.
+        if self.record_tx.try_send(()).is_err() {
+            log::trace!("SignallingCollectingHandler: signal had no room or no listener");
+        }
         Ok(())
     }
 

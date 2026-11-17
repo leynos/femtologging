@@ -82,14 +82,14 @@ impl InternalEventCollector {
     }
 
     fn wait_for_event_count(&self, expected_count: usize) -> Result<(), String> {
-        let events = self
+        let buffered = self
             .events
             .lock()
             .map_err(|error| format!("tracing event collector was poisoned: {error}"))?;
         let (events, _) = self
             .events_changed
-            .wait_timeout_while(events, Duration::from_secs(2), |events| {
-                events.len() < expected_count
+            .wait_timeout_while(buffered, Duration::from_secs(2), |pending| {
+                pending.len() < expected_count
             })
             .map_err(|error| format!("tracing event collector was poisoned: {error}"))?;
         if events.len() >= expected_count {
@@ -122,9 +122,8 @@ where
             return;
         }
 
-        let mut events = match self.events.lock() {
-            Ok(events) => events,
-            Err(_) => return,
+        let Ok(mut events) = self.events.lock() else {
+            return;
         };
         events.push(CapturedEvent {
             fields: collect_fields(event),
@@ -301,17 +300,23 @@ fn emit_handler_filter_outcomes() {
     emit_handler_filter_chain(raising_callback_filter(), false);
 }
 
+/// Borrow one captured event field's rendered value, if it was recorded.
+fn event_field<'a>(event: &'a CapturedEvent, name: &str) -> Option<&'a str> {
+    event.fields.get(name).map(String::as_str)
+}
+
 fn assert_no_local_handler_events(events: &[CapturedEvent]) {
     let no_local_handler_events = events
         .iter()
-        .filter(|event| {
-            event.fields.get("dispatch_outcome").map(String::as_str) == Some("no_local_handlers")
-        })
+        .filter(|event| event_field(event, "dispatch_outcome") == Some("no_local_handlers"))
         .collect::<Vec<_>>();
     assert_eq!(no_local_handler_events.len(), 2);
     for event in no_local_handler_events {
-        assert_eq!(event.fields["handler_kind"], "none");
-        assert_eq!(event.fields["dispatch_outcome"], "no_local_handlers");
+        assert_eq!(event_field(event, "handler_kind"), Some("none"));
+        assert_eq!(
+            event_field(event, "dispatch_outcome"),
+            Some("no_local_handlers")
+        );
         assert_eq!(
             event
                 .fields
@@ -328,14 +333,15 @@ fn assert_no_local_handler_events(events: &[CapturedEvent]) {
 fn assert_no_handlers_accepted_events(events: &[CapturedEvent]) {
     let no_handlers_accepted_events = events
         .iter()
-        .filter(|event| {
-            event.fields.get("dispatch_outcome").map(String::as_str) == Some("no_handlers_accepted")
-        })
+        .filter(|event| event_field(event, "dispatch_outcome") == Some("no_handlers_accepted"))
         .collect::<Vec<_>>();
     assert_eq!(no_handlers_accepted_events.len(), 1);
     for event in no_handlers_accepted_events {
-        assert_eq!(event.fields["operation"], "producer_handler_dispatch");
-        assert_eq!(event.fields["handler_kind"], "none");
+        assert_eq!(
+            event_field(event, "operation"),
+            Some("producer_handler_dispatch")
+        );
+        assert_eq!(event_field(event, "handler_kind"), Some("none"));
         assert_eq!(
             event
                 .fields

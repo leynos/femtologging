@@ -97,7 +97,7 @@ impl FemtoLogger {
             Err(err) => {
                 self.context_dropped_records
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                log::warn!("FemtoLogger: dropping record due to invalid context payload: {err}");
                 return None;
             }
         }
@@ -172,7 +172,7 @@ impl FemtoLogger {
     }
 
     /// Decode the logger's validated atomic representation.
-    pub(crate) fn level_from_raw(level: u8) -> FemtoLevel {
+    pub(crate) const fn level_from_raw(level: u8) -> FemtoLevel {
         match level {
             0 => FemtoLevel::Trace,
             1 => FemtoLevel::Debug,
@@ -212,7 +212,7 @@ impl FemtoLogger {
 
     /// Queue a record for this logger's local handlers on its dispatch shard.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
-        let Some((record, handlers)) = self.select_local_handlers(record) else {
+        let Some((filtered_record, handlers)) = self.select_local_handlers(record) else {
             return;
         };
         #[cfg(feature = "tracing-compat")]
@@ -225,12 +225,12 @@ impl FemtoLogger {
         ) {
             Ok(context) => context,
             Err(error) => {
-                self.record_context_capture_failure(error);
+                self.record_context_capture_failure(&error);
                 return;
             }
         };
         let queued = Box::new(QueuedRecord {
-            record,
+            record: filtered_record,
             handlers,
             #[cfg(feature = "python")]
             context,

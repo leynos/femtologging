@@ -27,21 +27,25 @@ const SENSITIVE_MARKER: &str = "SENSITIVE-flush-payload-7d1c";
 
 /// Run `body` with Python's `sys.stderr` replaced by a buffer.
 fn with_captured_stderr<T>(py: Python<'_>, body: impl FnOnce() -> T) -> (T, String) {
-    let contextlib = py.import("contextlib").expect("contextlib is importable");
-    let io = py.import("io").expect("io is importable");
+    let contextlib = py
+        .import("contextlib")
+        .unwrap_or_else(|err| panic!("contextlib is importable: {err}"));
+    let io = py
+        .import("io")
+        .unwrap_or_else(|err| panic!("io is importable: {err}"));
     let buffer = io
         .getattr("StringIO")
-        .expect("io.StringIO exists")
+        .unwrap_or_else(|err| panic!("io.StringIO exists: {err}"))
         .call0()
-        .expect("StringIO constructs");
+        .unwrap_or_else(|err| panic!("StringIO constructs: {err}"));
     let redirect = contextlib
         .getattr("redirect_stderr")
-        .expect("contextlib.redirect_stderr exists")
+        .unwrap_or_else(|err| panic!("contextlib.redirect_stderr exists: {err}"))
         .call1((&buffer,))
-        .expect("the redirect context constructs");
+        .unwrap_or_else(|err| panic!("the redirect context constructs: {err}"));
     redirect
         .call_method0("__enter__")
-        .expect("the redirect context enters");
+        .unwrap_or_else(|err| panic!("the redirect context enters: {err}"));
 
     let result = body();
 
@@ -49,28 +53,28 @@ fn with_captured_stderr<T>(py: Python<'_>, body: impl FnOnce() -> T) -> (T, Stri
     // body raised nothing, which is the only case this helper supports.
     redirect
         .call_method1("__exit__", (py.None(), py.None(), py.None()))
-        .expect("the redirect context exits");
+        .unwrap_or_else(|err| panic!("the redirect context exits: {err}"));
     let captured = buffer
         .call_method0("getvalue")
-        .expect("the buffer is readable")
+        .unwrap_or_else(|err| panic!("the buffer is readable: {err}"))
         .extract::<String>()
-        .expect("the buffer holds text");
+        .unwrap_or_else(|err| panic!("the buffer holds text: {err}"));
     (result, captured)
 }
 
-/// Build a handler by instantiating *class_name* from Python *source*.
+/// Build a handler by instantiating `class_name` from Python `source`.
 ///
 /// The three builders below differ only in the source they compile, so the
 /// module loading and construction live here once. Each call compiles its own
 /// module, so one shared module name is enough to label a traceback.
 fn handler_from_source(py: Python<'_>, source: &CStr, class_name: &str) -> PyHandler {
     let module = PyModule::from_code(py, source, c"flush_handler_test.py", c"flush_handler_test")
-        .expect("the test handler module compiles");
+        .unwrap_or_else(|err| panic!("the test handler module compiles: {err}"));
     let object = module
         .getattr(class_name)
-        .expect("the class exists")
+        .unwrap_or_else(|err| panic!("the class exists: {err}"))
         .call0()
-        .expect("the handler constructs");
+        .unwrap_or_else(|err| panic!("the handler constructs: {err}"));
     PyHandler::new(py, object.unbind())
 }
 
