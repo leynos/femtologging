@@ -1,5 +1,3 @@
-# ruff: file-ignore[assert, suspicious-subprocess-import] This support module
-# reports a child scenario's outcome to the calling test and runs a fixed argv.
 """Run re-entrant finalizer scenarios in a bounded child interpreter.
 
 The scenarios under test need a fresh interpreter: a deadlocked finalizer would
@@ -14,7 +12,7 @@ merely avoids crashing without finishing the re-entry still fails.
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # ruff: ignore[suspicious-subprocess-import] fixed argv, no shell
 import sys
 
 #: How long a scenario may take before it is treated as deadlocked.
@@ -27,7 +25,7 @@ def run_reentrant_finalizer_script(
     *,
     timeout: float = CHILD_TIMEOUT_SECONDS,
 ) -> None:
-    """Run *script* in a child interpreter and require *marker* in its output.
+    """Run *script* in a child interpreter and require a *marker* output line.
 
     Parameters
     ----------
@@ -68,11 +66,13 @@ def run_reentrant_finalizer_script(
         )
         raise AssertionError(message) from exc
 
-    assert result.returncode == 0, (
+    assert result.returncode == 0, (  # ruff: ignore[assert] test outcome check
         f"child interpreter exited with {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert marker in result.stdout, (
+    # The marker must be a whole line: a scenario that prints it embedded in
+    # other text has not reached the point the marker stands for.
+    assert marker in result.stdout.splitlines(), (  # ruff: ignore[assert] test outcome check
         f"child interpreter never printed the completion marker {marker!r}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
