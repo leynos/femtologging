@@ -19,6 +19,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argv
+import tomllib
 import typing as typ
 
 import pytest
@@ -30,7 +31,8 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 #: A minimal shared dictionary. It carries the broad colour-option mask the
-#: overlay withdraws, and one misspelling the fixture document repeats.
+#: overlay withdraws, a sentinel mask it leaves alone, and one misspelling the
+#: fixture document repeats.
 FIXTURE_DICTIONARY = """\
 schema = 1
 
@@ -44,7 +46,10 @@ accepted = []
 mispell = "misspell"
 
 [patterns]
-ignore = ['--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\\b|_)']
+ignore = [
+    '--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\\b|_)',
+    'zzgatefixture-sentinel',
+]
 
 [phrases.corrections]
 
@@ -245,7 +250,12 @@ def test_the_gate_regenerates_configuration_and_reports_a_misspelling(
     assert result.returncode == 2, result.stdout + result.stderr
     generated = (repository / "typos.toml").read_text(encoding="utf-8")
     assert '"zzgatefixture" = "zzgatefixture"' in generated, generated
-    assert BROAD_COLOUR_PATTERN not in generated, generated
+    # The pattern values are JSON-escaped inside the TOML strings, so a raw
+    # substring search would miss them: reading the file back is what proves
+    # the overlay's `remove` was honoured rather than merely unrecognised.
+    patterns = tomllib.loads(generated)["default"]["extend-ignore-re"]
+    assert "zzgatefixture-sentinel" in patterns, patterns
+    assert BROAD_COLOUR_PATTERN not in patterns, patterns
     assert "mispell" in result.stdout + result.stderr, result.stdout + result.stderr
 
 
