@@ -225,7 +225,9 @@ fn sequential_transactions_both_complete(install_baseline_after_reset: Result<()
 /// Python finalizer would deadlock in.
 #[rstest]
 #[serial]
-fn displaced_filter_is_released_after_the_transaction(install_baseline_after_reset: Result<(), ConfigError>) {
+fn displaced_filter_is_released_after_the_transaction(
+    install_baseline_after_reset: Result<(), ConfigError>,
+) {
     run_with_timeout("a filter replacement", move || {
         install_baseline_after_reset.expect("the baseline configuration should build");
         FILTERS_RELEASED.store(0, Ordering::SeqCst);
@@ -269,7 +271,9 @@ fn displaced_filter_is_released_after_the_transaction(install_baseline_after_res
 /// would wait on a guard its own thread already owns and never return.
 #[rstest]
 #[serial]
-fn reentering_drop_can_apply_another_transaction(install_baseline_after_reset: Result<(), ConfigError>) {
+fn reentering_drop_can_apply_another_transaction(
+    install_baseline_after_reset: Result<(), ConfigError>,
+) {
     run_with_timeout("a re-entering drop", move || {
         install_baseline_after_reset.expect("the baseline configuration should build");
         REENTERED.store(0, Ordering::SeqCst);
