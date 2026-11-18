@@ -4,18 +4,19 @@ This module handles the processing of filters, formatters, handlers,
 loggers, and root logger sections in ``dictConfig``-style configuration
 dictionaries.
 
-The entry points are :func:`_process_filters`, :func:`_process_formatters`,
-:func:`_process_handlers`, :func:`_process_loggers`, and
-:func:`_process_root_logger`, called from
+The entry points are :func:`_reject_filter_factories`,
+:func:`_process_sections`, and :func:`_process_root_logger`, called from
 :func:`femtologging.config.dictConfig`.
 """
 
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import typing as typ
 
-from ._config_filters import build_filter_from_dict, factory_disallowed_message
+from ._config_filters import build_filter_from_dict
+from ._config_policy import factory_disallowed_message
 from .config import (
     _build_formatter,
     _build_handler_from_dict,
@@ -72,6 +73,55 @@ def _iter_section_items(
                 f"{item_name} config",
             ),
         )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SectionSpec:
+    """Describe a section whose entries each build one configured object."""
+
+    section: str
+    item_name: str
+    attach: cabc.Callable[
+        [_ConfigBuilder, str, cabc.Mapping[str, object]], _ConfigBuilder
+    ]
+    key_err_tmpl: str | None = None
+
+
+_SECTION_SPECS: tuple[_SectionSpec, ...] = (
+    _SectionSpec(
+        "formatters",
+        "formatter",
+        lambda builder, fid, cfg: builder.with_formatter(fid, _build_formatter(cfg)),
+    ),
+    _SectionSpec(
+        "handlers",
+        "handler",
+        lambda builder, hid, cfg: builder.with_handler(
+            hid, _build_handler_from_dict(hid, cfg)
+        ),
+    ),
+    _SectionSpec(
+        "loggers",
+        "logger",
+        lambda builder, lname, cfg: builder.with_logger(
+            lname, _build_logger_from_dict(lname, cfg)
+        ),
+        key_err_tmpl="loggers section key {name} must be a string",
+    ),
+)
+
+
+def _attach_section(
+    builder: _ConfigBuilder,
+    config: cabc.Mapping[str, object],
+    spec: _SectionSpec,
+) -> _ConfigBuilder:
+    """Attach every validated item in ``spec``'s section."""
+    for item_id, item_cfg in _iter_section_items(
+        config, spec.section, spec.item_name, key_err_tmpl=spec.key_err_tmpl
+    ):
+        builder = spec.attach(builder, item_id, item_cfg)
+    return builder
 
 
 def _reject_filter_factories(config: cabc.Mapping[str, object]) -> None:
@@ -134,43 +184,16 @@ def _process_filters(
     return builder
 
 
-def _process_formatters(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
+def _process_sections(
+    builder: _ConfigBuilder,
+    config: cabc.Mapping[str, object],
+    *,
+    allow_factories: bool = True,
 ) -> _ConfigBuilder:
-    """Attach formatter builders to ``builder``."""
-    for fid, fmt_cfg in _iter_section_items(
-        config,
-        "formatters",
-        "formatter",
-    ):
-        builder = builder.with_formatter(fid, _build_formatter(fmt_cfg))
-    return builder
-
-
-def _process_handlers(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
-) -> _ConfigBuilder:
-    """Attach handler builders to ``builder``."""
-    for hid, handler_cfg in _iter_section_items(
-        config,
-        "handlers",
-        "handler",
-    ):
-        builder = builder.with_handler(hid, _build_handler_from_dict(hid, handler_cfg))
-    return builder
-
-
-def _process_loggers(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
-) -> _ConfigBuilder:
-    """Attach logger configurations to ``builder``."""
-    for lname, logger_cfg in _iter_section_items(
-        config,
-        "loggers",
-        "logger",
-        key_err_tmpl="loggers section key {name} must be a string",
-    ):
-        builder = builder.with_logger(lname, _build_logger_from_dict(lname, logger_cfg))
+    """Attach the filter, formatter, handler, and logger sections."""
+    builder = _process_filters(builder, config, allow_factories=allow_factories)
+    for spec in _SECTION_SPECS:
+        builder = _attach_section(builder, config, spec)
     return builder
 
 

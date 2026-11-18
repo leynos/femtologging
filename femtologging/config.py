@@ -30,7 +30,7 @@ from . import _femtologging_rs as rust
 # Re-export BasicConfig, basicConfig, and fileConfig for backward compatibility
 # (these are also available from the top-level femtologging package)
 from ._basic_config import BasicConfig, basicConfig
-from ._config_filters import validate_allow_factories
+from ._config_policy import validate_allow_factories
 from ._timed_handler_config import parse_timed_args
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
@@ -369,12 +369,9 @@ def dictConfig(
     if not allow_factories:
         config_sections._reject_filter_factories(config)
     builder = typ.cast("typ.Any", _create_config_builder(version, config))
-    builder = config_sections._process_filters(
+    builder = config_sections._process_sections(
         builder, config, allow_factories=allow_factories
     )
-    builder = config_sections._process_formatters(builder, config)
-    builder = config_sections._process_handlers(builder, config)
-    builder = config_sections._process_loggers(builder, config)
     builder = config_sections._process_root_logger(builder, config)
     builder.build_and_init()
 
