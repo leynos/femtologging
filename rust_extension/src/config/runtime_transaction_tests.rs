@@ -139,14 +139,15 @@ impl Drop for ReenteringFilter {
     }
 }
 
-/// Build a baseline logger holding a handler and a level filter.
+/// Reset the manager, then build a baseline logger holding a handler and a
+/// level filter.
 ///
 /// Returns the build error rather than panicking: fixture setup is not a
 /// recognised test body, so each consuming test reports a failed build at its
-/// own panic boundary. Calling [`gil_and_clean_manager`] first keeps the
-/// manager reset ahead of the baseline, as the original inline calls did.
+/// own panic boundary. The reset is part of the fixture, which is why the name
+/// carries it.
 #[fixture]
-fn install_baseline() -> Result<(), ConfigError> {
+fn install_baseline_after_reset() -> Result<(), ConfigError> {
     gil_and_clean_manager();
     ConfigBuilder::new()
         .with_filter(
@@ -201,9 +202,9 @@ where
 /// acquisition against a regression that never releases the guard.
 #[rstest]
 #[serial]
-fn sequential_transactions_both_complete(install_baseline: Result<(), ConfigError>) {
+fn sequential_transactions_both_complete(install_baseline_after_reset: Result<(), ConfigError>) {
     run_with_timeout("two sequential transactions", move || {
-        install_baseline.expect("the baseline configuration should build");
+        install_baseline_after_reset.expect("the baseline configuration should build");
         for _ in 0..2 {
             RuntimeConfigBuilder::new()
                 .with_logger(
@@ -224,9 +225,9 @@ fn sequential_transactions_both_complete(install_baseline: Result<(), ConfigErro
 /// Python finalizer would deadlock in.
 #[rstest]
 #[serial]
-fn displaced_filter_is_released_after_the_transaction(install_baseline: Result<(), ConfigError>) {
+fn displaced_filter_is_released_after_the_transaction(install_baseline_after_reset: Result<(), ConfigError>) {
     run_with_timeout("a filter replacement", move || {
-        install_baseline.expect("the baseline configuration should build");
+        install_baseline_after_reset.expect("the baseline configuration should build");
         FILTERS_RELEASED.store(0, Ordering::SeqCst);
         FILTERS_RELEASED_UNDER_GUARD.store(0, Ordering::SeqCst);
 
@@ -268,9 +269,9 @@ fn displaced_filter_is_released_after_the_transaction(install_baseline: Result<(
 /// would wait on a guard its own thread already owns and never return.
 #[rstest]
 #[serial]
-fn reentering_drop_can_apply_another_transaction(install_baseline: Result<(), ConfigError>) {
+fn reentering_drop_can_apply_another_transaction(install_baseline_after_reset: Result<(), ConfigError>) {
     run_with_timeout("a re-entering drop", move || {
-        install_baseline.expect("the baseline configuration should build");
+        install_baseline_after_reset.expect("the baseline configuration should build");
         REENTERED.store(0, Ordering::SeqCst);
 
         Python::attach(|py| {
@@ -304,10 +305,10 @@ fn reentering_drop_can_apply_another_transaction(install_baseline: Result<(), Co
 #[rstest]
 #[serial]
 fn displaced_handlers_are_released_after_the_transaction(
-    install_baseline: Result<(), ConfigError>,
+    install_baseline_after_reset: Result<(), ConfigError>,
 ) {
     run_with_timeout("a handler replacement", move || {
-        install_baseline.expect("the baseline configuration should build");
+        install_baseline_after_reset.expect("the baseline configuration should build");
         let committed = manager::snapshot_runtime_state();
         let handler = committed
             .handler_registry
