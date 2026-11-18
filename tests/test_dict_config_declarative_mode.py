@@ -42,15 +42,10 @@ class _FactoryProbe:
         """Start with no observed invocations."""
         self.invocations: list[dict[str, object]] = []
 
-    def callable_target(self) -> cabc.Callable[..., object]:
-        """Return a callable that records its invocation and returns a filter."""
-
-        def factory(**kwargs: object) -> object:
-            """Record the keyword arguments and return an accepting filter."""
-            self.invocations.append(kwargs)
-            return lambda _record: True
-
-        return factory
+    def __call__(self, **kwargs: object) -> object:
+        """Record the keyword arguments and return an accepting filter."""
+        self.invocations.append(kwargs)
+        return lambda _record: True
 
 
 def _plain_factory(**_kwargs: object) -> object:
@@ -74,7 +69,7 @@ _FACTORY_VALUE_BUILDERS: tuple[
     ("function", lambda _probe: _plain_factory),
     ("class", lambda _probe: _PlainFactoryClass),
     ("filter-class", lambda _probe: logging.Filter),
-    ("callable-instance", lambda probe: probe.callable_target()),
+    ("callable-instance", lambda probe: probe),
     ("lambda", lambda _probe: lambda **_kwargs: None),
     ("none", lambda _probe: None),
     ("zero", lambda _probe: 0),
@@ -298,10 +293,15 @@ def test_declarative_mode_rejection_leaves_live_state_unchanged() -> None:
         "loggers": {"app": {"filters": ["lvl"]}},
         "root": {"level": "DEBUG"},
     }
+    app = get_logger("app")
+    root = get_logger("root")
+    before = (app.level, app.disabled, root.level, root.disabled)
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
         dictConfig(config, allow_factories=False)
 
-    assert get_logger("root").log("INFO", "still suppressed") is None, (
+    after = (app.level, app.disabled, root.level, root.disabled)
+    assert after == before, "rejection must leave both loggers' state unchanged"
+    assert root.log("INFO", "still suppressed") is None, (
         "rejection must leave the pre-existing root level in place"
     )
 
@@ -315,7 +315,7 @@ def test_build_filter_from_dict_rejects_factory_forms(
         config_filters, "resolve_factory", _unexpected_call("resolve_factory")
     )
 
-    for factory_ref in (_FACTORY_PATH, probe.callable_target()):
+    for factory_ref in (_FACTORY_PATH, probe):
         with pytest.raises(ValueError, match=_POLICY_PATTERN):
             build_filter_from_dict("f", {"()": factory_ref}, allow_factories=False)
 
