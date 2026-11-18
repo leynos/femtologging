@@ -18,8 +18,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pyo3::Python;
-
 use crate::handler::FemtoHandlerTrait;
 #[cfg(all(test, not(loom)))]
 use crate::monotonic_clock::MonotonicClock;
@@ -185,17 +183,19 @@ impl FemtoLogger {
     ///
     /// # Examples
     ///
-    /// A Rust caller holding Python access detaches during the blocking flush:
+    /// A Rust caller flushes the logger's handlers:
     ///
     /// ```
     /// use _femtologging_rs::FemtoLogger;
-    /// use pyo3::Python;
     ///
     /// let logger = FemtoLogger::new(String::from("example"))
     ///     .expect("the shared dispatch pool starts");
-    /// let flushed = Python::attach(|py| py.detach(|| logger.flush_handlers()));
-    /// assert!(flushed);
+    /// assert!(logger.flush_handlers());
     /// ```
+    ///
+    /// A caller that already holds Python access does not call this directly:
+    /// it goes through the Python-facing entry points, which detach the
+    /// interpreter for the whole barrier.
     pub fn flush_handlers(&self) -> bool {
         self.flush_handlers_blocking().finish(
             &self.flush_diagnostics,
@@ -242,21 +242,6 @@ impl FemtoLogger {
             timing,
             barrier_completed_at,
         }
-    }
-
-    /// Release Python while the shard and handlers consume the flush deadline.
-    pub(crate) fn flush_handlers_detached(&self, py: Python<'_>) -> bool {
-        #[cfg(not(loom))]
-        let outcome = py.detach(|| self.flush_handlers_blocking());
-        #[cfg(loom)]
-        let outcome = {
-            let _ = py;
-            self.flush_handlers_blocking()
-        };
-        outcome.finish(
-            &self.flush_diagnostics,
-            FlushFailureStage::CallerReturnDeadlineExceeded,
-        )
     }
 
     /// Snapshot handlers and enqueue their flush after accepted dispatch work.

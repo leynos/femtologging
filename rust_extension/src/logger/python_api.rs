@@ -7,6 +7,10 @@
 //! and `py_flush_handlers`, which releases the GIL while the barrier runs.
 //! Fallible entry points return `PyResult`; `log` lives in
 //! `convenience_methods` and flush diagnostics in `flush_diagnostics_api`.
+//! A second, non-`#[pymethods]` block holds `flush_handlers_detached`, the
+//! detachment seam that keeps `pyo3` out of the barrier module: the Python
+//! method and the log-compat manager sweep both reach it with the interpreter
+//! token they already hold.
 
 use std::sync::{Arc, atomic::Ordering};
 
@@ -15,6 +19,7 @@ use pyo3::{Py, PyAny};
 
 use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 
+use super::flush::FlushFailureStage;
 use super::{FemtoLogger, HandlerAttachment, PyHandler, validate_handler};
 
 #[pymethods]
@@ -192,5 +197,41 @@ impl FemtoLogger {
     /// Capture filter addresses for tests that verify attachment replacement.
     pub(crate) fn filter_ptrs_for_test(&self) -> Vec<usize> {
         self.filter_ptrs_for_test_native()
+    }
+}
+
+/// Detachment seam for callers that already hold the interpreter.
+///
+/// The barrier in [`super::flush`] names no `pyo3` type, so releasing the GIL
+/// belongs here, at the Python boundary: this module owns the
+/// `Python<'_>` token every Python-facing flush already carries, and the
+/// log-compat manager sweep in [`crate::manager::registry`] shares the same
+/// entry point rather than detaching for itself.
+impl FemtoLogger {
+    /// Release Python while the shard and handlers consume the flush deadline.
+    ///
+    /// The final verdict is still recorded after the interpreter is
+    /// reacquired, so a Python return that lands past the deadline reports
+    /// `false` even when the Rust-side barrier completed in time.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn py_flush(&self, py: Python<'_>) -> bool {
+    ///     self.flush_handlers_detached(py)
+    /// }
+    /// ```
+    pub(crate) fn flush_handlers_detached(&self, py: Python<'_>) -> bool {
+        #[cfg(not(loom))]
+        let outcome = py.detach(|| self.flush_handlers_blocking());
+        #[cfg(loom)]
+        let outcome = {
+            let _ = py;
+            self.flush_handlers_blocking()
+        };
+        outcome.finish(
+            &self.flush_diagnostics,
+            FlushFailureStage::CallerReturnDeadlineExceeded,
+        )
     }
 }
