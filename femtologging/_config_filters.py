@@ -12,6 +12,9 @@ from ._femtologging_rs import (
 )
 from ._filter_factory import resolve_factory
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 _DECLARATIVE_KEYS: frozenset[str] = frozenset({"level", "name"})
 
 
@@ -82,7 +85,7 @@ def _build_declarative_filter(fid: str, data: dict[str, object]) -> object:
 
 
 def build_filter_from_dict(
-    fid: str, data: dict[str, object], *, allow_factories: bool = True
+    fid: str, data: cabc.Mapping[str, object], *, allow_factories: bool = True
 ) -> object:
     """Create a filter builder from ``dictConfig`` filter data.
 
@@ -94,10 +97,11 @@ def build_filter_from_dict(
         Filter entry body. A ``"()"`` key selects the stdlib factory form; an
         entry without it must declare exactly one of ``level`` or ``name``.
     allow_factories
-        When ``False``, reject any entry carrying a ``"()"`` key. The rejection
-        happens on key presence alone, so the factory target is never read,
-        resolved, or invoked. Declarative ``level`` and ``name`` entries still
-        work.
+        When ``False``, reject any entry carrying a ``"()"`` key. The initial
+        key scan rejects before any value is read, so a factory target it sees
+        is never read, resolved, or invoked. A key that appears only during
+        copying is rejected before dispatch, so it is never resolved or
+        invoked. Declarative ``level`` and ``name`` entries still work.
 
     Returns
     -------

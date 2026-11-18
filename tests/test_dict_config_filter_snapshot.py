@@ -116,7 +116,31 @@ def test_declarative_mode_rejects_by_key_without_reading_value() -> None:
 def test_build_filter_from_dict_rejects_without_reading_value() -> None:
     """The direct guard rejects by key before copying the entry."""
     entry = _UnreadableFactoryEntry()
-    unreadable = typ.cast("dict[str, object]", entry)
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
-        build_filter_from_dict("f", unreadable, allow_factories=False)
+        build_filter_from_dict("f", entry, allow_factories=False)
     assert entry.value_reads == 0, "the factory value must never be read"
+
+
+def test_factory_mode_reads_each_entry_before_construction() -> None:
+    """A trusted factory's change to a later entry is visible to that entry."""
+    observed: list[object] = []
+
+    def _mutate(request_id: object) -> object:
+        """Record the current value and update the later entry."""
+        observed.append(request_id)
+        filters["later"]["request_id"] = "new"
+        return lambda _record: True
+
+    def _record(request_id: object) -> object:
+        """Record the value visible when this entry is constructed."""
+        observed.append(request_id)
+        return lambda _record: True
+
+    filters: dict[str, dict[str, object]] = {
+        "first": {"()": _mutate, "request_id": "old"},
+        "later": {"()": _record, "request_id": "old"},
+    }
+    dictConfig({"version": 1, "filters": filters, "root": {"level": "DEBUG"}})
+    assert observed == ["old", "new"], (
+        "each factory entry must be read when it is constructed"
+    )
