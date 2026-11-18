@@ -4,6 +4,9 @@ Reconfiguring the logger without the filter displaces the callback from both the
 registry and the live logger in one transaction commit, so the finalizer runs
 as part of the commit rather than at process exit.
 
+Checks go through ``scenario_support.require`` rather than ``assert``, which
+``python -O`` would remove.
+
 Run by ``tests.reentrant_finalizer_support`` in a child interpreter.
 """
 
@@ -18,6 +21,7 @@ from femtologging import (
     PythonCallbackFilterBuilder,
     get_logger,
 )
+from tests.fixtures.scenario_support import require
 
 if typ.TYPE_CHECKING:
     import logging
@@ -46,7 +50,7 @@ class FinalizingCallback:
 
     def __del__(self) -> None:
         """Re-enter the logger from finalization."""
-        assert STATE.phase != "setup", "the callback finalised before the replacement"
+        require(STATE.phase != "setup", "the callback finalised before the replacement")
         get_logger(NAME).info("re-entered during configuration replacement")
         STATE.dropped.append(True)
 
@@ -68,7 +72,7 @@ def main() -> None:
     configure(callback)
     del callback
     gc.collect()
-    assert not STATE.dropped, "the configuration did not keep the callback alive"
+    require(not STATE.dropped, "the configuration did not keep the callback alive")
     STATE.phase = "replace"
     (
         ConfigBuilder()
@@ -76,7 +80,7 @@ def main() -> None:
         .with_root_logger(LoggerConfigBuilder())
         .build_and_init()
     )
-    assert STATE.dropped == [True], "the replacement did not finalise the callback"
+    require(STATE.dropped == [True], "the replacement did not finalise the callback")
     print("replace-configuration-finalizer-complete")
 
 

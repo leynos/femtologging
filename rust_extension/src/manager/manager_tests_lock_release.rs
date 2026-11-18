@@ -113,6 +113,13 @@ fn replace_runtime_state_returns_displaced_state_dropped_without_the_lock() {
             BTreeMap::new(),
             BTreeMap::new(),
         );
+        // The swap must hand the previous snapshot back intact; destroying it
+        // is the caller's step, not part of the locked replacement.
+        assert_eq!(
+            observation.drop_count(),
+            0,
+            "replace_runtime_state must return the displaced state without dropping it"
+        );
         drop(displaced);
 
         assert_eq!(observation.drop_count(), 1, "the probe must be dropped");

@@ -75,10 +75,13 @@ def run_reentrant_finalizer_script(
 
     Examples
     --------
-    >>> run_reentrant_finalizer_script(
+    >>> run_reentrant_finalizer_script(  # doctest: +SKIP
     ...     CLEAR_HANDLERS_SCENARIO,
     ...     CLEAR_HANDLERS_MARKER,
     ... )
+
+    The example is skipped under ``--doctest-modules`` so the dedicated test
+    remains the single owner of the scenario's timeout budget.
     """
     try:
         result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed argv, no shell
@@ -96,16 +99,22 @@ def run_reentrant_finalizer_script(
         )
         raise AssertionError(message) from exc
 
-    assert result.returncode == 0, (  # ruff: ignore[assert] test outcome check
-        f"child interpreter exited with {result.returncode}\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
+    # Explicit raises rather than `assert`: pytest can run under `-O`, which
+    # removes assertion statements and would let a failed child run pass.
+    if result.returncode != 0:
+        message = (
+            f"child interpreter exited with {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        raise AssertionError(message)
     # The marker must be a whole line: a scenario that prints it embedded in
     # other text has not reached the point the marker stands for.
-    assert marker in result.stdout.splitlines(), (  # ruff: ignore[assert] test outcome check
-        f"child interpreter never printed the completion marker {marker!r}\n"
-        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-    )
+    if marker not in result.stdout.splitlines():
+        message = (
+            f"child interpreter never printed the completion marker {marker!r}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        raise AssertionError(message)
 
 
 def _as_text(output: str | bytes | None) -> str:
