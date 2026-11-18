@@ -249,9 +249,14 @@ collected" rather than inferring a result.
      ENV_POLICY_CARGO_ARGS='--lib --offline' ENV_POLICY_LINT_ARGS='-A clippy::all'
    ```
 
-4. Repeat each measurement several times. For every run record the lock-wait
-   duration until the blocking message clears, total elapsed time, exit status,
-   load average and `build-limits-status`.
+4. Repeat each measurement several times. Run the holder so that it prints its
+   own acquisition and release timestamps, on the same clock as the lane's
+   timestamped output: the blocking message is printed when Cargo starts
+   waiting and says nothing when the wait ends, so lane output alone cannot
+   separate the wait from the work after it. For every run report the interval
+   from the first blocking message to the holder's logged release separately
+   from total elapsed time, along with exit status, load average and
+   `build-limits-status`.
 5. If contention is reproducible, record each run's distribution and
    conditions, then give H3 a verdict. If it is not reproducible, record "not
    collected" with the reason. Do not infer unmeasured results.
@@ -260,28 +265,32 @@ collected" rather than inferring a result.
 `flock -x` for a fixed time and confirmed the hold with a control:
 `cargo metadata --format-version 1` printed the blocking message and timed out
 after 3 seconds without producing output. The accepting lane then ran with
-every output line timestamped. No run was wrapped in an enclosing `timeout`,
-the target directory and the offline cache were warm, and each run recorded its
+every output line timestamped, and the holder logged its own acquisition and
+release on that same clock. No run was wrapped in an enclosing `timeout`, the
+target directory and the offline cache were warm, and each run recorded its
 exit status, lock wait, total elapsed time, load average and
-`build-limits-status` either side.
+`build-limits-status` either side. The lock wait below is the interval from the
+first blocking message to the holder's logged release, and elapsed time is
+reported separately from it.
 
 | Run | Lane arguments    | Hold | Lock wait | Elapsed | Exit | Load (before → after) | Admission           |
 | --- | ----------------- | ---- | --------- | ------- | ---- | --------------------- | ------------------- |
-| 1   | defaults          | 60 s | 56 s      | 64 s    | 0    | 24.50 → 22.28         | held 4 → 4, healthy |
-| 2   | defaults          | 90 s | 85 s      | 90 s    | 0    | 21.52 → 15.95         | held 4 → 3, healthy |
-| 3   | defaults          | none | 0 s       | 1 s     | 0    | 17.62 → 17.62         | held 4 → 4, healthy |
-| 4   | `--lib --offline` | 45 s | 41 s      | 44 s    | 0    | 17.63 → 19.44         | held 4 → 4, healthy |
-| 5   | `--lib --offline` | 75 s | 71 s      | 75 s    | 0    | 20.72 → 22.63         | held 4 → 4, healthy |
+| 1   | defaults          | 60 s | 56 s      | 57 s    | 0    | 20.33 → 16.93         | held 4 → 4, healthy |
+| 2   | defaults          | 90 s | 85 s      | 88 s    | 0    | 16.93 → 19.85         | held 4 → 4, healthy |
+| 3   | defaults          | none | 0 s       | 13 s    | 0    | 19.19 → 20.33         | held 4 → 4, healthy |
+| 4   | `--lib --offline` | 45 s | 41 s      | 43 s    | 0    | 19.85 → 20.10         | held 4 → 4, healthy |
+| 5   | `--lib --offline` | 75 s | 71 s      | 72 s    | 0    | 20.10 → 21.28         | held 4 → 4, healthy |
 
 Every contended run printed `Blocking waiting for file lock on package cache`
-and stayed blocked until the holder released the file, and its wait tracked the
-hold rather than the lane's own work: 56 seconds of a 60-second hold, 85 of 90,
-41 of 45 and 71 of 75. The uncontended control printed no lock message and
-reported `Finished` in 0.20 seconds. Every run began with `build-limits-status`
-reading `capacity 4, held 4, healthy, caching through sccache`, and every run
-but the second ended at the same reading; the second ended at `held 3`, still
-healthy and still caching. The waits are therefore not an artefact of a stalled
-cache server or refused admission.
+and stayed blocked until the holder logged its release, and its wait tracked
+the hold rather than the lane's own work: 56 seconds of a 60-second hold, 85 of
+90, 41 of 45 and 71 of 75. The four-second difference in each case is `uv`
+start-up before Cargo prints its first blocking message, not work after
+release: the uncontended control printed no lock message and reported
+`Finished` in 12.8 seconds in total. Every run began and ended with
+`build-limits-status` reading
+`capacity 4, held 4, healthy, caching through sccache`, so the waits are not an
+artefact of a stalled cache server or refused admission.
 
 Runs 4 and 5 passed `--lib --offline` and still blocked for the whole hold,
 which is the evidence behind rejecting `--offline` below: it changes network
@@ -290,12 +299,15 @@ and lockfile policy, not package-cache locking.
 The holder is `flock -x` rather than a second Cargo build. That is the same
 exclusive advisory lock Cargo takes on the file, and the control shows a real
 `cargo metadata` contending with it and reporting the same message, so the
-measurement is of the operative resource rather than of a simulation. A
-concurrent build was rejected as the holder because its hold length cannot be
-chosen: its wait would measure that build's own resolve as well as the lane's.
-The natural instance is recorded already: the 2026-10-16 stall came from other
-agents' real Cargo work and lasted 420 seconds. A fixed hold supplies what a
-concurrent build cannot, a number the lane's wait can be checked against.
+measurement is of the operative resource rather than of a simulation. Because
+the holder prints its own acquisition and release, the interval the lane spent
+blocked is bounded by recorded timestamps rather than inferred from the lane's
+output. A concurrent build was rejected as the holder because its hold length
+cannot be chosen: its wait would measure that build's own resolve as well as
+the lane's. The natural instance is recorded already: the 2026-10-16 stall came
+from other agents' real Cargo work and lasted 420 seconds. A fixed hold
+supplies what a concurrent build cannot, a number the lane's wait can be
+checked against.
 
 H3 therefore survives. The lane blocks exactly while a competing job holds the
 lock and resumes as soon as it is released; it is not a stall without the

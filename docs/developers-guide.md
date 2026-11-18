@@ -1780,13 +1780,17 @@ running the target: such a variable takes the environment's value over the
 Makefile's default, so an exported `CARGO` would bypass the fake and an exported
 `ENV_POLICY_FEATURE_LANES` would change which lanes run. The list is read from
 the Makefile rather than written out, so a new `?=` variable is covered when it
-is added. The helper also removes `FAKE_CARGO_REJECT` before setting its own
-value, since an inherited rejection would fail a lane the test expects to
-accept, and the failure would read as a wiring defect. The general rule is the
-one above — where an inherited variable could change the outcome, the child's
-environment is built explicitly. `run_policy_target` takes the parent
-environment as an argument for the same reason, so those contracts inject one
-instead of editing this process's environment.
+is added. It also removes Make's own controls, `MAKEFLAGS`, `GNUMAKEFLAGS` and
+`MAKEFILES`: `MAKEFLAGS=-i` would make the target ignore a rejected lane's exit
+status, and either variable can carry assignments the Makefile parse cannot
+see. The helper removes `FAKE_CARGO_REJECT` before setting its own value too,
+since an inherited rejection would fail a lane the test expects to accept, and
+the failure would read as a wiring defect. The general rule is the one above —
+where an inherited variable could change the outcome, the child's environment
+is built explicitly. `run_policy_target` takes the parent environment as an
+argument for the same reason, so those contracts inject one instead of editing
+this process's environment, and it runs the target in its own process group so
+a timed-out run cannot leave `uv` and the driver behind.
 
 See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
