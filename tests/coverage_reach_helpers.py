@@ -2,11 +2,13 @@
 
 A pull-request lane may only run the workflows it can actually reach: a
 pull-request trigger, a local reusable-workflow call, or a ``workflow_run``
-trigger naming a workflow already reached. This reader follows those three
-routes and returns a call into another repository separately, because its jobs
-are not in this repository and so its environment declarations cannot be
-proved from here. The workflow readers it builds on live in
-:mod:`tests.coverage_contract_helpers`.
+trigger that watches a workflow already reached. The last route runs forwards:
+the workflow naming another in ``workflow_run.workflows`` is the listener, so
+it becomes reachable once the watched workflow is, not the other way round.
+This reader follows those three routes and returns a call into another
+repository separately, because its jobs are not in this repository and so its
+environment declarations cannot be proved from here. The workflow readers it
+builds on live in :mod:`tests.coverage_contract_helpers`.
 """
 
 from __future__ import annotations
@@ -96,13 +98,60 @@ def _pull_request_documents(
     }
 
 
-def _document_targets(
-    file_name: str,
-    document: dict[str, typ.Any],
+def _listeners_by_workflow(
     documents: cabc.Mapping[str, dict[str, typ.Any]],
     by_display: cabc.Mapping[str, str],
+) -> dict[str, list[str]]:
+    """Map each workflow to the workflows whose ``workflow_run`` watches it.
+
+    A ``workflow_run`` trigger names its predecessors, but the edge runs the
+    other way for reachability: the document declaring the trigger is the
+    listener, and it becomes reachable only once the workflow it watches is.
+    Indexing the edges once, before any traversal, keeps that direction in one
+    place.
+
+    Parameters
+    ----------
+    documents
+        The repository's workflows, keyed by file name.
+    by_display
+        Each workflow's display name mapped to the file that declares it.
+
+    Returns
+    -------
+    dict[str, list[str]]
+        The listening file names, keyed by the file they listen for. A
+        ``workflow_run`` that names no workflow in this repository is refused,
+        because a listener whose predecessor cannot be identified could be
+        declared safe without ever being reached.
+
+    Examples
+    --------
+    >>> _listeners_by_workflow(
+    ...     {
+    ...         "ci.yml": {"name": "CI", "on": {"pull_request": None}},
+    ...         "report.yml": {"on": {"workflow_run": {"workflows": ["CI"]}}},
+    ...     },
+    ...     {"CI": "ci.yml"},
+    ... )
+    {'ci.yml': ['report.yml']}
+    """
+    listeners: dict[str, list[str]] = {}
+    for listener, document in documents.items():
+        for watched in _workflow_run_names(triggers(document)):
+            require(
+                watched in by_display,
+                f"{listener} listens for unknown: {watched}",
+            )
+            listeners.setdefault(by_display[watched], []).append(listener)
+    return listeners
+
+
+def _document_targets(
+    document: dict[str, typ.Any],
+    documents: cabc.Mapping[str, dict[str, typ.Any]],
 ) -> tuple[list[str], list[str]]:
-    """Return the workflows one document can reach, and its remote calls.
+    """Return the workflows one document calls, and its remote calls.
 
     A reusable-workflow call into another repository is returned separately
     rather than followed: its jobs live elsewhere, so its environment
@@ -111,16 +160,13 @@ def _document_targets(
     Returns
     -------
     tuple[list[str], list[str]]
-        The workflows this document reaches, and the remote reusable-workflow
-        references it calls.
+        The local workflows this document calls, and the remote
+        reusable-workflow references it calls.
     """
     calls = [(ref, _local_target(ref, documents)) for ref in _job_references(document)]
     remote = [ref for ref, target in calls if target is None]
-    targets = [target for _, target in calls if target is not None]
-    for display in _workflow_run_names(triggers(document)):
-        require(display in by_display, f"{file_name} listens for unknown: {display}")
-        targets.append(by_display[display])
-    return targets, remote
+    local = [target for _, target in calls if target is not None]
+    return local, remote
 
 
 def _enqueue_unreached(target: str, reached: set[str], frontier: list[str]) -> None:
@@ -130,6 +176,40 @@ def _enqueue_unreached(target: str, reached: set[str], frontier: list[str]) -> N
         frontier.append(target)
 
 
+def _reachable_from(
+    start: cabc.Iterable[str],
+    documents: cabc.Mapping[str, dict[str, typ.Any]],
+    listeners: cabc.Mapping[str, list[str]],
+) -> tuple[set[str], set[str]]:
+    """Follow every edge out of `start` until no unreached workflow remains.
+
+    Parameters
+    ----------
+    start
+        The workflow files reached before any edge is followed.
+    documents
+        The repository's workflows, keyed by file name.
+    listeners
+        The listening workflows, keyed by the file they listen for.
+
+    Returns
+    -------
+    tuple[set[str], set[str]]
+        The reachable file names, and every remote reusable-workflow
+        reference they call.
+    """
+    reached = set(start)
+    frontier = sorted(reached)
+    remote: set[str] = set()
+    while frontier:
+        file_name = frontier.pop()
+        calls, remote_calls = _document_targets(documents[file_name], documents)
+        remote.update(remote_calls)
+        for target in [*calls, *listeners.get(file_name, [])]:
+            _enqueue_unreached(target, reached, frontier)
+    return reached, remote
+
+
 def pull_request_reach(
     documents: cabc.Mapping[str, dict[str, typ.Any]],
 ) -> tuple[set[str], set[str]]:
@@ -137,9 +217,10 @@ def pull_request_reach(
 
     Reachability follows the three routes the workflow language offers: a
     pull-request trigger, a local reusable-workflow call, and a ``workflow_run``
-    trigger naming a workflow already reached. A call into another repository
-    is returned separately rather than followed: its jobs are not in this
-    repository, so its environment declarations cannot be proved from here.
+    trigger in another workflow that watches one already reached. A call into
+    another repository is returned separately rather than followed: its jobs
+    are not in this repository, so its environment declarations cannot be
+    proved from here.
 
     Parameters
     ----------
@@ -152,17 +233,5 @@ def pull_request_reach(
         The reachable file names and the remote reusable-workflow references
         those workflows call, which the caller must account for explicitly.
     """
-    by_display = _display_name_index(documents)
-    reached = _pull_request_documents(documents)
-    remote: set[str] = set()
-    frontier = sorted(reached)
-    while frontier:
-        file_name = frontier.pop()
-        document = documents[file_name]
-        targets, remote_calls = _document_targets(
-            file_name, document, documents, by_display
-        )
-        remote.update(remote_calls)
-        for target in targets:
-            _enqueue_unreached(target, reached, frontier)
-    return reached, remote
+    listeners = _listeners_by_workflow(documents, _display_name_index(documents))
+    return _reachable_from(_pull_request_documents(documents), documents, listeners)
