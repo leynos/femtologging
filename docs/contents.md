@@ -64,6 +64,10 @@ libraries. Use the links below to explore each topic.
   - Records adoption of the release-pinned spelling configuration builder, the
     live shared dictionary and the Python 3.14 interpreter pin.
 
+- [adrs/adr-0011-release-collection-locks-before-dropping-user-resources.md](./adrs/adr-0011-release-collection-locks-before-dropping-user-resources.md)
+  - Records the rule that logger and manager locks cover collection mutation
+    only, so re-entrant destructors and finalizers run with no guard held.
+
 ## Logging Architecture
 
 - [logging-class-overview.md](./logging-class-overview.md)
