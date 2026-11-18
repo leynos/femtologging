@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import tomllib
+
 from tests.make_contract_helpers import (
     recipe_tokens,
+    repo_root,
     sole_recipe_rule,
     text_sequence,
 )
@@ -52,6 +55,19 @@ _SPELLING_COMMANDS: tuple[Tokens, ...] = (
         "--config",
         "typos.toml",
         "--force-exclude",
+    ),
+)
+_CHECK_API_BOUNDARY_COMMANDS: tuple[Tokens, ...] = (
+    (
+        "$(CARGO_BUILD_ENV)",
+        "UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml",
+        "uv",
+        "run",
+        "pytest",
+        "-v",
+        "-o",
+        "addopts=",
+        "tests/test_release_api_boundary.py",
     ),
 )
 _SPELLING_HELPER_COMMANDS: tuple[Tokens, ...] = (
@@ -132,6 +148,27 @@ def test_typecheck_recipe_uses_the_project_extension_environment() -> None:
     assert _commands("typecheck") == (
         ("$(TY)", "check", "--python", ".venv", "--extra-search-path", "scripts"),
     ), "typecheck must preserve its complete ty invocation"
+
+
+def test_check_api_boundary_builds_then_runs_the_boundary_suite() -> None:
+    """`check-api-boundary` must build the extension before probing packaging."""
+    assert _prerequisites("check-api-boundary") == ("build",), (
+        "the boundary check needs the development environment that `build` makes"
+    )
+    assert _commands("check-api-boundary") == _CHECK_API_BOUNDARY_COMMANDS, (
+        "the boundary check must run its dedicated pytest module"
+    )
+
+
+def test_default_collection_skips_the_api_boundary_suite() -> None:
+    """Only `check-api-boundary` may collect the release-wheel boundary suite."""
+    pyproject = repo_root() / "pyproject.toml"
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    addopts = project["tool"]["pytest"]["ini_options"]["addopts"]
+    assert "--ignore=tests/test_release_api_boundary.py" in addopts, (
+        "default pytest collection must leave the release-wheel build to "
+        "`make check-api-boundary`"
+    )
 
 
 def test_markdownlint_recipe_requires_spelling_and_scans_repository_markdown() -> None:

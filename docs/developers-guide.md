@@ -212,8 +212,18 @@ fixtures.
 ### Maturin build features
 
 The persistent `features = ["python"]` setting in the `[tool.maturin]` table is
-the production build configuration. It keeps the test-only `test-util` feature
-and timed-rotation hooks out of ordinary wheel builds.
+the production build configuration, and it is the only feature set a package
+build may use. It keeps the test-only `test-util` feature out of wheels and
+sdists, so the Rust `TestConfig` and `with_writer_for_test()` seams and every
+Python `*_for_test` hook are absent from release artefacts. Build release
+packages with the plain packaging command:
+
+```shell
+maturin build --release --manifest-path rust_extension/Cargo.toml
+```
+
+Cargo treats `--features` as additive, so adding `test-util` to a package build
+would defeat the boundary. Never pass it when packaging.
 
 Tests that exercise those hooks opt in explicitly. `make build` and the heavy
 test workflow run `maturin develop --features python,test-util`. The coverage
@@ -221,6 +231,18 @@ action uses `.github/uv-test-util.toml` through `UV_CONFIG_FILE` so its source
 install receives the same features without changing `pyproject.toml`. Coverage
 and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
 then fails before tests start if the extension omitted the hooks.
+
+`make check-api-boundary` enforces the boundary. It builds a release wheel from
+the production configuration, installs it into a fresh virtual environment, and
+runs `scripts/release_wheel_probe.py`, which rejects any `*_for_test`,
+`_emit_rust_*`, or `_install_test_*` name in the native module, the
+`FemtoLogger` type, or the shipped stub. It then compiles two small Rust crates
+with default features: a control that names the production API, and a probe
+that must fail to resolve `TestConfig` and `with_writer_for_test()`. Default
+pytest collection ignores the module, because every local run and every CI
+coverage lane would otherwise rebuild the release wheel; the target clears that
+ignore with `-o addopts=`. The CI build-test job runs this target once rather
+than in every interpreter lane.
 
 ### Documentation example loader
 
@@ -923,8 +945,10 @@ only while a detached wait is in flight and reports whether it counted,
 `gil_release_observations_for_test()` reads that count,
 `reset_gil_release_observations_for_test()` clears it, and
 `wait_for_wait_in_flight_for_test()` waits until a wait has detached. Normal
-`python` builds omit every one of these hooks, and
-`femtologging/_femtologging_rs.pyi` declares them for type checkers.
+`python` builds omit every one of these hooks, so
+`femtologging/_femtologging_rs.pyi` deliberately does not declare them: the
+stub is the published contract of a production wheel. The tests bind the hooks
+through `getattr` and skip when `test-util` is absent.
 
 Dropping a logger follows the same per-logger in-flight check. The pool itself
 lives for the process lifetime. If the operating system refuses to start a
@@ -1926,9 +1950,9 @@ cache proxy is scoped by ref, and each pull request warms its own scope.
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
 runner. Every job whose `runs-on` can select Ubicloud therefore states its own
-`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 40
-minutes: warm `standard-4` runs took up to 19 minutes (run 36617135055,
-attempts 2 and 3), against 21.4 on the first, cold-cache run.
+`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 50
+minutes: warm `standard-4` runs reached 37 minutes (run 44118816542), and the
+`3.12` lane additionally builds a release wheel for `make check-api-boundary`.
 
 The uv cache is the caller's. `generate-coverage` is given
 `cache-provider: external`, because its own uv cache is keyed on the operating

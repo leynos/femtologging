@@ -22,10 +22,10 @@ jobs:
       || github.event.pull_request.user.login == 'dependabot[bot]')
       && 'ubuntu-latest' || 'ubicloud-standard-4' }}
     # An Ubicloud runner is a self-hosted just-in-time runner with no
-    # six-hour hosted cap, so the job states its own ceiling: twice the warm
-    # standard-4 runs of up to 19 min (run 36617135055, attempts 2 and 3), rounded up
-    # to 40.
-    timeout-minutes: 40
+    # six-hour hosted cap, so the job states its own ceiling. Warm standard-4
+    # runs reached 37 min (run 44118816542), and the 3.12 lane additionally
+    # builds a release wheel for the API-boundary check, so the ceiling is 50.
+    timeout-minutes: 50
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
@@ -139,6 +139,13 @@ jobs:
         run: make spelling
       - name: Typecheck
         run: make typecheck
+      - name: API boundary
+        # One lane suffices: the check builds its own release wheel and
+        # compiles a default-feature Rust consumer, so repeating it for every
+        # interpreter would quadruple the cost without changing the surface
+        # under test.
+        if: matrix.python-version == '3.12'
+        run: make check-api-boundary
       - name: Test Rust (no default features)
         run: cargo test --manifest-path rust_extension/Cargo.toml --no-default-features -- --test-threads=1
       - name: Test Rust (log-compat feature)
