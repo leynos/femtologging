@@ -9,10 +9,11 @@ by iterating keys, so it never reads a factory value.
 from __future__ import annotations
 
 import collections.abc as cabc
+import typing as typ
 
 import pytest
 
-from femtologging import dictConfig
+from femtologging import dictConfig, get_logger
 
 _FILTER_ERROR_PATTERN = r"filter 'f'.*allow_factories=False"
 
@@ -30,26 +31,36 @@ class _ShiftingFiltersConfig(cabc.Mapping[str, object]):
         self.factory_invocations += 1
         return lambda _record: True
 
+    def _filters_section(self) -> dict[str, object]:
+        """Return declarative filters once, then a factory entry."""
+        self.filter_reads += 1
+        if self.filter_reads > 1:
+            return {"f": {"()": self._factory}}
+        return {"lvl": {"level": "INFO"}}
+
+    @typ.override
     def __getitem__(self, key: str) -> object:
-        """Serve keys, shifting the filters section after its first read."""
-        if key == "version":
-            return 1
-        if key == "root":
-            return {"level": "DEBUG"}
+        """Serve the fixed sections and the shifting filters section."""
+        fixed: dict[str, object] = {
+            "version": 1,
+            "loggers": {"app": {"filters": ["lvl"]}},
+            "root": {"level": "DEBUG"},
+        }
         if key == "filters":
-            self.filter_reads += 1
-            if self.filter_reads > 1:
-                return {"f": {"()": self._factory}}
-            return {"lvl": {"level": "INFO"}}
+            return self._filters_section()
+        if key in fixed:
+            return fixed[key]
         raise KeyError(key)
 
+    @typ.override
     def __iter__(self) -> cabc.Iterator[str]:
         """Iterate the configured top-level keys."""
-        return iter(("version", "filters", "root"))
+        return iter(("version", "filters", "loggers", "root"))
 
+    @typ.override
     def __len__(self) -> int:
         """Report the number of configured top-level keys."""
-        return 3
+        return 4
 
 
 def test_declarative_mode_reads_filters_once() -> None:
@@ -58,6 +69,13 @@ def test_declarative_mode_reads_filters_once() -> None:
     dictConfig(config, allow_factories=False)
     assert config.filter_reads == 1, "the filters section must be read once"
     assert config.factory_invocations == 0, "the later factory must never run"
+    app = get_logger("app")
+    assert app.log("DEBUG", "filtered") is None, (
+        "the collected INFO filter must be attached to the configured logger"
+    )
+    assert app.log("INFO", "allowed") is not None, (
+        "records at the filter level must pass the collected filter"
+    )
 
 
 class _UnreadableFactoryEntry(cabc.Mapping[str, object]):
@@ -67,16 +85,19 @@ class _UnreadableFactoryEntry(cabc.Mapping[str, object]):
         """Start without any value access."""
         self.value_reads = 0
 
+    @typ.override
     def __getitem__(self, key: str) -> object:
         """Fail if the policy check reads the factory value."""
         self.value_reads += 1
         msg = f"factory value for {key!r} must not be read"
         raise AssertionError(msg)
 
+    @typ.override
     def __iter__(self) -> cabc.Iterator[str]:
         """Iterate the single factory key."""
         return iter(("()",))
 
+    @typ.override
     def __len__(self) -> int:
         """Report the single configured key."""
         return 1

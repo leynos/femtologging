@@ -107,8 +107,13 @@ def build_filter_from_dict(
     Raises
     ------
     ValueError
-        If the entry is malformed, or uses a factory while
-        ``allow_factories`` is ``False``.
+        If the entry is malformed, mixes factory and declarative forms, or
+        uses a factory while ``allow_factories`` is ``False``.
+
+    Notes
+    -----
+    A non-string ``level`` or ``name``, or a factory target that is not
+    callable, raises ``TypeError`` from the builder helpers.
 
     Examples
     --------
@@ -121,13 +126,14 @@ def build_filter_from_dict(
     ValueError: filter 'f' uses a '()' factory, rejected by allow_factories=False
 
     """
-    # Snapshot key presence once: a mapping that mutates during iteration must
-    # not let the guard pass and then reach factory construction.
-    has_factory = "()" in data
+    # Copy once so the policy check, validation, and dispatch all inspect the
+    # same keys, even if a dict subclass mutates its mapping during validation.
+    entry = dict(data)
+    has_factory = "()" in entry
     if not allow_factories and has_factory:
         msg = factory_disallowed_message(fid)
         raise ValueError(msg)
-    validate_filter_config_keys(fid, data)
+    validate_filter_config_keys(fid, entry)
     if has_factory:
-        return _build_factory_filter(fid, data)
-    return _build_declarative_filter(fid, data)
+        return _build_factory_filter(fid, entry)
+    return _build_declarative_filter(fid, entry)
