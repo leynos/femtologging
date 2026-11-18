@@ -863,6 +863,14 @@ keys as keyword arguments, and wrapped as producer-thread callback filters. The
 callback may be either a plain callable or a ``logging.Filter``-style object
 exposing ``filter(record)``.
 
+Factory entries are trusted-code-equivalent input: resolving one imports a
+module and invokes a callable selected by the configuration author. Callers
+that accept lower-trust configuration must reject factory entries or call
+``dictConfig(config, allow_factories=False)``, which rejects any ``"()"`` key
+by presence alone, before resolution or invocation. An allowlist applied after
+resolution or invocation is too late. See the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
+
 When a Python callback filter accepts a record, any new or modified attributes
 it adds to the mutable ``logging.LogRecord`` view are copied into
 ``RecordMetadata.key_values`` before the record crosses the async queue
@@ -940,6 +948,14 @@ predictable today while leaving space for future relaxations when the builder
 surfaces mature further.
 
 ## 3. Runtime Reconfiguration
+
+Configuration that carries filter factory entries (``"()"``) remains
+trusted-code-equivalent during reconfiguration: every bootstrap-shaped reload
+resolves and invokes those factories again. Reject factory entries for
+lower-trust reloads with ``allow_factories=False``; see the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary)
+and
+[runtime reconfiguration](users-guide.md#runtime-reconfiguration-and-reloads).
 
 ### 3.1. Bootstrap transaction boundary
 
@@ -1089,8 +1105,12 @@ This differs from the standard library in three ways:
 Two side effects sit outside the atomic guarantee. Records already queued or
 snapshotted onto a logger before the commit are not retracted. Handler
 construction happens during preparation, so it can open a file or socket before
-a later preparation failure rejects the configuration. A rejection restores
-only live logger state; it does not undo the effects of handler construction.
+a later preparation failure rejects the configuration. Factory resolution is a
+third preparation-time side effect: when a configuration carries ``"()"``
+filter entries, resolution imports modules and invokes configuration-selected
+callables before the commit. A rejection restores only live logger state; it
+does not undo the effects of handler construction or factory resolution. See
+[Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ### 3.2. Runtime mutation control plane
 

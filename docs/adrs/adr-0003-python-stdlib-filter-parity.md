@@ -181,6 +181,12 @@ safety, error semantics, and performance regression coverage.
   `logging` edge cases.
 - Enrichment bound enforcement can reject callback-produced fields when limits
   are exceeded.
+- Factory entries are trusted-code-equivalent input: resolving one imports
+  modules and invokes a configuration-selected callable. Callers that accept
+  lower-trust configuration must reject `"()"` entries or use
+  `dictConfig(config, allow_factories=False)`. An allowlist applied after
+  resolution or invocation is too late. See the filter factory trust
+  boundary.[^2]
 
 ## Architectural rationale
 
@@ -237,3 +243,5 @@ run synchronously in the captured producer context, as does formatting done
 during that call. A handler that defers formatting or emission to another
 thread or process needs separate context propagation. Handler subclasses that
 override `handle()` define their own internal behaviour.
+
+[^2]: <../users-guide.md#filter-factory-trust-boundary>
