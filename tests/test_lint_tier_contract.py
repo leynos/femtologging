@@ -213,6 +213,21 @@ def _exempts_d103(selector: str) -> bool:
     return normalized.startswith("D") and "D103".startswith(normalized)
 
 
+_STEP_DECORATORS: typ.Final = (
+    "pytest_bdd.given",
+    "pytest_bdd.when",
+    "pytest_bdd.then",
+)
+
+
+def _ignored_step_decorators(patterns: list[str]) -> list[str]:
+    """Return configured decorators that would exempt steps from D103."""
+    normalized = {pattern.removeprefix("@").lower() for pattern in patterns}
+    return [
+        decorator for decorator in _STEP_DECORATORS if decorator.lower() in normalized
+    ]
+
+
 def test_ruff_requires_docstrings_in_step_modules() -> None:
     """Ruff must not exempt pytest-bdd step modules from D103.
 
@@ -241,4 +256,13 @@ def test_ruff_requires_docstrings_in_step_modules() -> None:
 
     assert "D" in lint["select"], (
         "Ruff must select the D docstring rules so D103 applies to steps"
+    )
+
+    ignored_step_decorators = _ignored_step_decorators(
+        lint.get("pydocstyle", {}).get("ignore-decorators", [])
+    )
+    assert not ignored_step_decorators, (
+        "Ruff must not ignore pytest-bdd step decorators when checking for "
+        f"docstrings: {ignored_step_decorators!r}; steps must still require "
+        "D103 docstrings"
     )
