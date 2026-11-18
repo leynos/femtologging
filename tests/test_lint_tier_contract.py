@@ -202,3 +202,31 @@ def test_pylint_reports_unparseable_modules() -> None:
         "pyproject.toml must not disable syntax-error: a module PyPy cannot "
         f"parse would then be skipped silently; disable={disabled!r}"
     )
+
+
+def test_ruff_requires_docstrings_in_step_modules() -> None:
+    """Ruff must not exempt pytest-bdd step modules from D103.
+
+    `interrogate` requires a docstring on every step, fixture and helper, so a
+    Ruff exemption would let the two gates disagree about what "documented"
+    means.
+    """
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    lint = config["tool"]["ruff"]["lint"]
+
+    exempting_lists = [
+        *lint.get("per-file-ignores", {}).values(),
+        *([lint["ignore"]] if "ignore" in lint else []),
+    ]
+    forbidden = {"undocumented-public-function", "D103"}
+    for exempting_list in exempting_lists:
+        assert forbidden.isdisjoint(exempting_list), (
+            "Ruff must not exempt any path from undocumented-public-function "
+            "(D103): interrogate requires those docstrings, so the two gates "
+            "would contradict each other"
+        )
+
+    assert "D" in lint["select"], (
+        "Ruff must select the D docstring rules so D103 applies to steps"
+    )

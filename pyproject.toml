@@ -134,7 +134,11 @@ extend-ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/test_*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
-"tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use", "undocumented-public-function"]
+# Docstring coverage is enforced here, not exempted: interrogate requires
+# docstrings on steps, fixtures and helpers, so a Ruff D103 exemption would
+# contradict the gate. Step docstrings describe their scenario effect rather
+# than restating the decorator text.
+"tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
 "tests/helpers.py" = ["assert"]
 # Shared fixtures and assertion helpers live beside the tests they serve.
 "tests/**/conftest.py" = ["assert"]
