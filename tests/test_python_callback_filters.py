@@ -15,9 +15,9 @@ from femtologging import (
     LoggerConfigBuilder,
     PythonCallbackFilterBuilder,
     StdlibHandlerAdapter,
-    StreamHandlerBuilder,
     get_logger,
 )
+from tests.documentation_examples import documented_example
 from tests.python_filter_support import (
     REQUEST_ID,
     PrefixRejectingFilter,
@@ -265,36 +265,18 @@ def test_contextvar_enrichment_is_thread_local(
     )
 
 
-def test_documented_service_configuration_enriches_records() -> None:
-    """The users' guide configuration enriches records for the service logger.
+def test_documented_callback_enrichment_example_enriches_records() -> None:
+    """The published users' guide example configures an enriching filter.
 
-    The configuration mirrors the callback-enrichment example in
-    ``docs/users-guide.md`` so that drift between the published example and
-    the supported builder API fails here.
+    The example runs exactly as published, so a guide that drifts back to an
+    API the library does not support fails here instead of misleading a
+    reader.
     """
-
-    def request_filter(record: logging.LogRecord) -> bool:
-        """Stamp the documented enrichment fields and accept the record."""
-        record.request_id = "req-123"
-        record.user_id = 42
-        record.cache_hit = False
-        return True
-
-    (
-        ConfigBuilder()
-        .with_filter(
-            "request_enrichment",
-            PythonCallbackFilterBuilder(request_filter),
-        )
-        .with_handler("console", StreamHandlerBuilder.stderr())
-        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
-        .with_logger(
-            "service",
-            LoggerConfigBuilder()
-            .with_filters(["request_enrichment"])
-            .with_handlers(["console"]),
-        )
-        .build_and_init()
+    example = documented_example("callback-enrichment-accepted")
+    namespace: dict[str, object] = {}
+    exec(  # ruff: ignore[exec-builtin] the published example must run as shipped
+        compile(example.body, example.source, "exec"),
+        namespace,
     )
 
     collector = RecordCollector()

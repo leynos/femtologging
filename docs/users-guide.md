@@ -1417,6 +1417,7 @@ Accepted enrichment must satisfy all of the following:
 
 Example of accepted enrichment:
 
+<!-- tested-example: callback-enrichment-accepted -->
 ```python
 import logging
 
