@@ -7,6 +7,8 @@ use pyo3::{Py, PyAny};
 
 use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 
+#[cfg(all(feature = "python", any(test, feature = "test-util")))]
+use super::test_identity::AttachmentIdentity;
 use super::{FemtoLogger, HandlerAttachment, PyHandler, validate_handler};
 
 #[pymethods]
@@ -179,14 +181,46 @@ impl FemtoLogger {
     fn py_flush_handlers(&self, py: Python<'_>) -> bool {
         py.detach(|| self.flush_handlers())
     }
+}
 
-    /// Capture handler addresses for tests that verify attachment replacement.
-    pub(crate) fn handler_ptrs_for_test(&self) -> Vec<usize> {
-        self.handler_ptrs_for_test_native()
+/// Test-only identity hooks for attachment assertions.
+///
+/// These methods live in their own implementation block because they exist
+/// only when the extension is built with `test-util`; the production
+/// `#[pymethods]` block above must not gain test seams. They return opaque
+/// tokens rather than native addresses so the process layout never crosses the
+/// FFI boundary.
+#[cfg(all(feature = "python", any(test, feature = "test-util")))]
+#[pymethods]
+impl FemtoLogger {
+    /// Return one opaque identity token per attached handler.
+    ///
+    /// Tokens follow attachment order, so a list captured before a
+    /// reconfiguration can be compared with one captured afterwards without
+    /// exposing native addresses. The token class is deliberately not
+    /// registered with the Python module.
+    fn handler_identities_for_test(&self, py: Python<'_>) -> PyResult<Vec<Py<AttachmentIdentity>>> {
+        let handlers = self.handlers.read();
+        handlers
+            .iter()
+            .map(|attachment| {
+                Py::new(
+                    py,
+                    AttachmentIdentity::for_handler(Arc::downgrade(&attachment.handler)),
+                )
+            })
+            .collect()
     }
 
-    /// Capture filter addresses for tests that verify attachment replacement.
-    pub(crate) fn filter_ptrs_for_test(&self) -> Vec<usize> {
-        self.filter_ptrs_for_test_native()
+    /// Return one opaque identity token per attached filter.
+    ///
+    /// Tokens follow attachment order and compare by allocation identity, as
+    /// [`Self::handler_identities_for_test`] does for handlers.
+    fn filter_identities_for_test(&self, py: Python<'_>) -> PyResult<Vec<Py<AttachmentIdentity>>> {
+        let filters = self.filters.read();
+        filters
+            .iter()
+            .map(|filter| Py::new(py, AttachmentIdentity::for_filter(Arc::downgrade(filter))))
+            .collect()
     }
 }

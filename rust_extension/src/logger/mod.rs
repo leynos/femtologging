@@ -23,6 +23,8 @@ mod python_helpers;
 mod queue;
 #[cfg(feature = "python")]
 mod runtime_mutation;
+#[cfg(all(feature = "python", any(test, feature = "test-util")))]
+mod test_identity;
 mod worker;
 
 use pyo3::prelude::*;
@@ -250,7 +252,8 @@ impl FemtoLogger {
             .collect()
     }
 
-    /// Capture handler addresses for Rust transaction tests and Python test hooks.
+    /// Capture handler addresses for Rust transaction tests.
+    #[cfg(test)]
     pub(crate) fn handler_ptrs_for_test_native(&self) -> Vec<usize> {
         self.handlers
             .read()
@@ -259,7 +262,8 @@ impl FemtoLogger {
             .collect()
     }
 
-    /// Capture filter addresses for Rust transaction tests and Python test hooks.
+    /// Capture filter addresses for Rust transaction tests.
+    #[cfg(test)]
     pub(crate) fn filter_ptrs_for_test_native(&self) -> Vec<usize> {
         self.filters
             .read()

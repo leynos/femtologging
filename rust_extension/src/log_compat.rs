@@ -266,7 +266,7 @@ pub(crate) fn setup_rust_logging() -> PyResult<()> {
 /// This is an internal helper used by the Python behavioural tests to validate
 /// the bridge. `CRITICAL` maps to `ERROR` because the `log` crate has no
 /// critical level.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_emit_rust_log")]
 pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
@@ -301,7 +301,7 @@ pub(crate) fn rust_log_max_level() -> String {
 /// This helper is intended for subprocess-based test scenarios that need to
 /// verify `setup_rust_logging()` fails when a different global logger has
 /// already been configured.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_install_test_global_rust_logger")]
 pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {

@@ -98,11 +98,11 @@ def test_runtime_apply_rejects_unreferenced_http_handler(
 def test_runtime_apply_of_empty_transaction_is_a_noop(core_config: None) -> None:
     """An empty transaction must succeed without disturbing the registries."""
     logger = get_logger("core")
-    before = logger.handler_ptrs_for_test()
+    before = logger.handler_identities_for_test()
 
     RuntimeConfigBuilder().apply()
 
-    assert logger.handler_ptrs_for_test() == before, (
+    assert logger.handler_identities_for_test() == before, (
         "an empty RuntimeConfigBuilder().apply() must be a successful no-op "
         "that leaves the existing attachment graph untouched"
     )
@@ -116,7 +116,7 @@ def test_runtime_apply_defines_and_attaches_in_one_transaction(
 ) -> None:
     """A definition attached in the same transaction must be published and live."""
     logger = get_logger("core")
-    before = logger.handler_ptrs_for_test()
+    before = logger.handler_identities_for_test()
 
     (
         RuntimeConfigBuilder()
@@ -125,7 +125,7 @@ def test_runtime_apply_defines_and_attaches_in_one_transaction(
         .apply()
     )
 
-    after = logger.handler_ptrs_for_test()
+    after = logger.handler_identities_for_test()
     assert after[: len(before)] == before, (
         "a definition attached in the same transaction must join the logger "
         f"without disturbing the existing handlers; went from {before} to {after}"
@@ -146,7 +146,7 @@ def test_replacing_file_handler_id_keeps_one_live_handler(
     that the public API keeps the live attachment set bounded across churn.
     """
     logger = get_logger("core")
-    baseline = len(logger.handler_ptrs_for_test())
+    baseline = len(logger.handler_identities_for_test())
 
     for round_index in range(CHURN_ROUNDS):
         replacement = tmp_path / f"replacement-{round_index}.log"
@@ -156,7 +156,7 @@ def test_replacing_file_handler_id_keeps_one_live_handler(
             .with_logger("core", LoggerMutationBuilder().append_handlers(["log"]))
             .apply()
         )
-        live = logger.handler_ptrs_for_test()
+        live = logger.handler_identities_for_test()
         expected = baseline + 1
         assert len(live) == expected, (
             f"round {round_index}: appending the reachable id 'log' must settle "
@@ -168,7 +168,7 @@ def test_replacing_file_handler_id_keeps_one_live_handler(
             .with_handler("log", FileHandlerBuilder(str(live_path)))
             .apply()
         )
-        assert len(logger.handler_ptrs_for_test()) == expected, (
+        assert len(logger.handler_identities_for_test()) == expected, (
             f"round {round_index}: replacing the reachable id 'log' must swap "
             "the handler in place rather than add another one"
         )

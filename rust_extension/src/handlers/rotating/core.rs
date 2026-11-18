@@ -13,10 +13,12 @@ use std::{
 use delegate::delegate;
 
 use super::strategy::FileRotationStrategy;
+#[cfg(any(test, feature = "test-util"))]
+use crate::handlers::file::TestConfig;
 use crate::{
     formatter::FemtoFormatter,
     handler::{FemtoHandlerTrait, HandlerError},
-    handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, NoRotation, TestConfig},
+    handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, NoRotation},
     log_record::FemtoLogRecord,
 };
 
@@ -159,6 +161,10 @@ impl FemtoRotatingFileHandler {
     /// This delegates to [`FemtoFileHandler::with_writer_for_test`], which
     /// accepts arbitrary writers and therefore does not attach
     /// [`FileRotationStrategy`]. Rotation is disabled for this constructor.
+    ///
+    /// The constructor exists only for unit tests and builds that opt in to
+    /// `test-util`.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
         W: std::io::Write + std::io::Seek + Send + 'static,

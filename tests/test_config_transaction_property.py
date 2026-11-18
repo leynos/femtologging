@@ -16,8 +16,10 @@ from femtologging import (
 from femtologging._rust_compat import _runtime_attachment_state_for_test
 
 type AttachmentState = tuple[tuple[str, ...], tuple[str, ...]] | None
+# Attachment identities are opaque extension tokens; their concrete type is
+# deliberately not part of the public stub, so the state records objects.
 type LoggerState = tuple[
-    tuple[int, ...], tuple[int, ...], str, bool, bool, AttachmentState
+    tuple[object, ...], tuple[object, ...], str, bool, bool, AttachmentState
 ]
 
 _LOGGER_NAMES = ("api", "api.worker", "batch", "batch.worker")
@@ -37,8 +39,8 @@ def _logger_state(name: str) -> LoggerState:
     """Capture identity, scalar settings, and attachment metadata for *name*."""
     logger = get_logger(name)
     return (
-        tuple(logger.handler_ptrs_for_test()),
-        tuple(logger.filter_ptrs_for_test()),
+        tuple(logger.handler_identities_for_test()),
+        tuple(logger.filter_identities_for_test()),
         logger.level,
         logger.propagate,
         logger.disabled,

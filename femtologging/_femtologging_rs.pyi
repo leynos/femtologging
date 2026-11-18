@@ -556,40 +556,10 @@ hello: _Any
 get_logger: _Any
 reset_manager_py: _Any
 
-def runtime_attachment_state_for_test(
-    name: str,
-) -> tuple[list[str], list[str]] | None: ...
-def wait_for_flush_entry_for_test(logger: FemtoLogger, timeout_ms: int) -> bool:
-    """Wait for the test-only flush-entry signal within ``timeout_ms``."""
-    ...
-
-def drain_flush_signals_for_test(logger: FemtoLogger) -> None:
-    """Clear stale test-only flush signals before arming a handler gate."""
-    ...
-
-def cancel_flush_wait_for_test(logger: FemtoLogger) -> None:
-    """Wake a pending test-only flush-entry wait during cleanup."""
-    ...
-
-def note_python_thread_ran_for_test() -> bool:
-    """Count this thread's interpreter time if a wait is detached.
-
-    Returns whether the observation counted. It is ``False`` when no
-    Python-facing wait has the interpreter detached.
-    """
-    ...
-
-def gil_release_observations_for_test() -> int:
-    """Return how many observations were counted since the last reset."""
-    ...
-
-def reset_gil_release_observations_for_test() -> None:
-    """Forget observations from earlier calls before a new measurement."""
-    ...
-
-def wait_for_wait_in_flight_for_test(timeout_ms: int) -> bool:
-    """Wait for a Python-facing wait to detach, releasing the GIL to do so."""
-    ...
+# Test-only hooks (`*_for_test`, `_emit_rust_*`, `_install_test_*`) are
+# deliberately absent: they exist only in builds compiled with `test-util`, so
+# declaring them here would promise production wheels an API they do not have.
+# Tests reach them through `getattr` and skip when the feature is missing.
 
 setup_rust_logging: Callable[[], None]
 setup_rust_tracing: Callable[[], None]
@@ -604,7 +574,6 @@ error: _NamedLogFn
 """Log a message at ERROR level via the root logger (or named logger)."""
 
 def _validate_log_context(context: dict[str, str]) -> None: ...
-def _emit_rust_log(level: LevelArg, message: str, target: str | None = ...) -> None: ...
 def _rust_log_enabled(level: LevelArg, target: str) -> bool:
     """Return whether the Rust facade enables this level for the target."""
     ...
@@ -613,10 +582,6 @@ def _rust_log_max_level() -> str:
     """Return the current process-wide Rust facade maximum level."""
     ...
 
-def _emit_rust_tracing_event(level: LevelArg, message: str) -> None: ...
-def _emit_rust_tracing_structured_event() -> None: ...
-def _emit_rust_tracing_span_event() -> None: ...
-def _install_test_global_tracing_subscriber() -> None: ...
 def parse_ini_file(
     path: str, encoding: str | None = ...
 ) -> list[tuple[str, list[tuple[str, str]]]]: ...

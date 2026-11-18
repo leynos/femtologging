@@ -130,8 +130,8 @@ def build_fails_with_key_error(config_builder: ConfigBuilder, msg: str) -> None:
 @then(parsers.parse('loggers "{first}" and "{second}" share handler "{hid}"'))
 def loggers_share_handler(first: str, second: str, hid: str) -> None:
     """Assert both named loggers hold the same handler instance."""
-    first_handlers = get_logger(first).handler_ptrs_for_test()
-    second_handlers = get_logger(second).handler_ptrs_for_test()
+    first_handlers = get_logger(first).handler_identities_for_test()
+    second_handlers = get_logger(second).handler_identities_for_test()
     assert first_handlers, f"logger '{first}' must have handler '{hid}' attached"
     assert second_handlers, f"logger '{second}' must have handler '{hid}' attached"
     assert first_handlers[0] == second_handlers[0], (

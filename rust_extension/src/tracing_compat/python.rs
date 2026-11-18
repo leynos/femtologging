@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use pyo3::prelude::*;
 use tracing_subscriber::prelude::*;
 
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
 use crate::level::FemtoLevel;
 
 use super::layer;
@@ -21,6 +22,7 @@ fn install_global_tracing_subscriber() -> bool {
 }
 
 /// Maintains the tracing bridge boundary, including one-time subscriber installation and faithful forwarding into femtologging.
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
 fn emit_message_event(level: FemtoLevel, message: &str) {
     match level {
         FemtoLevel::Trace => {
@@ -58,6 +60,7 @@ pub(crate) fn setup_rust_tracing() -> PyResult<()> {
 }
 
 /// Emit a basic tracing event for behavioural tests.
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_emit_rust_tracing_event")]
 pub(crate) fn emit_rust_tracing_event(level: FemtoLevel, message: &str) {
@@ -65,6 +68,7 @@ pub(crate) fn emit_rust_tracing_event(level: FemtoLevel, message: &str) {
 }
 
 /// Emit a tracing event carrying structured fields for behavioural tests.
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_emit_rust_tracing_structured_event")]
 pub(crate) fn emit_rust_tracing_structured_event() {
@@ -79,6 +83,7 @@ pub(crate) fn emit_rust_tracing_structured_event() {
 }
 
 /// Emit a tracing event inside nested spans for behavioural tests.
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_emit_rust_tracing_span_event")]
 pub(crate) fn emit_rust_tracing_span_event() {
@@ -92,6 +97,7 @@ pub(crate) fn emit_rust_tracing_span_event() {
 }
 
 /// Install a different global tracing subscriber for subprocess failure tests.
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_install_test_global_tracing_subscriber")]
 pub(crate) fn install_test_global_tracing_subscriber() -> PyResult<()> {

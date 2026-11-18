@@ -55,6 +55,13 @@ if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
     skip = typ.cast("typ.Any", pytest.skip)
     skip(message, allow_module_level=True)
 
+# The emit hook exists only in `test-util` builds and is deliberately absent
+# from the production stub, so bind it dynamically rather than importing it.
+_EMIT_RUST_LOG = typ.cast(
+    "cabc.Callable[[str, str, str | None], None]",
+    getattr(rust, "_emit_rust_log", None),
+)
+
 scenarios(str(FEATURES / "rust_log_compat.feature"))
 
 
@@ -180,7 +187,7 @@ def when_emit_rust_log(
     """Emit a Rust-side log record and capture stderr output."""
     capfd.readouterr()
     handler, logger_name = handler_ctx
-    rust._emit_rust_log(log_params.level, log_params.message, log_params.target)
+    _EMIT_RUST_LOG(log_params.level, log_params.message, log_params.target)
     logger = get_logger(logger_name)
     _flush_and_sync_stderr(logger, handler)
 

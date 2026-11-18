@@ -146,7 +146,7 @@ def set_root_level(level: str) -> None:
 @then(parsers.parse('logger "{name}" has {count:d} handlers'))
 def logger_has_handler_count(name: str, count: int) -> None:
     """Assert the handler count seen by the named logger."""
-    actual = len(get_logger(name).handler_ptrs_for_test())
+    actual = len(get_logger(name).handler_identities_for_test())
     assert actual == count, (
         f"expected {name} to have {count} handlers but found {actual}"
     )
@@ -198,7 +198,7 @@ def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> No
     logger = get_logger(name)
     attachment_state = _runtime_attachment_state_for_test(name)
     handler_ids, filter_ids = attachment_state or ([], [])
-    handler_ptrs = logger.handler_ptrs_for_test()
+    handler_ptrs = logger.handler_identities_for_test()
     assert len(handler_ptrs) == len(handler_ids), (
         f"expected resolved handler count for {name} to match runtime metadata: "
         f"{len(handler_ptrs)} != {len(handler_ids)}"
@@ -233,7 +233,7 @@ def clear_runtime_handlers_and_filters(name: str) -> None:
 @then(parsers.parse('logger "{name}" has no runtime handlers'))
 def logger_has_no_runtime_handlers(name: str) -> None:
     """Assert that the logger has no runtime handlers after mutation."""
-    remaining = get_logger(name).handler_ptrs_for_test()
+    remaining = get_logger(name).handler_identities_for_test()
     assert not remaining, (
         f"clearing runtime handlers must leave {name} with none, "
         f"but {len(remaining)} remain"
