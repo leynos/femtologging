@@ -31,6 +31,14 @@ type Tokens = tuple[str, ...]
 #: the real Make run; see issue #537 and the debugging plan of 2026-09-08.
 MAKE_TIMEOUT_SECONDS: typ.Final = 120
 
+#: Outer pytest bound for one `make lint-env-policy` run. Each contract test
+#: starts one subprocess, so this sits above `MAKE_TIMEOUT_SECONDS` with room
+#: for fixture setup. Fake Cargo compiles nothing, so the budget covers uv
+#: provisioning and the real Make run, not a compiler queue or Cargo's
+#: package-cache lock (issue #537). It lives here so every module that runs the
+#: target is bounded the same way.
+CONTRACT_TIMEOUT_SECONDS: typ.Final = MAKE_TIMEOUT_SECONDS + 60
+
 #: The `cargo` executable. A shell launcher names the interpreter instead of a
 #: `#!` line doing so, because a deep virtualenv path can outgrow the kernel's
 #: shebang limit and the fake would then fail before recording anything. The
@@ -213,6 +221,10 @@ def run_policy_target(
         environment.get("PATH", ""),
     ))
     environment["FAKE_CARGO_LOG"] = str(fake.log)
+    # The child inherits enough of this process for uv and Make to work, so an
+    # ambient rejection could fail a lane this run expects to accept. The
+    # caller's choice always wins; see ADR-0006 on inherited variables.
+    environment.pop("FAKE_CARGO_REJECT", None)
     if reject is not None:
         environment["FAKE_CARGO_REJECT"] = reject
     # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is

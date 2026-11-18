@@ -35,7 +35,7 @@ import typing as typ
 import pytest
 
 from tests.env_policy_lane_support import (
-    MAKE_TIMEOUT_SECONDS,
+    CONTRACT_TIMEOUT_SECONDS,
     FakeCargo,
     captured_output,
     expected_invocation,
@@ -68,11 +68,6 @@ REQUIRED_LANES: typ.Final[Tokens] = ("none", "all")
 #: Manifest feature keys that name no lane of their own.
 LANE_EXEMPT_FEATURES: typ.Final[Tokens] = ("default",)
 STANDARD_CLIPPY_TARGET: typ.Final = "lint-rust-clippy"
-#: Outer pytest bound. Each Make-running test starts one subprocess, so this
-#: sits above `MAKE_TIMEOUT_SECONDS` with room for fixture setup. Fake Cargo
-#: compiles nothing, so the budget covers uv provisioning and the real Make
-#: run, not a compiler queue or Cargo's package-cache lock (issue #537).
-POLICY_CONTRACT_TIMEOUT_SECONDS: typ.Final = MAKE_TIMEOUT_SECONDS + 60
 #: Shell fragments that swallow the preceding command's exit status.
 STATUS_SWALLOWING: typ.Final[Tokens] = (
     "|| true",
@@ -321,7 +316,7 @@ def fake_cargo(tmp_path: Path) -> FakeCargo:
 # to exceed MAKE_TIMEOUT_SECONDS plus fixture setup. The subprocess budget
 # covers provisioning the lane driver through uv and the real Make run, not
 # compilation; see docs/debugging/debugging-plan-2026-09-08-env-policy-timeout.md.
-POLICY_TARGET_MARKER: typ.Final = pytest.mark.timeout(POLICY_CONTRACT_TIMEOUT_SECONDS)
+POLICY_TARGET_MARKER: typ.Final = pytest.mark.timeout(CONTRACT_TIMEOUT_SECONDS)
 
 
 @POLICY_TARGET_MARKER
