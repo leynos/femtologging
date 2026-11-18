@@ -277,9 +277,11 @@ Every contended run printed `Blocking waiting for file lock on package cache`
 and stayed blocked until the holder released the file, and its wait tracked the
 hold rather than the lane's own work: 56 seconds of a 60-second hold, 85 of 90,
 41 of 45 and 71 of 75. The uncontended control printed no lock message and
-reported `Finished` in 0.20 seconds. `build-limits-status` read
-`capacity 4, held 4, healthy, caching through sccache` throughout, so the waits
-are not an artefact of a stalled cache server or refused admission.
+reported `Finished` in 0.20 seconds. Every run began with `build-limits-status`
+reading `capacity 4, held 4, healthy, caching through sccache`, and every run
+but the second ended at the same reading; the second ended at `held 3`, still
+healthy and still caching. The waits are therefore not an artefact of a stalled
+cache server or refused admission.
 
 Runs 4 and 5 passed `--lib --offline` and still blocked for the whole hold,
 which is the evidence behind rejecting `--offline` below: it changes network
