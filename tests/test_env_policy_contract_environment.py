@@ -27,13 +27,15 @@ import pytest
 
 from tests.env_policy_lane_support import (
     CONTRACT_TIMEOUT_SECONDS,
-    MARKER_VARIABLE,
-    FakeCargo,
     captured_output,
     lane_diagnostics,
+    run_policy_target,
+)
+from tests.fake_cargo import (
+    MARKER_VARIABLE,
+    FakeCargo,
     recorded_child_environments,
     recorded_invocations,
-    run_policy_target,
 )
 from tests.make_contract_helpers import variable_tokens
 

@@ -36,14 +36,13 @@ import pytest
 
 from tests.env_policy_lane_support import (
     CONTRACT_TIMEOUT_SECONDS,
-    FakeCargo,
     captured_output,
     expected_invocation,
     lane_diagnostics,
     policy_defaults,
-    recorded_invocations,
     run_policy_target,
 )
+from tests.fake_cargo import FakeCargo, recorded_invocations
 from tests.make_contract_helpers import (
     objects,
     repo_root,

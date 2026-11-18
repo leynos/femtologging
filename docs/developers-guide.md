@@ -1762,9 +1762,10 @@ lane driver all execute. It then checks that a failing lane fails the target,
 that the driver names that lane, that every lane's diagnostic reaches the
 caller on standard error, and that Cargo receives the exact argument vector the
 Makefile's defaults imply, lane by lane and in order. Cargo itself is the one
-part replaced: `tests/env_policy_lane_support.py` puts a recording fake `cargo`
-first on `PATH`, and its `cargo_runner.py` companion does the recording and
-rejects only the lane a test names.
+part replaced: `tests/fake_cargo.py` writes a recording fake `cargo`, which
+`run_policy_target` in `tests/env_policy_lane_support.py` puts first on the
+child's `PATH`; its `cargo_runner.py` companion does the recording and rejects
+only the lane a test names.
 
 The fake compiles nothing, so the contract never takes Cargo's package-cache
 lock and cannot wait on another job's resolve
@@ -1792,8 +1793,8 @@ read as a wiring defect. The general rule is the one above — where an inherite
 variable could change the outcome, the child's environment is built explicitly.
 `run_policy_target` takes the parent environment as an argument for the same
 reason, so those contracts inject one instead of editing this process's
-environment, and it runs the target in its own process group so a timed-out run
-cannot leave `uv` and the driver behind.
+environment, and it runs the target in its own process group so a timed-out or
+interrupted run cannot leave `uv` and the driver behind.
 
 See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
