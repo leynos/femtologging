@@ -349,3 +349,30 @@ The scan is `rust_extension/tests/test_utils/source_scan/`, and its contracts
 are `rust_extension/tests/env_policy_source_scan.rs`,
 `rust_extension/tests/test_utils/policy_routes.rs` and
 `rust_extension/tests/test_utils/policy_walk.rs`.
+
+## Addendum: the contract test runs a fake Cargo (2026-11-18)
+
+The decision above stands unchanged: the extension reads the process
+environment only through a named seam, and the lint enforcing that still runs
+in every feature lane and every target kind. What changed is the Make-level
+contract test. The Consequences section above describes the failure path as
+held partly by "a test that runs the real `make lint-env-policy` with a failing
+lane ahead of a passing one". That test still runs the real Make, `uv` and lane
+driver, but a recording fake `cargo` now sits first on `PATH`, so it compiles
+nothing and observes no real policy violation
+([#537](https://github.com/leynos/femtologging/issues/537)).
+
+The cause is scheduling rather than policy. The accepting lane once waited 420
+seconds on Cargo's package-cache lock while another agent's dependency resolve
+held it, so a slow run measured the host's load rather than this repository's
+wiring. What the contract keeps is what the Make target owns: that a failing
+lane fails the target, that the driver names it and forwards every lane's
+diagnostic on standard error, and that Cargo receives the exact argument vector
+the Makefile's defaults imply, lane by lane and in order.
+
+Enforcement therefore remains where it compiled before —
+`rust_extension/tests/env_access_policy.rs`, its probe and `syn` source scan,
+and the `make lint` lanes — and the Consequences entries above speak for those.
+This addendum records that the Make-level contract test is a wiring test, not a
+compile test. The measurements behind it, and the rejected alternatives, are in
+`docs/debugging/debugging-plan-2026-09-08-env-policy-timeout.md`.

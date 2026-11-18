@@ -1754,6 +1754,40 @@ contract. See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
 for the decision and its rationale.
 
+### The policy contract test
+
+`tests/test_env_access_policy_contract.py` judges the target's wiring from
+outside: it runs the real `make lint-env-policy` target, so Make, `uv` and the
+lane driver all execute. It then checks that a failing lane fails the target,
+that the driver names that lane, that every lane's diagnostic reaches the
+caller on standard error, and that Cargo receives the exact argument vector the
+Makefile's defaults imply, lane by lane and in order. Cargo itself is the one
+part replaced: `tests/env_policy_lane_support.py` puts a recording fake `cargo`
+first on `PATH`, and its `cargo_runner.py` companion does the recording and
+rejects only the lane a test names.
+
+The fake compiles nothing, so the contract never takes Cargo's package-cache
+lock and cannot wait on another job's resolve
+([#537](https://github.com/leynos/femtologging/issues/537)). Each run
+therefore has 120 seconds (`MAKE_TIMEOUT_SECONDS`) for provisioning through
+`uv` and the real Make run, and each test carries the
+`CONTRACT_TIMEOUT_SECONDS` marker above that budget. Real compilation and
+policy enforcement stay with `rust_extension/tests/` and `make lint`.
+
+The child inherits this process's environment so that `uv` and Make work, but
+the helper removes `FAKE_CARGO_REJECT` before setting its own value: an
+inherited rejection would fail a lane the test expects to accept, and the
+failure would read as a wiring defect. The general rule is the one above —
+where an inherited variable could change the outcome, the child's environment
+is built explicitly.
+
+See
+[adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
+for the decision, and the
+[2026-09-08 debugging plan revision](./debugging/debugging-plan-2026-09-08-env-policy-timeout.md)
+for the measurements that led to the fake and the alternatives that were
+rejected.
+
 ### The source scan
 
 Clippy cannot see an attribute that switches its own lint off, so
