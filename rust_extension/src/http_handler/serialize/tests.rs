@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 mod support;
 use support::*;
 
+/// Build the standard record used across the serialization tests.
 #[fixture]
 fn test_record() -> FemtoLogRecord {
     let metadata = RecordMetadata {
@@ -88,6 +89,7 @@ fn record_with_payloads(key_values: &[(&str, &str)]) -> FemtoLogRecord {
         .with_stack(StackTracePayload::new(frames))
 }
 
+/// Assert JSON keeps authoritative fields and drops reserved metadata.
 #[rstest]
 fn json_omits_reserved_metadata_and_keeps_authoritative_fields() {
     let record = record_with_authoritative_thread(COLLIDING_KEY_VALUES);
@@ -115,6 +117,7 @@ fn json_omits_reserved_metadata_and_keeps_authoritative_fields() {
     assert_json_keys_absent(&json, ABSENT_BUILTIN_COLLISIONS);
 }
 
+/// Assert reserved metadata is dropped even when its built-in field is absent.
 #[rstest]
 fn json_omits_reserved_metadata_even_when_builtin_field_is_absent() {
     let mut record = record_with_key_values(&[
@@ -129,6 +132,7 @@ fn json_omits_reserved_metadata_even_when_builtin_field_is_absent() {
     assert_json_keys_absent(&json, &["threadName", "exc_info", "stack_info"]);
 }
 
+/// Assert filtered JSON reports authoritative values for reserved names.
 #[rstest]
 fn filtered_json_uses_authoritative_values_for_reserved_fields() {
     let record = record_with_authoritative_thread(COLLIDING_KEY_VALUES);
@@ -162,6 +166,7 @@ fn filtered_json_uses_authoritative_values_for_reserved_fields() {
     assert_json_keys_unique(&json, &field_names);
 }
 
+/// Assert metadata cannot displace the record's exception or stack payloads.
 #[rstest]
 fn json_keeps_record_payloads_when_metadata_collides_with_them() {
     let record =
@@ -185,6 +190,7 @@ fn json_keeps_record_payloads_when_metadata_collides_with_them() {
     );
 }
 
+/// Assert URL-encoded output drops reserved metadata and keeps keys unique.
 #[rstest]
 fn url_encoded_omits_reserved_metadata_and_keeps_unique_keys() {
     let record = record_with_authoritative_thread(COLLIDING_KEY_VALUES);
@@ -213,6 +219,7 @@ fn url_encoded_omits_reserved_metadata_and_keeps_unique_keys() {
     assert_pairs_exclude(&pairs, ABSENT_BUILTIN_COLLISIONS);
 }
 
+/// Assert filtered URL-encoded output reports authoritative values for reserved names.
 #[rstest]
 fn filtered_url_encoded_uses_authoritative_values_for_reserved_fields() {
     let record = record_with_authoritative_thread(COLLIDING_KEY_VALUES);
@@ -246,6 +253,7 @@ fn filtered_url_encoded_uses_authoritative_values_for_reserved_fields() {
     }
 }
 
+/// Assert URL-encoded metadata cannot displace the record's payloads.
 #[rstest]
 fn url_encoded_keeps_record_payloads_when_metadata_collides_with_them() {
     let record =
@@ -262,6 +270,7 @@ fn url_encoded_keeps_record_payloads_when_metadata_collides_with_them() {
     );
 }
 
+/// Assert custom fields stay flat and string-valued in both encodings.
 #[rstest]
 fn legitimate_custom_fields_remain_flat_and_string_valued() {
     let record =

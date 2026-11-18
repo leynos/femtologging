@@ -195,6 +195,12 @@ fn try_validate_and_insert_enrichment(
 ) -> PyResult<bool> {
     let previous = context.before.get(&key);
     let has_changed = match previous {
+        // A reserved attribute whose comparison raises is treated as changed so
+        // the callback is warned about and the change is discarded, rather than
+        // rejecting the record through the comparison error.
+        Some(previous) if is_reserved_enrichment_key(&key) => {
+            !python_values_equal(context.py, previous, value).unwrap_or(false)
+        }
         Some(previous) => !python_values_equal(context.py, previous, value)?,
         None => true,
     };

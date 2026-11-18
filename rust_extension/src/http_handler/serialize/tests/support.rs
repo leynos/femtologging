@@ -111,6 +111,7 @@ pub(super) fn assert_created_matches(parsed: &Value, record: &FemtoLogRecord) {
     );
 }
 
+/// Assert URL-encoded output carries the record's built-in fields.
 #[rstest]
 pub(super) fn url_encoded_contains_expected_fields(test_record: FemtoLogRecord) {
     let encoded = serialize_url_encoded(&test_record, None).expect("serialize");
@@ -125,6 +126,7 @@ pub(super) fn url_encoded_contains_expected_fields(test_record: FemtoLogRecord) 
     );
 }
 
+/// Assert JSON output carries the record's built-in fields.
 #[rstest]
 pub(super) fn json_contains_expected_fields(test_record: FemtoLogRecord) {
     let parsed = parsed_json(&test_record, None);
@@ -139,6 +141,7 @@ pub(super) fn json_contains_expected_fields(test_record: FemtoLogRecord) {
     );
 }
 
+/// Assert a field selection emits only the requested built-in fields.
 #[rstest]
 pub(super) fn field_filter_limits_output(test_record: FemtoLogRecord) {
     let fields = selected_fields(&["name", "msg"]);
