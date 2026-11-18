@@ -125,31 +125,36 @@ def _attach_section(
 
 def _collect_filters(
     config: cabc.Mapping[str, object], *, allow_factories: bool
-) -> dict[str, dict[str, object]]:
-    """Read the filters section once, applying the declarative-only policy."""
+) -> cabc.Iterable[tuple[str, cabc.Mapping[str, object]]]:
+    """Return the filter entries to construct, rejecting factories if asked."""
+    entries = _iter_section_items(config, "filters", "filter")
+    if allow_factories:
+        # A trusted factory may change a later entry before it is read, which
+        # the stdlib loop allows. Read each entry only when it is constructed.
+        return entries
     collected: dict[str, dict[str, object]] = {}
-    for fid, filter_cfg in _iter_section_items(config, "filters", "filter"):
+    for fid, filter_cfg in entries:
         # Iterate keys instead of testing membership: a custom mapping's
         # ``__contains__`` would read the "()" value, which the policy
         # promises never to inspect.
         keys = list(filter_cfg)
-        if not allow_factories and "()" in keys:
+        if "()" in keys:
             msg = factory_disallowed_message(fid)
             raise ValueError(msg)
         # The snapshot is what construction consumes, so a mapping that
         # changes between reads cannot introduce a factory afterwards.
         collected[fid] = {key: filter_cfg[key] for key in keys}
-    return collected
+    return collected.items()
 
 
 def _process_filters(
     builder: _ConfigBuilder,
-    filters: cabc.Mapping[str, dict[str, object]],
+    filters: cabc.Iterable[tuple[str, cabc.Mapping[str, object]]],
     *,
     allow_factories: bool = True,
 ) -> _ConfigBuilder:
     """Attach filter builders for the collected ``filters`` entries."""
-    for fid, filter_cfg in filters.items():
+    for fid, filter_cfg in filters:
         # The per-entry guard is defence in depth for direct callers of
         # ``build_filter_from_dict`` and for any unscreened future caller.
         builder = builder.with_filter(
@@ -162,7 +167,7 @@ def _process_filters(
 def _process_sections(
     builder: _ConfigBuilder,
     config: cabc.Mapping[str, object],
-    filters: cabc.Mapping[str, dict[str, object]],
+    filters: cabc.Iterable[tuple[str, cabc.Mapping[str, object]]],
     *,
     allow_factories: bool = True,
 ) -> _ConfigBuilder:
