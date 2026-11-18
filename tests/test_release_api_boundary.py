@@ -238,27 +238,22 @@ def _assert_negative_probe_fails_on(
     assert symbol in rendered, f"the probe must fail on `{symbol}`"
 
 
+@pytest.mark.parametrize(
+    ("fixture_name", "symbol"),
+    [
+        ("test_only_api", "TestConfig"),
+        ("test_only_constructor", "with_writer_for_test"),
+    ],
+)
 @pytest.mark.timeout(1800)
-def test_default_feature_build_rejects_test_only_api(tmp_path: pth.Path) -> None:
-    """A default-feature consumer cannot name the test-only Rust seams."""
-    manifest = _prepare_probe("test_only_api", tmp_path)
-    result = _cargo_check(manifest)
-    assert result.returncode != 0, (
-        "the test-only probe compiled under default features, so a test seam "
-        "leaked into the production API"
-    )
-    _assert_negative_probe_fails_on(result, "TestConfig")
-
-
-@pytest.mark.timeout(1800)
-def test_default_feature_build_rejects_test_only_constructor(
-    tmp_path: pth.Path,
+def test_default_feature_build_rejects_test_only_api(
+    tmp_path: pth.Path, fixture_name: str, symbol: str
 ) -> None:
-    """A default-feature consumer cannot call the test-only constructor."""
-    manifest = _prepare_probe("test_only_constructor", tmp_path)
+    """A default-feature consumer cannot name any test-only seam."""
+    manifest = _prepare_probe(fixture_name, tmp_path)
     result = _cargo_check(manifest)
     assert result.returncode != 0, (
-        "the test-only constructor probe compiled under default features, so "
-        "the constructor leaked into the production API"
+        f"the {fixture_name} probe compiled under default features, so the "
+        f"`{symbol}` test seam leaked into the production API"
     )
-    _assert_negative_probe_fails_on(result, "with_writer_for_test")
+    _assert_negative_probe_fails_on(result, symbol)

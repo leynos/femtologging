@@ -6,7 +6,11 @@ import ast
 import importlib
 import importlib.machinery
 import sys
+import typing as typ
 from pathlib import Path
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 # Test-only names that follow none of the shapes below.
 _TEST_ONLY_EXACT_NAMES = frozenset({"_stream_waiter_count", "AttachmentIdentity"})
@@ -115,6 +119,33 @@ def _native_surface_errors(native: object) -> list[str]:
     return errors
 
 
+def _reexported_names(aliases: cabc.Iterable[ast.alias]) -> set[str]:
+    """Return the names *aliases* re-export under an identical alias.
+
+    Parameters
+    ----------
+    aliases : collections.abc.Iterable[ast.alias]
+        Imported names from a ``from`` statement.
+
+    Returns
+    -------
+    set[str]
+        Names imported as themselves, which is how a stub re-exports them.
+
+    Examples
+    --------
+    >>> _reexported_names([ast.alias(name="Token", asname="Token")])
+    {'Token'}
+    >>> _reexported_names([ast.alias(name="Token", asname=None)])
+    set()
+    """
+    return {
+        alias.asname
+        for alias in aliases
+        if alias.asname is not None and alias.asname == alias.name
+    }
+
+
 def _stub_declaration_names(tree: ast.AST) -> set[str]:
     """Return every name *tree* declares or explicitly re-exports.
 
@@ -156,11 +187,7 @@ def _stub_declaration_names(tree: ast.AST) -> set[str]:
             case ast.TypeAlias(name=ast.Name(id=name)):
                 names.add(name)
             case ast.ImportFrom(names=aliases):
-                names.update(
-                    alias.asname
-                    for alias in aliases
-                    if alias.asname is not None and alias.asname == alias.name
-                )
+                names.update(_reexported_names(aliases))
     return names
 
 
