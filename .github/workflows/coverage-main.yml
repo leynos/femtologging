@@ -32,11 +32,15 @@ on:
     branches: [main]
 
 # One group per ref, never cancelled. A cancelled publisher abandons both its
-# upload and its baseline write. With cancellation off, runs never overlap and
-# a newer push replaces any pending run, so uploads land in commit order and
-# the newest baseline wins. A manual "Re-run jobs" on an older run is an
-# operator action: it keeps that run's commit and republishes its coverage and
-# baseline until the next push supersedes it.
+# upload and its baseline write, so cancellation is off and the group
+# serialises active runs: one run publishes at a time. Which of several waiting
+# pushes holds the pending slot follows when each run started waiting, not push
+# time, so this setting does not order uploads by commit and cannot make the
+# newest baseline win. A manual "Re-run jobs" on an older run is an operator
+# action: it keeps that run's commit and republishes its coverage to CodeScene.
+# It cannot rewrite a baseline already saved, because a cache entry is
+# immutable once written, so a rerun's save is a no-op and a baseline a later
+# push superseded stays superseded.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -93,6 +97,16 @@ jobs:
         uses: leynos/shared-actions/.github/actions/setup-rust@ff1dd759dfffc0db3459e30e833f52437ee62b57
         with:
           install-mold: 'true'
+          # One cache lane per interpreter. On a push to main the action saves
+          # its sccache directory under a key carrying this discriminator, and
+          # the default is the job id, which all three lanes here share: they
+          # would race to save one entry. The action expects a caller to make a
+          # matrix lane distinct, so it is named here.
+          sccache-cache-discriminator: ${{ matrix.python-version }}
+          # One writer for the Cargo registry archive; every other lane only
+          # restores it. The three lanes compile the same code, so a single
+          # owner loses nothing and the archive is saved once.
+          save-cache: ${{ matrix.python-version == '3.14' }}
       - name: Install makeutil
         id: makeutil
         # The measured suite includes the contract tests, which parse the
@@ -133,6 +147,10 @@ jobs:
           # would never be restored. `never` skips both and hands the figures
           # to `coverage-baseline`, which publishes from an Ubicloud runner.
           publish-baseline: never
+          # The action's own archive would store this report a second time;
+          # the hand-over below and the explicit `codescene-report` upload are
+          # the only copies this workflow keeps.
+          publish-artefact: 'false'
           baseline-artefact-name: coverage-baseline-handover-${{ matrix.python-version }}
       - name: Keep the report for the uploader
         # The upload job holds the CodeScene environment and nothing else, so
@@ -144,7 +162,10 @@ jobs:
         with:
           name: codescene-report
           path: coverage.xml
-          retention-days: 1
+          # Long enough to retry a failed upload job over a weekend. A retry
+          # after this window finds the report gone, so it must re-run the
+          # measurement rather than only the upload job.
+          retention-days: 3
           if-no-files-found: error
 
   coverage-upload:
