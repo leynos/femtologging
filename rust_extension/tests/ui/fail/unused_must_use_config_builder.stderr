@@ -1,0 +1,26 @@
+error: unused return value of `ConfigBuilder::with_version` that must be used
+  --> tests/ui/fail/unused_must_use_config_builder.rs:12:5
+   |
+12 |     ConfigBuilder::new().with_version(1);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/fail/unused_must_use_config_builder.rs:7:9
+   |
+ 7 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+12 |     let _ = ConfigBuilder::new().with_version(1);
+   |     +++++++
+
+error: unused return value of `LoggerConfigBuilder::with_level` that must be used
+  --> tests/ui/fail/unused_must_use_config_builder.rs:13:5
+   |
+13 |     LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+13 |     let _ = LoggerConfigBuilder::new().with_level(FemtoLevel::Info);
+   |     +++++++
