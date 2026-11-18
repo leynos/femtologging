@@ -15,6 +15,12 @@ use crate::log_record::FemtoLogRecord;
 use crate::manager;
 use crate::test_utils::collecting_handler::CollectingHandler;
 
+// Compile-time checks: `layer()` is the public constructor and `map_level` the
+// pure mapping behind it, and both must stay const-evaluable. A run-time test
+// cannot detect a `const fn` that quietly stops being one.
+const _: FemtoTracingLayer = super::layer();
+const _: FemtoLevel = FemtoTracingLayer::map_level(tracing::Level::INFO);
+
 /// Assert that flushing the logger bound to `$logger` (via `$py`) succeeds,
 /// panicking with a message from the caller's line on failure.
 macro_rules! assert_flush {
