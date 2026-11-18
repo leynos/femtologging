@@ -1422,11 +1422,24 @@ file run too and do emit, which is why the assertions name their records.
 Python logging captures the active task-local `ContextVar` fields and any
 explicit `extra` fields when `FemtoLogger.py_log` creates a record. The
 `rust_extension/src/python_context.rs` adapter converts Python mappings and
-scalar values, then `ContextBudget` in `rust_extension/src/log_context.rs`
-validates keys, values, and aggregate size. The resulting fields are stored in
-record metadata; this path does not read or merge Rust thread-local context.
+scalar values, then `ContextBudget` in
+`rust_extension/src/log_context/budget.rs` validates keys, values, and
+aggregate size; `rust_extension/src/log_context.rs` re-exports it alongside the
+scoped-context API. Budget validation checks key length, then the reserved-name
+contract, then key count, value length, and aggregate size, and commits state
+only after every check passes. The resulting fields are stored in record
+metadata; this path does not read or merge Rust thread-local context.
 Conversion failures are reported to Python as type errors, and invalid context
 values as `ValueError`.
+
+Reserved names are defined once, in
+`rust_extension/src/log_context/reserved.rs`. Context admission, Python
+callback enrichment, and HTTP serialization all call the same predicate, so a
+name that cannot enter through `extra` or `log_context(...)` also cannot
+replace an authoritative field later in the pipeline. Because
+`RecordMetadata::key_values` is public and direct construction bypasses
+admission, HTTP serialization omits reserved names at the output boundary as
+well; that omission is defence in depth, not a second policy.
 
 Rust logging uses `merge_context_values` at the producer boundary. It combines
 active Rust thread-local context with explicit record fields, with explicit

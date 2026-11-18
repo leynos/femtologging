@@ -154,6 +154,9 @@ def test_log_context_rejects_an_unsupported_scalar() -> None:
         pytest.fail("unsupported scoped scalar unexpectedly entered context")
 
 
+# Mirrors RESERVED_STD_RECORD_KEYS and RESERVED_FEMTO_KEYS in
+# `rust_extension/src/log_context/reserved.rs`. Every name in the shared contract
+# appears here, so dropping one from either list fails these tests.
 RESERVED_EXTRA_KEYS = [
     # Logger identity.
     "name",
@@ -165,19 +168,32 @@ RESERVED_EXTRA_KEYS = [
     # Message.
     "msg",
     "message",
+    "args",
     # Timing and threading.
     "created",
+    "msecs",
+    "relativeCreated",
     "thread",
+    "threadName",
+    "thread_id",
+    "thread_name",
+    "timestamp",
+    "process",
+    "processName",
     # Source information.
     "filename",
+    "pathname",
     "lineno",
     "module",
     "module_path",
     "line_number",
+    "funcName",
     # Optional built-in payloads and femtologging metadata.
     "exc_info",
+    "exc_text",
     "stack_info",
-    "threadName",
+    "asctime",
+    "taskName",
     "metadata",
     "key_values",
 ]

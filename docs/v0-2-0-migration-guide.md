@@ -22,6 +22,7 @@ ______________________________________________________________________
 | Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).          |
 | Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                       |
 | Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                              |
+| Required if called | Reserved structured-field names | Rename any `extra=` or `log_context(...)` key that uses a built-in record name; those names now raise `ValueError`.                      |
 | Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                 |
 | Review if enabled  | Async `log_context` use         | Replace reliance on thread-local leakage between tasks with `contextvars`-aware code.                                                    |
 | Review if enabled  | Shared dispatch                 | Review handlers that keep per-logger state in `threading.local`; use `contextvars` or keep the state with the handler.                   |
@@ -100,6 +101,19 @@ exception instead of being silently discarded.
 When a field is present both in `extra` and in an active `log_context`, the
 inline value takes precedence. `exception()` is unchanged and does not accept
 `extra`.
+
+Field names that belong to the record itself are reserved. `name`, `msg`,
+`args`, `levelname`, `levelno`, `pathname`, `filename`, `module`, `exc_info`,
+`exc_text`, `stack_info`, `lineno`, `funcName`, `created`, `msecs`,
+`relativeCreated`, `thread`, `threadName`, `process`, `processName`, `message`,
+`asctime`, `taskName`, `logger`, `level`, `metadata`, `module_path`,
+`line_number`, `timestamp`, `thread_id`, `thread_name`, and `key_values` all
+raise `ValueError` when used as an `extra` key or a `log_context(...)` key.
+Matching is exact and case-sensitive, so `Name` and `logger_name` remain
+legitimate custom fields. Rust callers see the same contract:
+`log_with_metadata` drops a record whose context contains a reserved name and
+counts it through `get_context_dropped()`. Rename any such field, for example
+`message` to `message_id`.
 
 ______________________________________________________________________
 

@@ -7,6 +7,7 @@ use crate::log_record::RecordMetadata;
 use rstest::{fixture, rstest};
 use serde_json::{Value, json};
 
+mod reserved_metadata;
 mod support;
 use support::*;
 
