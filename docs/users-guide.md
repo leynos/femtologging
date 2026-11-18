@@ -1587,8 +1587,9 @@ code, before a later preparation error is reported. See
   so an INI reload cannot introduce a factory through that path.
 - `RuntimeConfigBuilder` mutations select registered filters by ID through
   `replace_filters`, `append_filters`, `remove_filters`, and `clear_filters`.
-  They do not resolve `"()"` entries. This does not make every runtime builder
-  factory-free: `PythonCallbackFilterBuilder` still runs caller-supplied Python.
+  They do not resolve `"()"` entries. That does not make every registered
+  filter factory-free: a Python callback filter still runs caller-supplied
+  Python on the producer thread when it evaluates each record.
 
 ## Rust log facade bridge
 

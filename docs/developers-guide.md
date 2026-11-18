@@ -2271,9 +2271,9 @@ worker runs without the GIL.
 builder-level validation and commit semantics match direct builder use. Only a
 `dictConfig` document can carry ``"()"`` filter entries; `fileConfig` has no
 filter section. Declarative-only mode also rejects those entries in Python
-before the builder is created. When such an entry is present, its resolution
-and invocation happen before this transaction boundary and are not undone by a
-rejection. See the
+before the builder is created. When factories are enabled and processing
+reaches such an entry, its resolution and invocation happen before this
+transaction boundary and are not undone by a rejection. See the
 [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 At runtime, each handler is paired with its resolved filter chain in a
