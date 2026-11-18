@@ -349,7 +349,10 @@ def dictConfig(
     author. Lower-trust configuration (tenants, HTTP APIs, remote configuration
     services, writable files) must reject factory entries or pass
     ``allow_factories=False``; checks after resolution or invocation are too
-    late. See ``docs/users-guide.md#filter-factory-trust-boundary``.
+    late. ``allow_factories=False`` rejects filter factories only and applies no
+    trust policy to the rest of the document, so callers must validate
+    permitted handler classes and destinations separately. See
+    ``docs/users-guide.md#filter-factory-trust-boundary``.
 
     Examples
     --------

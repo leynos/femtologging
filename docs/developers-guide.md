@@ -2268,8 +2268,9 @@ manager lock is dropped, `build_and_init` calls
 worker runs without the GIL.
 
 `dictConfig` and `fileConfig` use this same builder path, so their validation
-and transaction boundary match direct builder use. When a document contains
-``"()"`` filter entries, their resolution and invocation happen before this
+and transaction boundary match direct builder use. Only a `dictConfig` document
+can carry ``"()"`` filter entries; `fileConfig` has no filter section. When
+such an entry is present, its resolution and invocation happen before this
 transaction boundary and are not undone by a rejection. See the
 [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 

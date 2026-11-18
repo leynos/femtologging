@@ -1509,11 +1509,13 @@ For upgrade steps covering handler filters and formatter builders, see the
   enables it again.
 
 Configuration preparation validates logger names and resource references before
-changing live logger state. If validation fails, every existing logger keeps
-its state. Records already queued before a successful change are not retracted,
-handler construction can open destinations, and filter factory resolution can
-import modules and run configuration-selected code, before a later preparation
-error is reported. See
+changing live logger state. If validation fails, none of the staged logger
+changes are applied, so every existing logger keeps the state it had before
+preparation, apart from changes made directly by code that preparation ran.
+Records already queued before a successful change are not retracted, handler
+construction can open destinations, and filter factory resolution can import
+modules and run configuration-selected code, before a later preparation error
+is reported. See
 [Filter factory trust boundary](#filter-factory-trust-boundary).
 
 ## Operational tips and caveats
