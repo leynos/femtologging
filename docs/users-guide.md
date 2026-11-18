@@ -1249,10 +1249,10 @@ builder.build_and_init()
 - A `root` section is mandatory. Named loggers support `level`,
   `handlers`, `filters`, and `propagate` (bool).
 - The parsed configuration is passed to `ConfigBuilder.build_and_init()`, so
-  handler and filter validation completes before live logger state changes. A
-  failed configuration applies none of its staged logger changes, but it does
-  not undo side effects already performed while preparing it, including any
-  change a factory made directly to a live logger.
+  handler and filter validation completes before the builder applies its staged
+  changes to live loggers. A failed configuration applies none of its staged
+  logger changes, but it does not undo side effects already performed while
+  preparing it, including any change a factory made directly to a live logger.
 
 #### Filter factory trust boundary
 
