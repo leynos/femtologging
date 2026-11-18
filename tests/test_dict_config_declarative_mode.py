@@ -48,18 +48,6 @@ class _FactoryProbe:
         return lambda _record: True
 
 
-def _plain_factory(**_kwargs: object) -> object:
-    """Return a filter callable without observing any side effect."""
-    return lambda _record: True
-
-
-class _PlainFactoryClass:
-    """Class target that would accept the factory keyword arguments."""
-
-    def __init__(self, **_kwargs: object) -> None:
-        """Accept keyword arguments without observing any side effect."""
-
-
 type _ValueBuilder = cabc.Callable[[_FactoryProbe], object]
 type _EntryBuilder = cabc.Callable[[_FactoryProbe], cabc.Mapping[str, object]]
 
@@ -67,8 +55,8 @@ _FACTORY_VALUE_BUILDERS: tuple[tuple[str, _ValueBuilder], ...] = (
     ("unimported-dotted", lambda _probe: "declarative_guard_missing.missing"),
     ("importable-dotted", lambda _probe: _FACTORY_PATH),
     ("module-dotted", lambda _probe: "tests.python_filter_support"),
-    ("function", lambda _probe: _plain_factory),
-    ("class", lambda _probe: _PlainFactoryClass),
+    ("function", lambda _probe: logging.getLevelName),
+    ("class", lambda _probe: logging.Formatter),
     ("filter-class", lambda _probe: logging.Filter),
     ("callable-instance", lambda probe: probe),
     ("lambda", lambda _probe: lambda **_kwargs: None),
@@ -306,15 +294,19 @@ def test_declarative_mode_rejection_leaves_live_state_unchanged() -> None:
         "loggers": {"declarative_rejection_probe": {"filters": ["lvl"]}},
         "root": {"level": "DEBUG"},
     }
-    assert app.log("DEBUG", "before") is not None, "probe must start unfiltered"
+    root = get_logger("root")
+    assert app.log("ERROR", "before") is not None, "probe must start unfiltered"
+    assert root.log("ERROR", "before") is not None, "root must start permissive"
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
         dictConfig(config, allow_factories=False)
 
-    # The staged INFO-only filter would block this record if attached.
-    assert app.log("DEBUG", "after") is not None, (
+    assert app.log("ERROR", "after") is not None, (
         "rejection must not attach the staged INFO-only filter"
     )
-    assert get_logger("root").log("INFO", "still suppressed") is None, (
+    assert root.log("ERROR", "after") is not None, (
+        "rejection must not raise the pre-existing root level"
+    )
+    assert root.log("INFO", "still suppressed") is None, (
         "rejection must leave the pre-existing root level in place"
     )
 
