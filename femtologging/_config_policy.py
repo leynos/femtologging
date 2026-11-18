@@ -1,0 +1,65 @@
+"""Trust-boundary policy helpers for ``dictConfig`` filter factories."""
+
+from __future__ import annotations
+
+
+def factory_disallowed_message(fid: str) -> str:
+    """Describe why a factory entry was refused in declarative-only mode.
+
+    Factory entries are trusted-code-equivalent: resolving one imports a module
+    and invokes a callable named by the configuration author. The message names
+    the offending filter and the policy that rejected it so a control plane can
+    report why lower-trust configuration was refused.
+
+    Parameters
+    ----------
+    fid
+        Identifier of the filter entry that used a ``"()"`` key.
+
+    Returns
+    -------
+    str
+        Message naming the filter identifier and the policy.
+
+    Examples
+    --------
+    >>> factory_disallowed_message("svc")
+    "filter 'svc' uses a '()' factory, rejected by allow_factories=False"
+
+    """
+    return f"filter {fid!r} uses a '()' factory, rejected by allow_factories=False"
+
+
+def validate_allow_factories(value: object) -> bool:
+    """Validate the ``allow_factories`` policy before configuration processing.
+
+    Parameters
+    ----------
+    value
+        Candidate policy from the public ``dictConfig`` argument.
+
+    Returns
+    -------
+    bool
+        The validated policy.
+
+    Raises
+    ------
+    TypeError
+        If ``value`` is not a bool, so ``0``, ``1``, and ``"false"`` cannot be
+        mistaken for a policy choice.
+
+    Examples
+    --------
+    >>> validate_allow_factories(False)
+    False
+    >>> validate_allow_factories("false")
+    Traceback (most recent call last):
+    ...
+    TypeError: allow_factories must be a bool
+
+    """
+    if not isinstance(value, bool):
+        msg = "allow_factories must be a bool"
+        raise TypeError(msg)
+    return value
