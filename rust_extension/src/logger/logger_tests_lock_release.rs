@@ -12,6 +12,7 @@ use super::*;
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
+use rstest::rstest;
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
@@ -191,31 +192,92 @@ fn filter_probe(logger: &FemtoLogger) -> (Arc<FilterLockProbe>, Arc<DropObservat
     (probe, observation)
 }
 
-#[test]
-fn clear_handlers_drops_handlers_after_releasing_the_lock() {
-    let logger = test_logger("lock.clear.handlers");
-    let (probe, observation) = handler_probe(&logger);
+/// A logger collection that can own user resources.
+#[derive(Clone, Copy)]
+enum CollectionKind {
+    /// The logger's handler collection.
+    Handlers,
+    /// The logger's filter collection.
+    Filters,
+}
+
+impl CollectionKind {
+    /// Attach a probe, leaving this collection as the probe's only owner so a
+    /// later mutation destroys it.
+    fn attach_probe(self, logger: &FemtoLogger) -> Arc<DropObservation> {
+        match self {
+            Self::Handlers => attach_handler_probe(logger),
+            Self::Filters => attach_filter_probe(logger),
+        }
+    }
+
+    /// Empty this collection.
+    fn clear(self, logger: &FemtoLogger) {
+        match self {
+            Self::Handlers => logger.clear_handlers(),
+            Self::Filters => logger.clear_filters(),
+        }
+    }
+
+    /// Name the clear operation in assertion messages.
+    fn clearing_operation(self) -> &'static str {
+        match self {
+            Self::Handlers => "clear_handlers",
+            Self::Filters => "clear_filters",
+        }
+    }
+
+    /// Replace this collection with an empty one, dropping what it displaced.
+    #[cfg(feature = "python")]
+    fn replace_with_nothing(self, logger: &FemtoLogger) {
+        // Dropping the displaced value here, outside any guard, mirrors how the
+        // production call sites dispose of it.
+        match self {
+            Self::Handlers => drop(logger.replace_handlers(Vec::new())),
+            Self::Filters => drop(logger.replace_filters(Vec::new())),
+        }
+    }
+
+    /// Name the replace operation in assertion messages.
+    #[cfg(feature = "python")]
+    fn replacing_operation(self) -> &'static str {
+        match self {
+            Self::Handlers => "replace_handlers",
+            Self::Filters => "replace_filters",
+        }
+    }
+}
+
+/// Attach a probe to *logger*'s handler collection and leave that collection as
+/// the probe's only owner.
+fn attach_handler_probe(logger: &FemtoLogger) -> Arc<DropObservation> {
+    let (probe, observation) = handler_probe(logger);
     logger
         .add_handler(probe.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("probe handler should attach");
-    // Leave the collection as the only owner so `clear_handlers` destroys it.
     drop(probe);
-
-    logger.clear_handlers();
-
-    assert_dropped_after_release(&observation, "clear_handlers");
+    observation
 }
 
-#[test]
-fn clear_filters_drops_filters_after_releasing_the_lock() {
-    let logger = test_logger("lock.clear.filters");
-    let (probe, observation) = filter_probe(&logger);
+/// Attach a probe to *logger*'s filter collection and leave that collection as
+/// the probe's only owner.
+fn attach_filter_probe(logger: &FemtoLogger) -> Arc<DropObservation> {
+    let (probe, observation) = filter_probe(logger);
     logger.add_filter(probe.clone() as Arc<dyn FemtoFilter>);
     drop(probe);
+    observation
+}
 
-    logger.clear_filters();
+#[rstest]
+#[case::handlers(CollectionKind::Handlers)]
+#[case::filters(CollectionKind::Filters)]
+fn clear_drops_values_after_releasing_the_lock(#[case] kind: CollectionKind) {
+    let logger = test_logger("lock.clear");
+    let observation = kind.attach_probe(&logger);
 
-    assert_dropped_after_release(&observation, "clear_filters");
+    kind.clear(&logger);
+
+    assert_dropped_after_release(&observation, kind.clearing_operation());
 }
 
 #[cfg(feature = "python")]
@@ -262,35 +324,19 @@ fn remove_filter_drops_the_removed_reference_after_releasing_the_lock() {
     assert_dropped_after_release(&observation, "remove_filter");
 }
 
-// `replace_handlers` lives in the python-gated `runtime_mutation` module. Test
-// builds currently always enable the feature through the crate's self
-// dev-dependency, but the gate keeps this file honest if that changes.
+// `replace_handlers` and `replace_filters` live in the python-gated
+// `runtime_mutation` module. Test builds currently always enable the feature
+// through the crate's self dev-dependency, but the gate keeps this file honest
+// if that changes.
 #[cfg(feature = "python")]
-#[test]
-fn replace_handlers_drops_displaced_handlers_after_releasing_the_lock() {
-    let logger = test_logger("lock.replace.handlers");
-    let (probe, observation) = handler_probe(&logger);
-    logger
-        .add_handler(probe.clone() as Arc<dyn FemtoHandlerTrait>)
-        .expect("probe handler should attach");
-    drop(probe);
+#[rstest]
+#[case::handlers(CollectionKind::Handlers)]
+#[case::filters(CollectionKind::Filters)]
+fn replace_drops_displaced_values_after_releasing_the_lock(#[case] kind: CollectionKind) {
+    let logger = test_logger("lock.replace");
+    let observation = kind.attach_probe(&logger);
 
-    let displaced = logger.replace_handlers(Vec::new());
-    drop(displaced);
+    kind.replace_with_nothing(&logger);
 
-    assert_dropped_after_release(&observation, "replace_handlers");
-}
-
-#[cfg(feature = "python")]
-#[test]
-fn replace_filters_drops_displaced_filters_after_releasing_the_lock() {
-    let logger = test_logger("lock.replace.filters");
-    let (probe, observation) = filter_probe(&logger);
-    logger.add_filter(probe.clone() as Arc<dyn FemtoFilter>);
-    drop(probe);
-
-    let displaced = logger.replace_filters(Vec::new());
-    drop(displaced);
-
-    assert_dropped_after_release(&observation, "replace_filters");
+    assert_dropped_after_release(&observation, kind.replacing_operation());
 }
