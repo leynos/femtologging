@@ -10,7 +10,9 @@ use super::{
     ConfigBuilder, ConfigError, LoggerConfigBuilder, LoggerMutationBuilder, RuntimeConfigBuilder,
     test_utils::{
         gil_and_clean_manager,
-        prune_test_support::{configured_core_logger_after_reset, published_filters, published_handlers},
+        prune_test_support::{
+            configured_core_logger_after_reset, published_filters, published_handlers,
+        },
     },
 };
 use crate::{
@@ -23,7 +25,9 @@ use serial_test::serial;
 
 #[rstest]
 #[serial]
-fn unused_definition_rejected_before_build(configured_core_logger_after_reset: Result<(), ConfigError>) {
+fn unused_definition_rejected_before_build(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
     configured_core_logger_after_reset.expect("initial build should succeed");
     let dir = tempfile::tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("orphan.log");
@@ -55,7 +59,9 @@ fn unused_definition_rejected_before_build(configured_core_logger_after_reset: R
 
 #[rstest]
 #[serial]
-fn unused_filter_definition_rejected_before_build(configured_core_logger_after_reset: Result<(), ConfigError>) {
+fn unused_filter_definition_rejected_before_build(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
     configured_core_logger_after_reset.expect("initial build should succeed");
 
     let err = RuntimeConfigBuilder::new()
@@ -80,7 +86,9 @@ fn unused_filter_definition_rejected_before_build(configured_core_logger_after_r
 
 #[rstest]
 #[serial]
-fn empty_mutation_leaves_registries_unchanged(configured_core_logger_after_reset: Result<(), ConfigError>) {
+fn empty_mutation_leaves_registries_unchanged(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
     configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
@@ -185,7 +193,9 @@ fn removing_one_of_two_references_keeps_definition() {
 
 #[rstest]
 #[serial]
-fn detaching_and_redefining_same_id_is_rejected(configured_core_logger_after_reset: Result<(), ConfigError>) {
+fn detaching_and_redefining_same_id_is_rejected(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
     configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
