@@ -215,6 +215,15 @@ returns `False` if the marker cannot be enqueued or acknowledged in time, or
 any handler flush fails. A failing handler does not stop the remaining handlers
 from being flushed.
 
+`logger.flush_handlers()` also reports the drop counts that rate-limited
+warnings are still holding back. It does so after the dispatch queue drains and
+the handlers flush, so a count recorded while the flush was waiting is included
+in the same report rather than left pending. Both counters are covered: the
+dispatch-admission drop counter reported by `get_dropped()`, and the
+context-capture failure counter reported by `get_context_capture_failures()`.
+Destroying a logger reports any count still pending in the same way, because a
+logger that is going away has no later moment at which to warn.
+
 <!-- tested-example: flush-handlers-usage -->
 ```python
 import femtologging

@@ -5,6 +5,8 @@
 //! delivered, and that the drop does not hold a lock the record's own path
 //! needs.
 
+use serial_test::serial;
+
 use super::logger_tests_helpers::{CollectingHandler, collected_messages};
 use super::*;
 
@@ -144,5 +146,47 @@ fn drop_does_not_hold_the_handler_list_while_draining() {
          observed locked during a {PROBE_WINDOW:?} window in which the drop was \
          waiting for a blocked handler, which only a drop that took the list \
          can cause"
+    );
+}
+
+/// A drop reports a count the warning interval is holding back.
+///
+/// `Drop` runs the same flush the explicit path does, because after the drop
+/// nothing is left to warn on the logger's behalf: a suppressed interval would
+/// take its final count with it. The second drop below warns nothing, so
+/// without that flush the count would never be reported.
+#[test]
+#[serial]
+fn drop_reports_the_pending_drop_count() {
+    use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
+
+    install_test_logger();
+    let logger =
+        FemtoLogger::new("drop-report".to_string()).expect("test logger should be constructible");
+    // The first drop claims the interval; the second is suppressed and stays
+    // pending, which is the state the drop has to report. The callback is a
+    // no-op because what the first warning says is another test's subject.
+    logger.drop_warner.record_drop();
+    logger.drop_warner.warn_if_due(|_| {});
+    logger.drop_warner.record_drop();
+    logger.drop_warner.warn_if_due(|_| {});
+    let _ = take_logged_messages();
+    assert_eq!(
+        logger.drop_warner.pending_drops(),
+        1,
+        "the second drop should be held back by the interval",
+    );
+
+    drop(logger);
+
+    let reported: Vec<_> = take_logged_messages()
+        .into_iter()
+        .filter(|entry| entry.message == "FemtoLogger: dropped 1 records; reported by flush")
+        .collect();
+    assert_eq!(
+        reported.len(),
+        1,
+        "a dropped logger must report the count the interval was still holding: \
+         reported {reported:?}",
     );
 }
