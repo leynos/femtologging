@@ -5,7 +5,7 @@
 //! [`EXCEPTION_SCHEMA_VERSION`]. [`SchemaVersioned`] exposes that check as
 //! `validate_version`; a payload that nests independently versioned payloads
 //! overrides the method so the whole tree is validated, as
-//! [`ExceptionPayload`] does.
+//! [`ExceptionPayload`](super::ExceptionPayload) does.
 //!
 //! [`SchemaVersionError`] keeps the original root-level variants unchanged and
 //! adds path-bearing failures for a nested mismatch and for the bounded walk.
