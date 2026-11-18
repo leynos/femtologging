@@ -88,8 +88,8 @@ impl BackoffOverrides {
 impl SocketHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[new]
-    fn py_new() -> Self {
-        Self::new()
+    fn py_new() -> PyResult<Self> {
+        Ok(Self::new())
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
@@ -113,28 +113,37 @@ impl SocketHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_capacity")]
     #[pyo3(signature = (capacity))]
-    fn py_with_capacity(mut slf: PyRefMut<'_, Self>, capacity: usize) -> PyRefMut<'_, Self> {
+    fn py_with_capacity(
+        mut slf: PyRefMut<'_, Self>,
+        capacity: usize,
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let updated = slf.clone().with_capacity(capacity);
         *slf = updated;
-        slf
+        Ok(slf)
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_connect_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
-    fn py_with_connect_timeout(mut slf: PyRefMut<'_, Self>, timeout_ms: u64) -> PyRefMut<'_, Self> {
+    fn py_with_connect_timeout(
+        mut slf: PyRefMut<'_, Self>,
+        timeout_ms: u64,
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let updated = slf.clone().with_connect_timeout_ms(timeout_ms);
         *slf = updated;
-        slf
+        Ok(slf)
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[pyo3(name = "with_write_timeout_ms")]
     #[pyo3(signature = (timeout_ms))]
-    fn py_with_write_timeout(mut slf: PyRefMut<'_, Self>, timeout_ms: u64) -> PyRefMut<'_, Self> {
+    fn py_with_write_timeout(
+        mut slf: PyRefMut<'_, Self>,
+        timeout_ms: u64,
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let updated = slf.clone().with_write_timeout_ms(timeout_ms);
         *slf = updated;
-        slf
+        Ok(slf)
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
