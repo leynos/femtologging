@@ -16,7 +16,9 @@ use rstest::rstest;
 
 #[cfg(feature = "python")]
 use super::context_snapshot::ContextSnapshotProvider;
-use super::logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_signal};
+use super::logger_tests_helpers::{
+    CollectingHandler, SignallingCollectingHandler, wait_for_record_signal,
+};
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
@@ -51,6 +53,35 @@ fn enrichment_pair(key: &str, value: &str) -> BTreeMap<String, String> {
     BTreeMap::from([(key.to_owned(), value.to_owned())])
 }
 
+/// Attach a test filter that decides `accepted` and merges one field pair.
+fn attach_filter(
+    logger: &FemtoLogger,
+    accepted: bool,
+    pair: (&str, &str),
+    calls: &Arc<AtomicUsize>,
+) {
+    logger.add_filter(Arc::new(TestFilter {
+        accepted,
+        enrichment: enrichment_pair(pair.0, pair.1),
+        calls: Arc::clone(calls),
+    }));
+}
+
+/// Assert the single collected record carries every expected field pair.
+fn assert_enrichment(handler: &CollectingHandler, expected: &[(&str, &str)]) {
+    let collected = handler.collected();
+    let record = collected
+        .first()
+        .expect("the handler should collect one record");
+    for (key, value) in expected {
+        assert_eq!(
+            record.metadata().key_values.get(*key).map(String::as_str),
+            Some(*value),
+            "enrichment field {key} should carry {value}"
+        );
+    }
+}
+
 #[rstest]
 #[case::all_filters_accept(true, true, 1)]
 #[case::second_filter_rejects(false, false, 0)]
@@ -67,21 +98,9 @@ fn apply_filters_merges_enrichment_and_short_circuits(
     let second_calls = Arc::new(AtomicUsize::new(0));
     let third_calls = Arc::new(AtomicUsize::new(0));
 
-    logger.add_filter(Arc::new(TestFilter {
-        accepted: true,
-        enrichment: enrichment_pair("request_id", "req-123"),
-        calls: Arc::clone(&first_calls),
-    }));
-    logger.add_filter(Arc::new(TestFilter {
-        accepted: second_accepts,
-        enrichment: enrichment_pair("user_id", "alice"),
-        calls: Arc::clone(&second_calls),
-    }));
-    logger.add_filter(Arc::new(TestFilter {
-        accepted: true,
-        enrichment: enrichment_pair("ignored", "value"),
-        calls: Arc::clone(&third_calls),
-    }));
+    attach_filter(&logger, true, ("request_id", "req-123"), &first_calls);
+    attach_filter(&logger, second_accepts, ("user_id", "alice"), &second_calls);
+    attach_filter(&logger, true, ("ignored", "value"), &third_calls);
     logger
         .add_handler(Arc::new(signalling_handler) as Arc<dyn FemtoHandlerTrait>)
         .expect("native test handler should register");
@@ -94,33 +113,13 @@ fn apply_filters_merges_enrichment_and_short_circuits(
     if expected_result {
         assert_eq!(result.as_deref(), Some("producer [INFO] hello"));
         wait_for_record_signal(&record_rx).expect("timed out waiting for queued record");
-        let collected = collecting_handler.collected();
-        let record = collected
-            .first()
-            .expect("the handler should collect one record");
-        assert_eq!(
-            record
-                .metadata()
-                .key_values
-                .get("request_id")
-                .map(String::as_str),
-            Some("req-123")
-        );
-        assert_eq!(
-            record
-                .metadata()
-                .key_values
-                .get("user_id")
-                .map(String::as_str),
-            Some("alice")
-        );
-        assert_eq!(
-            record
-                .metadata()
-                .key_values
-                .get("ignored")
-                .map(String::as_str),
-            Some("value")
+        assert_enrichment(
+            &collecting_handler,
+            &[
+                ("request_id", "req-123"),
+                ("user_id", "alice"),
+                ("ignored", "value"),
+            ],
         );
     } else {
         assert_eq!(result, None);
