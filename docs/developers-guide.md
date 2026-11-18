@@ -2268,7 +2268,10 @@ manager lock is dropped, `build_and_init` calls
 worker runs without the GIL.
 
 `dictConfig` and `fileConfig` use this same builder path, so their validation
-and transaction boundary match direct builder use.
+and transaction boundary match direct builder use. When a document contains
+``"()"`` filter entries, their resolution and invocation happen before this
+transaction boundary and are not undone by a rejection. See the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 At runtime, each handler is paired with its resolved filter chain in a
 `HandlerAttachment`. The logger evaluates that chain on the producer thread

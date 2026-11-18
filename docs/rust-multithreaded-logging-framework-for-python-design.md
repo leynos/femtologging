@@ -1268,6 +1268,11 @@ potential future enhancement.
   phased support for standard library factory-based filter declarations (the
   `"()"` form), while preserving existing declarative behaviour.
 
+  Factory entries are trusted-code-equivalent input; reject them before
+  `dictConfig` for lower-trust configuration, or use `allow_factories=False`.
+  See the
+  [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
+
   ```python
   from femtologging import Config, FileHandler, Formatter
 
@@ -2115,6 +2120,13 @@ re-attached. When a shared handler ID is replaced, every logger tracked by the
 structured configuration metadata and still referencing that ID is refreshed to
 point at the new shared runtime object.
 
+Reloads that accept factory-bearing configuration remain inside the
+trusted-code boundary: ``"()"`` filter entries stay trusted-code-equivalent and
+are resolved again on each bootstrap-shaped reload. See
+[Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary)
+and
+[Runtime reconfiguration](users-guide.md#runtime-reconfiguration-and-reloads).
+
 ### 7.3. Integration with Application Configuration
 
 If file-based configuration (e.g., YAML or TOML) is implemented in
@@ -2141,6 +2153,13 @@ network restrictions), could become a vector for attackers to disrupt logging
 While `femtologging` itself might not provide the HTTP server, its
 reconfiguration API design should be mindful of these potential misuse
 scenarios.
+
+Configuration delivered through such an endpoint can also carry filter factory
+entries (``"()"``), which are trusted-code-equivalent: resolving one imports
+modules and invokes a configuration-selected callable. Endpoint validation must
+reject factory entries before calling `dictConfig`, or use
+`allow_factories=False`. See
+[Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ## 8. Key Recommendations and Future Directions
 
