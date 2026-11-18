@@ -5,6 +5,9 @@ re-entry completes through dispatch rather than that the collection destroyed
 its last owner. The record the finalizer emits is checked, which also proves
 the log call itself finished.
 
+Checks go through ``scenario_support.require`` rather than ``assert``, which
+``python -O`` would remove.
+
 Run by ``tests.reentrant_finalizer_support`` in a child interpreter.
 """
 
@@ -13,6 +16,7 @@ from __future__ import annotations
 import gc
 
 from femtologging import get_logger
+from tests.fixtures.scenario_support import require
 
 NAME = "reentrant.remove.handler"
 
@@ -36,7 +40,7 @@ class Collector:
         self.records: list[tuple[str, str, str]] = []
 
     def handle(self, logger_name: str, level: str, message: str) -> None:
-        """Store one record for the scenario's final assertion."""
+        """Store one record for the scenario's final check."""
         self.records.append((logger_name, level, message))
 
 
@@ -52,6 +56,15 @@ class FinalizingHandler:
         STATE.dropped.append(True)
 
 
+def _require_single_finalizer_record(collector: Collector) -> None:
+    """Require the finalizer's record to be the only one collected."""
+    messages = [record[2] for record in collector.records]
+    require(
+        messages == ["re-entered from a removed handler"],
+        f"unexpected records: {collector.records!r}",
+    )
+
+
 def main() -> None:
     """Run the scenario and print the completion marker."""
     logger = get_logger(NAME)
@@ -59,14 +72,15 @@ def main() -> None:
     logger.add_handler(collector)
     handler = FinalizingHandler()
     logger.add_handler(handler)
-    assert logger.remove_handler(handler), "the finalizing handler was not attached"
+    # Keep the call outside the check: `require` evaluates its condition, but
+    # the removal must happen whatever the condition would say.
+    removed = logger.remove_handler(handler)
+    require(removed, "the finalizing handler was not attached")
     del handler
     gc.collect()
-    assert STATE.dropped == [True], "removing the handler did not finalise it"
-    assert logger.flush_handlers(), "the finalizer record was not flushed"
-    assert [record[2] for record in collector.records] == [
-        "re-entered from a removed handler"
-    ], collector.records
+    require(STATE.dropped == [True], "removing the handler did not finalise it")
+    require(logger.flush_handlers(), "the finalizer record was not flushed")
+    _require_single_finalizer_record(collector)
     print("remove-handler-finalizer-complete")
 
 

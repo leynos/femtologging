@@ -4,6 +4,9 @@ A root-only reconfiguration releases the registry's reference without touching
 the live logger, so its filter collection becomes the callback's last owner and
 ``clear_filters`` runs the finalizer.
 
+Checks go through ``scenario_support.require`` rather than ``assert``, which
+``python -O`` would remove.
+
 Run by ``tests.reentrant_finalizer_support`` in a child interpreter.
 """
 
@@ -18,6 +21,7 @@ from femtologging import (
     PythonCallbackFilterBuilder,
     get_logger,
 )
+from tests.fixtures.scenario_support import require
 
 if typ.TYPE_CHECKING:
     import logging
@@ -46,7 +50,7 @@ class FinalizingCallback:
 
     def __del__(self) -> None:
         """Re-enter the logger from finalization."""
-        assert STATE.phase != "setup", "the callback finalised before clear_filters"
+        require(STATE.phase != "setup", "the callback finalised before clear_filters")
         get_logger(NAME).info("re-entered from a filter finalizer")
         STATE.dropped.append(True)
 
@@ -77,10 +81,10 @@ def main() -> None:
     )
     del callback
     gc.collect()
-    assert not STATE.dropped, "the reconfiguration already finalised the callback"
+    require(not STATE.dropped, "the reconfiguration already finalised the callback")
     STATE.phase = "clear"
     get_logger(NAME).clear_filters()
-    assert STATE.dropped == [True], "clear_filters did not finalise the callback"
+    require(STATE.dropped == [True], "clear_filters did not finalise the callback")
     print("clear-filters-finalizer-complete")
 
 

@@ -5,6 +5,9 @@ callback's last owner. ``reset_manager`` takes that state out of ``MANAGER``
 under the lock and destroys it after releasing the lock, which is what lets the
 finalizer's ``get_logger`` call complete.
 
+Checks go through ``scenario_support.require`` rather than ``assert``, which
+``python -O`` would remove.
+
 Run by ``tests.reentrant_finalizer_support`` in a child interpreter.
 """
 
@@ -20,6 +23,7 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
+from tests.fixtures.scenario_support import require
 
 if typ.TYPE_CHECKING:
     import logging
@@ -48,7 +52,7 @@ class FinalizingCallback:
 
     def __del__(self) -> None:
         """Re-enter the logger from finalization."""
-        assert STATE.phase != "setup", "the callback finalised before reset_manager"
+        require(STATE.phase != "setup", "the callback finalised before reset_manager")
         get_logger(NAME).info("re-entered from reset_manager")
         STATE.dropped.append(True)
 
@@ -73,10 +77,10 @@ def main() -> None:
     # Release the live logger's reference so the runtime registry is the last
     # owner; reset_manager then destroys it after dropping MANAGER.
     get_logger(NAME).clear_filters()
-    assert not STATE.dropped, "clearing the live logger finalised the callback early"
+    require(not STATE.dropped, "clearing the live logger finalised the callback early")
     STATE.phase = "reset"
     reset_manager()
-    assert STATE.dropped == [True], "reset_manager did not finalise the callback"
+    require(STATE.dropped == [True], "reset_manager did not finalise the callback")
     print("reset-manager-finalizer-complete")
 
 

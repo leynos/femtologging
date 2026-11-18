@@ -44,9 +44,13 @@ Adopt one lifecycle rule for every logger and manager collection:
 4. The manager takes the values it is about to destroy out of `MANAGER` under
    the lock, drops the guard, and only then drops them. When the API promises
    to return displaced state to its caller, the guard ends before the return.
-5. A fallible batch that has already built values drops its partial result
-   after the guard, so a mid-loop failure cannot destroy a logger while the
-   registry is locked.
+5. A fallible batch that has already built values never destroys its partial
+   result under the guard. It either drops the partial result after releasing
+   the guard, or hands it back with the error so the caller's unlocked failure
+   path can. `stage_loggers` takes the first form. `register_missing_ancestors`
+   takes the second by returning an `AncestorRegistrationError` that owns the
+   ancestors built before the failure; a bare `Result<_, PyErr>` could not,
+   because the error value would be forced to drop the partial batch in place.
 
 The rule is stated as a rule, not as five fixes, because the next collection
 mutation is the one that will reintroduce the defect.

@@ -301,8 +301,9 @@ fn remove_handler_drops_the_attachment_filter_chain_after_releasing_the_lock() {
     assert_dropped_after_release(&observation, "remove_handler");
 }
 
+/// Removal detaches the collection's reference; the caller's outlives the call.
 #[test]
-fn remove_filter_drops_the_removed_reference_after_releasing_the_lock() {
+fn remove_filter_releases_the_collections_reference() {
     let logger = test_logger("lock.remove.filter");
     let (probe, observation) = filter_probe(&logger);
     // The caller must hold an `Arc` to name the filter, so removal cannot drop

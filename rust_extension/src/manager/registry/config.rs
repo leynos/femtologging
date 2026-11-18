@@ -74,6 +74,32 @@ pub(crate) fn stage_loggers<'a>(
     Ok(staged)
 }
 
+/// A failed ancestor registration, carrying what it built before failing.
+///
+/// Construction is fallible, and the loggers built before the failure must not
+/// be destroyed while the caller still holds the manager write lock: a logger's
+/// teardown may wait for its shard or run a Python finalizer that needs the
+/// manager. Returning the partial batch with the error lets the caller dispose
+/// of it on an unlocked path.
+pub(crate) struct AncestorRegistrationError {
+    /// The failure that stopped the batch.
+    pub(crate) error: PyErr,
+    /// Ancestors built before the failure, dropped by the caller after unlock.
+    pub(crate) partial: Vec<(String, Py<FemtoLogger>)>,
+}
+
+impl std::fmt::Debug for AncestorRegistrationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The partial batch is kept out of the debug output: printing it would
+        // require a Python interpreter and could run user code.
+        formatter
+            .debug_struct("AncestorRegistrationError")
+            .field("error", &self.error)
+            .field("partial_len", &self.partial.len())
+            .finish()
+    }
+}
+
 /// Register the missing ancestors of a configuration's loggers.
 ///
 /// The caller holds the manager write lock, so the capacity check and the
@@ -91,27 +117,48 @@ pub(crate) fn stage_loggers<'a>(
 ///
 /// `"root"` never appears here; the chain iterator stops before it, and the
 /// configured root logger arrives as one of the caller's staged plans.
+///
+/// # Errors
+///
+/// Returns [`AncestorRegistrationError`] when the registry has no room or a
+/// logger cannot be constructed. The error carries any ancestors built before
+/// the failure so the caller can drop them after releasing the manager guard.
 pub(crate) fn register_missing_ancestors<'a>(
     py: Python<'_>,
     mgr: &mut Manager,
     names: impl IntoIterator<Item = &'a str>,
     is_staged: impl Fn(&str) -> bool,
-) -> PyResult<()> {
+) -> Result<(), AncestorRegistrationError> {
     let novel = new_logger_names(mgr, names);
     if !registry_has_room_for(named_logger_count(mgr), novel.len()) {
-        return Err(registry_full_error());
+        return Err(AncestorRegistrationError {
+            error: registry_full_error(),
+            partial: Vec::new(),
+        });
     }
     // Build every object before inserting any: construction is fallible, and a
-    // failure here must not leave a half-registered chain behind.
-    let ancestors = novel
-        .into_iter()
-        .filter(|name| !is_staged(name))
-        .map(|name| {
-            let parent_name = calculate_parent_name(&name);
-            Py::new(py, FemtoLogger::with_parent(name.clone(), parent_name)?)
-                .map(|logger| (name, logger))
-        })
-        .collect::<PyResult<Vec<_>>>()?;
+    // failure here must not leave a half-registered chain behind. The batch is
+    // built by hand rather than collected so a partial result travels out with
+    // the error instead of being dropped under the caller's write guard.
+    let mut ancestors = Vec::with_capacity(novel.len());
+    for name in novel {
+        if is_staged(&name) {
+            continue;
+        }
+        let parent_name = calculate_parent_name(&name);
+        let built = FemtoLogger::with_parent(name.clone(), parent_name)
+            .map_err(pyo3::PyErr::from)
+            .and_then(|logger| Py::new(py, logger));
+        match built {
+            Ok(logger) => ancestors.push((name, logger)),
+            Err(error) => {
+                return Err(AncestorRegistrationError {
+                    error,
+                    partial: ancestors,
+                });
+            }
+        }
+    }
     for (name, logger) in ancestors {
         // The `log` bridge resolves a target's threshold without attaching to
         // Python, so an ancestor created here must be indexed exactly as

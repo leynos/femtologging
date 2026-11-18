@@ -281,9 +281,12 @@ fn a_commit_over_the_cap_registers_nothing() {
                 true
             });
 
+        let Err(refusal) = result else {
+            panic!("a commit whose planned chains exceed the cap must be refused");
+        };
         assert!(
-            result.is_err(),
-            "a commit whose planned chains exceed the cap must be refused"
+            refusal.partial.is_empty(),
+            "a capacity refusal builds no logger, so it carries no partial batch"
         );
         assert!(
             mgr.loggers.is_empty(),

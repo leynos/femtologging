@@ -5,6 +5,9 @@ in one commit. The displaced handler is the last owner of a Python object whose
 finalizer logs to the root logger, so the finalizer must run after the
 reconfiguration has released its locks.
 
+Checks go through ``scenario_support.require`` rather than ``assert``, which
+``python -O`` would remove.
+
 Run by ``tests.reentrant_finalizer_support`` in a child interpreter.
 """
 
@@ -13,6 +16,7 @@ from __future__ import annotations
 import gc
 
 from femtologging import basicConfig, get_logger
+from tests.fixtures.scenario_support import require
 
 NAME = "root"
 
@@ -37,7 +41,7 @@ class FinalizingHandler:
 
     def __del__(self) -> None:
         """Re-enter the root logger from finalization."""
-        assert STATE.phase != "setup", "the handler finalised before basicConfig"
+        require(STATE.phase != "setup", "the handler finalised before basicConfig")
         get_logger(NAME).info("re-entered from a forced handler removal")
         STATE.dropped.append(True)
 
@@ -49,11 +53,12 @@ def main() -> None:
     root.add_handler(handler)
     del handler
     gc.collect()
-    assert not STATE.dropped, "the root logger did not keep the handler alive"
+    require(not STATE.dropped, "the root logger did not keep the handler alive")
     STATE.phase = "force"
     basicConfig(force=True, handlers=[])
-    assert STATE.dropped == [True], (
-        "basicConfig(force=True) did not finalise the handler"
+    require(
+        STATE.dropped == [True],
+        "basicConfig(force=True) did not finalise the handler",
     )
     print("basic-config-finalizer-complete")
 
