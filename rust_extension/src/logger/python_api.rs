@@ -22,7 +22,7 @@ use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 use super::flush::FlushFailureStage;
 #[cfg(all(feature = "python", any(test, feature = "test-util")))]
 use super::test_identity::AttachmentIdentity;
-use super::{FemtoLogger, HandlerAttachment, PyHandler, validate_handler};
+use super::{FemtoLogger, PyHandler, validate_handler};
 
 #[pymethods]
 impl FemtoLogger {
@@ -115,22 +115,36 @@ impl FemtoLogger {
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::attach(|py| {
+            // Inspect the candidates outside every guard: `as_any` is a trait
+            // method any handler may override, and an implementation that
+            // re-enters this logger would deadlock on the non-reentrant lock.
+            // A concurrent removal can still win afterwards, which the pointer
+            // check below detects.
+            let candidates: Vec<Arc<dyn FemtoHandlerTrait>> = {
+                let handlers = self.handlers.read();
+                handlers
+                    .iter()
+                    .map(|attachment| Arc::clone(&attachment.handler))
+                    .collect()
+            };
+            let target = candidates.into_iter().find(|candidate| {
+                candidate
+                    .as_any()
+                    .downcast_ref::<PyHandler>()
+                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+            });
+            let Some(target) = target else {
+                return false;
+            };
             // Take the removed attachment out of the guarded block; dropping it
             // here would run a Python finalizer that may re-enter this logger
             // and take the same write lock. The drop happens after the guard is
             // gone but still inside `Python::attach`, so decref is immediate.
             let removed = {
                 let mut handlers = self.handlers.write();
-                let matches_handler = |attachment: &HandlerAttachment| {
-                    attachment
-                        .handler
-                        .as_any()
-                        .downcast_ref::<PyHandler>()
-                        .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
-                };
                 handlers
                     .iter()
-                    .position(matches_handler)
+                    .position(|attachment| Arc::ptr_eq(&attachment.handler, &target))
                     .map(|pos| handlers.remove(pos))
             };
             let is_removed = removed.is_some();

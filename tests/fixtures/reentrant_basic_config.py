@@ -1,9 +1,9 @@
-"""Force a reconfiguration that finalizes a root handler re-entrantly.
+"""Run ``clear_handlers`` through ``basicConfig(force=True)`` with a finalizer.
 
-``basicConfig(force=True, handlers=[])`` displaces the root logger's handlers
-in one commit. The displaced handler is the last owner of a Python object whose
-finalizer logs to the root logger, so the finalizer must run after the
-reconfiguration has released its locks.
+``basicConfig(force=True, handlers=[])`` calls ``root.clear_handlers()``; it
+does not enter the configuration transaction. The cleared handler is the last
+owner of a Python object whose finalizer logs to the root logger, so the
+finalizer must run after ``clear_handlers`` has released the collection lock.
 
 Checks go through ``scenario_support.require`` rather than ``assert``, which
 ``python -O`` would remove.

@@ -201,6 +201,26 @@ enum CollectionKind {
     Filters,
 }
 
+/// Values a replacement displaced, retained until the test drops them.
+#[cfg(feature = "python")]
+enum DisplacedValues {
+    /// Attachments removed from the handler collection.
+    Handlers(Vec<HandlerAttachment>),
+    /// Filters removed from the filter collection.
+    Filters(Vec<Arc<dyn FemtoFilter>>),
+}
+
+#[cfg(feature = "python")]
+impl DisplacedValues {
+    /// Return whether the replacement displaced anything.
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Handlers(values) => values.is_empty(),
+            Self::Filters(values) => values.is_empty(),
+        }
+    }
+}
+
 impl CollectionKind {
     /// Attach a probe, leaving this collection as the probe's only owner so a
     /// later mutation destroys it.
@@ -227,14 +247,14 @@ impl CollectionKind {
         }
     }
 
-    /// Replace this collection with an empty one, dropping what it displaced.
+    /// Replace this collection with an empty one, returning what it displaced.
     #[cfg(feature = "python")]
-    fn replace_with_nothing(self, logger: &FemtoLogger) {
-        // Dropping the displaced value here, outside any guard, mirrors how the
-        // production call sites dispose of it.
+    fn replace_with_nothing(self, logger: &FemtoLogger) -> DisplacedValues {
+        // The caller owns the returned value, mirroring production sites that
+        // receive displaced state and dispose of it after releasing the guard.
         match self {
-            Self::Handlers => drop(logger.replace_handlers(Vec::new())),
-            Self::Filters => drop(logger.replace_filters(Vec::new())),
+            Self::Handlers => DisplacedValues::Handlers(logger.replace_handlers(Vec::new())),
+            Self::Filters => DisplacedValues::Filters(logger.replace_filters(Vec::new())),
         }
     }
 
@@ -337,7 +357,19 @@ fn replace_drops_displaced_values_after_releasing_the_lock(#[case] kind: Collect
     let logger = test_logger("lock.replace");
     let observation = kind.attach_probe(&logger);
 
-    kind.replace_with_nothing(&logger);
+    let displaced = kind.replace_with_nothing(&logger);
+    assert!(
+        !displaced.is_empty(),
+        "{} must hand back the displaced values",
+        kind.replacing_operation()
+    );
+    assert_eq!(
+        observation.drop_count(),
+        0,
+        "{} must return the displaced values without dropping them",
+        kind.replacing_operation()
+    );
+    drop(displaced);
 
     assert_dropped_after_release(&observation, kind.replacing_operation());
 }

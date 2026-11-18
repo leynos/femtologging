@@ -4,19 +4,27 @@
 //! Python object. Destroying it under `MANAGER` would let a finalizer re-enter
 //! `get_logger` or `reset_manager` and deadlock on the same lock. These probes
 //! record whether `MANAGER` was free at the instant their `Drop` ran.
+//!
+//! The same rule covers the values a configuration commit builds but cannot
+//! install: a refused commit and a batch that fails partway must both hand
+//! their values to an unlocked path rather than destroy them under the guard.
 
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use pyo3::Python;
+use pyo3::{Python, exceptions::PyRuntimeError};
 use serial_test::serial;
 
-use super::registry::MANAGER;
-use super::{replace_runtime_state, reset_manager};
+use super::registry::{MANAGER, build_batch};
+use super::{
+    MAX_LOGGERS, PreparedConfiguration, PreparedLogger, commit_configuration,
+    replace_runtime_state, reset_manager, stage_loggers,
+};
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
+use crate::logger::HandlerAttachment;
 
 /// Verdict recorded when the runtime probe is destroyed.
 #[derive(Default)]
@@ -126,6 +134,127 @@ fn replace_runtime_state_returns_displaced_state_dropped_without_the_lock() {
         assert!(
             observation.lock_was_available(),
             "replace_runtime_state must not drop displaced state under MANAGER"
+        );
+    });
+}
+
+/// A batch that fails partway hands its values back for the caller to drop.
+///
+/// A capacity refusal builds nothing, so it cannot show what happens to a value
+/// that already exists when construction fails. This case injects that failure
+/// after the first value and pins both halves of the rule: the builder does not
+/// drop the partial batch, and the caller destroys it only after releasing the
+/// manager guard.
+#[test]
+#[serial]
+fn a_partial_batch_is_returned_for_the_caller_to_drop() {
+    Python::attach(|_py| {
+        reset_manager();
+        let observation = Arc::new(DropObservation::default());
+
+        let manager = MANAGER.write();
+        let result = build_batch(
+            ["first", "second"].into_iter().map(str::to_string),
+            |name| {
+                if name == "first" {
+                    Ok(ManagerLockProbe {
+                        observation: Arc::clone(&observation),
+                    })
+                } else {
+                    Err(PyRuntimeError::new_err("injected construction failure"))
+                }
+            },
+        );
+
+        let Err(refusal) = result else {
+            panic!("the injected construction failure must be reported");
+        };
+        assert_eq!(
+            refusal.built.len(),
+            1,
+            "the batch must carry the value it built before failing"
+        );
+        assert_eq!(
+            observation.drop_count(),
+            0,
+            "the partial batch must outlive the caller's guard"
+        );
+
+        drop(manager);
+        drop(refusal);
+
+        assert_eq!(
+            observation.drop_count(),
+            1,
+            "the caller drops the partial batch exactly once"
+        );
+        assert!(
+            observation.lock_was_available(),
+            "the partial batch must be destroyed after the manager guard is released"
+        );
+    });
+}
+
+/// A refused commit releases the manager lock before dropping staged handlers.
+#[test]
+#[serial]
+fn a_refused_commit_drops_staged_handlers_after_unlocking() {
+    Python::attach(|py| {
+        reset_manager();
+        let staged = stage_loggers(py, std::iter::once("probe"))
+            .expect("one staged logger fits an empty registry");
+        let probe_logger = staged
+            .get("probe")
+            .expect("the staged map holds the requested name")
+            .clone_ref(py);
+
+        let observation = Arc::new(DropObservation::default());
+        let probe_plan = PreparedLogger {
+            name: "refused-0".to_string(),
+            logger: probe_logger.clone_ref(py),
+            handlers: vec![HandlerAttachment::new(Arc::new(ManagerLockProbe {
+                observation: Arc::clone(&observation),
+            }))],
+            filters: Vec::new(),
+            handler_ids: Vec::new(),
+            filter_ids: Vec::new(),
+            level: None,
+            propagate: None,
+        };
+        // One more distinct name than the registry can hold, so the commit is
+        // refused after staging but before any plan is applied.
+        let remaining = (1..=MAX_LOGGERS).map(|index| PreparedLogger {
+            name: format!("refused-{index}"),
+            logger: probe_logger.clone_ref(py),
+            handlers: Vec::new(),
+            filters: Vec::new(),
+            handler_ids: Vec::new(),
+            filter_ids: Vec::new(),
+            level: None,
+            propagate: None,
+        });
+        let loggers: Vec<PreparedLogger> = std::iter::once(probe_plan).chain(remaining).collect();
+
+        let result = commit_configuration(
+            py,
+            PreparedConfiguration {
+                loggers,
+                disable_existing: false,
+                keep_names: HashSet::new(),
+                handler_registry: BTreeMap::new(),
+                handler_filter_ids: BTreeMap::new(),
+                filter_registry: BTreeMap::new(),
+            },
+        );
+
+        assert!(result.is_err(), "a commit over the cap must be refused");
+        assert!(
+            observation.lock_was_available(),
+            "staged handlers must be dropped after the manager lock is released",
+        );
+        assert!(
+            MANAGER.read().loggers.is_empty(),
+            "a refused commit must not register anything",
         );
     });
 }
