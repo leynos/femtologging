@@ -392,9 +392,10 @@ The Python `dictConfig` parity layer is split into two focused helpers:
 
 This keeps the Rust extension focused on runtime behaviour, while Python
 retains responsibility for importing arbitrary user-defined factories. Factory
-entries are trusted-code-equivalent: resolution imports modules and invocation
-runs configuration-selected code. `dictConfig(allow_factories=False)` rejects
-them by key presence before this bridge is reached. See the
+entries are trusted-code-equivalent: a dotted target imports modules during
+resolution and is then invoked, while a direct callable object is invoked
+without resolution. `dictConfig(allow_factories=False)` rejects top-level
+filter entries by key presence before this bridge is reached. See the
 [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ## HTTP handler builder bindings

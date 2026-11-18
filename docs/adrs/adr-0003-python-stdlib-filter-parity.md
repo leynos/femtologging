@@ -181,9 +181,10 @@ safety, error semantics, and performance regression coverage.
   `logging` edge cases.
 - Enrichment bound enforcement can reject callback-produced fields when limits
   are exceeded.
-- Factory entries are trusted-code-equivalent input: resolving one imports
-  modules and invokes a configuration-selected callable. Callers that accept
-  lower-trust configuration must reject `"()"` entries or use
+- Factory entries are trusted-code-equivalent input. A dotted target imports
+  modules during resolution and then invokes the resolved callable; a direct
+  callable object is invoked without that step. Callers that accept lower-trust
+  configuration must reject `"()"` entries or use
   `dictConfig(config, allow_factories=False)`. An allowlist applied after
   resolution or invocation is too late. See the filter factory trust
   boundary.[^2]

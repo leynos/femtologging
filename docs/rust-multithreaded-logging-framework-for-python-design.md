@@ -1268,9 +1268,10 @@ potential future enhancement.
   phased support for standard library factory-based filter declarations (the
   `"()"` form), while preserving existing declarative behaviour.
 
-  Factory entries are trusted-code-equivalent input; reject them before
-  `dictConfig` for lower-trust configuration, or use `allow_factories=False`.
-  See the
+  Factory entries are trusted-code-equivalent input: a dotted target is
+  imported and resolved before invocation, and a direct callable is invoked
+  without resolution. Reject them before `dictConfig` for lower-trust
+  configuration, or use `allow_factories=False`. See the
   [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
   ```python
@@ -2155,10 +2156,10 @@ reconfiguration API design should be mindful of these potential misuse
 scenarios.
 
 Configuration delivered through such an endpoint can also carry filter factory
-entries (``"()"``), which are trusted-code-equivalent: resolving one imports
-modules and invokes a configuration-selected callable. Endpoint validation must
-reject factory entries before calling `dictConfig`, or use
-`allow_factories=False`. See
+entries (``"()"``), which are trusted-code-equivalent. A dotted target imports
+modules during resolution and is then invoked; a direct callable object is
+invoked without resolution. Endpoint validation must reject factory entries
+before calling `dictConfig`, or use `allow_factories=False`. See
 [Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ## 8. Key Recommendations and Future Directions

@@ -1256,18 +1256,21 @@ builder.build_and_init()
 
 #### Filter factory trust boundary
 
-A filter entry containing `"()"` is **trusted-code-equivalent**. Resolving it
-imports a module and invokes a callable selected by the configuration author,
-passing the remaining entry keys as keyword arguments. Side effects happen
-during that invocation, so a factory can do anything the application process
-can do, whether or not it returns a usable filter.
+A top-level filter entry containing `"()"` is **trusted-code-equivalent**. A
+dotted string target is imported and resolved, then invoked; a direct callable
+object skips resolution but is still invoked. Either way the configuration
+author selects the code, and the remaining entry keys are passed as keyword
+arguments. Side effects happen during resolution and invocation, so a factory
+can do anything the application process can do, whether or not it returns a
+usable filter.
 
 Configuration assembled from tenants, HTTP APIs, remote configuration services,
-writable files, or any other lower-trust source must reject factory entries
-before calling `dictConfig`. Use `dictConfig(config, allow_factories=False)`
-for a supported declarative-only route: it accepts `level` and `name` filters
-and rejects every `"()"` entry, including direct callable objects, by key
-presence before import, resolution, or invocation.
+writable files, or any other lower-trust source must either reject factory
+entries before calling `dictConfig`, or pass `allow_factories=False` for a
+supported declarative-only route. That mode accepts `level` and `name` filters
+and rejects any top-level filter entry carrying `"()"`, including direct
+callable objects, by key presence before import, resolution, or invocation. It
+does not scan nested values for that key.
 
 An allowlist or type check applied after resolution or invocation is too late.
 Checking that the resolved object is callable, or that the returned value is a
@@ -1511,12 +1514,12 @@ For upgrade steps covering handler filters and formatter builders, see the
 
 Configuration preparation validates logger names and resource references before
 changing live logger state. If validation fails, none of the staged logger
-changes are applied, so every existing logger keeps the state it had before
-preparation, apart from changes made directly by code that preparation ran.
-Records already queued before a successful change are not retracted, handler
-construction can open destinations, and filter factory resolution can import
-modules and run configuration-selected code, before a later preparation error
-is reported. See
+changes are applied. Every existing logger keeps the state it had before
+preparation, apart from changes made directly by code that preparation ran or
+by other threads while it ran. Records already queued before a successful
+change are not retracted, handler construction can open destinations, and
+filter factory resolution can import modules and run configuration-selected
+code, before a later preparation error is reported. See
 [Filter factory trust boundary](#filter-factory-trust-boundary).
 
 ## Operational tips and caveats
