@@ -23,6 +23,15 @@ from tests.python_filter_support import (
     RecordCollector,
     wait_for,
 )
+from tests.reentrant_finalizer_support import (
+    CLEAR_FILTERS_MARKER,
+    CLEAR_FILTERS_SCRIPT,
+    REPLACE_CONFIGURATION_MARKER,
+    REPLACE_CONFIGURATION_SCRIPT,
+    RESET_MANAGER_MARKER,
+    RESET_MANAGER_SCRIPT,
+    run_reentrant_finalizer_script,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -262,3 +271,38 @@ def test_contextvar_enrichment_is_thread_local(
         "each thread's contextvar must be captured against its own record, "
         f"got {payload!r}"
     )
+
+
+@pytest.mark.timeout(20)
+def test_clear_filters_runs_a_callback_finalizer_after_releasing_the_lock() -> None:
+    """A callback filter finalizer may log to the same logger.
+
+    The registry releases its reference first, leaving the logger's filter
+    collection as the last owner, so ``clear_filters`` is what triggers the
+    finalizer's re-entrant ``info`` call.
+    """
+    run_reentrant_finalizer_script(CLEAR_FILTERS_SCRIPT, CLEAR_FILTERS_MARKER)
+
+
+@pytest.mark.timeout(20)
+def test_configuration_replacement_runs_a_callback_finalizer() -> None:
+    """Replacing a configuration destroys displaced callbacks without locks.
+
+    The callback leaves both the registry and the live logger in one commit;
+    its finalizer re-enters ``get_logger`` before printing the marker.
+    """
+    run_reentrant_finalizer_script(
+        REPLACE_CONFIGURATION_SCRIPT,
+        REPLACE_CONFIGURATION_MARKER,
+    )
+
+
+@pytest.mark.timeout(20)
+def test_reset_manager_runs_a_callback_finalizer_after_releasing_the_manager() -> None:
+    """``reset_manager`` drops runtime state after releasing ``MANAGER``.
+
+    The live logger's reference is cleared first, so the runtime registry is
+    the callback's last owner and the finalizer's ``get_logger`` call would
+    deadlock on ``MANAGER`` if the snapshot were dropped under the guard.
+    """
+    run_reentrant_finalizer_script(RESET_MANAGER_SCRIPT, RESET_MANAGER_MARKER)

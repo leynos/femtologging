@@ -14,6 +14,13 @@ import pytest
 
 from femtologging import FemtoLogger
 from tests.logger_support import CollectingHandler
+from tests.reentrant_finalizer_support import (
+    CLEAR_HANDLERS_MARKER,
+    CLEAR_HANDLERS_SCRIPT,
+    REMOVE_HANDLER_MARKER,
+    REMOVE_HANDLER_SCRIPT,
+    run_reentrant_finalizer_script,
+)
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -206,3 +213,26 @@ def test_log_fast_path_without_exc_or_stack() -> None:
     assert output == "core [INFO] simple", (
         f"fast path produced unexpected output: {output!r}"
     )
+
+
+@pytest.mark.timeout(20)
+def test_clear_handlers_runs_a_finalizer_after_releasing_the_lock() -> None:
+    """A handler finalizer may log to the same logger without deadlocking.
+
+    The child logs only from ``__del__``; a marker on standard output proves
+    the re-entrant ``info`` call returned rather than merely avoiding a crash.
+    """
+    run_reentrant_finalizer_script(CLEAR_HANDLERS_SCRIPT, CLEAR_HANDLERS_MARKER)
+
+
+@pytest.mark.timeout(20)
+def test_remove_handler_runs_a_finalizer_and_delivers_its_record() -> None:
+    """A removed handler's finalizer logs into the surviving collector.
+
+    The caller's own reference keeps the handler alive past removal, so this
+    proves the re-entry completed through dispatch rather than that the drop
+    happened under the lock. The last-owner case, where removing the entry
+    destroys it, needs an owner the caller does not hold; the Rust probes in
+    ``logger_tests_lock_release`` cover it.
+    """
+    run_reentrant_finalizer_script(REMOVE_HANDLER_SCRIPT, REMOVE_HANDLER_MARKER)

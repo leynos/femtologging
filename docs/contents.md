@@ -57,6 +57,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0008-release-pipeline.md](./adrs/adr-0008-release-pipeline.md)
   - Records the attested release pipeline, production feature set and
     idempotent PyPI/GitHub Release reconciliation.
+- [adrs/adr-0009-release-collection-locks-before-dropping-user-resources.md](./adrs/adr-0009-release-collection-locks-before-dropping-user-resources.md)
+  - Records the rule that logger and manager locks cover collection mutation
+    only, so re-entrant destructors and finalizers run with no guard held.
 
 ## Logging Architecture
 
