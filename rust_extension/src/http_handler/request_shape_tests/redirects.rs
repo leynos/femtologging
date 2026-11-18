@@ -18,30 +18,6 @@ use super::{
     read_http_request, spawn_held_server, spawn_mock_server, tcp_listener, test_agent,
 };
 
-/// Spawn a server that answers its one request with `status` and `location`.
-fn spawn_redirect_server(
-    listener: TcpListener,
-    status: u16,
-    location: String,
-) -> io::Result<(SocketAddr, mpsc::Receiver<CapturedRequest>)> {
-    let addr = listener.local_addr()?;
-    let (capture_tx, capture_rx) = mpsc::channel();
-    thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else {
-            return;
-        };
-        let Ok(request) = read_http_request(&mut stream) else {
-            return;
-        };
-        let response = format!(
-            "HTTP/1.1 {status} Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        );
-        let _ = stream.write_all(response.as_bytes());
-        let _ = capture_tx.send(request);
-    });
-    Ok((addr, capture_rx))
-}
-
 /// Spawn a server that answers its one request with `response` verbatim.
 ///
 /// Some redirect contracts are about responses that cannot be built with the
@@ -64,6 +40,18 @@ fn spawn_raw_response(
         let _ = capture_tx.send(request);
     });
     Ok((addr, capture_rx))
+}
+
+/// Spawn a server that answers its one request with `status` and `location`.
+fn spawn_redirect_server(
+    listener: TcpListener,
+    status: u16,
+    location: String,
+) -> io::Result<(SocketAddr, mpsc::Receiver<CapturedRequest>)> {
+    let response = format!(
+        "HTTP/1.1 {status} Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    spawn_raw_response(listener, response.into_bytes())
 }
 
 /// What one non-blocking accept attempt found.
@@ -271,54 +259,46 @@ fn a_post_that_cannot_be_replayed_is_permanent(
     assert_eq!(request.method, "POST");
 }
 
-/// Scenario: the collector answers a redirect with no `Location` header.
-///
-/// Invariant: the verdict is permanent, which is what ureq 2 produced when it
-/// returned the redirect response instead of following it. ureq 3 raises
-/// `NoLocationHeader` instead; left unhandled it would become a transport
-/// error and the record would be retried until the backoff deadline.
-#[rstest]
-fn a_redirect_without_a_location_is_permanent(tcp_listener: io::Result<TcpListener>) {
-    let listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, requests) = spawn_raw_response(
-        listener,
-        b"HTTP/1.1 302 Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
-    )
-    .expect("spawn raw response server");
+/// Answer one attempt with `response` and return its verdict.
+fn execute_against_raw_response(
+    listener: TcpListener,
+    response: Vec<u8>,
+) -> Result<ResponseClass, String> {
+    let (addr, requests) =
+        spawn_raw_response(listener, response).expect("spawn raw response server");
     let config = post_config(format!("http://{addr}/log"), AuthConfig::None, &[]);
 
-    let class = execute(&config, &test_agent(), "msg=redirect")
-        .expect("a redirect without a Location is a verdict, not a transport error");
-
-    assert_eq!(class, ResponseClass::Permanent);
+    let result = execute(&config, &test_agent(), "msg=redirect");
     requests
         .recv_timeout(Duration::from_secs(5))
         .expect("the original POST is sent once");
+    result
 }
 
-/// Scenario: the collector's `Location` header is not valid UTF-8.
+/// Scenario: the collector answers a redirect that ureq 3 has no usable
+/// `Location` to follow.
 ///
-/// Invariant: the verdict is permanent. ureq 2 read such a header as missing
-/// and returned the redirect response; ureq 3 raises `BadLocationHeader`. Both
-/// are the same refusal, so it must not become a retried transport error.
+/// Invariant: the verdict is permanent, which is what ureq 2 produced when it
+/// returned the redirect response instead of following it. The two cases are a
+/// missing header, which ureq 3 raises as `NoLocationHeader`, and a header that
+/// is not valid UTF-8, which ureq 2 read as missing and ureq 3 raises as
+/// `BadLocationHeader`. Left unhandled, either would become a transport error
+/// and the record would be retried until the backoff deadline.
 #[rstest]
-fn a_non_utf8_location_is_permanent(tcp_listener: io::Result<TcpListener>) {
-    let listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, requests) = spawn_raw_response(
-        listener,
-        b"HTTP/1.1 302 Found\r\nLocation: http://example.invalid/\x80\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            .to_vec(),
-    )
-    .expect("spawn raw response server");
-    let config = post_config(format!("http://{addr}/log"), AuthConfig::None, &[]);
-
-    let class = execute(&config, &test_agent(), "msg=redirect")
-        .expect("an undecodable Location is a verdict, not a transport error");
+#[case::missing(b"HTTP/1.1 302 Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec())]
+#[case::not_utf8(
+    b"HTTP/1.1 302 Found\r\nLocation: http://example.invalid/\x80\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        .to_vec()
+)]
+fn a_redirect_without_a_usable_location_is_permanent(
+    tcp_listener: io::Result<TcpListener>,
+    #[case] response: Vec<u8>,
+) {
+    let class =
+        execute_against_raw_response(tcp_listener.expect("bind ephemeral listener"), response)
+            .expect("an unusable Location is a verdict, not a transport error");
 
     assert_eq!(class, ResponseClass::Permanent);
-    requests
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the original POST is sent once");
 }
 
 /// Scenario: a collector answers 307 with a `Location` and a body that stalls.
