@@ -277,8 +277,12 @@ impl PyTimedRotatingFileHandler {
     /// The wait for queue capacity runs with the interpreter lock released, so
     /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
     /// the "Concurrency" section of the user guide for the full contract.
+    ///
+    /// PyO3 calls this with the interpreter lock held, so no caller supplies a
+    /// token: the body attaches with `Python::attach(...)` to obtain one and
+    /// detaches around the enqueue.
     #[pyo3(name = "handle")]
-    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
+    // @codescene(disable:"Excess Number of Function Arguments") Stable Python API signature (2026-10-28).
     fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         // Parsing raises `ValueError`, so it must happen while the lock is
         // still held; only the enqueue below can wait on the worker.
