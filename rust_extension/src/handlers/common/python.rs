@@ -126,11 +126,11 @@ impl PyOverflowPolicy {
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
-    fn __hash__(&self) -> u64 {
+    fn __hash__(&self) -> PyResult<u64> {
         let mut hasher = DefaultHasher::new();
         self.inner.hash(&mut hasher);
 
-        hasher.finish()
+        Ok(hasher.finish())
     }
 }
 
