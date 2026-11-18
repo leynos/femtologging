@@ -32,8 +32,8 @@ fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
 impl HTTPHandlerBuilder {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[new]
-    fn py_new() -> Self {
-        Self::new()
+    fn py_new() -> PyResult<Self> {
+        Ok(Self::new())
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
