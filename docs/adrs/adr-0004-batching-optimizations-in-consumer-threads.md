@@ -737,5 +737,11 @@ primary I/O overhead identified in design §5.4[^1] without compromising the
 latency characteristics that make femtologging suitable for interactive and
 debug logging under light traffic.
 
+## Addendum: module-root paths (2026-11-18)
+
+The module-root move replaced `rust_extension/src/stream_handler.rs` with
+`rust_extension/src/stream_handler/mod.rs`. The reference above follows that
+move; the decision recorded here is unchanged.
+
 [^1]: <./rust-multithreaded-logging-framework-for-python-design.md#54-potential-for-batching-log-messages-in-consumer-threads>
 [^2]: <./rust-multithreaded-logging-framework-for-python-design.md#81-suggested-implementation-roadmap>
