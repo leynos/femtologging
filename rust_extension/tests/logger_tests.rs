@@ -262,7 +262,7 @@ fn attach_handlers_concurrently(
             let barrier = Arc::clone(&start);
             std::thread::spawn(move || {
                 barrier.wait();
-attach_native_handler(&log_clone, handler)
+                attach_native_handler(&log_clone, handler)
                     .expect("native test handler should register");
             })
         })
