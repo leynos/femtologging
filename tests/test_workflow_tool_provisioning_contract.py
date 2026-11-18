@@ -243,13 +243,20 @@ def test_logical_lines_skips_here_document_bodies() -> None:
         ("echo '<<EOF'\ncargo test", ["echo '<<EOF'", "cargo test"]),
         ('echo "<<EOF"\ncargo test', ['echo "<<EOF"', "cargo test"]),
         ("cat <<-'EOF'\n\tbody\n\tEOF\ncargo test", ["cat <<-'EOF'", "cargo test"]),
+        (
+            "cat <<EOF-END\nbody\nEOF-END\ncargo test",
+            ["cat <<EOF-END", "cargo test"],
+        ),
         ("(( count << 2 ))\ncargo test", ["(( count << 2 ))", "cargo test"]),
+        ("(( n << shift ))\ncargo test", ["(( n << shift ))", "cargo test"]),
     ],
     ids=[
         "single-quoted-operator",
         "double-quoted-operator",
         "tab-stripping-delimiter",
-        "arithmetic-shift",
+        "hyphenated-delimiter",
+        "arithmetic-literal-shift",
+        "arithmetic-identifier-shift",
     ],
 )
 def test_only_an_unquoted_operator_opens_a_here_document(
@@ -257,10 +264,12 @@ def test_only_an_unquoted_operator_opens_a_here_document(
 ) -> None:
     """A `<<` the shell does not read as an operator hides nothing.
 
-    A quoted `<<` is part of its word, and an arithmetic shift's operator is
-    followed by a number rather than a delimiter. Reading either as a
+    A quoted `<<` is part of its word, and an arithmetic shift's `<<` sits
+    inside `(( … ))`, where it shifts a value rather than naming a delimiter:
+    its right operand may look exactly like one. Reading either as a
     here-document would skip every later line, because no delimiter line
-    follows to end the skip.
+    follows to end the skip. A bare delimiter is a whole shell word, so a
+    hyphen is part of it rather than the start of something else.
     """
     assert _logical_lines(run) == expected, run
 

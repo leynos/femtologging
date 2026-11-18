@@ -7,11 +7,13 @@ here-document body would open a single quote that swallows every line below
 it, including a later `cargo test` the provisioning contract has to see.
 
 Only an operator the shell reads opens a here-document: a `<<` inside a quoted
-word is part of that word, so `echo '<<EOF'` opens nothing. The operators are
-therefore found with the quoting scan the line reader already uses, and the
-skip then consumes only real bodies. One approximation remains: the scan does
-not look inside a command substitution that is itself quoted, so a
-here-document opened there is not seen.
+word is part of that word, so `echo '<<EOF'` opens nothing. Neither is a `<<`
+inside an arithmetic expression, where it is a shift: `(( n << shift ))` names
+an operand, not a delimiter. The operators are therefore found with the
+quoting scan the line reader already uses, with arithmetic nesting tracked
+alongside it, and the skip then consumes only real bodies. One approximation
+remains: the scan does not look inside a command substitution that is itself
+quoted, so a here-document opened there is not seen.
 """
 
 from __future__ import annotations
@@ -25,9 +27,12 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 #: A here-document operator and its delimiter. The delimiter may be bare or
-#: single- or double-quoted, and `<<-` strips leading tabs from the body.
+#: single- or double-quoted, and `<<-` strips leading tabs from the body. A
+#: bare delimiter is a shell word, so it may contain hyphens: matching only the
+#: prefix of `<<EOF-END` would look for the wrong terminator and read the rest
+#: of the script as body.
 _OPERATOR: typ.Final[re.Pattern[str]] = re.compile(
-    r"<<(-?)[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))"
+    r"<<(-?)[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_-]*))"
 )
 
 
@@ -42,8 +47,11 @@ def _operator_offsets(command: str) -> cabc.Iterator[int]:
     """Yield where an unquoted `<<` starts in `command`, in order.
 
     The shell reads a here-document operator only outside quotes, so a `<<`
-    inside a quoted word is data. A comment ends the scan, since nothing after
-    it is shell.
+    inside a quoted word is data. Nor is a `<<` inside an arithmetic
+    expression an operator: `(( n << shift ))` shifts `n`, and treating that
+    `<<` as a here-document would make the skip consume every line below it.
+    Arithmetic nesting is therefore tracked as the scan runs. A comment ends
+    the scan, since nothing after it is shell.
 
     Yields
     ------
@@ -52,11 +60,21 @@ def _operator_offsets(command: str) -> cabc.Iterator[int]:
     """
     index = 0
     quote: str | None = None
+    arithmetic_depth = 0
     while index < len(command):
-        if quote is None and command.startswith("<<", index):
-            yield index
-            index += 2
-            continue
+        if quote is None:
+            if command.startswith("((", index):
+                arithmetic_depth += 1
+                index += 2
+                continue
+            if arithmetic_depth and command.startswith("))", index):
+                arithmetic_depth -= 1
+                index += 2
+                continue
+            if not arithmetic_depth and command.startswith("<<", index):
+                yield index
+                index += 2
+                continue
         step = scan_step(command, index, quote)
         index, quote = step.index, step.quote
 
@@ -75,8 +93,10 @@ def here_document_at(command: str, at: int) -> HereDocument | None:
     -------
     HereDocument | None
         The here-document the operator opens, or ``None`` when no delimiter
-        follows. A delimiter shaped like a plain word is required, so the
-        `<<` of an arithmetic shift opens nothing.
+        follows. A delimiter must be shaped like a plain shell word, so a
+        shift by a literal such as `2` opens nothing here; a shift whose
+        operand is an identifier is excluded by `_operator_offsets`, which
+        never offers an operator from inside arithmetic.
 
     Examples
     --------
@@ -106,12 +126,16 @@ def here_documents(command: str) -> list[HereDocument]:
     -------
     list[HereDocument]
         One entry per operator the shell reads, in order. An operator inside a
-        quoted word contributes nothing.
+        quoted word contributes nothing, and neither does an arithmetic shift.
 
     Examples
     --------
     >>> here_documents("cat <<'EOF' && echo '<<EOF'")
     [HereDocument(delimiter='EOF', strips_leading_tabs=False)]
+    >>> here_documents("cat <<EOF-END; (( n << shift ))")
+    [HereDocument(delimiter='EOF-END', strips_leading_tabs=False)]
+    >>> here_documents("(( n << shift ))")
+    []
     """
     return [
         document
