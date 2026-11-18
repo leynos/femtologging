@@ -7,7 +7,10 @@ with ``python -c`` and a hard timeout makes a hang a test failure instead.
 
 A marker on standard output is the completion signal. Scripts print it only
 after the re-entrant log call inside ``__del__`` returns, so a script that
-merely avoids crashing without finishing the re-entry still fails.
+merely avoids crashing without finishing the re-entry still fails. For the
+same reason each finalizer records completion after its log call, never
+before: Python swallows an exception raised by ``__del__``, and a flag set
+first would let the marker stand for a re-entry that never happened.
 """
 
 from __future__ import annotations
@@ -105,8 +108,8 @@ class FinalizingHandler:
 
     def __del__(self):
         assert phase != "setup", "the handler finalised before clear_handlers"
-        dropped.append(True)
         get_logger(NAME).info("re-entered from a handler finalizer")
+        dropped.append(True)
 
 
 handler = FinalizingHandler()
@@ -178,8 +181,8 @@ class FinalizingHandler:
 
     def __del__(self):
         assert phase != "setup", "the handler finalised before basicConfig"
-        dropped.append(True)
         get_logger("root").info("re-entered from a forced handler removal")
+        dropped.append(True)
 
 
 handler = FinalizingHandler()
@@ -216,8 +219,8 @@ class FinalizingCallback:
 
     def __del__(self):
         assert phase != "setup", "the callback finalised before clear_filters"
-        dropped.append(True)
         get_logger(NAME).info("re-entered from a filter finalizer")
+        dropped.append(True)
 
 
 callback = FinalizingCallback()
@@ -270,8 +273,8 @@ class FinalizingCallback:
 
     def __del__(self):
         assert phase != "setup", "the callback finalised before the replacement"
-        dropped.append(True)
         get_logger(NAME).info("re-entered during configuration replacement")
+        dropped.append(True)
 
 
 callback = FinalizingCallback()
@@ -322,8 +325,8 @@ class FinalizingCallback:
 
     def __del__(self):
         assert phase != "setup", "the callback finalised before reset_manager"
-        dropped.append(True)
         get_logger(NAME).info("re-entered from reset_manager")
+        dropped.append(True)
 
 
 callback = FinalizingCallback()
