@@ -66,10 +66,16 @@ def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
     """`spelling` must delegate generation and checking to the builder gate."""
     assert variable_tokens("TYPOS_CONFIG_BUILDER") == (
         "uvx",
+        "--python",
+        "3.14",
         "--from",
         "git+https://github.com/leynos/typos-config-builder.git@v0.1.3",
         "typos-config-builder",
-    ), "the builder must stay pinned to the reviewed release"
+    ), (
+        "the builder must stay pinned to the reviewed release, on an "
+        "interpreter it accepts: it declares Python >= 3.14, while a hosted "
+        "suite job exports UV_PYTHON for its own lane"
+    )
     assert not _prerequisites("spelling"), (
         "the gate owns dictionary refresh, generation and checking"
     )
