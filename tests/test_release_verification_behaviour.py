@@ -134,6 +134,8 @@ def test_release_probe_accepts_a_production_wheel(
         ),
         ("def setup_rust_logging() -> None: ...\n", None),
         ("class FemtoLogger:\n    ...\n", None),
+        ("type AttachmentIdentity = object\n", "AttachmentIdentity"),
+        ("type ProductionAlias = object\n", None),
         ("class Broken(:\n", "cannot be parsed"),
     ],
 )

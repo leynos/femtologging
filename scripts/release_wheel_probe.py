@@ -149,6 +149,8 @@ def _stub_declaration_names(tree: ast.AST) -> set[str]:
                 names.update(
                     target.id for target in targets if isinstance(target, ast.Name)
                 )
+            case ast.TypeAlias(name=ast.Name(id=name)):
+                names.add(name)
     return names
 
 
