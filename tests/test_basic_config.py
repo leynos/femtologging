@@ -8,7 +8,7 @@ from femtologging import BasicConfig, basicConfig, get_logger, reset_manager
 from tests.helpers import require_identity_hooks
 from tests.reentrant_finalizer_support import (
     BASIC_CONFIG_MARKER,
-    BASIC_CONFIG_SCRIPT,
+    BASIC_CONFIG_SCENARIO,
     run_reentrant_finalizer_script,
 )
 
@@ -100,4 +100,4 @@ def test_basic_config_force_runs_a_handler_finalizer_after_releasing_locks() -> 
     ``__del__`` returns, so a deadlock fails by timeout rather than passing as
     a process that simply exited.
     """
-    run_reentrant_finalizer_script(BASIC_CONFIG_SCRIPT, BASIC_CONFIG_MARKER)
+    run_reentrant_finalizer_script(BASIC_CONFIG_SCENARIO, BASIC_CONFIG_MARKER)
