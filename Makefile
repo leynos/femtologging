@@ -34,7 +34,13 @@ NIXIE ?= nixie
 # reviewed code, while the shared en-GB-oxendict dictionary stays live so a
 # dictionary fix reaches every consumer without a repin. The gate writes
 # typos.toml, then runs the pinned Typos binary and the shared phrase checks.
-TYPOS_CONFIG_BUILDER ?= uvx --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" typos-config-builder
+#
+# The builder requires Python 3.14 or newer, so its interpreter is pinned here
+# as well. A hosted suite job exports `UV_PYTHON` for its own lane, and an
+# explicit `--python` beats that variable: without the pin the 3.12 and 3.13
+# lanes hand `uvx` an interpreter the builder refuses, and the spelling gate
+# fails on every one of their runs regardless of the repository's spelling.
+TYPOS_CONFIG_BUILDER ?= uvx --python 3.14 --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" typos-config-builder
 WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
