@@ -15,7 +15,7 @@ from __future__ import annotations
 import collections.abc as cabc
 import typing as typ
 
-from ._config_filters import build_filter_from_dict
+from ._config_filters import build_filter_from_dict, factory_disallowed_message
 from .config import (
     _build_formatter,
     _build_handler_from_dict,
@@ -74,17 +74,62 @@ def _iter_section_items(
         )
 
 
+def _reject_filter_factories(config: cabc.Mapping[str, object]) -> None:
+    """Reject every ``"()"`` filter entry before any builder is created.
+
+    This whole-section preflight runs before ``ConfigBuilder`` construction, so
+    declarative-only mode refuses factory entries before their target can be
+    imported, resolved, or invoked. Detection is by key presence alone: the
+    value is never inspected. A mixed entry carrying ``"()"`` alongside
+    ``level`` or ``name`` is rejected with the same error, ahead of the
+    mixed-key validation that would otherwise report it differently.
+
+    Parameters
+    ----------
+    config
+        The full ``dictConfig`` mapping. Section structure is validated while
+        iterating, so malformed filter sections still raise their usual
+        structural errors.
+
+    Raises
+    ------
+    ValueError
+        If any filter entry contains a ``"()"`` key.
+
+    """
+    for fid, filter_cfg in _iter_section_items(config, "filters", "filter"):
+        if "()" in filter_cfg:
+            msg = factory_disallowed_message(fid)
+            raise ValueError(msg)
+
+
 def _process_filters(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
+    builder: _ConfigBuilder,
+    config: cabc.Mapping[str, object],
+    *,
+    allow_factories: bool = True,
 ) -> _ConfigBuilder:
-    """Attach filter builders to ``builder``."""
+    """Attach filter builders to ``builder``.
+
+    Passing ``allow_factories=False`` keeps the per-entry guard active as well
+    as the caller's whole-section preflight. That guard protects direct callers
+    and any mapping that changes between the preflight and this pass.
+
+    Returns
+    -------
+    _ConfigBuilder
+        ``builder`` with every filter entry attached.
+    """
     for fid, filter_cfg in _iter_section_items(
         config,
         "filters",
         "filter",
     ):
         builder = builder.with_filter(
-            fid, build_filter_from_dict(fid, dict(filter_cfg))
+            fid,
+            build_filter_from_dict(
+                fid, dict(filter_cfg), allow_factories=allow_factories
+            ),
         )
     return builder
 

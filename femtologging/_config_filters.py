@@ -47,6 +47,69 @@ def validate_filter_config_keys(fid: str, data: dict[str, object]) -> None:
         _validate_declarative_keys(fid, present, data)
 
 
+# Trust-boundary helpers
+def factory_disallowed_message(fid: str) -> str:
+    """Describe why a factory entry was refused in declarative-only mode.
+
+    Factory entries are trusted-code-equivalent: resolving one imports a module
+    and invokes a callable named by the configuration author. The message names
+    the offending filter and the policy that rejected it so a control plane can
+    report why lower-trust configuration was refused.
+
+    Parameters
+    ----------
+    fid
+        Identifier of the filter entry that used a ``"()"`` key.
+
+    Returns
+    -------
+    str
+        Message naming the filter identifier and the policy.
+
+    Examples
+    --------
+    >>> factory_disallowed_message("svc")
+    "filter 'svc' uses a '()' factory, rejected by allow_factories=False"
+
+    """
+    return f"filter {fid!r} uses a '()' factory, rejected by allow_factories=False"
+
+
+def validate_allow_factories(value: object) -> bool:
+    """Validate the ``allow_factories`` policy before configuration processing.
+
+    Parameters
+    ----------
+    value
+        Candidate policy from the public ``dictConfig`` argument.
+
+    Returns
+    -------
+    bool
+        The validated policy.
+
+    Raises
+    ------
+    TypeError
+        If ``value`` is not a bool, so ``0``, ``1``, and ``"false"`` cannot be
+        mistaken for a policy choice.
+
+    Examples
+    --------
+    >>> validate_allow_factories(False)
+    False
+    >>> validate_allow_factories("false")
+    Traceback (most recent call last):
+    ...
+    TypeError: allow_factories must be a bool
+
+    """
+    if not isinstance(value, bool):
+        msg = "allow_factories must be a bool"
+        raise TypeError(msg)
+    return value
+
+
 # Builder helpers
 def _build_factory_filter(fid: str, data: dict[str, object]) -> object:
     """Build a callback filter from a factory reference."""
@@ -80,9 +143,51 @@ def _build_declarative_filter(fid: str, data: dict[str, object]) -> object:
     return NameFilterBuilder().with_prefix(name)
 
 
-def build_filter_from_dict(fid: str, data: dict[str, object]) -> object:
-    """Create a filter builder from ``dictConfig`` filter data."""
+def build_filter_from_dict(
+    fid: str, data: dict[str, object], *, allow_factories: bool = True
+) -> object:
+    """Create a filter builder from ``dictConfig`` filter data.
+
+    Parameters
+    ----------
+    fid
+        Filter identifier used in error messages and registry lookups.
+    data
+        Filter entry body. A ``"()"`` key selects the stdlib factory form; an
+        entry without it must declare exactly one of ``level`` or ``name``.
+    allow_factories
+        When ``False``, reject any entry carrying a ``"()"`` key. The rejection
+        happens on key presence alone, so the factory target is never resolved
+        or invoked. Declarative ``level`` and ``name`` entries still work.
+
+    Returns
+    -------
+    object
+        A ``LevelFilterBuilder``, ``NameFilterBuilder``, or
+        ``PythonCallbackFilterBuilder``.
+
+    Raises
+    ------
+    ValueError
+        If the entry is malformed, or uses a factory while
+        ``allow_factories`` is ``False``.
+
+    Examples
+    --------
+    >>> builder = build_filter_from_dict("lvl", {"level": "INFO"})
+    >>> build_filter_from_dict("f", {"()": "pkg.Factory"}, allow_factories=False)
+    Traceback (most recent call last):
+    ...
+    ValueError: filter 'f' uses a '()' factory, rejected by allow_factories=False
+
+    """
+    # Snapshot key presence once: a mapping that mutates during iteration must
+    # not let the guard pass and then reach factory construction.
+    has_factory = "()" in data
+    if not allow_factories and has_factory:
+        msg = factory_disallowed_message(fid)
+        raise ValueError(msg)
     validate_filter_config_keys(fid, data)
-    if "()" in data:
+    if has_factory:
         return _build_factory_filter(fid, data)
     return _build_declarative_filter(fid, data)
