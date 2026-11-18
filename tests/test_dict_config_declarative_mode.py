@@ -32,7 +32,6 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 _FACTORY_PATH = "tests.python_filter_support.ContextFilterFactory"
-_POLICY_PATTERN = r"allow_factories=False"
 _FILTER_ERROR_PATTERN = r"filter 'f'.*allow_factories=False"
 
 
@@ -61,9 +60,10 @@ class _PlainFactoryClass:
         """Accept keyword arguments without observing any side effect."""
 
 
-_FACTORY_VALUE_BUILDERS: tuple[
-    tuple[str, cabc.Callable[[_FactoryProbe], object]], ...
-] = (
+type _ValueBuilder = cabc.Callable[[_FactoryProbe], object]
+type _EntryBuilder = cabc.Callable[[_FactoryProbe], cabc.Mapping[str, object]]
+
+_FACTORY_VALUE_BUILDERS: tuple[tuple[str, _ValueBuilder], ...] = (
     ("unimported-dotted", lambda _probe: "declarative_guard_missing.missing"),
     ("importable-dotted", lambda _probe: _FACTORY_PATH),
     ("module-dotted", lambda _probe: "tests.python_filter_support"),
@@ -81,9 +81,7 @@ _FACTORY_VALUE_BUILDERS: tuple[
 )
 
 
-_FACTORY_ENTRY_BUILDERS: tuple[
-    tuple[str, cabc.Callable[[_FactoryProbe], dict[str, object]]], ...
-] = (
+_FACTORY_ENTRY_BUILDERS: tuple[tuple[str, _EntryBuilder], ...] = (
     ("dotted", lambda _probe: {"()": _FACTORY_PATH}),
     ("callable", lambda probe: {"()": probe}),
     ("mixed", lambda _probe: {"()": _FACTORY_PATH, "level": "INFO"}),
@@ -210,7 +208,7 @@ def test_declarative_mode_preserves_structural_errors(
 )
 def test_declarative_mode_rejects_every_factory_value(
     monkeypatch: pytest.MonkeyPatch,
-    value_builder: cabc.Callable[[_FactoryProbe], object],
+    value_builder: _ValueBuilder,
     extra_keys: dict[str, object],
 ) -> None:
     """Every ``"()"`` value is rejected without resolution or invocation."""
@@ -300,21 +298,23 @@ def test_declarative_mode_rejects_before_builder_construction(
 def test_declarative_mode_rejection_leaves_live_state_unchanged() -> None:
     """A rejected document must not apply any of its logger configuration."""
     basicConfig(level="ERROR")
+    app = get_logger("declarative_rejection_probe")
+    app.set_level("DEBUG")
     config = {
         "version": 1,
         "filters": {"lvl": {"level": "INFO"}, "f": {"()": _FACTORY_PATH}},
-        "loggers": {"app": {"filters": ["lvl"]}},
+        "loggers": {"declarative_rejection_probe": {"filters": ["lvl"]}},
         "root": {"level": "DEBUG"},
     }
-    app = get_logger("app")
-    root = get_logger("root")
-    before = (app.level, app.disabled, root.level, root.disabled)
+    assert app.log("DEBUG", "before") is not None, "probe must start unfiltered"
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
         dictConfig(config, allow_factories=False)
 
-    after = (app.level, app.disabled, root.level, root.disabled)
-    assert after == before, "rejection must leave both loggers' state unchanged"
-    assert root.log("INFO", "still suppressed") is None, (
+    # The staged INFO-only filter would block this record if attached.
+    assert app.log("DEBUG", "after") is not None, (
+        "rejection must not attach the staged INFO-only filter"
+    )
+    assert get_logger("root").log("INFO", "still suppressed") is None, (
         "rejection must leave the pre-existing root level in place"
     )
 
@@ -326,7 +326,7 @@ def test_declarative_mode_rejection_leaves_live_state_unchanged() -> None:
 )
 def test_build_filter_from_dict_rejects_factory_forms(
     monkeypatch: pytest.MonkeyPatch,
-    entry_builder: cabc.Callable[[_FactoryProbe], dict[str, object]],
+    entry_builder: _EntryBuilder,
 ) -> None:
     """The per-entry guard rejects dotted, callable, and mixed entries."""
     probe = _FactoryProbe()
@@ -334,8 +334,8 @@ def test_build_filter_from_dict_rejects_factory_forms(
         config_filters, "resolve_factory", _unexpected_call("resolve_factory")
     )
 
-    with pytest.raises(ValueError, match=_POLICY_PATTERN):
-        build_filter_from_dict("f", entry_builder(probe), allow_factories=False)
+    with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
+        build_filter_from_dict("f", dict(entry_builder(probe)), allow_factories=False)
     assert not probe.invocations, "the direct guard must not invoke callables"
 
 
