@@ -119,6 +119,28 @@ fn equal_seeds_reproduce_equal_delays() {
     assert_eq!(first_delays, second_delays);
 }
 
+/// The production constructor seeds independent random sources.
+///
+/// [`BackoffState::new`] draws a seed through `rand::make_rng`, so two states
+/// constructed on the same thread must not produce the same sequence. A
+/// fixed-seed fallback would put every state, and every process, in lockstep.
+/// Eight draws from a 1000 ms bound are practically certain to differ.
+#[rstest]
+fn independent_production_states_do_not_share_a_stream() {
+    let base = Duration::from_millis(1000);
+    let make_policy = || policy(base, base, Duration::from_secs(60));
+    let start = Instant::now();
+    let mut first = BackoffState::new(make_policy());
+    let mut second = BackoffState::new(make_policy());
+    let first_draws: Vec<_> = (0..8).map(|_| first.next_sleep(start)).collect();
+    let second_draws: Vec<_> = (0..8).map(|_| second.next_sleep(start)).collect();
+
+    assert_ne!(
+        first_draws, second_draws,
+        "two production states shared a stream, so seeding is fixed"
+    );
+}
+
 /// Repeating the initial failure timestamp must not double the bound.
 ///
 /// With a base of 20 ms the first window samples `10..=20`. Any sample above
