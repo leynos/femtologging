@@ -105,7 +105,8 @@ ipython_config.py
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
 #   Project freezes Python deps with uv, so the lock file is tracked for reproducibility.
-uv.lock
+#   Do not ignore uv.lock: it is committed, and `make check-lock` fails if an
+#   ignore rule excludes it.
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.

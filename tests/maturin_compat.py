@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] tests shell out to a pinned maturin.
 import sys
+import tomllib
 import typing as typ
 import zipfile
 
@@ -94,6 +95,49 @@ def _require_pin_match(match: re.Match[str] | None, location: str) -> str:
     return match.group(1)
 
 
+def _locked_maturin_version(lockfile: Path) -> str:
+    """Return the maturin version recorded in a uv lock file.
+
+    Parameters
+    ----------
+    lockfile:
+        Path to the repository's ``uv.lock``.
+
+    Returns
+    -------
+    str
+        The locked maturin version.
+
+    Raises
+    ------
+    AssertionError
+        If the lock file records no maturin package or more than one.
+    TypeError
+        If the recorded version is not a string.
+
+    Examples
+    --------
+    >>> _locked_maturin_version(Path("uv.lock"))  # doctest: +SKIP
+    '1.13.3'
+
+    """
+    locked = tomllib.loads(lockfile.read_text(encoding="utf-8"))
+    packages = locked.get("package", [])
+    matches = [
+        package
+        for package in packages
+        if isinstance(package, dict) and package.get("name") == "maturin"
+    ]
+    if len(matches) != 1:
+        message = f"Expected one maturin package in {lockfile}, found {len(matches)}"
+        raise AssertionError(message)
+    version = matches[0].get("version")
+    if not isinstance(version, str):
+        message = f"maturin in {lockfile} carries no string version: {version!r}"
+        raise TypeError(message)
+    return version
+
+
 def read_maturin_pins(root: Path) -> dict[str, str]:
     """Read maturin versions from the synchronized build locations.
 
@@ -113,7 +157,7 @@ def read_maturin_pins(root: Path) -> dict[str, str]:
 
     >>> pins = read_maturin_pins(root)  # doctest: +SKIP
     >>> sorted(pins)  # doctest: +SKIP
-    ['build-system', 'build-wheels', 'dev-dependency']
+    ['build-system', 'build-wheels', 'dev-dependency', 'uv-lock']
 
     """
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
@@ -129,6 +173,7 @@ def read_maturin_pins(root: Path) -> dict[str, str]:
             _BUILD_MATURIN_RE.search(pyproject),
             "pyproject.toml build-system requirement",
         ),
+        "uv-lock": _locked_maturin_version(root / "uv.lock"),
         "build-wheels": _require_pin_match(
             _BUILD_WORKFLOW_PIN_RE.search(build_wheels),
             ".github/workflows/build-wheels.yml",
