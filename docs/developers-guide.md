@@ -22,15 +22,91 @@ install Ruff directly; it picks up the version from the Makefile's
 `uvx ruff==$(RUFF_VERSION)` invocation. See [Python linting](#python-linting)
 for the complete five-tier lint pipeline.
 
+## Python lockfile policy
+
+`uv.lock` is tracked. It records the complete resolution of `pyproject.toml`
+for every supported Python version, so a developer machine and CI's project
+installs resolve the same dependency graph. Package builds are the exception:
+the isolated build backend resolves its own `[build-system]` requirements, so
+the wheel build of maturin is not read from `uv.lock`. The lock is committed
+beside the manifest, and `.gitignore` must never exclude it: `make check-lock`
+fails if an ignore rule matches the file, if Git does not track it, or if
+`uv lock --check` finds the manifest ahead of the lock.
+
+Update the lock after any change to `[project]` dependencies,
+`[dependency-groups]`, `requires-python`, `[tool.uv]` or `[build-system]`:
+
+```shell
+uv lock
+make check-lock
+```
+
+`uv lock` resolves the changed manifest and rewrites `uv.lock`; commit the
+manifest and the lock together, because a commit that moves one without the
+other fails every locked install. To move a single dependency, use its explicit
+upgrade rather than an unpinned refresh:
+
+```shell
+uv lock --upgrade-package <name>
+```
+
+`make check-lock` runs `uv lock --check`, requires
+`git ls-files --error-unmatch uv.lock` to succeed, and requires
+`git check-ignore --no-index` to report that no ignore rule matches, so it
+fails when the lock is stale, untracked or hidden. Run it before pushing; CI
+runs the same target in `build-test` before formatting or type checking.
+
+`make build`, `make test`, the scheduled heavy-tests workflow and the coverage
+action install in locked mode. The Makefile and heavy workflow pass `--locked`;
+the coverage action reads `UV_LOCKED=1` for its project `uv sync`. Locked mode
+fails when `pyproject.toml` and `uv.lock` diverge, and it never repairs the
+drift for you. Do not replace `--locked` with `--frozen`: `--frozen` reuses the
+lock without checking it against the manifest, so a stale lock installs
+silently. It is only appropriate where no manifest is available to check, which
+is not the case in this repository.
+
+The coverage tooling is a documented exception. The pinned `generate-coverage`
+action installs `slipcover`, `pytest`, `pytest-xdist` and `coverage` with
+`uv pip install` after its locked project sync, so those versions are not read
+from `uv.lock`. The action is pinned by commit digest and its tool list is the
+only control; when changing that digest, read its install list as part of the
+coverage environment rather than assuming the lock covers it.
+
+Some other environments are deliberately independent of the project lock, and
+each must pin its dependencies at the call site:
+
+- `uvx` and `uv tool run` invocations pin the tool version in the Makefile
+  (`RUFF_VERSION`, `TY_VERSION`, `TYPOS_VERSION`, `PYLINT_VERSION`).
+- PEP 723 scripts declare their own inline dependency block.
+- Most `uv run --no-project` helper tests pass every `--with` pin explicitly.
+  The `lint-lanes-test` and `loom-runner-test` targets leave `cyclopts` and
+  `plumbum` unpinned, so those two resolve fresh on each run; add pins there
+  when their releases start affecting those tests.
+- The isolated build backend resolves `maturin>=1.13.3,<2.0.0` from
+  `[build-system]`, separately from the project environment.
+
+The Python 3.15 lane is an allowed-failure early-warning lane. It enables
+interpreter prereleases only (`allow-prereleases` in `setup-python`) and uses
+the same universal `uv.lock` as every other lane; it does not enable
+prereleases for dependencies. Do not fix a 3.15 failure by turning on global
+dependency prereleases. When a dependency has no 3.15-compatible release, keep
+the lane experimental and record the failure; when a specific dependency
+prerelease is genuinely required, name that package explicitly and regenerate
+the lock so the exception is visible in review. See the
+[CI compatibility matrix](dev-workflow.md#ci-compatibility-matrix) for the lane
+list.
+
 ## Python test toolchain
 
 The local development group in `pyproject.toml` is the single source of the
 test toolchain, and the scheduled `.github/workflows/heavy-tests.yml` job
-installs that group from `uv.lock` with `uv sync --frozen --group dev` rather
+installs that group from `uv.lock` with `uv sync --locked --group dev` rather
 than repeating the pins. The sync reads `.github/uv-test-util.toml` through
 `UV_CONFIG_FILE`, so the project build receives the `test-util` hooks, and the
 job then runs `maturin develop` against the synced environment. A dependency or
-version-policy change therefore belongs in the development group only:
+version-policy change therefore belongs in the development group, followed by
+regenerating the lock as described in
+[Python lockfile policy](#python-lockfile-policy):
 
 - `maturin[patchelf]` is pinned to `1.13.3` for the editable Rust extension
   build, matching the build-system lower bound.
@@ -209,8 +285,10 @@ compatibility tests validate the same maturin and PyO3 releases:
   Cargo commands run from the repository root select that toolchain
   automatically. `make check-fmt` and `make lint` use its formatter and linter;
   editor integrations use the installed language server.
-- maturin is pinned to `1.13.3` in the development dependencies and CI build
-  workflows, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
+- maturin is pinned to `1.13.3` in the development group and recorded in
+  `uv.lock`; the heavy workflow installs it from that lock, and the release
+  wheel workflow keeps its own literal pin. The build-system requirement is
+  bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.30.1` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
@@ -230,14 +308,16 @@ parses test-support source and requires Rustdoc on helper types and their named
 fields. It is part of `lint-rust`; compiler UI fixtures remain intentionally
 minimal and are excluded from that source-level scan.
 
-When updating either dependency, change the pin in the source manifest, update
-the matching CI install step where applicable, and run the maturin/PyO3
-compatibility checks through the normal `make test` gate. The synchronization
-test in `tests/test_maturin_build.py` verifies that the maturin pins stay
-aligned across `pyproject.toml` and `.github/workflows/build-wheels.yml`. The
-isolated sdist builders read the same pin from
-`.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`; update
-that file alongside the other pins.
+When updating either dependency, change the pin in the source manifest,
+regenerate `uv.lock` as described in
+[Python lockfile policy](#python-lockfile-policy), and run the maturin/PyO3
+compatibility checks through the normal `make test` gate. The heavy workflow
+installs the locked development group and needs no pin edit. The
+synchronization test in `tests/test_maturin_build.py` verifies that the maturin
+pins stay aligned across `pyproject.toml`, `uv.lock`, and
+`.github/workflows/build-wheels.yml`. The isolated sdist builders read the same
+pin from `.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`;
+update that file alongside the other pins.
 `tests/test_ci_build_wheels_sdist_cardinality.py::test_sdist_builds_share_the_pinned_maturin_constraint`
 verifies the sdist constraint.
 
@@ -736,8 +816,8 @@ that key on an entry that joins a group), puts the available updates for the
 pair into one pull request. When both have one, a single CI run builds them
 together; a bump is not held back when only one of the two has an update, and a
 group cannot choose compatible versions or rewrite a pinned literal, so the
-maturin pins in the development group and the build workflows are still kept
-aligned by `tests/test_maturin_build.py`.
+maturin pin in `pyproject.toml` and its resolution in `uv.lock` are still kept
+aligned with the release wheel workflow by `tests/test_maturin_build.py`.
 
 An entry that joins a group runs only that group, over the dependencies its
 `patterns` take: its own groups, ignore rules and every other dependency are
