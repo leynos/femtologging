@@ -183,14 +183,9 @@ impl FemtoLogger {
 
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
-        let mut handlers = self.handlers.write();
-        handlers
-            .iter()
-            .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
-            .is_some_and(|pos| {
-                handlers.remove(pos);
-                true
-            })
+        remove_first_matching(&mut self.handlers.write(), |attachment| {
+            Arc::ptr_eq(&attachment.handler, handler)
+        })
     }
 
     /// Remove all handlers from this logger.
@@ -206,14 +201,9 @@ impl FemtoLogger {
     ///
     /// Removes the first matching attachment. Returns `true` if one was removed.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
-        let mut filters = self.filters.write();
-        filters
-            .iter()
-            .position(|f| Arc::ptr_eq(f, filter))
-            .is_some_and(|pos| {
-                filters.remove(pos);
-                true
-            })
+        remove_first_matching(&mut self.filters.write(), |attached| {
+            Arc::ptr_eq(attached, filter)
+        })
     }
 
     /// Remove all filters from this logger, so later records are not filtered by them.
@@ -286,6 +276,18 @@ impl Drop for FemtoLogger {
         #[cfg(not(loom))]
         self.finish_dispatch_state();
     }
+}
+
+/// Remove the first item of `items` that `is_target` selects.
+///
+/// Returns whether an item was removed. Selection is by predicate rather than
+/// by value so that callers keep identity semantics: handlers and filters are
+/// compared by pointer, not by the payload they carry.
+fn remove_first_matching<T>(items: &mut Vec<T>, is_target: impl Fn(&T) -> bool) -> bool {
+    items.iter().position(is_target).is_some_and(|pos| {
+        items.remove(pos);
+        true
+    })
 }
 
 #[cfg(test)]
