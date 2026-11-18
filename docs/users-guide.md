@@ -1586,8 +1586,9 @@ code, before a later preparation error is reported. See
 - Declarative-only mode checks only the incoming document. A logger omitted
   from the reload keeps its existing filters when `disable_existing_loggers` is
   `False`, so an installed callback filter can still run after a successful
-  declarative-only reload. Remove that logger's attachments explicitly to
-  retire the callback.
+  declarative-only reload. Removing one logger's attachment only stops that
+  logger from invoking the callback. To retire the callback, remove or replace
+  every attachment that can invoke it, including handler attachments.
 - `fileConfig` translates INI sections and never emits `"()"` filter entries,
   so an INI reload cannot introduce a factory through that path.
 - `RuntimeConfigBuilder` mutations select registered filters by ID through
