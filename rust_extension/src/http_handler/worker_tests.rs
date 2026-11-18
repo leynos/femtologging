@@ -13,6 +13,8 @@ use std::{
     time::Duration,
 };
 
+use rstest::rstest;
+
 use crate::{level::FemtoLevel, shutdown_signal::ShutdownSignal};
 
 #[test]
@@ -156,9 +158,9 @@ fn the_flush_command_reports_drops_before_acknowledging() {
         let acknowledged = ack_rx.recv_timeout(Duration::from_secs(5)).is_ok();
         assert!(acknowledged, "the flush command must be acknowledged");
         assert!(
-            messages.iter().any(|entry| {
-                entry.message == "FemtoHTTPHandler dropped 1 records since the last report"
-            }),
+            messages
+                .iter()
+                .any(|entry| entry.message.contains("dropped 1 records")),
             "the flush must report the held-back count before acknowledging: {messages:?}"
         );
     });
@@ -169,26 +171,40 @@ fn the_flush_command_reports_drops_before_acknowledging() {
     );
 }
 
-/// Worker exit reports the drops the interval was holding back.
+/// Which command a drain is left to acknowledge.
+#[derive(Clone, Copy)]
+enum PendingAck {
+    /// The normal path: a shutdown command queued before the deadline.
+    Shutdown,
+    /// The aborted path: the deadline has passed with a flush still queued.
+    FlushAfterAbort,
+}
+
+/// A drain reports the drops the interval held back before it acknowledges.
 ///
-/// Scenario: a worker-side drop is recorded inside the interval, then the
-/// worker drains a queue holding only its shutdown command. Invariant: the
-/// held-back count is reported before the shutdown acknowledgement and nothing
-/// is left pending. The worker is exiting, so a suppressed count has no later
-/// reader and no later warning.
+/// Scenario: a worker-side drop is recorded inside the warning interval, then
+/// the worker drains a queue holding one command whose acknowledgement the
+/// caller waits on. Invariant: the count is reported before that
+/// acknowledgement, and nothing is left pending, on the normal path and on the
+/// aborted path alike. The aborted path is the one that can regress:
+/// `discard_rest` acknowledges a queued flush itself, so a report emitted
+/// after it reaches a caller that has already returned.
 ///
-/// The acknowledgement channel is a rendezvous here, so capturing the warning
-/// before the test receives proves the order rather than assuming it.
-#[test]
+/// The acknowledgement channel is a rendezvous, so capturing the warning before
+/// the test receives proves the order rather than assuming it.
+#[rstest]
+#[case::shutdown(PendingAck::Shutdown)]
+#[case::flush_after_abort(PendingAck::FlushAfterAbort)]
 #[serial_test::serial]
-fn worker_exit_reports_drops_the_interval_held_back() {
+fn a_drain_reports_drops_before_acknowledging(#[case] pending: PendingAck) {
     use crate::handlers::file::test_support::{install_test_logger, wait_for_message};
 
     install_test_logger();
-    let mut worker = Worker::new(
-        HTTPHandlerConfig::default(),
-        Arc::new(ShutdownSignal::new()),
-    );
+    let signal = Arc::new(ShutdownSignal::new());
+    if matches!(pending, PendingAck::FlushAfterAbort) {
+        signal.abort();
+    }
+    let mut worker = Worker::new(HTTPHandlerConfig::default(), Arc::clone(&signal));
     // Open the interval with a reported drop, then record one it suppresses.
     worker.warner.record_drop();
     worker.warner.warn_if_due(|_| {});
@@ -196,10 +212,12 @@ fn worker_exit_reports_drops_the_interval_held_back() {
     assert_eq!(worker.warner.pending_drops(), 1);
 
     let (command_tx, command_rx) = bounded(1);
-    let (shutdown_tx, shutdown_rx) = bounded(0);
-    command_tx
-        .send(HTTPCommand::Shutdown(shutdown_tx))
-        .expect("queue the shutdown command");
+    let (ack_tx, ack_rx) = bounded(0);
+    let command = match pending {
+        PendingAck::Shutdown => HTTPCommand::Shutdown(ack_tx),
+        PendingAck::FlushAfterAbort => HTTPCommand::Flush(ack_tx),
+    };
+    command_tx.send(command).expect("queue the drain command");
 
     thread::scope(|scope| {
         let worker = &mut worker;
@@ -212,18 +230,22 @@ fn worker_exit_reports_drops_the_interval_held_back() {
         // the worker is blocked in a rendezvous acknowledgement send would
         // leave `thread::scope` joining a thread this test can no longer
         // release.
-        let acknowledged = shutdown_rx.recv_timeout(Duration::from_secs(5)).is_ok();
-        assert!(acknowledged, "the queued shutdown must be acknowledged");
+        let acknowledged = ack_rx.recv_timeout(Duration::from_secs(5)).is_ok();
         assert!(
-            messages.iter().any(|entry| {
-                entry.message == "FemtoHTTPHandler dropped 1 records since the last report"
-            }),
-            "worker exit must report the held-back count before acknowledging: {messages:?}"
+            acknowledged,
+            "the queued drain command must be acknowledged"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|entry| entry.message.contains("dropped 1 records")),
+            "the drain must report the held-back count before acknowledging: \
+             {messages:?}"
         );
     });
     assert_eq!(
         worker.warner.pending_drops(),
         0,
-        "worker exit must leave nothing pending"
+        "the drain must leave nothing pending"
     );
 }

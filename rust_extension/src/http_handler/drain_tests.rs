@@ -20,7 +20,7 @@
 //!   The count is warned about, because records disappearing silently is the
 //!   failure this whole change exists to make visible.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::net::{SocketAddr, TcpListener};
 use std::sync::mpsc;
 use std::thread;
@@ -66,6 +66,11 @@ const SLEEPING_CLOSE_ALLOWANCE: Duration = Duration::from_secs(4);
 /// nothing but the shutdown signal can stop the retry inside the test.
 const PAUSED_RETRY_DELAY: Duration = Duration::from_secs(60);
 
+#[path = "stalled_server_tests.rs"]
+mod stalled_server;
+
+use self::stalled_server::spawn_stalled_server;
+
 /// Spawn a server that answers every request with `status`, for as long as the
 /// test runs, and reports each request it answered.
 ///
@@ -96,42 +101,6 @@ fn spawn_perpetual_server(
         }
     });
     Ok((addr, answered_rx))
-}
-
-/// Hold each connection open without answering it, one at a time.
-///
-/// The worker's request timeout then keeps each attempt in flight for the rest
-/// of the close deadline, leaving queued records for the worker to count after
-/// it aborts.
-///
-/// The listener stays open for the whole test rather than serving a single
-/// connection. Serving one and then dropping the listener turns every later
-/// attempt into an immediate connection refusal, and a worker that refuses
-/// instantly drains the whole backlog inside its deadline instead of leaving
-/// records for the abort to discard. Whether the listener has closed by the
-/// time the next attempt starts is a thread-scheduling matter, so a
-/// single-connection server made the deadline contract pass or fail on load.
-///
-/// # Examples
-///
-/// ```ignore
-/// let (addr, received) = spawn_stalled_server(listener)?;
-/// received.recv_timeout(Duration::from_secs(2))?;
-/// ```
-fn spawn_stalled_server(listener: TcpListener) -> io::Result<(SocketAddr, mpsc::Receiver<()>)> {
-    let addr = listener.local_addr()?;
-    let (request_tx, request_rx) = mpsc::channel();
-    thread::spawn(move || {
-        while let Ok((mut stream, _)) = listener.accept() {
-            if super::read_http_request(&mut stream).is_err() {
-                continue;
-            }
-            let _ = request_tx.send(());
-            let mut sink = [0_u8; 1];
-            while matches!(stream.read(&mut sink), Ok(read) if read > 0) {}
-        }
-    });
-    Ok((addr, request_rx))
 }
 
 /// Build a handler with a short budget and a backoff deadline far longer than
@@ -299,16 +268,17 @@ const ABANDON_MARKER: &str = "abandoning it rather than blocking the caller";
 #[serial_test::serial]
 fn records_left_at_the_deadline_are_discarded_and_counted(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
-    let (addr, request_received) = spawn_stalled_server(tcp_listener).expect("spawn server");
+    let server = spawn_stalled_server(tcp_listener).expect("spawn server");
     crate::handlers::file::test_support::install_test_logger();
-    let mut handler = build_retrying_handler(addr, 64, Duration::from_millis(50));
+    let mut handler = build_retrying_handler(server.addr, 64, Duration::from_millis(50));
     // Enough records that the deadline cannot deliver them all at one request
     // per `CLOSE_BUDGET`, and queued before the close so they are the backlog
     // the drain has to decide about.
     for index in 0..32 {
         send_info_record(&handler, &format!("backlog {index}")).expect("record should be queued");
     }
-    request_received
+    server
+        .received
         .recv_timeout(ARRIVAL_ALLOWANCE)
         .expect("the worker should reach the stalled request");
 

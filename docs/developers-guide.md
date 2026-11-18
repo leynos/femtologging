@@ -1484,7 +1484,14 @@ interval carries its drops forward and one report can cover several intervals.
 `flush()` is unconditional. It swaps whatever is pending to zero and reports it
 without consulting the interval, and it neither consumes nor restarts one. No
 lock is held while a callback runs, so a reporting closure can safely call back
-into the warner. Every path that might be the last chance to speak uses it:
+into the warner.
+
+A flush reports only the count that is pending when it swaps. A batch that
+another caller has already drained for a warning is not part of that count: a
+warning refused its interval claim restores its batch afterwards, so a flush
+that has already returned does not cover it, and the next due warning or flush
+reports it. Every path that might otherwise leave a pending count unreported
+uses the flush:
 
 - an explicit `flush()` on a handler or logger;
 - `close()` and `take_shutdown()`, which report the handler-side count before

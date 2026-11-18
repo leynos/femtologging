@@ -332,10 +332,11 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
 #[cfg(not(loom))]
 impl Drop for FemtoSocketHandler {
     fn drop(&mut self) {
-        // Report drops refused after an earlier close before releasing the
-        // warner: no worker is left to flush them and no later warning comes.
-        flush_drops(&self.warner);
+        // A handler whose worker is gone has nobody left to report the drops
+        // refused after an earlier close, and no later warning comes. While a
+        // worker is still present, `close()` reports them itself.
         if self.handle.lock().is_none() {
+            flush_drops(&self.warner);
             return;
         }
         if Python::try_attach(|py| py.detach(|| self.close())).is_none() {

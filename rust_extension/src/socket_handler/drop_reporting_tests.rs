@@ -51,6 +51,31 @@ fn record(message: &str) -> FemtoLogRecord {
     FemtoLogRecord::new("test.logger", FemtoLevel::Info, message)
 }
 
+/// Render the warning naming `cause`, for comparison against captured messages.
+fn drop_warning(count: u64, cause: &str) -> String {
+    format!(
+        concat!(
+            "FemtoSocketHandler dropped {count} records since the last report; ",
+            "triggering cause: {cause}"
+        ),
+        count = count,
+        cause = cause
+    )
+}
+
+/// Count the captured messages equal to `expected`.
+///
+/// The test logger is process-global and the rest of this binary runs in
+/// parallel, so the racing test below cannot assume its messages are the only
+/// ones in the buffer. Counting exact matches keeps a neighbour's warning out of
+/// the comparison while still failing on a second report from this test.
+fn occurrences(messages: &[String], expected: &str) -> usize {
+    messages
+        .iter()
+        .filter(|message| *message == expected)
+        .count()
+}
+
 /// A due warning that carries two causes names only the one that triggered it.
 ///
 /// Scenario: the first drop warns and opens the interval, a second drop from a
@@ -117,30 +142,29 @@ fn racing_causes_report_both_drops_and_name_the_trigger() {
 
     // The first report opens a real interval; the next two are suppressed and
     // stay pending, each recorded with the cause it will be reported under.
-    warn_drops_naming_cause(&warner, "connect failure: refused");
-    warn_drops_naming_cause(&warner, "connect failure: refused");
-    warn_drops_naming_cause(&warner, "write error");
+    // The `(race)` marker keeps these messages attributable while neighbouring
+    // tests log through the same buffer.
+    warn_drops_naming_cause(&warner, "connect failure: refused (race)");
+    warn_drops_naming_cause(&warner, "connect failure: refused (race)");
+    warn_drops_naming_cause(&warner, "write error (race)");
     let opening: Vec<_> = take_logged_messages()
         .into_iter()
         .map(|entry| entry.message)
         .collect();
     assert_eq!(
-        opening,
-        vec![
-            concat!(
-                "FemtoSocketHandler dropped 1 records since the last report; ",
-                "triggering cause: connect failure: refused"
-            )
-            .to_owned()
-        ],
-        "only the first report should escape the interval"
+        occurrences(
+            &opening,
+            &drop_warning(1, "connect failure: refused (race)")
+        ),
+        1,
+        "only the first report should escape the interval: {opening:?}"
     );
     clock.elapse_interval();
 
     let reports = Mutex::new(Vec::new());
     let start = Arc::new(Barrier::new(2));
     thread::scope(|scope| {
-        for cause in ["connect failure: refused", "write error"] {
+        for cause in ["connect failure: refused (race)", "write error (race)"] {
             let warner = &warner;
             let reports = &reports;
             let start = Arc::clone(&start);
@@ -166,15 +190,19 @@ fn racing_causes_report_both_drops_and_name_the_trigger() {
         .map(|entry| entry.message)
         .collect();
     assert_eq!(
-        messages,
-        vec![format!(
-            concat!(
-                "FemtoSocketHandler dropped {} records since the last report; ",
-                "triggering cause: {}"
-            ),
-            count, cause
-        )],
-        "the report must be the winner's own count and cause"
+        occurrences(&messages, &drop_warning(count, cause)),
+        1,
+        "the report must be the winner's own count and cause: {messages:?}"
+    );
+    let loser_cause = if cause == "connect failure: refused (race)" {
+        "write error (race)"
+    } else {
+        "connect failure: refused (race)"
+    };
+    assert_eq!(
+        occurrences(&messages, &drop_warning(count, loser_cause)),
+        0,
+        "the losing caller must not relabel the winner's report: {messages:?}"
     );
     assert_eq!(count, 2, "both suppressed drops must be in the report");
     assert_eq!(warner.pending_drops(), 0);

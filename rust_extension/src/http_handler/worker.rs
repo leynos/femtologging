@@ -331,6 +331,10 @@ impl Worker {
         let mut shutdown_acks = Vec::new();
         loop {
             if self.signal.is_aborted() {
+                // Report before `discard_rest` acknowledges pending flushes: a
+                // caller waiting on `flush()` must not return ahead of the
+                // report the normal path guarantees it.
+                flush_drops(&self.warner);
                 discarded += discard_rest(rx, &mut shutdown_acks);
                 break;
             }

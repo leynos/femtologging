@@ -23,11 +23,13 @@ After this change, an operator reading the warnings sees the whole truth. A
 suppressed interval carries its drops forward: if three records are dropped
 inside the window and a fourth arrives after it, the next warning reports four,
 not one. An explicit `flush()` reports immediately, whatever the clock says, so
-shutdown and flush paths cannot lose the last batch. Every recorded drop is
-handed to exactly one callback batch — never twice, never zero times —
-including when `record_drop()`, `warn_if_due()` and `flush()` race on several
-threads. A callback panic can still abandon its batch after handoff; the warner
-does not retry it.
+no count pending when it runs is lost. A batch an in-flight warning has already
+drained is outside that count; a warning refused its claim restores the batch,
+and the next due warning or flush reports it. Every recorded drop that a report
+reaches is handed to exactly one callback batch — never twice — including when
+`record_drop()`, `warn_if_due()` and `flush()` race on several threads. A
+callback panic can still abandon its batch after handoff; the warner does not
+retry it.
 
 The user-visible evidence is a warning stream whose callback counts sum to the
 number of records actually dropped when callbacks return normally, and a test

@@ -47,7 +47,7 @@ pub(crate) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
 
 /// Report worker-owned drops without waiting for the warning interval.
 ///
-/// Drops the worker discovers — serialisation failures, retry exhaustion,
+/// Drops the worker discovers — serialization failures, retry exhaustion,
 /// permanent errors — are recorded by the worker rather than by the handler, so
 /// only the worker can report them. A suppressed interval would otherwise keep
 /// the count until the next due warning, which on a worker that is exiting
