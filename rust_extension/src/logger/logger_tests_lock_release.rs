@@ -327,9 +327,10 @@ fn remove_filter_releases_the_collections_reference() {
     let logger = test_logger("lock.remove.filter");
     let (probe, observation) = filter_probe(&logger);
     // The caller must hold an `Arc` to name the filter, so removal cannot drop
-    // the last owner. Keeping our own reference alive past the call proves the
-    // eventual destruction still happens with the guard released, and that the
-    // collection no longer owns the filter.
+    // the last owner and this drop timing says nothing about the guard. Holding
+    // our own reference past the call proves the collection no longer owns the
+    // filter: the probe survives until we drop it, and only then is its
+    // destruction observed.
     let lookup: Arc<dyn FemtoFilter> = probe.clone();
     logger.add_filter(probe as Arc<dyn FemtoFilter>);
 

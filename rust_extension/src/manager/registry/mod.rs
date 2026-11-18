@@ -379,7 +379,8 @@ pub fn reset_manager() {
     // Take both registries under the lock but drop neither there: handler
     // destruction may flush or join a worker, and a filter may own the last
     // reference to a Python callable whose finalizer re-enters the manager.
-    #[cfg(feature = "python")]
+    // `clear_runtime_state` is `()` without the python feature, so the one
+    // take-and-drop shape covers both lanes.
     let (loggers, displaced_runtime) = {
         let mut mgr = MANAGER.write();
         let displaced_runtime = clear_runtime_state(&mut mgr);
@@ -387,23 +388,17 @@ pub fn reset_manager() {
         LOGGER_LEVEL_INDEX.write().clear();
         (std::mem::take(&mut mgr.loggers), displaced_runtime)
     };
-    #[cfg(not(feature = "python"))]
-    let loggers = {
-        let mut mgr = MANAGER.write();
-        clear_runtime_state(&mut mgr);
-        #[cfg(feature = "log-compat")]
-        LOGGER_LEVEL_INDEX.write().clear();
-        std::mem::take(&mut mgr.loggers)
-    };
     #[cfg(feature = "python")]
-    // Destroy the snapshot with the interpreter detached: a file handler's
-    // destructor closes and waits for completion, and holding the GIL across
-    // that wait stalls unrelated Python threads. The configuration commit's
-    // refusal path disposes of displaced state the same way.
-    Python::attach(|py| py.detach(move || drop(displaced_runtime)));
+    // Destroy both halves with the interpreter detached: a file handler's
+    // destructor closes and waits for completion, and a logger's destructor may
+    // wait for queued records to drain. Holding the GIL across either wait
+    // stalls unrelated Python threads. The configuration commit's refusal path
+    // disposes of displaced state the same way.
+    Python::attach(|py| py.detach(move || drop((displaced_runtime, loggers))));
+    #[cfg(not(feature = "python"))]
     // Dropping the loggers outside the registry lock may wait for queued
-    // records, so refresh the facade maximum only after that drain.
-    drop(loggers);
+    // records; the wait must not sit inside the guard.
+    drop((displaced_runtime, loggers));
     #[cfg(feature = "log-compat")]
     crate::log_compat::refresh_global_max_level();
 }

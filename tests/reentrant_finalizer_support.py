@@ -7,8 +7,15 @@ script with a hard timeout makes a hang a test failure instead.
 
 Each scenario is a Python file under ``tests/fixtures`` rather than a string
 literal, so lint, type checking and docstring coverage see it as code. Run a
-script and it executes the scenario; import it, as pytest's
+module and it executes the scenario; import it, as pytest's
 ``--doctest-modules`` does, and its ``__main__`` guard keeps the body inert.
+
+The child is launched as ``python -m tests.fixtures.<scenario>`` from the
+repository root, not by file path. A by-path launch puts the scenario's own
+directory on the child's import path instead of the root, so the scenario's
+``tests.fixtures.scenario_support`` import would depend on the environment
+already exposing the checkout. ``-m`` puts the working directory on the path,
+which is the root by construction.
 
 A marker on standard output is the completion signal. Scripts print it only
 after the re-entrant log call inside ``__del__`` returns, so a script that
@@ -30,6 +37,9 @@ CHILD_TIMEOUT_SECONDS = 10.0
 
 #: Directory holding the scenario scripts.
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+#: Repository root, the working directory and import root of each child.
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 CLEAR_HANDLERS_SCENARIO = FIXTURES / "reentrant_clear_handlers.py"
 CLEAR_HANDLERS_MARKER = "clear-handlers-finalizer-complete"
@@ -61,7 +71,7 @@ def run_reentrant_finalizer_script(
     Parameters
     ----------
     script
-        Path to the scenario script to execute.
+        Path to the scenario script, run as a module from the repository root.
     marker
         Exact line the script prints after its re-entrant call returns.
     timeout
@@ -86,11 +96,12 @@ def run_reentrant_finalizer_script(
     """
     try:
         result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed argv, no shell
-            [sys.executable, str(script)],
+            [sys.executable, "-m", _scenario_module(script)],
             capture_output=True,
             encoding="utf-8",
             errors="replace",
             env=_child_environment(),
+            cwd=REPOSITORY_ROOT,
             timeout=timeout,
             check=False,
         )
@@ -118,6 +129,23 @@ def run_reentrant_finalizer_script(
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
         raise AssertionError(message)
+
+
+def _scenario_module(script: Path) -> str:
+    """Return the dotted module name the child runs *script* as.
+
+    Parameters
+    ----------
+    script
+        A scenario file inside :data:`REPOSITORY_ROOT`.
+
+    Returns
+    -------
+    str
+        The module path, such as ``tests.fixtures.reentrant_clear_handlers``.
+    """
+    relative = script.resolve().relative_to(REPOSITORY_ROOT).with_suffix("")
+    return ".".join(relative.parts)
 
 
 def _child_environment() -> dict[str, str]:
