@@ -116,12 +116,14 @@ def _native_surface_errors(native: object) -> list[str]:
 
 
 def _stub_declaration_names(tree: ast.AST) -> set[str]:
-    """Return every name *tree* declares as a class, function, or attribute.
+    """Return every name *tree* declares or explicitly re-exports.
 
     Parsing the stub rather than scanning lines keeps the check correct for
     syntax that is not a bare ``name:`` line, such as a PEP 695 generic class
     whose name is followed by ``[``. Type parameters are not declarations of
-    the module's API, so they are not collected.
+    the module's API, so they are not collected. A ``from x import Y as Y``
+    alias is a stub's way of re-exporting ``Y``; a plain import stays private
+    and is not collected.
 
     Parameters
     ----------
@@ -137,6 +139,8 @@ def _stub_declaration_names(tree: ast.AST) -> set[str]:
     --------
     >>> sorted(_stub_declaration_names(ast.parse("class Token[T]: ...")))
     ['Token']
+    >>> _stub_declaration_names(ast.parse("from .mod import Token as Token"))
+    {'Token'}
     """
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -151,6 +155,12 @@ def _stub_declaration_names(tree: ast.AST) -> set[str]:
                 )
             case ast.TypeAlias(name=ast.Name(id=name)):
                 names.add(name)
+            case ast.ImportFrom(names=aliases):
+                names.update(
+                    alias.asname
+                    for alias in aliases
+                    if alias.asname is not None and alias.asname == alias.name
+                )
     return names
 
 

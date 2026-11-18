@@ -136,6 +136,12 @@ def test_release_probe_accepts_a_production_wheel(
         ("class FemtoLogger:\n    ...\n", None),
         ("type AttachmentIdentity = object\n", "AttachmentIdentity"),
         ("type ProductionAlias = object\n", None),
+        (
+            "from .test_support import AttachmentIdentity as AttachmentIdentity\n",
+            "AttachmentIdentity",
+        ),
+        ("from .test_support import Helper as Helper\n", None),
+        ("from .test_support import AttachmentIdentity\n", None),
         ("class Broken(:\n", "cannot be parsed"),
     ],
 )
