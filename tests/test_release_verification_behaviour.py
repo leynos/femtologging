@@ -116,6 +116,53 @@ def test_release_probe_accepts_a_production_wheel(
     )
 
 
+@pytest.mark.parametrize(
+    ("stub_body", "expected"),
+    [
+        ("class AttachmentIdentity:\n    ...\n", "AttachmentIdentity"),
+        (
+            "def wait_for_flush_entry_for_test(self) -> None: ...\n",
+            "wait_for_flush_entry_for_test",
+        ),
+        (
+            "async def _emit_rust_tracing_event() -> None: ...\n",
+            "_emit_rust_tracing_event",
+        ),
+        ("def setup_rust_logging() -> None: ...\n", None),
+        ("class FemtoLogger:\n    ...\n", None),
+    ],
+)
+def test_release_probe_checks_every_stub_declaration_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stub_body: str,
+    expected: str | None,
+) -> None:
+    """Class, synchronous and asynchronous declarations all face the name check."""
+    package = tmp_path / "femtologging"
+    package.mkdir()
+    package_file = package / "__init__.py"
+    package_file.write_text("", encoding="utf-8")
+    (package / "_femtologging_rs.pyi").write_text(stub_body, encoding="utf-8")
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    native = SimpleNamespace(
+        __file__=str(Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}")
+    )
+    monkeypatch.setattr(
+        release_wheel_probe.importlib, "import_module", lambda _: native
+    )
+    monkeypatch.setattr(femtologging, "__file__", str(package_file))
+    monkeypatch.setattr(femtologging, "_has_test_util", False)
+
+    errors = release_wheel_probe.release_wheel_errors()
+    if expected is None:
+        assert not errors, "A production-only stub must pass the probe."
+    else:
+        assert any(expected in error for error in errors), (
+            "Report the test-only stub declaration."
+        )
+
+
 def test_promised_test_hooks_missing_exits_with_usage_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -12,8 +12,10 @@ from pathlib import Path
 _TEST_ONLY_EXACT_NAMES = frozenset({"_stream_waiter_count", "AttachmentIdentity"})
 _TEST_ONLY_NAME_PREFIXES = ("_emit_rust_", "_install_test_")
 _TEST_ONLY_NAME_SUFFIX = "_for_test"
+# Stubs declare the test-only surface as functions, classes, or attributes.
+# Every shape must reach the name check, so the keyword is part of the pattern.
 _STUB_DECLARATION_RE = re.compile(
-    r"^\s*(?:def\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:=(]",
+    r"^\s*(?:(?:async\s+)?def\s+|class\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:=(]",
     re.MULTILINE,
 )
 
