@@ -394,8 +394,8 @@ This keeps the Rust extension focused on runtime behaviour, while Python
 retains responsibility for importing arbitrary user-defined factories. Factory
 entries are trusted-code-equivalent: a dotted target imports modules during
 resolution and is then invoked, while a direct callable object is invoked
-without resolution. `dictConfig(config, allow_factories=False)` rejects
-top-level filter entries by key presence before this bridge is reached. See the
+without resolution. `dictConfig(config, allow_factories=False)` rejects any
+top-level filter entry containing `"()"` before this bridge is reached. See the
 [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ## HTTP handler builder bindings

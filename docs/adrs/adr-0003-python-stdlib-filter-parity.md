@@ -5,7 +5,8 @@
 Accepted – decision recorded on 2026-02-25 to add Python standard library
 (`logging`) filter parity in a phased rollout.
 
-Amended on 2026-11-18 by the filter factory trust-boundary policy (issue #450).
+Amended by ADR-0003 (2026-11-18) for the filter factory trust-boundary policy
+(issue #450).
 
 ## Date
 
