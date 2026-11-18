@@ -161,7 +161,7 @@ exit=124
 itself was still blocked. No Clippy diagnostic appeared, so the lane never
 reached compilation: it was waiting, not building.
 
-Conditions recorded around the stall:
+*Table 1. Conditions recorded around the 2026-10-16 stall.*
 
 | Measurement         | Value                                                                     |
 | ------------------- | ------------------------------------------------------------------------- |
@@ -185,7 +185,9 @@ that the lane is independent of that lock.
 
 The bound also changed after the plan was written. The plan's Error Artefacts
 quote the then-current global `timeout = 30` from `[tool.pytest.ini_options]`;
-the test's own marker has since moved:
+the test's own marker has since moved as Table 2 records.
+
+*Table 2. The contract's pytest bound over time.*
 
 | Date       | Bound                                                     | Source                     |
 | ---------- | --------------------------------------------------------- | -------------------------- |
@@ -273,6 +275,9 @@ exit status, lock wait, total elapsed time, load average and
 first blocking message to the holder's logged release, and elapsed time is
 reported separately from it.
 
+*Table 3. Each measured run: the holder's chosen hold against the lane's
+observed lock wait.*
+
 | Run | Lane arguments    | Hold | Lock wait | Elapsed | Exit | Load (before → after) | Admission           |
 | --- | ----------------- | ---- | --------- | ------- | ---- | --------------------- | ------------------- |
 | 1   | defaults          | 60 s | 56 s      | 57 s    | 0    | 20.33 → 16.93         | held 4 → 4, healthy |
@@ -284,11 +289,15 @@ reported separately from it.
 Every contended run printed `Blocking waiting for file lock on package cache`
 and stayed blocked until the holder logged its release, and its wait tracked
 the hold rather than the lane's own work: 56 seconds of a 60-second hold, 85 of
-90, 41 of 45 and 71 of 75. The four-second difference in each case is `uv`
-start-up before Cargo prints its first blocking message, not work after
-release: the uncontended control printed no lock message and reported
-`Finished` in 12.8 seconds in total. Every run began and ended with
-`build-limits-status` reading
+90, 41 of 45 and 71 of 75. The four-second difference in each case lies outside
+the wait: elapsed time is the wait plus whatever preceded the first blocking
+message and whatever followed the holder's release, and the uncontended control
+finished the same lane in 13 seconds in total. The run did not timestamp the
+interval from the holder's acquisition to the lane's first blocking message —
+that interval contains the 3-second `cargo metadata` control which preceded
+each lane — so this plan does not divide the difference between `uv` start-up,
+Cargo's own start-up and work after release, and it attributes no duration to
+`uv` alone. Every run began and ended with `build-limits-status` reading
 `capacity 4, held 4, healthy, caching through sccache`, so the waits are not an
 artefact of a stalled cache server or refused admission.
 
