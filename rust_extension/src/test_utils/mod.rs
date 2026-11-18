@@ -21,4 +21,6 @@ pub mod json_round_trip;
 #[cfg(feature = "python")]
 pub mod logging_test_helpers;
 #[cfg(feature = "python")]
+pub mod stderr_capture;
+#[cfg(feature = "python")]
 pub mod traceback_test_helpers;

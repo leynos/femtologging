@@ -1763,6 +1763,16 @@ rate-limited warning without waiting. One logger's records remain FIFO on its
 shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
+A refused enqueue returns an `AdmissionRefusal`. Its `Record` variant carries
+the untouched record back so the producer can count and report the drop, and
+`UnexpectedJob` covers the queue handing back a job that carries no record. The
+pool's shard list lives in `rust_extension/src/logger/dispatcher/shards.rs` and
+keeps its first shard apart from the rest, so an empty pool is not
+representable: `Dispatcher::start_with` refuses a request for zero shards as an
+invalid-input `DispatcherError` instead of deferring the failure to the first
+logger, and a slot lookup past the end falls back to that first shard, so
+round-robin assignment always answers with one.
+
 `flush_handlers()` queues a flush marker when the logger has handlers. With no
 handlers it skips that marker, but when the logger still has records in flight
 it queues a shard-wide drain marker on the same dispatch queue. That marker is

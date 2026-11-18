@@ -50,6 +50,9 @@ use pyo3::{PyErr, exceptions::PyRuntimeError};
 #[path = "../dispatcher_tests.rs"]
 mod dispatcher_tests;
 
+#[cfg(all(test, not(loom)))]
+mod shards_property_tests;
+
 #[cfg(not(loom))]
 use super::flush_clock::FlushDeadline;
 pub(crate) use shard::{AdmissionRefusal, DrainOutcome, LoggerBudget, Shard};
