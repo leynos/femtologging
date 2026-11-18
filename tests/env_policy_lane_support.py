@@ -240,14 +240,17 @@ def lane_diagnostics(
 
     Counting per lane rather than in total is what rules out a driver that
     forwards one lane's line twice and drops another's: the total would still
-    match, but the lane that was dropped would report zero.
+    match, but the lane that was dropped would report zero. The count reads
+    standard error alone, because a diagnostic is meant to arrive there; a
+    driver that diverted one to standard output would not satisfy the contract
+    even though the text reached the caller somehow.
 
     Returns
     -------
     dict[str, int]
         One count per requested lane, keyed by lane name.
     """
-    output = captured_output(completed)
+    output = completed.stderr
     return {
         lane: output.count(f"{FAKE_CARGO_DIAGNOSTIC_PREFIX} {lane}\n") for lane in lanes
     }
