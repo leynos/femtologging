@@ -369,6 +369,11 @@ mod logger_tests_drop;
 #[path = "logger_tests_drop_reporting.rs"]
 mod logger_tests_drop_reporting;
 
+// Guard-release-before-drop tests live in a separate module to respect
+// the 400-line limit.
+#[path = "logger_tests_lock_release.rs"]
+mod logger_tests_lock_release;
+
 // Drain-on-drop and pool-shape tests are in a separate module to respect
 // the 400-line limit.
 #[path = "logger_tests_shutdown.rs"]
