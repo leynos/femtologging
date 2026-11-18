@@ -204,6 +204,15 @@ def test_pylint_reports_unparseable_modules() -> None:
     )
 
 
+def _exempts_d103(selector: str) -> bool:
+    """Return whether a Ruff selector suppresses `undocumented-public-function`."""
+    normalized = selector.upper()
+    if normalized in {"ALL", "UNDOCUMENTED-PUBLIC-FUNCTION"}:
+        return True
+    # Ruff accepts prefixes, so `D`, `D1` and `D10` all cover D103.
+    return normalized.startswith("D") and "D103".startswith(normalized)
+
+
 def test_ruff_requires_docstrings_in_step_modules() -> None:
     """Ruff must not exempt pytest-bdd step modules from D103.
 
@@ -217,14 +226,17 @@ def test_ruff_requires_docstrings_in_step_modules() -> None:
 
     exempting_lists = [
         *lint.get("per-file-ignores", {}).values(),
-        *([lint["ignore"]] if "ignore" in lint else []),
+        *lint.get("extend-per-file-ignores", {}).values(),
+        lint.get("ignore", []),
+        lint.get("extend-ignore", []),
     ]
-    forbidden = {"undocumented-public-function", "D103"}
     for exempting_list in exempting_lists:
-        assert forbidden.isdisjoint(exempting_list), (
-            "Ruff must not exempt any path from undocumented-public-function "
-            "(D103): interrogate requires those docstrings, so the two gates "
-            "would contradict each other"
+        offenders = [selector for selector in exempting_list if _exempts_d103(selector)]
+        assert not offenders, (
+            "Ruff must not exempt any path or the rule set from "
+            f"undocumented-public-function (D103): {offenders!r}; interrogate "
+            "requires those docstrings, so the two gates would contradict "
+            "each other"
         )
 
     assert "D" in lint["select"], (
