@@ -91,82 +91,97 @@ pub(super) enum Segment {
 /// );
 /// ```
 pub(super) fn compile(format: &str) -> Vec<Segment> {
-    let mut segments = Vec::new();
-    let mut literal = String::new();
-    let mut search = ClosingParenthesisSearch::default();
-    let mut cursor = 0;
-
-    while let Some(relative) = format[cursor..].find('%') {
-        let percent = cursor + relative;
-        literal.push_str(&format[cursor..percent]);
-        cursor = consume_percent(format, percent, &mut literal, &mut segments, &mut search);
-    }
-
-    literal.push_str(&format[cursor..]);
-    push_literal(&mut segments, &mut literal);
-    segments
+    Compiler::new(format).run()
 }
 
-/// Consume the `%` at `percent`, returning the offset to resume scanning from.
-///
-/// The literal buffer is flushed into `segments` before a compiled directive
-/// is pushed, so the two stay in output order.
-fn consume_percent(
-    format: &str,
-    percent: usize,
-    literal: &mut String,
-    segments: &mut Vec<Segment>,
-    search: &mut ClosingParenthesisSearch,
-) -> usize {
-    let after_percent = percent + 1;
-
-    // `%%` is an escaped percent sign, not a directive terminator.
-    if format[after_percent..].starts_with('%') {
-        literal.push('%');
-        return after_percent + 1;
-    }
-
-    let Some((field, conversion, end)) = parse_directive(format, after_percent, search) else {
-        literal.push('%');
-        return after_percent;
-    };
-
-    push_literal(segments, literal);
-    segments.push(Segment::Directive {
-        field: field.to_owned(),
-        conversion,
-    });
-    end
-}
-
-/// Parse the directive whose opening parenthesis is at `open`.
-///
-/// Returns the field name, the conversion, and the offset just past the
-/// conversion character when the directive is supported.
-fn parse_directive<'a>(
+/// Working state for compiling one format string.
+struct Compiler<'a> {
+    /// Format text being compiled.
     format: &'a str,
-    open: usize,
-    search: &mut ClosingParenthesisSearch,
-) -> Option<(&'a str, Conversion, usize)> {
-    if !format[open..].starts_with('(') {
-        return None;
-    }
-
-    let close = search.find(format, open + 1)?;
-    let conversion_start = close + 1;
-    let conversion_char = format[conversion_start..].chars().next()?;
-    let conversion = Conversion::from_char(conversion_char)?;
-    Some((
-        &format[open + 1..close],
-        conversion,
-        conversion_start + conversion_char.len_utf8(),
-    ))
+    /// Literal text not yet flushed into `segments`.
+    literal: String,
+    /// Compiled segments, in output order.
+    segments: Vec<Segment>,
+    /// Search state reused across closing-parenthesis lookups.
+    search: ClosingParenthesisSearch,
+    /// Offset to resume scanning from.
+    cursor: usize,
 }
 
-/// Move buffered literal text into `segments` when it is non-empty.
-fn push_literal(segments: &mut Vec<Segment>, literal: &mut String) {
-    if !literal.is_empty() {
-        segments.push(Segment::Literal(std::mem::take(literal)));
+impl<'a> Compiler<'a> {
+    /// Start compiling `format` with empty output.
+    fn new(format: &'a str) -> Self {
+        Self {
+            format,
+            literal: String::new(),
+            segments: Vec::new(),
+            search: ClosingParenthesisSearch::default(),
+            cursor: 0,
+        }
+    }
+
+    /// Compile the whole format, returning its segments in output order.
+    fn run(mut self) -> Vec<Segment> {
+        while let Some(relative) = self.format[self.cursor..].find('%') {
+            let percent = self.cursor + relative;
+            self.literal.push_str(&self.format[self.cursor..percent]);
+            self.cursor = self.consume_percent(percent);
+        }
+
+        self.literal.push_str(&self.format[self.cursor..]);
+        self.flush_literal();
+        self.segments
+    }
+
+    /// Consume the `%` at `percent`, returning the offset to resume scanning from.
+    fn consume_percent(&mut self, percent: usize) -> usize {
+        let after_percent = percent + 1;
+
+        // `%%` is an escaped percent sign, not a directive terminator.
+        if self.format[after_percent..].starts_with('%') {
+            self.literal.push('%');
+            return after_percent + 1;
+        }
+
+        let Some((field, conversion, end)) = self.parse_directive(after_percent) else {
+            self.literal.push('%');
+            return after_percent;
+        };
+
+        self.flush_literal();
+        self.segments.push(Segment::Directive {
+            field: field.to_owned(),
+            conversion,
+        });
+        end
+    }
+
+    /// Parse the directive whose opening parenthesis is at `open`.
+    ///
+    /// Returns the field name, the conversion, and the offset just past the
+    /// conversion character when the directive is supported.
+    fn parse_directive(&mut self, open: usize) -> Option<(&'a str, Conversion, usize)> {
+        if !self.format[open..].starts_with('(') {
+            return None;
+        }
+
+        let close = self.search.find(self.format, open + 1)?;
+        let conversion_start = close + 1;
+        let conversion_char = self.format[conversion_start..].chars().next()?;
+        let conversion = Conversion::from_char(conversion_char)?;
+        Some((
+            &self.format[open + 1..close],
+            conversion,
+            conversion_start + conversion_char.len_utf8(),
+        ))
+    }
+
+    /// Move buffered literal text into `segments` when it is non-empty.
+    fn flush_literal(&mut self) {
+        if !self.literal.is_empty() {
+            self.segments
+                .push(Segment::Literal(std::mem::take(&mut self.literal)));
+        }
     }
 }
 
