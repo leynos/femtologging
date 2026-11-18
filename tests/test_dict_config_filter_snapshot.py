@@ -121,6 +121,62 @@ def test_build_filter_from_dict_rejects_without_reading_value() -> None:
     assert entry.value_reads == 0, "the factory value must never be read"
 
 
+class _MutableLevelEntry(cabc.Mapping[str, object]):
+    """Expose one ``level`` value that a later entry can change."""
+
+    def __init__(self, level: str) -> None:
+        """Start with the declarative level this entry reports."""
+        self.level = level
+
+    @typ.override
+    def __getitem__(self, key: str) -> object:
+        """Return the current level."""
+        return self.level
+
+    @typ.override
+    def __iter__(self) -> cabc.Iterator[str]:
+        """Iterate the single declarative key."""
+        return iter(("level",))
+
+    @typ.override
+    def __len__(self) -> int:
+        """Report the single configured key."""
+        return 1
+
+
+class _MutatingEntry(_MutableLevelEntry):
+    """Change another entry when declarative-only mode reaches this one."""
+
+    def __init__(self, target: _MutableLevelEntry) -> None:
+        """Hold the entry to change, reporting an INFO level itself."""
+        super().__init__("INFO")
+        self._target = target
+
+    @typ.override
+    def __iter__(self) -> cabc.Iterator[str]:
+        """Change the target before returning this entry's keys."""
+        self._target.level = "ERROR"
+        return iter(("level",))
+
+
+def test_declarative_mode_constructs_from_the_entry_snapshot() -> None:
+    """A change after preflight reaches neither the snapshot nor construction."""
+    first = _MutableLevelEntry("INFO")
+    config = {
+        "version": 1,
+        "filters": {"first": first, "second": _MutatingEntry(first)},
+        "loggers": {"entry_snapshot_probe": {"filters": ["first"]}},
+        "root": {"level": "DEBUG"},
+    }
+    dictConfig(config, allow_factories=False)
+
+    app = get_logger("entry_snapshot_probe")
+    app.set_level("DEBUG")
+    assert app.log("INFO", "from snapshot") is not None, (
+        "construction must use the INFO level captured during preflight"
+    )
+
+
 def test_factory_mode_reads_each_entry_before_construction() -> None:
     """A trusted factory's change to a later entry is visible to that entry."""
     observed: list[object] = []
