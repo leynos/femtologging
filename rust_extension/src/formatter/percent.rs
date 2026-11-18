@@ -2,8 +2,10 @@
 //!
 //! A [`PercentFormatter`] compiles its format string once, at construction, so
 //! rendering a record only walks precompiled literal and directive segments.
-//! Unsupported directives are preserved literally, matching the documented
-//! behaviour for lone percent signs and unrecognized conversions.
+//! An unsupported directive keeps its leading `%` as literal text and scanning
+//! resumes after that `%`, so embedded escapes and later directives are still
+//! processed, matching the documented behaviour for lone percent signs and
+//! unrecognized conversions.
 
 mod directives;
 #[cfg(test)]
@@ -33,9 +35,10 @@ pub struct PercentFormatter {
 impl PercentFormatter {
     /// Create a formatter using `format` and an optional timestamp format.
     ///
-    /// The format string is parsed once here. An unsupported directive is kept
-    /// as literal text rather than rejected, so a malformed format degrades to
-    /// readable output instead of failing configuration.
+    /// The format string is parsed once here. An unsupported directive is not
+    /// rejected: its `%` becomes literal text and scanning resumes after it,
+    /// so a malformed format degrades to readable output instead of failing
+    /// configuration.
     ///
     /// # Examples
     ///
