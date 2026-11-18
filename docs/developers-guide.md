@@ -889,6 +889,10 @@ nothing, so it is safe to run before every gate. Installed tooling need not be
 active in every job; release, coverage and Whitaker routes deliberately exclude
 parts of the development standard, as described below.
 
+Both scripts read `BUILD_TOOLS_OS` in place of `uname -s` when it is set, so
+the installer and preflight contract tests can exercise the Linux and non-Linux
+branches without leaving the host.
+
 Before the first suite step, install the pinned toolchain and `mold` in every
 hosted Linux job that runs a test suite step, or a Make goal that reaches the
 suite: place an unconditional `setup-rust` step with `install-mold: 'true'`
@@ -907,6 +911,9 @@ auto-install, in
 [`tests/test_build_tools_probe_contract.py`](../tests/test_build_tools_probe_contract.py);
 and the Makefile's dependency, ordering and substitutability rules in
 [`tests/test_build_tools_contract.py`](../tests/test_build_tools_contract.py).
+The installer's own contract, which runs every case through both
+`bash scripts/install-build-tools.sh` and `make install-build-tools`, lives in
+[`tests/test_build_tools_installer_script_contract.py`](../tests/test_build_tools_installer_script_contract.py).
 Their machinery has modules of its own:
 [`tests/build_tools_support.py`](../tests/build_tools_support.py) builds the
 fake executables,
@@ -929,6 +936,15 @@ finds the operators that scan leaves unquoted and skips their bodies;
 classifies runners; and
 [`tests/workflow_contract_helpers.py`](../tests/workflow_contract_helpers.py)
 states the provisioning rules and consumes the other three.
+[`tests/test_workflow_contract_properties.py`](../tests/test_workflow_contract_properties.py)
+is the Hypothesis suite that checks those readers against independent models,
+and [`tests/make_contract_helpers.py`](../tests/make_contract_helpers.py)
+supplies `prerequisite_map()`, the Makeutil-backed prerequisite map.
+
+The readers take their outside inputs from the caller rather than reaching for
+them: `depends_on_preflight` accepts a prerequisite map and `workflow_jobs`
+accepts a `reusable_exists` lookup, so neither parses the Makefile nor reads
+the repository itself.
 
 The preflight runs `rustup toolchain list` and `rustup show` from `/`, so the
 repository's `rust-toolchain.toml` cannot provision or redirect the pinned
