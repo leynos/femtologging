@@ -99,6 +99,13 @@ def test_factories_support_equality() -> None:
     )
 
 
+def test_policy_differs_from_an_unrelated_object() -> None:
+    """A policy compares unequal to an object that is not a policy."""
+    assert OverflowPolicy.drop() != object(), (
+        "a policy must not equal an unrelated object"
+    )
+
+
 def test_hash_consistency() -> None:
     """Policies usable as dictionary keys expose stable hash values."""
     drop_hash = hash(OverflowPolicy.drop())
