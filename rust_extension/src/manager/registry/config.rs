@@ -42,19 +42,36 @@ pub(crate) fn stage_loggers<'a>(
     if !registry_has_room_for(named_logger_count(&mgr), additions.len()) {
         return Err(registry_full_error());
     }
-    requested_names
-        .into_iter()
-        .map(|name| {
-            let logger = match mgr.loggers.get(&name) {
-                Some(logger) => logger.clone_ref(py),
-                None => Py::new(
-                    py,
-                    FemtoLogger::with_parent(name.clone(), calculate_parent_name(&name))?,
-                )?,
-            };
-            Ok((name, logger))
-        })
-        .collect()
+    // Build the staged map by hand so a construction failure keeps the partial
+    // map alive past the read guard. Collecting here would drop the loggers
+    // built so far inside the guard, and a logger's teardown may wait for its
+    // shard or run a Python finalizer that needs the manager.
+    let mut staged = BTreeMap::new();
+    let mut construction_error = None;
+    for name in requested_names {
+        let logger = match mgr.loggers.get(&name) {
+            Some(logger) => logger.clone_ref(py),
+            None => {
+                let built = FemtoLogger::with_parent(name.clone(), calculate_parent_name(&name))
+                    .map_err(pyo3::PyErr::from)
+                    .and_then(|logger| Py::new(py, logger));
+                match built {
+                    Ok(logger) => logger,
+                    Err(error) => {
+                        construction_error = Some(error);
+                        break;
+                    }
+                }
+            }
+        };
+        staged.insert(name, logger);
+    }
+    drop(mgr);
+    if let Some(error) = construction_error {
+        drop(staged);
+        return Err(error);
+    }
+    Ok(staged)
 }
 
 /// Register the missing ancestors of a configuration's loggers.

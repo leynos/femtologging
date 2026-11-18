@@ -94,6 +94,8 @@ pub(crate) use validation::is_valid_logger_name;
 
 #[cfg(test)]
 mod manager_tests;
+#[cfg(all(test, feature = "python"))]
+mod manager_tests_lock_release;
 
 #[cfg(all(test, feature = "python"))]
 mod configuration_tests;
