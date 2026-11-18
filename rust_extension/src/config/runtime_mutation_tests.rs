@@ -1,7 +1,7 @@
 //! Unit tests for runtime mutation builders and apply semantics.
 #![cfg(all(test, feature = "python"))]
 
-use super::test_utils::{gil_and_clean_manager, prune_test_support::configured_core_logger};
+use super::test_utils::{gil_and_clean_manager, prune_test_support::configured_core_logger_after_reset};
 use super::*;
 use crate::{
     FemtoLevel, StreamHandlerBuilder,
@@ -42,8 +42,8 @@ fn same_mode_payload_conflict_has_an_accurate_error() {
 
 #[rstest]
 #[serial]
-fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn append_handler_preserves_existing_handler_arc(configured_core_logger_after_reset: Result<(), ConfigError>) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         let before = handler_ptrs(&logger.borrow(py));
@@ -70,9 +70,9 @@ fn append_handler_preserves_existing_handler_arc(configured_core_logger: Result<
 #[rstest]
 #[serial]
 fn concurrent_applies_preserve_both_handler_updates(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     let start = Arc::new(Barrier::new(3));
     let first = RuntimeConfigBuilder::new()
@@ -123,8 +123,8 @@ fn concurrent_applies_preserve_both_handler_updates(
 
 #[rstest]
 #[serial]
-fn replace_filters_changes_live_filtering(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn replace_filters_changes_live_filtering(configured_core_logger_after_reset: Result<(), ConfigError>) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         assert!(
@@ -160,9 +160,9 @@ fn replace_filters_changes_live_filtering(configured_core_logger: Result<(), Con
 #[rstest]
 #[serial]
 fn unknown_removed_handler_preserves_existing_state(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
     Python::attach(|py| {
         let logger = manager::get_logger(py, "core").expect("logger should exist");
         let before = handler_ptrs(&logger.borrow(py));

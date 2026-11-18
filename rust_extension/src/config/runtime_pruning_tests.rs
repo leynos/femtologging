@@ -10,7 +10,7 @@ use super::{
     ConfigBuilder, ConfigError, LoggerConfigBuilder, LoggerMutationBuilder, RuntimeConfigBuilder,
     test_utils::{
         gil_and_clean_manager,
-        prune_test_support::{configured_core_logger, published_filters, published_handlers},
+        prune_test_support::{configured_core_logger_after_reset, published_filters, published_handlers},
     },
 };
 use crate::{
@@ -23,8 +23,8 @@ use serial_test::serial;
 
 #[rstest]
 #[serial]
-fn unused_definition_rejected_before_build(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn unused_definition_rejected_before_build(configured_core_logger_after_reset: Result<(), ConfigError>) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
     let dir = tempfile::tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("orphan.log");
 
@@ -55,8 +55,8 @@ fn unused_definition_rejected_before_build(configured_core_logger: Result<(), Co
 
 #[rstest]
 #[serial]
-fn unused_filter_definition_rejected_before_build(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn unused_filter_definition_rejected_before_build(configured_core_logger_after_reset: Result<(), ConfigError>) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     let err = RuntimeConfigBuilder::new()
         .with_filter(
@@ -80,8 +80,8 @@ fn unused_filter_definition_rejected_before_build(configured_core_logger: Result
 
 #[rstest]
 #[serial]
-fn empty_mutation_leaves_registries_unchanged(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn empty_mutation_leaves_registries_unchanged(configured_core_logger_after_reset: Result<(), ConfigError>) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         let before_handlers = published_handlers();
@@ -107,9 +107,9 @@ fn empty_mutation_leaves_registries_unchanged(configured_core_logger: Result<(),
 #[rstest]
 #[serial]
 fn define_and_attach_in_one_transaction_publishes_definition(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         RuntimeConfigBuilder::new()
@@ -132,9 +132,9 @@ fn define_and_attach_in_one_transaction_publishes_definition(
 #[rstest]
 #[serial]
 fn removing_last_handler_reference_prunes_definition(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         RuntimeConfigBuilder::new()
@@ -185,8 +185,8 @@ fn removing_one_of_two_references_keeps_definition() {
 
 #[rstest]
 #[serial]
-fn detaching_and_redefining_same_id_is_rejected(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn detaching_and_redefining_same_id_is_rejected(configured_core_logger_after_reset: Result<(), ConfigError>) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         let err = RuntimeConfigBuilder::new()
@@ -279,9 +279,9 @@ fn handler_filter_definition_survives_only_while_its_handler_is_attached() {
 #[rstest]
 #[serial]
 fn unknown_definition_id_takes_precedence_over_unreachable_rejection(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         let err = RuntimeConfigBuilder::new()
