@@ -269,10 +269,11 @@ package-cache lock at all. `tests/test_env_access_policy_contract.py` now puts
 a recording fake `cargo` first on `PATH` (defined in
 `tests/env_policy_lane_support.py`). Make, uv and the lane driver still run for
 real, and the test judges exact ordered argument arrays, the named failure
-message, and a standard-error sentinel the fake writes once per lane. Requiring
-the sentinel once per lane proves that the driver forwards each lane's
-diagnostics rather than swallowing them. The fake compiles nothing, so the
-contract can no longer wait on a co-scheduled resolve.
+message, and a standard-error sentinel that names its lane and is written once
+per lane. Requiring each lane's own sentinel proves that the driver forwards
+every lane's diagnostics rather than swallowing one and repeating another. The
+fake compiles nothing, so the contract can no longer wait on a co-scheduled
+resolve.
 
 Validated on 2026-11-09, with `flock -x ~/.cargo/.package-cache` holding the
 lock: `cargo metadata --format-version 1` printed

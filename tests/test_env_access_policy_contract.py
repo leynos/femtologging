@@ -38,8 +38,8 @@ from tests.env_policy_lane_support import (
     MAKE_TIMEOUT_SECONDS,
     FakeCargo,
     captured_output,
-    diagnostic_count,
     expected_invocation,
+    lane_diagnostics,
     policy_defaults,
     recorded_invocations,
     run_policy_target,
@@ -347,7 +347,10 @@ def test_a_failing_lane_fails_the_policy_target(fake_cargo: FakeCargo) -> None:
         "the driver must name the rejected lane and its status\n"
         f"{captured_output(failing_lane)}"
     )
-    assert diagnostic_count(failing_lane) == 2, (
+    assert lane_diagnostics(failing_lane, ("none", "python")) == {
+        "none": 1,
+        "python": 1,
+    }, (
         "each lane's diagnostics must reach the caller before the failure\n"
         f"{captured_output(failing_lane)}"
     )
@@ -376,7 +379,7 @@ def test_accepting_lanes_pass_the_policy_target(fake_cargo: FakeCargo) -> None:
         f"lint-env-policy must succeed when every lane passes\n"
         f"{captured_output(passing_lane)}"
     )
-    assert diagnostic_count(passing_lane) == len(lanes), (
+    assert lane_diagnostics(passing_lane, lanes) == dict.fromkeys(lanes, 1), (
         "every lane's diagnostics must reach the caller\n"
         f"{captured_output(passing_lane)}"
     )

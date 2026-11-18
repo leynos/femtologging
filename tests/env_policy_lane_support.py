@@ -5,8 +5,8 @@ propagation and exact argument order through the real Make → uv → lane-drive
 boundary. Cargo itself is replaced: the accepting `none` lane once waited 420
 seconds on Cargo's package-cache lock before reporting anything ([#537]), and
 that wait measures another job's build rather than this repository's policy.
-The fake records each invocation, writes a standard-error diagnostic, and fails
-only the lane a test names.
+The fake records each invocation, writes a standard-error diagnostic naming the
+lane it serves, and fails only the lane a test names.
 """
 
 from __future__ import annotations
@@ -39,16 +39,22 @@ _FAKE_CARGO_LAUNCHER: typ.Final = f"""#!/bin/sh
 exec {shlex.quote(sys.executable)} "$(dirname "$0")/cargo_runner.py" "$@"
 """
 
-#: A line every fake Cargo run writes to standard error. The contract asserts
-#: that it reaches the caller once per lane, so a driver that swallowed a
-#: lane's diagnostics would fail the test instead of passing silently.
-FAKE_CARGO_DIAGNOSTIC: typ.Final = "fake cargo: policy lane diagnostic"
+#: The prefix of a line every fake Cargo run writes to standard error. The
+#: lane name follows it, so the contract can prove that *each* lane's
+#: diagnostics reached the caller. A shared, lane-less sentence would be
+#: satisfied by the same lane's line repeated, which does not show that the
+#: driver forwards every lane.
+FAKE_CARGO_DIAGNOSTIC_PREFIX: typ.Final = "fake cargo: policy lane diagnostic for"
+
+#: The full diagnostic line, with `{}` standing in for the lane name. Spelled
+#: out here so the generated stand-in can print it without a nested f-string.
+_LANE_DIAGNOSTIC_FORMAT: typ.Final = f"{FAKE_CARGO_DIAGNOSTIC_PREFIX} {{}}"
 
 #: The fake Cargo program. It records every argument vector as one JSON array
-#: per line, writes `FAKE_CARGO_DIAGNOSTIC` to standard error, derives the lane
-#: from the driver's own flags, and rejects at most the lane named by
-#: `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's failed compile so the
-#: driver has a real failure to propagate.
+#: per line, writes a `_LANE_DIAGNOSTIC_FORMAT` line naming the lane to
+#: standard error, derives the lane from the driver's own flags, and rejects at
+#: most the lane named by `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's
+#: failed compile so the driver has a real failure to propagate.
 _FAKE_CARGO_RUNNER: typ.Final = f"""# Recording Cargo stand-in; see
 # tests/env_policy_lane_support.py for the contract it serves.
 import json
@@ -59,14 +65,14 @@ arguments = sys.argv[1:]
 with open(os.environ["FAKE_CARGO_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(arguments) + "\\n")
 
-print({FAKE_CARGO_DIAGNOSTIC!r}, file=sys.stderr)
-
 if "--all-features" in arguments:
     lane = "all"
 elif "--features" in arguments:
     lane = arguments[arguments.index("--features") + 1]
 else:
     lane = "none"
+
+print({_LANE_DIAGNOSTIC_FORMAT!r}.format(lane), file=sys.stderr)
 
 raise SystemExit(101 if lane == os.environ.get("FAKE_CARGO_REJECT") else 0)
 """
@@ -227,12 +233,21 @@ def captured_output(completed: subprocess.CompletedProcess[str]) -> str:
     return f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
 
 
-def diagnostic_count(completed: subprocess.CompletedProcess[str]) -> int:
-    """Return how many lane diagnostics reached the caller's captured output.
+def lane_diagnostics(
+    completed: subprocess.CompletedProcess[str], lanes: Tokens
+) -> dict[str, int]:
+    """Return how many times each lane's diagnostic reached the caller.
+
+    Counting per lane rather than in total is what rules out a driver that
+    forwards one lane's line twice and drops another's: the total would still
+    match, but the lane that was dropped would report zero.
 
     Returns
     -------
-    int
-        The number of times the fake's standard-error sentinel appears.
+    dict[str, int]
+        One count per requested lane, keyed by lane name.
     """
-    return captured_output(completed).count(FAKE_CARGO_DIAGNOSTIC)
+    output = captured_output(completed)
+    return {
+        lane: output.count(f"{FAKE_CARGO_DIAGNOSTIC_PREFIX} {lane}\n") for lane in lanes
+    }
