@@ -35,6 +35,8 @@ mod capacity;
 #[cfg(feature = "python")]
 mod config;
 
+#[cfg(all(test, feature = "python"))]
+pub(crate) use config::build_batch;
 #[cfg(feature = "python")]
 pub(crate) use config::{AncestorRegistrationError, register_missing_ancestors, stage_loggers};
 
@@ -385,7 +387,11 @@ pub fn reset_manager() {
         std::mem::take(&mut mgr.loggers)
     };
     #[cfg(feature = "python")]
-    drop(displaced_runtime);
+    // Destroy the snapshot with the interpreter detached: a file handler's
+    // destructor closes and waits for completion, and holding the GIL across
+    // that wait stalls unrelated Python threads. The configuration commit's
+    // refusal path disposes of displaced state the same way.
+    Python::attach(|py| py.detach(move || drop(displaced_runtime)));
     // Dropping the loggers outside the registry lock may wait for queued
     // records, so refresh the facade maximum only after that drain.
     drop(loggers);

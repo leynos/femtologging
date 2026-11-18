@@ -20,6 +20,7 @@ first would let the marker stand for a re-entry that never happened.
 
 from __future__ import annotations
 
+import os
 import subprocess  # ruff: ignore[suspicious-subprocess-import] fixed argv, no shell
 import sys
 from pathlib import Path
@@ -87,7 +88,9 @@ def run_reentrant_finalizer_script(
         result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed argv, no shell
             [sys.executable, str(script)],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_child_environment(),
             timeout=timeout,
             check=False,
         )
@@ -115,6 +118,23 @@ def run_reentrant_finalizer_script(
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
         raise AssertionError(message)
+
+
+def _child_environment() -> dict[str, str]:
+    """Return the child's environment with a fixed standard-stream encoding.
+
+    The parent decodes the child's output as UTF-8 so it can compare the
+    marker. An inherited ``PYTHONIOENCODING`` could make the child encode its
+    streams differently, so the child is given an explicit value instead.
+
+    Returns
+    -------
+    dict[str, str]
+        The parent's environment with ``PYTHONIOENCODING`` fixed to UTF-8.
+    """
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return environment
 
 
 def _as_text(output: str | bytes | None) -> str:

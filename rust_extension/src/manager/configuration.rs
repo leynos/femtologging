@@ -183,10 +183,10 @@ pub(crate) fn commit_configuration(
         // or join a worker. Release the manager lock, then the GIL, before
         // those resources are torn down; dropping them under either would
         // deadlock a worker that needs the lock or the interpreter.
-        let AncestorRegistrationError { error, partial } = refusal;
+        let AncestorRegistrationError { error, built } = refusal;
         drop(manager);
         drop(transaction);
-        py.detach(move || drop((loggers, handler_registry, filter_registry, partial)));
+        py.detach(move || drop((loggers, handler_registry, filter_registry, built)));
         return Err(error);
     }
 

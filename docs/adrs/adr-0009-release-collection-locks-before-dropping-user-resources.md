@@ -26,6 +26,17 @@ issue #448 for `clear_handlers`, the same shape appeared in `remove_handler`,
 mutation, and in the manager's reset and runtime-replacement paths, where the
 dropped value can be a logger, a handler or a filter.
 
+The removal paths are not equally exposed. `remove_filter` is the mildest:
+naming the filter to remove requires the caller to hold an `Arc` to it, so the
+call cannot destroy the last owner, and the rule applies only because the
+collection's reference must still leave the guarded scope. `remove_handler` can
+destroy the last owner: the handler the caller names stays alive, but the
+removed attachment may own the last reference to its filter chain, and dropping
+that chain in place would run its finalizers under the write lock. The
+handler-removal regression test therefore puts its probe in the attachment's
+filter chain, where a last-owner drop actually occurs; a probe that only
+observes the named handler cannot fail on that regression.
+
 The hazard is not limited to Python. A native handler's destructor may flush or
 join its worker thread, and a worker that needs the same lock deadlocks the
 same way. Python only makes the re-entry easy to observe.
