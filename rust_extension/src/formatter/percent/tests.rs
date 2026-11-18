@@ -6,6 +6,7 @@ use std::{
 };
 
 use proptest::prelude::*;
+use rstest::rstest;
 
 use crate::{
     exception_schema::{ExceptionPayload, StackFrame, StackTracePayload},
@@ -93,24 +94,15 @@ fn compiles_literals_and_directives_once() {
     );
 }
 
-#[test]
-fn preserves_directive_without_conversion_character() {
-    assert_eq!(render("%(message)"), "%(message)");
-}
-
-#[test]
-fn continues_after_malformed_directive() {
-    assert_eq!(render("%x %(message)s"), "%x hello");
-}
-
-#[test]
-fn continues_after_non_ascii_unsupported_conversion() {
-    assert_eq!(render("%(message)é %(message)s"), "%(message)é hello");
-}
-
-#[test]
-fn continues_after_invalid_conversion_to_render_later_directives() {
-    assert_eq!(render("%(nope)q %(message)s"), "%(nope)q hello");
+/// Unsupported starts are copied up to their `%`, then scanning resumes.
+#[rstest]
+#[case::missing_conversion_character("%(message)", "%(message)")]
+#[case::missing_opening_parenthesis("%x %(message)s", "%x hello")]
+#[case::non_ascii_conversion("%(message)é %(message)s", "%(message)é hello")]
+#[case::unsupported_conversion("%(nope)q %(message)s", "%(nope)q hello")]
+#[case::escape_inside_rejected_directive("%(bad%%)q", "%(bad%)q")]
+fn continues_after_unsupported_starts(#[case] format: &str, #[case] expected: &str) {
+    assert_eq!(render(format), expected);
 }
 
 #[test]
