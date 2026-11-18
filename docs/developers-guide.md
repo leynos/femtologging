@@ -236,6 +236,15 @@ configuration is built by
 [`typos-config-builder`](https://github.com/leynos/typos-config-builder), which
 `TYPOS_CONFIG_BUILDER` in the `Makefile` pins to release `v0.1.3`.
 
+The builder requires Python 3.14 or newer, so `TYPOS_CONFIG_BUILDER` pins
+`--python 3.14` as well. `uvx` otherwise honours `UV_PYTHON`, which the hosted
+matrix exports for each lane it tests, and the 3.12 and 3.13 lanes would hand
+the builder an interpreter it refuses; an explicit `--python` outranks the
+variable. Keep the pin when the matrix changes, and keep it in the standalone
+command below so the two invocations stay identical. The decision, and the
+alternatives that were rejected, are recorded in
+[ADR 0010](adrs/adr-0010-spelling-config-builder.md).
+
 - `make spelling` runs the pinned `typos-config-builder gate`. The gate
   refreshes the shared en-GB-oxendict dictionary from
   `leynos/agent-helper-scripts` on its `main` branch, merges the repository
@@ -274,7 +283,8 @@ when a shared pattern is too broad for this repository. Run the gate directly
 to regenerate the file after changing the overlay:
 
 ```shell
-uvx --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" \
+uvx --python 3.14 \
+  --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" \
   typos-config-builder gate
 ```
 
