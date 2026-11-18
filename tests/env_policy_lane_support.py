@@ -52,6 +52,11 @@ CONTRACT_TIMEOUT_SECONDS: typ.Final = MAKE_TIMEOUT_SECONDS + 60
 #: see. A measured run must therefore start without any of them.
 _MAKE_CONTROL_VARIABLES: typ.Final = ("MAKEFLAGS", "GNUMAKEFLAGS", "MAKEFILES")
 
+#: The variable a test exports to prove its environment reached the child. Only
+#: an injected parent can supply this value, so finding it in the stand-in's
+#: record distinguishes the caller's mapping from this process's environment.
+MARKER_VARIABLE: typ.Final = "FAKE_CARGO_MARKER"
+
 #: The `cargo` executable. A shell launcher names the interpreter instead of a
 #: `#!` line doing so, because a deep virtualenv path can outgrow the kernel's
 #: shebang limit and the fake would then fail before recording anything. The
@@ -71,19 +76,48 @@ FAKE_CARGO_DIAGNOSTIC_PREFIX: typ.Final = "fake cargo: policy lane diagnostic fo
 #: out here so the generated stand-in can print it without a nested f-string.
 _LANE_DIAGNOSTIC_FORMAT: typ.Final = f"{FAKE_CARGO_DIAGNOSTIC_PREFIX} {{}}"
 
-#: The fake Cargo program. It records every argument vector as one JSON array
-#: per line, writes a `_LANE_DIAGNOSTIC_FORMAT` line naming the lane to
-#: standard error, derives the lane from the driver's own flags, and rejects at
-#: most the lane named by `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's
-#: failed compile so the driver has a real failure to propagate. It also
-#: records the control variables a test may have injected, which is how the
-#: contract proves the child received that environment. Only those names are
-#: copied, so no credential or unrelated path reaches the fixture directory.
-_FAKE_CARGO_RUNNER: typ.Final = f"""# Recording Cargo stand-in; see
+
+def _observed_environment_names() -> Tokens:
+    """Return the variable names the stand-in records, in a stable order.
+
+    The record is an allow-list rather than a prefix filter: the `?=` names
+    come from the Makefile, the marker and Make's controls are named here, and
+    nothing else in the child's environment is copied to the fixture directory.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The names to copy from the child's environment.
+    """
+    return (
+        *environment_overridable_variables(),
+        MARKER_VARIABLE,
+        *_MAKE_CONTROL_VARIABLES,
+    )
+
+
+def _fake_cargo_runner(observed_names: Tokens) -> str:
+    """Return the recording Cargo stand-in's source.
+
+    It logs each argument vector, writes a `_LANE_DIAGNOSTIC_FORMAT` line naming
+    the lane to standard error, derives the lane from the driver's own flags,
+    rejects at most the lane named by `FAKE_CARGO_REJECT`, and records
+    `observed_names`. Exit status 101 mirrors Cargo's failed compile so the
+    driver has a real failure to propagate.
+
+    Returns
+    -------
+    str
+        The program source, with the allow-list embedded as a literal.
+    """
+    allow_list = json.dumps(list(observed_names))
+    return f"""# Recording Cargo stand-in; see
 # tests/env_policy_lane_support.py for the contract it serves.
 import json
 import os
 import sys
+
+OBSERVED_NAMES = {allow_list}
 
 arguments = sys.argv[1:]
 with open(os.environ["FAKE_CARGO_LOG"], "a", encoding="utf-8") as log:
@@ -92,10 +126,7 @@ with open(os.environ["FAKE_CARGO_LOG"], "a", encoding="utf-8") as log:
 environment_log = os.environ.get("FAKE_CARGO_ENVIRONMENT_LOG")
 if environment_log is not None:
     observed = {{
-        name: value
-        for name, value in os.environ.items()
-        if name.startswith(("FAKE_CARGO_", "ENV_POLICY_"))
-        or name in {{"MAKEFLAGS", "GNUMAKEFLAGS", "MAKEFILES"}}
+        name: os.environ[name] for name in OBSERVED_NAMES if name in os.environ
     }}
     with open(environment_log, "a", encoding="utf-8") as log:
         log.write(json.dumps(observed) + "\\n")
@@ -136,7 +167,7 @@ def write_fake_cargo(directory: Path) -> FakeCargo:
     binary_directory = directory / "bin"
     binary_directory.mkdir()
     (binary_directory / "cargo_runner.py").write_text(
-        _FAKE_CARGO_RUNNER, encoding="utf-8"
+        _fake_cargo_runner(_observed_environment_names()), encoding="utf-8"
     )
     executable = binary_directory / "cargo"
     executable.write_text(_FAKE_CARGO_LAUNCHER, encoding="utf-8")
@@ -166,9 +197,9 @@ def recorded_child_environments(fake: FakeCargo) -> tuple[dict[str, str], ...]:
     Returns
     -------
     tuple[dict[str, str], ...]
-        One mapping per invocation, holding the `FAKE_CARGO_` and
-        `ENV_POLICY_` variables and Make's control variables that run saw. A
-        name the run did not receive is absent, not empty.
+        One mapping per invocation, holding the Makefile's `?=` names, the
+        marker variable and Make's control variables that run saw. A name the
+        run did not receive is absent, not empty.
     """
     if not fake.environment_log.exists():
         return ()
@@ -206,13 +237,16 @@ def expected_invocation(
     tuple[str, ...]
         Every argument after the `cargo` executable name, in order.
     """
+    # `--` separates Cargo's own flags from the arguments meant for Clippy, so
+    # it exists only when there are Clippy arguments to separate.
+    lint_separator: Tokens = ("--",) if lint_args else ()
     return (
         "clippy",
         "--manifest-path",
         manifest,
         *lane_selection(lane),
         *cargo_args,
-        "--",
+        *lint_separator,
         *lint_args,
     )
 
@@ -270,15 +304,21 @@ def run_policy_target(
         If `make` is not on the `PATH` of the environment being run.
     subprocess.TimeoutExpired
         If the target outlives `MAKE_TIMEOUT_SECONDS`; its process group is
-        killed first, so no descendant keeps running against the fixture.
+        killed and reaped first, so no descendant keeps running against the
+        fixture.
+    KeyboardInterrupt
+        If the caller is interrupted; the process group is killed and reaped
+        before the interruption propagates, for the same reason.
     """
     environment = dict(os.environ if parent_environment is None else parent_environment)
     # A `?=` Make variable takes the environment's value in preference to the
     # Makefile's, and the child inherits this process's environment. Clearing
-    # every such name keeps the run on the defaults the contract reads from
-    # the Makefile: an exported `CARGO` would bypass the fake, and an exported
-    # `ENV_POLICY_FEATURE_LANES` would change which lanes run. Command-line
-    # overrides still apply after removal, because make ranks them above both.
+    # every such name keeps the run on the defaults the contract reads from the
+    # Makefile: an exported `ENV_POLICY_FEATURE_LANES` would change which lanes
+    # run, and an exported `ENV_POLICY_LINT_ARGS` would change what Clippy is
+    # asked to do. Command-line overrides still apply after removal, because
+    # make ranks them above both. `CARGO` is `?=` too, but no recipe here
+    # expands `$(CARGO)`, so the fake wins on `PATH` regardless.
     for name in environment_overridable_variables():
         environment.pop(name, None)
     # Make's own controls are a different leak: `MAKEFLAGS=-i` would make the
@@ -318,11 +358,12 @@ def run_policy_target(
     ) as process:
         try:
             stdout, stderr = process.communicate(timeout=MAKE_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
             # `make` starts uv and the lane driver as descendants. Killing only
             # the direct child would leave them running, still holding this
-            # run's directory and log, so signal the whole group before
-            # re-raising.
+            # run's directory and log, so signal the whole group and reap it
+            # before re-raising, whether the wait expired or the caller
+            # interrupted the test.
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate()
             raise

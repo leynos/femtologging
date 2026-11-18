@@ -27,6 +27,7 @@ import pytest
 
 from tests.env_policy_lane_support import (
     CONTRACT_TIMEOUT_SECONDS,
+    MARKER_VARIABLE,
     FakeCargo,
     captured_output,
     lane_diagnostics,
@@ -79,10 +80,10 @@ def assert_marker_reached_child(fake_cargo: FakeCargo) -> None:
     """
     received = recorded_child_environments(fake_cargo)
     assert received, "the fake must record the environment it ran with"
-    markers = {seen.get("FAKE_CARGO_MARKER") for seen in received}
-    assert markers == {INHERITED_MARKER}, (
+    markers = [seen.get(MARKER_VARIABLE) for seen in received]
+    assert set(markers) == {INHERITED_MARKER}, (
         "every run must see the injected parent's marker, and only that one\n"
-        f"recorded: {received!r}"
+        f"recorded markers: {markers!r}"
     )
 
 
@@ -99,7 +100,7 @@ def test_accepting_lanes_ignore_an_inherited_rejection(fake_cargo: FakeCargo) ->
     """
     parent = inherited_environment(
         FAKE_CARGO_REJECT=INHERITED_REJECTION,
-        FAKE_CARGO_MARKER=INHERITED_MARKER,
+        **{MARKER_VARIABLE: INHERITED_MARKER},
     )
     passing_lane = run_policy_target(fake_cargo, parent_environment=parent)
     assert parent["FAKE_CARGO_REJECT"] == INHERITED_REJECTION, (
@@ -126,7 +127,7 @@ def test_inherited_make_variables_keep_the_makefile_defaults(
     """
     parent = inherited_environment(
         ENV_POLICY_FEATURE_LANES=INHERITED_LANES,
-        FAKE_CARGO_MARKER=INHERITED_MARKER,
+        **{MARKER_VARIABLE: INHERITED_MARKER},
     )
     lanes = variable_tokens("ENV_POLICY_FEATURE_LANES")
     completed = run_policy_target(fake_cargo, parent_environment=parent)
@@ -158,7 +159,9 @@ def test_inherited_makeflags_cannot_silence_a_rejected_lane(
     rejected lane still fails the target. With the flag in place the target
     would exit 0 and the contract would report a passing run.
     """
-    parent = inherited_environment(MAKEFLAGS="-i", FAKE_CARGO_MARKER=INHERITED_MARKER)
+    parent = inherited_environment(
+        MAKEFLAGS="-i", **{MARKER_VARIABLE: INHERITED_MARKER}
+    )
     failed_lane = run_policy_target(
         fake_cargo, *FAILING_OVERRIDES, reject=REJECTED_LANE, parent_environment=parent
     )
