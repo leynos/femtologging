@@ -2,10 +2,11 @@
 
 A release wheel and a default-feature Rust consumer must both be unable to see
 the helpers that exist only for tests. The wheel probe inspects the imported
-native module, the ``FemtoLogger`` type and the shipped type stub. The Rust
-probes compile a tiny consumer twice: once against the production API as a
-control, and once against ``TestConfig`` and ``with_writer_for_test``, which
-must fail to resolve when ``test-util`` is absent.
+native module, the ``FemtoLogger`` type and the shipped type stub. Three Rust
+probes compile tiny consumers against the default features: one control that
+names only the production API, and one each for ``TestConfig`` and
+``with_writer_for_test``. The control must compile; each negative probe has a
+single expected seam, so one resolution error cannot mask the other.
 """
 
 from __future__ import annotations
@@ -201,6 +202,42 @@ def test_default_feature_build_accepts_production_api(tmp_path: pth.Path) -> Non
     )
 
 
+def _assert_negative_probe_fails_on(
+    result: subprocess.CompletedProcess[str], symbol: str
+) -> None:
+    """Require *result* to fail only because *symbol* is unavailable.
+
+    Parameters
+    ----------
+    result:
+        Completed ``cargo check`` for a negative probe.
+    symbol:
+        The test-only item the probe names and the diagnostics must mention.
+
+    Examples
+    --------
+    >>> diagnostic = {
+    ...     "reason": "compiler-message",
+    ...     "message": {
+    ...         "level": "error",
+    ...         "code": {"code": "E0432"},
+    ...         "rendered": "no `TestConfig` in the root",
+    ...     },
+    ... }
+    >>> result = subprocess.CompletedProcess([], 1, json.dumps(diagnostic), "")
+    >>> _assert_negative_probe_fails_on(result, "TestConfig")
+    """
+    errors = _compiler_errors(result.stdout)
+    assert errors, f"cargo reported no compiler errors:\n{result.stderr}"
+    unexpected = {code for code, _ in errors} - _ALLOWED_NEGATIVE_ERROR_CODES
+    assert not unexpected, (
+        "the probe failed for reasons other than unresolved names: "
+        f"{sorted(unexpected)}"
+    )
+    rendered = "\n".join(text for _, text in errors)
+    assert symbol in rendered, f"the probe must fail on `{symbol}`"
+
+
 @pytest.mark.timeout(1800)
 def test_default_feature_build_rejects_test_only_api(tmp_path: pth.Path) -> None:
     """A default-feature consumer cannot name the test-only Rust seams."""
@@ -210,16 +247,18 @@ def test_default_feature_build_rejects_test_only_api(tmp_path: pth.Path) -> None
         "the test-only probe compiled under default features, so a test seam "
         "leaked into the production API"
     )
-    errors = _compiler_errors(result.stdout)
-    assert errors, f"cargo reported no compiler errors:\n{result.stderr}"
-    codes = {code for code, _ in errors}
-    unexpected = codes - _ALLOWED_NEGATIVE_ERROR_CODES
-    assert not unexpected, (
-        "the probe failed for reasons other than unresolved names: "
-        f"{sorted(unexpected)}"
+    _assert_negative_probe_fails_on(result, "TestConfig")
+
+
+@pytest.mark.timeout(1800)
+def test_default_feature_build_rejects_test_only_constructor(
+    tmp_path: pth.Path,
+) -> None:
+    """A default-feature consumer cannot call the test-only constructor."""
+    manifest = _prepare_probe("test_only_constructor", tmp_path)
+    result = _cargo_check(manifest)
+    assert result.returncode != 0, (
+        "the test-only constructor probe compiled under default features, so "
+        "the constructor leaked into the production API"
     )
-    rendered = "\n".join(text for _, text in errors)
-    assert "TestConfig" in rendered, "the probe must fail on the TestConfig import"
-    assert "with_writer_for_test" in rendered, (
-        "the probe must fail on the test-only constructor"
-    )
+    _assert_negative_probe_fails_on(result, "with_writer_for_test")

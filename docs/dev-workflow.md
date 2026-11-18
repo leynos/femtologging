@@ -29,8 +29,8 @@ across Python and Rust code.
   `maturin develop --features python,test-util`.
 
 - `make check-api-boundary` – build the extension, then build a release wheel
-  from the production maturin configuration and compile default-feature Rust
-  probes to prove the test-only seams stay absent. See
+  from the production maturin configuration and compile three default-feature
+  Rust probes to prove the test-only seams stay absent. See
   [Maturin build features](developers-guide.md#maturin-build-features). This
   suite is excluded from default pytest collection, and therefore from
   `make test` and the CI coverage run, because it builds its own wheel rather

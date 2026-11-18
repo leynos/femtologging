@@ -236,13 +236,15 @@ then fails before tests start if the extension omitted the hooks.
 the production configuration, installs it into a fresh virtual environment, and
 runs `scripts/release_wheel_probe.py`, which rejects any `*_for_test`,
 `_emit_rust_*`, or `_install_test_*` name in the native module, the
-`FemtoLogger` type, or the shipped stub. It then compiles two small Rust crates
-with default features: a control that names the production API, and a probe
-that must fail to resolve `TestConfig` and `with_writer_for_test()`. Default
-pytest collection ignores the module, because every local run and every CI
-coverage lane would otherwise rebuild the release wheel; the target clears that
-ignore with `-o addopts=`. The CI build-test job runs this target once rather
-than in every interpreter lane.
+`FemtoLogger` type, or the shipped stub. It then compiles three small Rust
+crates with default features: a control that names the production API, and one
+negative probe each for `TestConfig` and `with_writer_for_test()`. Each
+negative probe names a single test-only seam, so an early resolution error in
+one cannot hide a leak in the other. Default pytest collection ignores the
+module, because every local run and every CI coverage lane would otherwise
+rebuild the release wheel; the target clears that ignore with `-o addopts=`.
+The CI build-test job runs this target once rather than in every interpreter
+lane.
 
 ### Documentation example loader
 
