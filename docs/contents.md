@@ -57,6 +57,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0008-release-pipeline.md](./adrs/adr-0008-release-pipeline.md)
   - Records the attested release pipeline, production feature set and
     idempotent PyPI/GitHub Release reconciliation.
+- [adrs/adr-0009-spelling-config-builder.md](./adrs/adr-0009-spelling-config-builder.md)
+  - Records adoption of the release-pinned spelling configuration builder, the
+    live shared dictionary and the Python 3.14 interpreter pin.
 
 ## Logging Architecture
 
