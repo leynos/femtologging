@@ -90,3 +90,26 @@ def test_the_rustup_probes_cannot_auto_install(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     recorded = env_log.read_text("utf-8").splitlines()
     assert recorded == ["0", "0"], recorded
+
+
+def test_the_stub_records_into_a_directory_holding_an_apostrophe(
+    tmp_path: Path,
+) -> None:
+    """A quote in the scratch path cannot break the shell the stub is written in."""
+    scratch = tmp_path / "O'Brien"
+    scratch.mkdir()
+    options = StubOptions(
+        argv_log=scratch / "rustup-argv",
+        pwd_log=scratch / "rustup-pwd",
+        env_log=scratch / "rustup-auto-install",
+    )
+    result = run_preflight_against(scratch, installed_line(pinned_channel()), options)
+
+    assert result.returncode == 0, result.stderr
+    recorded = options.argv_log.read_text("utf-8").splitlines()
+    commands = [line.split() for line in recorded]
+    assert commands == [["show"], ["toolchain", "list"]], commands
+    directories = options.pwd_log.read_text("utf-8").splitlines()
+    assert len(directories) == 2, directories
+    auto_install = options.env_log.read_text("utf-8").splitlines()
+    assert auto_install == ["0", "0"], auto_install
