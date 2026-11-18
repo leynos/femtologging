@@ -5,6 +5,7 @@
 //! counted as dropped, so a slow handler slows the loggers sharing its shard
 //! rather than the code doing the logging.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::handler::FemtoHandlerTrait;
@@ -97,7 +98,15 @@ impl FemtoLogger {
             Err(err) => {
                 self.context_dropped_records
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                log::warn!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                // No `log` backend is installed by default, so a warning sent
+                // through the facade would be dropped and a caller that never
+                // installed the bridge would lose the only diagnostic for a
+                // record this path discards. A failed stderr write must not
+                // take down the logging path, so its result is discarded.
+                drop(writeln!(
+                    std::io::stderr(),
+                    "FemtoLogger: dropping record due to invalid context payload: {err}"
+                ));
                 return None;
             }
         }
