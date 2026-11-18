@@ -26,13 +26,13 @@ from tests.coverage_contract_helpers import (
     coverage_inputs,
     environment_name,
     jobs_named,
-    pull_request_reach,
     pushes_to,
     repository_documents,
     secret_in_env,
     steps_using,
     triggers,
 )
+from tests.coverage_reach_helpers import pull_request_reach
 from tests.runner_placement_judgement import selected_runner
 
 CI_WORKFLOW: typ.Final[str] = "ci.yml"
