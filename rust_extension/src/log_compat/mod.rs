@@ -368,6 +368,10 @@ mod tests;
 mod enabled_tests;
 
 #[cfg(test)]
+#[path = "const_eval_tests.rs"]
+mod const_eval_tests;
+
+#[cfg(test)]
 #[path = "flush_tests.rs"]
 mod flush_tests;
 
