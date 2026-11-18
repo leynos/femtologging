@@ -962,8 +962,9 @@ surfaces mature further.
 
 Configuration that carries filter factory entries (``"()"``) remains
 trusted-code-equivalent during reconfiguration: every bootstrap-shaped reload
-resolves and invokes those factories again. Reject factory entries for
-lower-trust reloads with ``allow_factories=False``; see the
+that enables factories and reaches factory construction resolves and invokes
+those factories again. Use ``allow_factories=False`` for lower-trust reloads,
+which rejects the entries before any of them runs; see the
 [filter factory trust boundary](users-guide.md#filter-factory-trust-boundary)
 and
 [runtime reconfiguration](users-guide.md#runtime-reconfiguration-and-reloads).
