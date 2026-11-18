@@ -1038,8 +1038,9 @@ covers the logger changes it stages; it does not undo side effects that
 occurred while preparing the configuration, including logger changes a factory
 makes directly.
 
-Factories run again on every `dictConfig` call, including application-managed
-reloads; see
+Factories run again on each `dictConfig` call that enables factories and
+reaches factory construction, including application-managed reloads; a call
+rejected under `allow_factories=False` runs none. See
 [Runtime reconfiguration and reloads](#runtime-reconfiguration-and-reloads).
 `fileConfig` builds its schema from INI sections and never emits `"()"` filter
 entries.
@@ -1279,13 +1280,15 @@ is reported. See
 ### Runtime reconfiguration and reloads
 
 - Repeated `dictConfig` calls use bootstrap-shaped replacement: each call
-  prepares a complete configuration and commits it atomically instead of
-  applying incremental updates.
+  prepares and atomically commits a new configuration for the loggers it
+  configures, instead of applying incremental updates. Omitted loggers are
+  handled separately by `disable_existing_loggers`: when it is `False` they
+  keep their existing handlers and filters.
 - Factory-bearing configuration stays inside the trusted-code boundary. A
-  `"()"` filter entry is resolved and invoked again on every `dictConfig` call,
-  so an application-managed reload re-runs that code with the reloaded
-  document's keys. See
-  [Filter factory trust boundary](#filter-factory-trust-boundary).
+  `"()"` filter entry is resolved and invoked again whenever a `dictConfig`
+  call reaches factory construction with factories enabled, so an
+  application-managed reload re-runs that code with the reloaded document's
+  keys. See [Filter factory trust boundary](#filter-factory-trust-boundary).
 - Call `dictConfig(config, allow_factories=False)` when a reload can receive a
   lower-trust document. That mode rejects `"()"` entries before import,
   resolution, or invocation.
