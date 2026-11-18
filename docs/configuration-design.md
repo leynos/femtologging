@@ -1102,14 +1102,16 @@ This differs from the standard library in three ways:
 
 #### Transaction limits
 
-Two side effects sit outside the atomic guarantee. Records already queued or
+Three side effects sit outside the atomic guarantee. Records already queued or
 snapshotted onto a logger before the commit are not retracted. Handler
 construction happens during preparation, so it can open a file or socket before
-a later preparation failure rejects the configuration. Factory resolution is a
-third preparation-time side effect: when a configuration carries ``"()"``
+a later preparation failure rejects the configuration. Factory resolution is
+the third preparation-time side effect: when a configuration carries ``"()"``
 filter entries, resolution imports modules and invokes configuration-selected
-callables before the commit. A rejection restores only live logger state; it
-does not undo the effects of handler construction or factory resolution. See
+callables before the commit. A rejected transaction applies none of its staged
+logger changes, but it does not restore logger state that a factory changed
+directly, nor undo the effects of handler construction or factory resolution.
+See
 [Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ### 3.2. Runtime mutation control plane

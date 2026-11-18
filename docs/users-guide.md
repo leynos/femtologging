@@ -1006,9 +1006,9 @@ builder.build_and_init()
   `handlers`, `filters`, and `propagate` (bool).
 - The parsed configuration is passed to `ConfigBuilder.build_and_init()`, so
   handler and filter validation completes before live logger state changes. A
-  failed configuration leaves the current logger configuration intact, but it
-  does not undo side effects already performed while preparing the
-  configuration.
+  failed configuration applies none of its staged logger changes, but it does
+  not undo side effects already performed while preparing it, including any
+  change a factory made directly to a live logger.
 
 #### Filter factory trust boundary
 
@@ -1034,8 +1034,9 @@ resolution, or reject factory entries outright.
 Declarative-only mode does not sandbox the rest of the configuration. Handlers
 still open files and network connections, and filters may enrich records with
 values that reach downstream systems. The atomic configuration transaction
-covers logger state; it does not undo side effects that occurred while
-preparing the configuration.
+covers the logger changes it stages; it does not undo side effects that
+occurred while preparing the configuration, including logger changes a factory
+makes directly.
 
 Factories run again on every `dictConfig` call, including application-managed
 reloads; see
