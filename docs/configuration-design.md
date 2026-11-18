@@ -1111,12 +1111,12 @@ snapshotted onto a logger before the commit are not retracted. Handler
 construction happens during the builder's preparation, so it can open a file or
 socket before a later preparation failure rejects the configuration. Factory
 resolution happens earlier still, in the Python ``dictConfig`` translation
-phase: when a configuration carries ``"()"`` filter entries, it imports modules
-and invokes configuration-selected callables before ``build_and_init()`` is
-called. The builder's preparation itself never mutates live logger state, but a
-rejected transaction applies none of its staged logger changes; it does not
-restore logger state that a factory changed directly, nor undo the effects of
-handler construction or factory resolution. See
+phase: when factories are enabled and processing reaches them, it resolves
+dotted ``"()"`` targets and invokes both dotted and direct callables before
+``build_and_init()`` is called. The builder's preparation itself never mutates
+live logger state, but a rejected transaction applies none of its staged logger
+changes; it does not restore logger state that a factory changed directly, nor
+undo the effects of handler construction or factory resolution. See
 [Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ### 3.2. Runtime mutation control plane

@@ -1903,7 +1903,8 @@ point at the new shared runtime object.
 
 Reloads that accept factory-bearing configuration remain inside the
 trusted-code boundary: ``"()"`` filter entries stay trusted-code-equivalent and
-are resolved again on each bootstrap-shaped reload. See
+are resolved and invoked again when a bootstrap-shaped reload enables factories
+and reaches factory construction. See
 [Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary)
 and
 [Runtime reconfiguration](users-guide.md#runtime-reconfiguration-and-reloads).
