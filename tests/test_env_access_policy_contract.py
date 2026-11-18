@@ -43,7 +43,6 @@ from tests.env_policy_lane_support import (
     policy_defaults,
     recorded_invocations,
     run_policy_target,
-    write_fake_cargo,
 )
 from tests.make_contract_helpers import (
     objects,
@@ -53,9 +52,6 @@ from tests.make_contract_helpers import (
     text_sequence,
     variable_tokens,
 )
-
-if typ.TYPE_CHECKING:
-    from pathlib import Path
 
 type Tokens = tuple[str, ...]
 
@@ -298,18 +294,6 @@ def test_standard_clippy_matrix_has_one_make_target() -> None:
         assert runs_target(parent, STANDARD_CLIPPY_TARGET), (
             f"{parent} must run {STANDARD_CLIPPY_TARGET}"
         )
-
-
-@pytest.fixture
-def fake_cargo(tmp_path: Path) -> FakeCargo:
-    """Install a recording `cargo` first on `PATH` and return its log path.
-
-    Returns
-    -------
-    FakeCargo
-        The directory holding the fake executable and the log it writes.
-    """
-    return write_fake_cargo(tmp_path)
 
 
 # Fake Cargo removes package-cache-lock delays (#537), so this marker only has

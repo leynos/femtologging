@@ -19,6 +19,7 @@ from femtologging import (
     LoggerConfigBuilder,
     StreamHandlerBuilder,
 )
+from tests.env_policy_lane_support import FakeCargo, write_fake_cargo
 from tests.stdlib_adapter_support import AdapterProbe, build_adapter_probe
 
 # This BDD step module is loaded as a plugin during collection, so register it
@@ -181,6 +182,21 @@ def active_exception() -> cabc.Callable[[str], AbstractContextManager[None]]:
             yield
 
     return _raise
+
+
+@pytest.fixture
+def fake_cargo(tmp_path: Path) -> FakeCargo:
+    """Install a recording `cargo` first on `PATH` and return its logs.
+
+    The executable, its argument log and its environment log are all created
+    per test, so one contract cannot see another's invocations.
+
+    Returns
+    -------
+    FakeCargo
+        The directory holding the fake executable and the logs it writes.
+    """
+    return write_fake_cargo(tmp_path)
 
 
 @pytest.fixture(autouse=True)

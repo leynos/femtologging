@@ -15,6 +15,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess  # ruff: ignore[suspicious-subprocess-import] contract tests run the real target
 import sys
 import typing as typ
@@ -45,6 +46,12 @@ MAKE_TIMEOUT_SECONDS: typ.Final = 120
 #: target is bounded the same way.
 CONTRACT_TIMEOUT_SECONDS: typ.Final = MAKE_TIMEOUT_SECONDS + 60
 
+#: GNU Make's control variables. `MAKEFLAGS` carries command-line flags such as
+#: `-i`, which would silence a rejected lane's failure, and both it and
+#: `MAKEFILES` can introduce variable assignments the Makefile parse cannot
+#: see. A measured run must therefore start without any of them.
+_MAKE_CONTROL_VARIABLES: typ.Final = ("MAKEFLAGS", "GNUMAKEFLAGS", "MAKEFILES")
+
 #: The `cargo` executable. A shell launcher names the interpreter instead of a
 #: `#!` line doing so, because a deep virtualenv path can outgrow the kernel's
 #: shebang limit and the fake would then fail before recording anything. The
@@ -68,7 +75,10 @@ _LANE_DIAGNOSTIC_FORMAT: typ.Final = f"{FAKE_CARGO_DIAGNOSTIC_PREFIX} {{}}"
 #: per line, writes a `_LANE_DIAGNOSTIC_FORMAT` line naming the lane to
 #: standard error, derives the lane from the driver's own flags, and rejects at
 #: most the lane named by `FAKE_CARGO_REJECT`. Exit status 101 mirrors Cargo's
-#: failed compile so the driver has a real failure to propagate.
+#: failed compile so the driver has a real failure to propagate. It also
+#: records the control variables a test may have injected, which is how the
+#: contract proves the child received that environment. Only those names are
+#: copied, so no credential or unrelated path reaches the fixture directory.
 _FAKE_CARGO_RUNNER: typ.Final = f"""# Recording Cargo stand-in; see
 # tests/env_policy_lane_support.py for the contract it serves.
 import json
@@ -78,6 +88,17 @@ import sys
 arguments = sys.argv[1:]
 with open(os.environ["FAKE_CARGO_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(arguments) + "\\n")
+
+environment_log = os.environ.get("FAKE_CARGO_ENVIRONMENT_LOG")
+if environment_log is not None:
+    observed = {{
+        name: value
+        for name, value in os.environ.items()
+        if name.startswith(("FAKE_CARGO_", "ENV_POLICY_"))
+        or name in {{"MAKEFLAGS", "GNUMAKEFLAGS", "MAKEFILES"}}
+    }}
+    with open(environment_log, "a", encoding="utf-8") as log:
+        log.write(json.dumps(observed) + "\\n")
 
 if "--all-features" in arguments:
     lane = "all"
@@ -97,6 +118,11 @@ class FakeCargo(typ.NamedTuple):
 
     directory: Path
     log: Path
+
+    @property
+    def environment_log(self) -> Path:
+        """The sidecar recording the environment each run received."""
+        return self.log.with_name("cargo-environments.jsonl")
 
 
 def write_fake_cargo(directory: Path) -> FakeCargo:
@@ -131,6 +157,24 @@ def recorded_invocations(log: Path) -> tuple[Tokens, ...]:
     return tuple(
         tuple(typ.cast("list[str]", json.loads(line)))
         for line in log.read_text(encoding="utf-8").splitlines()
+    )
+
+
+def recorded_child_environments(fake: FakeCargo) -> tuple[dict[str, str], ...]:
+    """Return the control variables each run received, in call order.
+
+    Returns
+    -------
+    tuple[dict[str, str], ...]
+        One mapping per invocation, holding the `FAKE_CARGO_` and
+        `ENV_POLICY_` variables and Make's control variables that run saw. A
+        name the run did not receive is absent, not empty.
+    """
+    if not fake.environment_log.exists():
+        return ()
+    return tuple(
+        typ.cast("dict[str, str]", json.loads(line))
+        for line in fake.environment_log.read_text(encoding="utf-8").splitlines()
     )
 
 
@@ -212,7 +256,8 @@ def run_policy_target(
 
     `parent_environment` replaces the process environment as the source of
     inherited variables, so a test can inject one without changing shared
-    process state. The mapping is copied and never written to.
+    process state. The mapping is copied and never written to, and `make`
+    itself is resolved against the `PATH` it supplies.
 
     Returns
     -------
@@ -222,12 +267,11 @@ def run_policy_target(
     Raises
     ------
     RuntimeError
-        If `make` is not on `PATH`.
+        If `make` is not on the `PATH` of the environment being run.
+    subprocess.TimeoutExpired
+        If the target outlives `MAKE_TIMEOUT_SECONDS`; its process group is
+        killed first, so no descendant keeps running against the fixture.
     """
-    make = shutil.which("make")
-    if make is None:
-        message = "make must be on PATH to run the policy target"
-        raise RuntimeError(message)
     environment = dict(os.environ if parent_environment is None else parent_environment)
     # A `?=` Make variable takes the environment's value in preference to the
     # Makefile's, and the child inherits this process's environment. Clearing
@@ -237,11 +281,24 @@ def run_policy_target(
     # overrides still apply after removal, because make ranks them above both.
     for name in environment_overridable_variables():
         environment.pop(name, None)
+    # Make's own controls are a different leak: `MAKEFLAGS=-i` would make the
+    # target ignore a rejected lane's exit status, and both `MAKEFLAGS` and
+    # `MAKEFILES` can carry variable assignments or include a file that
+    # defines them, which the loop above cannot see.
+    for name in _MAKE_CONTROL_VARIABLES:
+        environment.pop(name, None)
+    # Resolve `make` against the environment the child will actually get, not
+    # this process's `PATH`: an injected environment is the whole point.
+    make = shutil.which("make", path=environment.get("PATH", ""))
+    if make is None:
+        message = "make must be on PATH to run the policy target"
+        raise RuntimeError(message)
     environment["PATH"] = os.pathsep.join((
         str(fake.directory),
         environment.get("PATH", ""),
     ))
     environment["FAKE_CARGO_LOG"] = str(fake.log)
+    environment["FAKE_CARGO_ENVIRONMENT_LOG"] = str(fake.environment_log)
     # The fake reads this one, so it is not a Make variable to strip. An
     # ambient rejection could fail a lane this run expects to accept, and the
     # caller's choice always wins; see ADR-0006 on inherited variables.
@@ -250,15 +307,27 @@ def run_policy_target(
         environment["FAKE_CARGO_REJECT"] = reject
     # ruff: ignore[subprocess-without-shell-equals-true] the argument vector is
     # fixed here and the executable is resolved above
-    return subprocess.run(
+    with subprocess.Popen(
         (make, "lint-env-policy", *overrides),
         cwd=repo_root(),
         env=environment,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-        timeout=MAKE_TIMEOUT_SECONDS,
-    )
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=MAKE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            # `make` starts uv and the lane driver as descendants. Killing only
+            # the direct child would leave them running, still holding this
+            # run's directory and log, so signal the whole group before
+            # re-raising.
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise
+        returncode = process.returncode
+    return subprocess.CompletedProcess(process.args, returncode, stdout, stderr)
 
 
 def captured_output(completed: subprocess.CompletedProcess[str]) -> str:
