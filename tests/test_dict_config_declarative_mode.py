@@ -253,7 +253,6 @@ def test_declarative_mode_rejects_before_importing_factory_module(
         "    return lambda _record: True\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path))
-    original_modules = dict(sys.modules)
     try:
         config = _factory_config("declarative_guard_module.build", {})
         with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
@@ -263,8 +262,9 @@ def test_declarative_mode_rejects_before_importing_factory_module(
             "the factory module must not be left in sys.modules"
         )
     finally:
-        sys.modules.clear()
-        sys.modules.update(original_modules)
+        # Only this test's temporary module belongs to it; modules imported by
+        # unrelated code while it runs must stay in the process-wide cache.
+        sys.modules.pop("declarative_guard_module", None)
 
 
 def test_declarative_mode_rejects_before_builder_construction(
