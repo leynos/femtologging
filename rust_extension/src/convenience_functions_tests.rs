@@ -7,6 +7,7 @@ use crate::log_record::RecordMetadata;
 use crate::logger::FemtoLogger;
 use crate::test_utils::collecting_handler::CollectingHandler;
 use crate::test_utils::logging_test_helpers::unique_logger_name;
+use crate::test_utils::stderr_capture::with_captured_stderr;
 use pyo3::types::PyDict;
 use rstest::rstest;
 use std::collections::BTreeMap;
@@ -180,6 +181,43 @@ fn invalid_merged_context_drops_record(unique_logger_name: String) {
         );
         assert_eq!(logger.borrow(py).get_context_dropped(), 1);
         assert_eq!(logger.borrow(py).get_dropped(), 0);
+
+        log_context::clear_log_context_for_test();
+    });
+}
+
+#[rstest]
+fn invalid_merged_context_reports_the_drop_on_stderr(unique_logger_name: String) {
+    Python::attach(|py| {
+        let (logger, handler) = logger_with_collecting_handler(py, &unique_logger_name)
+            .expect("logger should be created");
+
+        let mut invalid_key_values = BTreeMap::new();
+        invalid_key_values.insert(String::from("oversize"), "x".repeat(1_025));
+        let metadata = RecordMetadata {
+            key_values: invalid_key_values,
+            ..Default::default()
+        };
+        let (result, stderr) = with_captured_stderr(py, || {
+            logger
+                .borrow(py)
+                .log_with_metadata(FemtoLevel::Info, "should drop", metadata)
+        });
+
+        assert!(
+            result.is_none(),
+            "invalid merged context should drop record"
+        );
+        assert!(
+            stderr.contains("dropping record due to invalid context payload"),
+            "the dropped record must be reported on stderr, got {stderr:?}"
+        );
+        assert_eq!(logger.borrow(py).get_context_dropped(), 1);
+        assert!(logger.borrow(py).flush_handlers());
+        assert!(
+            handler.collected().is_empty(),
+            "no records should be emitted when context merge fails"
+        );
 
         log_context::clear_log_context_for_test();
     });

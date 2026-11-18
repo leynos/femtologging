@@ -21,46 +21,10 @@ use rstest::rstest;
 use crate::logger::PyHandler;
 
 use super::{FlushFailure, reported};
+use crate::test_utils::stderr_capture::with_captured_stderr;
 
 /// Marker that only the raising handler's exception carries.
 const SENSITIVE_MARKER: &str = "SENSITIVE-flush-payload-7d1c";
-
-/// Run `body` with Python's `sys.stderr` replaced by a buffer.
-fn with_captured_stderr<T>(py: Python<'_>, body: impl FnOnce() -> T) -> (T, String) {
-    let contextlib = py
-        .import("contextlib")
-        .unwrap_or_else(|err| panic!("contextlib is importable: {err}"));
-    let io = py
-        .import("io")
-        .unwrap_or_else(|err| panic!("io is importable: {err}"));
-    let buffer = io
-        .getattr("StringIO")
-        .unwrap_or_else(|err| panic!("io.StringIO exists: {err}"))
-        .call0()
-        .unwrap_or_else(|err| panic!("StringIO constructs: {err}"));
-    let redirect = contextlib
-        .getattr("redirect_stderr")
-        .unwrap_or_else(|err| panic!("contextlib.redirect_stderr exists: {err}"))
-        .call1((&buffer,))
-        .unwrap_or_else(|err| panic!("the redirect context constructs: {err}"));
-    redirect
-        .call_method0("__enter__")
-        .unwrap_or_else(|err| panic!("the redirect context enters: {err}"));
-
-    let result = body();
-
-    // `__exit__` always receives the exception triple; `None` reports that the
-    // body raised nothing, which is the only case this helper supports.
-    redirect
-        .call_method1("__exit__", (py.None(), py.None(), py.None()))
-        .unwrap_or_else(|err| panic!("the redirect context exits: {err}"));
-    let captured = buffer
-        .call_method0("getvalue")
-        .unwrap_or_else(|err| panic!("the buffer is readable: {err}"))
-        .extract::<String>()
-        .unwrap_or_else(|err| panic!("the buffer holds text: {err}"));
-    (result, captured)
-}
 
 /// Build a handler by instantiating `class_name` from Python `source`.
 ///

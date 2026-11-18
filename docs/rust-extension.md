@@ -76,6 +76,9 @@ now splits responsibilities between:
    (`budget.rs`), and the worker loop that runs each handler under
    `catch_unwind` (`worker.rs`). The drain barrier is what `Drop` and `flush()`
    wait on.
+6. `dispatcher/shards.rs` — the pool's started shards. The first is stored
+   apart from the rest, so a pool of zero shards cannot be built and a slot
+   lookup past the end falls back to that first shard.
 
 The split matters beyond file size: shard cardinality is now a property of the
 machine rather than of the logger count, so `dispatcher/mod.rs` is where the
