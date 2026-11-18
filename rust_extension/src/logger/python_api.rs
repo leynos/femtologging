@@ -100,20 +100,27 @@ impl FemtoLogger {
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::attach(|py| {
-            let mut handlers = self.handlers.write();
-            let matches_handler = |attachment: &HandlerAttachment| {
-                attachment
-                    .handler
-                    .as_any()
-                    .downcast_ref::<PyHandler>()
-                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+            // Take the removed attachment out of the guarded block; dropping it
+            // here would run a Python finalizer that may re-enter this logger
+            // and take the same write lock. The drop happens after the guard is
+            // gone but still inside `Python::attach`, so decref is immediate.
+            let removed = {
+                let mut handlers = self.handlers.write();
+                let matches_handler = |attachment: &HandlerAttachment| {
+                    attachment
+                        .handler
+                        .as_any()
+                        .downcast_ref::<PyHandler>()
+                        .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+                };
+                handlers
+                    .iter()
+                    .position(matches_handler)
+                    .map(|pos| handlers.remove(pos))
             };
-            if let Some(pos) = handlers.iter().position(matches_handler) {
-                handlers.remove(pos);
-                true
-            } else {
-                false
-            }
+            let is_removed = removed.is_some();
+            drop(removed);
+            is_removed
         })
     }
 
