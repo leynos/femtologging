@@ -289,17 +289,18 @@ observed lock wait.*
 Every contended run printed `Blocking waiting for file lock on package cache`
 and stayed blocked until the holder logged its release, and its wait tracked
 the hold rather than the lane's own work: 56 seconds of a 60-second hold, 85 of
-90, 41 of 45 and 71 of 75. The four-second difference in each case lies outside
-the wait: elapsed time is the wait plus whatever preceded the first blocking
-message and whatever followed the holder's release, and the uncontended control
-finished the same lane in 13 seconds in total. The run did not timestamp the
-interval from the holder's acquisition to the lane's first blocking message —
-that interval contains the 3-second `cargo metadata` control which preceded
-each lane — so this plan does not divide the difference between `uv` start-up,
-Cargo's own start-up and work after release, and it attributes no duration to
-`uv` alone. Every run began and ended with `build-limits-status` reading
-`capacity 4, held 4, healthy, caching through sccache`, so the waits are not an
-artefact of a stalled cache server or refused admission.
+90, 41 of 45 and 71 of 75. The gap between each hold and its wait is four to
+five seconds: 60 against 56, 90 against 85, 45 against 41, 75 against 71. That
+gap is the interval from the holder's acquisition to the lane's first blocking
+message, and it contains the 3-second `cargo metadata` control that preceded
+each lane as well as whatever `uv` and the driver took to start Cargo. The run
+did not timestamp those two parts separately, so the split between the control
+and `uv` start-up is not measured, and this plan attributes no duration to `uv`
+alone. Elapsed time minus the wait is that same interval plus whatever the lane
+did after the holder released; the uncontended control finished the same lane
+in 13 seconds in total. Every run began and ended with `build-limits-status`
+reading `capacity 4, held 4, healthy, caching through sccache`, so the waits
+are not an artefact of a stalled cache server or refused admission.
 
 Runs 4 and 5 passed `--lib --offline` and still blocked for the whole hold,
 which is the evidence behind rejecting `--offline` below: it changes network
