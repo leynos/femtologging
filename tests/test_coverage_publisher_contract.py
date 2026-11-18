@@ -16,21 +16,23 @@ import pytest
 
 from tests.coverage_contract_helpers import (
     BASELINE_MARKER,
-    CODESCENE_ENVIRONMENT,
     GENERATE_MARKER,
     TOKEN_COMMAND,
-    TOKEN_NAME,
     TOKEN_STEP_NAME,
     UPLOAD_CONDITION,
     UPLOAD_MARKER,
     coverage_inputs,
-    environment_name,
     jobs_named,
     pushes_to,
     repository_documents,
-    secret_in_env,
     steps_using,
     triggers,
+)
+from tests.coverage_environment_helpers import (
+    CODESCENE_ENVIRONMENT,
+    TOKEN_NAME,
+    environment_name,
+    secret_in_env,
 )
 from tests.coverage_reach_helpers import pull_request_reach
 from tests.runner_placement_judgement import selected_runner
@@ -152,6 +154,69 @@ def test_one_publisher_owns_the_default_branch_upload() -> None:
         and steps_using({file_name: document}, BASELINE_MARKER)
     )
     assert publishers == [PUBLISHER], publishers
+
+
+def test_the_publisher_runs_only_on_a_push_to_the_trunk() -> None:
+    """The publisher declares one trigger, a push restricted to `main`.
+
+    `pushes_to` answers whether a push to main is accepted, which a widened
+    filter still satisfies. The exact mapping is asserted here so an added
+    trigger, or a `feature/*` branch, fails the contract.
+    """
+    document = repository_documents()[PUBLISHER]
+    assert triggers(document) == {"push": {"branches": ["main"]}}, document.get("on")
+
+
+def test_the_only_codescene_upload_is_the_publishers() -> None:
+    """No workflow other than the publisher uploads to CodeScene.
+
+    A second uploader would carry the report to the protected service from a
+    route the reachability contract never inspects.
+    """
+    uploaders = [
+        (file_name, job_id)
+        for file_name, job_id, _ in steps_using(repository_documents(), UPLOAD_MARKER)
+    ]
+    assert [file_name for file_name, _ in uploaders] == [PUBLISHER], uploaders
+
+
+def test_an_environment_name_is_matched_case_insensitively() -> None:
+    """GitHub folds environment names, so the reader must fold them too.
+
+    Returning the declaration verbatim would report no protected environment
+    for a job that declares one in another case.
+    """
+    scalar = environment_name({"environment": "CodeScene"})
+    mapping = {"name": "CODESCENE", "url": "${{ github.ref }}"}
+    mapped = environment_name({"environment": mapping})
+    assert scalar == CODESCENE_ENVIRONMENT, scalar
+    assert mapped == CODESCENE_ENVIRONMENT, mapped
+
+
+@pytest.mark.parametrize(
+    ("declaration", "refusal"),
+    [
+        ("${{ inputs.environment }}", "an environment expression is not verifiable"),
+        (
+            {"name": "${{ inputs.environment }}"},
+            "an environment expression is not verifiable",
+        ),
+        ({"url": "${{ x }}"}, "an environment mapping must declare a name"),
+        (7, "an environment must be a name or a mapping"),
+    ],
+    ids=[
+        "scalar-expression",
+        "mapping-expression",
+        "mapping-without-name",
+        "scalar-int",
+    ],
+)
+def test_an_unprovable_environment_declaration_is_refused(
+    declaration: object, refusal: str
+) -> None:
+    """A name this repository cannot resolve, or cannot read, is not guessed."""
+    with pytest.raises(AssertionError, match=refusal):
+        environment_name({"environment": declaration})
 
 
 def test_the_publisher_is_not_reachable_from_a_pull_request() -> None:
