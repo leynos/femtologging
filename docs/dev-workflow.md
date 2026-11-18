@@ -12,6 +12,9 @@ across Python and Rust code.
 - `make lint` – run the pinned Ruff checker and `cargo clippy` with
   `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0`.
 
+- `make check-lock` – verify that `uv.lock` matches `pyproject.toml`, is
+  tracked by Git and is not ignored.
+
 - `make typecheck` – run the pinned `ty` command
 
   ```shell
@@ -24,7 +27,8 @@ across Python and Rust code.
   by the Makefile; use this target rather than an independently installed `ty`
   version.
 
-- `make build` – compile the Rust extension by running `pip install -e .`.
+- `make build` – install the locked development group and build the extension
+  with maturin.
 
 - `make release` – build the extension with optimizations.
 
@@ -51,6 +55,11 @@ Pull-request CI uses a Python-version matrix in `.github/workflows/ci.yml`:
 
 All lanes run the same gates: `make check-fmt`, `make lint`, `make typecheck`,
 and `make test`.
+
+Every lane installs from the same universal `uv.lock`. The 3.15 lane enables
+interpreter prereleases only and does not enable dependency prereleases. See
+[Python lockfile policy](developers-guide.md#python-lockfile-policy) for the
+lock update and prerelease procedure.
 
 Ruff is pinned in the root `Makefile` with `RUFF_VERSION`; the `RUFF` variable
 uses `uvx ruff==$(RUFF_VERSION)` so formatting and linting use the same Ruff
