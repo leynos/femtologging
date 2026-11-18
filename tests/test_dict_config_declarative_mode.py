@@ -9,10 +9,12 @@ construction, and leaves default factory behaviour unchanged.
 
 from __future__ import annotations
 
+import collections.abc as cabc
 import dataclasses
 import logging
 import sys
 import typing as typ
+import uuid
 
 import pytest
 
@@ -27,7 +29,6 @@ from tests.python_filter_support import (
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
 _FACTORY_PATH = "tests.python_filter_support.ContextFilterFactory"
@@ -77,6 +78,15 @@ _FACTORY_VALUE_BUILDERS: tuple[
     ("empty-string", lambda _probe: ""),
     ("list", lambda _probe: []),
     ("dict", lambda _probe: {}),
+)
+
+
+_FACTORY_ENTRY_BUILDERS: tuple[
+    tuple[str, cabc.Callable[[_FactoryProbe], dict[str, object]]], ...
+] = (
+    ("dotted", lambda _probe: {"()": _FACTORY_PATH}),
+    ("callable", lambda probe: {"()": probe}),
+    ("mixed", lambda _probe: {"()": _FACTORY_PATH, "level": "INFO"}),
 )
 
 
@@ -238,7 +248,10 @@ def test_declarative_mode_rejects_before_importing_factory_module(
 ) -> None:
     """A rejected dotted factory must not import the module that holds it."""
     marker = tmp_path / "imported.marker"
-    module_path = tmp_path / "declarative_guard_module.py"
+    # A unique name keeps the cache assertions robust if a plugin or another
+    # test has already loaded a module with a similar name.
+    module_name = f"declarative_guard_{uuid.uuid4().hex}"
+    module_path = tmp_path / f"{module_name}.py"
     module_path.write_text(
         "from pathlib import Path\n"
         f"Path({str(marker)!r}).write_text('imported')\n"
@@ -247,17 +260,17 @@ def test_declarative_mode_rejects_before_importing_factory_module(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     try:
-        config = _factory_config("declarative_guard_module.build", {})
+        config = _factory_config(f"{module_name}.build", {})
         with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
             dictConfig(config, allow_factories=False)
         assert not marker.exists(), "the factory module must not be imported"
-        assert "declarative_guard_module" not in sys.modules, (
+        assert module_name not in sys.modules, (
             "the factory module must not be left in sys.modules"
         )
     finally:
         # Only this test's temporary module belongs to it; modules imported by
         # unrelated code while it runs must stay in the process-wide cache.
-        sys.modules.pop("declarative_guard_module", None)
+        sys.modules.pop(module_name, None)
 
 
 def test_declarative_mode_rejects_before_builder_construction(
@@ -306,36 +319,54 @@ def test_declarative_mode_rejection_leaves_live_state_unchanged() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "entry_builder",
+    [builder for _, builder in _FACTORY_ENTRY_BUILDERS],
+    ids=[name for name, _ in _FACTORY_ENTRY_BUILDERS],
+)
 def test_build_filter_from_dict_rejects_factory_forms(
     monkeypatch: pytest.MonkeyPatch,
+    entry_builder: cabc.Callable[[_FactoryProbe], dict[str, object]],
 ) -> None:
-    """The per-entry guard rejects dotted and callable targets directly."""
+    """The per-entry guard rejects dotted, callable, and mixed entries."""
     probe = _FactoryProbe()
     monkeypatch.setattr(
         config_filters, "resolve_factory", _unexpected_call("resolve_factory")
     )
 
-    for factory_ref in (_FACTORY_PATH, probe):
-        with pytest.raises(ValueError, match=_POLICY_PATTERN):
-            build_filter_from_dict("f", {"()": factory_ref}, allow_factories=False)
-
     with pytest.raises(ValueError, match=_POLICY_PATTERN):
-        build_filter_from_dict(
-            "f", {"()": _FACTORY_PATH, "level": "INFO"}, allow_factories=False
-        )
+        build_filter_from_dict("f", entry_builder(probe), allow_factories=False)
     assert not probe.invocations, "the direct guard must not invoke callables"
+
+
+class _UnreadableConfig(cabc.Mapping[str, object]):
+    """Fail if ``dictConfig`` reads the configuration at all."""
+
+    @typ.override
+    def __getitem__(self, key: str) -> object:
+        """Fail on any key lookup."""
+        msg = f"policy validation must not read the configuration ({key!r})"
+        raise AssertionError(msg)
+
+    @typ.override
+    def __iter__(self) -> cabc.Iterator[str]:
+        """Fail on any iteration."""
+        msg = "policy validation must not iterate the configuration"
+        raise AssertionError(msg)
+
+    @typ.override
+    def __len__(self) -> int:
+        """Fail on any length check."""
+        msg = "policy validation must not read the configuration length"
+        raise AssertionError(msg)
 
 
 @pytest.mark.parametrize(
     "policy", [0, 1, "false", None], ids=["zero", "one", "string", "none"]
 )
 def test_dict_config_rejects_non_bool_policy(policy: object) -> None:
-    """A non-bool policy fails before any filter processing begins."""
-    config = {
-        "version": 1,
-        "filters": {"f": {"()": _FACTORY_PATH}},
-        "root": {"level": "DEBUG"},
-    }
+    """A non-bool policy fails before the configuration is read."""
+    config = _UnreadableConfig()
     with pytest.raises(TypeError, match="allow_factories must be a bool"):
         dictConfig(config, allow_factories=typ.cast("bool", policy))
 
