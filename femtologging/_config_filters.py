@@ -95,8 +95,9 @@ def build_filter_from_dict(
         entry without it must declare exactly one of ``level`` or ``name``.
     allow_factories
         When ``False``, reject any entry carrying a ``"()"`` key. The rejection
-        happens on key presence alone, so the factory target is never resolved
-        or invoked. Declarative ``level`` and ``name`` entries still work.
+        happens on key presence alone, so the factory target is never read,
+        resolved, or invoked. Declarative ``level`` and ``name`` entries still
+        work.
 
     Returns
     -------
@@ -126,7 +127,12 @@ def build_filter_from_dict(
     ValueError: filter 'f' uses a '()' factory, rejected by allow_factories=False
 
     """
-    # Copy once so the policy check, validation, and dispatch all inspect the
+    # Scan keys first: copying a mapping reads every value, so a check after
+    # the copy would run a hostile value accessor before the policy rejection.
+    if not allow_factories and "()" in list(data):
+        msg = factory_disallowed_message(fid)
+        raise ValueError(msg)
+    # Copy once so the policy re-check, validation, and dispatch all inspect the
     # same keys, even if a dict subclass mutates its mapping during validation.
     entry = dict(data)
     has_factory = "()" in entry

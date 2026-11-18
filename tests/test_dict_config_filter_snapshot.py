@@ -14,6 +14,7 @@ import typing as typ
 import pytest
 
 from femtologging import dictConfig, get_logger
+from femtologging._config_filters import build_filter_from_dict
 
 _FILTER_ERROR_PATTERN = r"filter 'f'.*allow_factories=False"
 
@@ -109,4 +110,13 @@ def test_declarative_mode_rejects_by_key_without_reading_value() -> None:
     config = {"version": 1, "filters": {"f": entry}, "root": {"level": "DEBUG"}}
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
         dictConfig(config, allow_factories=False)
+    assert entry.value_reads == 0, "the factory value must never be read"
+
+
+def test_build_filter_from_dict_rejects_without_reading_value() -> None:
+    """The direct guard rejects by key before copying the entry."""
+    entry = _UnreadableFactoryEntry()
+    unreadable = typ.cast("dict[str, object]", entry)
+    with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
+        build_filter_from_dict("f", unreadable, allow_factories=False)
     assert entry.value_reads == 0, "the factory value must never be read"
