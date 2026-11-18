@@ -256,10 +256,36 @@ collected" rather than inferring a result.
    conditions, then give H3 a verdict. If it is not reproducible, record "not
    collected" with the reason. Do not infer unmeasured results.
 
-**Status: not collected.** The 2026-10-16 run established that a stall can
-happen, but it paired no stalled run with an uncontended control and no
-repeated series was captured. Holding the cache on demand was not reproduced
-for this revision, so no distribution is claimed.
+**Status: collected 2026-11-18.** A competing holder was placed on
+`~/.cargo/.package-cache` with `flock -x`, and its hold was confirmed by a
+control (`cargo metadata` timed out after 3 seconds without producing output).
+The accepting lane was then run under it, with each output line timestamped.
+
+| Run     | Holder released after | Total elapsed | Blocking lines |
+| ------- | --------------------- | ------------- | -------------- |
+| 1       | 90 s                  | 908 s         | 4              |
+| 2       | 120 s                 | 123 s         | 4              |
+| 3       | 60 s                  | 68 s          | 4              |
+| Control | no holder             | 1 s           | 0              |
+| 4       | 45 s (`--offline`)    | 324 s         | 4              |
+
+Every contended run printed `Blocking waiting for file lock on package cache`
+and stayed blocked until the holder released the file. Run 2 blocked from
+01:47:56 to 01:49:53 (117 seconds) for a 120-second hold; run 3 blocked from
+01:50:24 to 01:51:29 for a 60-second hold; the uncontended control reported
+`Finished` in 0.68 seconds with no lock message. Run 1 also filled a cold
+target directory, so its total is not comparable with the others, and run 4
+compiled for the remainder of its total after a 43-second wait; the lock-wait
+window, not the total, is the measurement.
+
+Run 4 passed `--lib --offline` and still blocked for the whole hold, which is
+the evidence behind rejecting `--offline` below: it changes network and
+lockfile policy, not package-cache locking.
+
+H3 therefore survives. The lane blocks exactly while a competing job holds the
+lock and resumes as soon as it is released; it is not a stall without the
+message, and its duration tracks the competing resolve rather than the lane's
+own work.
 
 ### Decision: remove Cargo from the contract test
 
