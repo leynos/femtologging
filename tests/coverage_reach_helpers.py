@@ -79,12 +79,31 @@ def _job_references(document: dict[str, typ.Any]) -> list[str]:
 def _display_name_index(
     documents: cabc.Mapping[str, dict[str, typ.Any]],
 ) -> dict[str, str]:
-    """Map each workflow's display name to the file that declares it."""
-    return {
-        str(document["name"]): file_name
-        for file_name, document in documents.items()
-        if "name" in document
-    }
+    """Map each workflow's display name to the file that declares it.
+
+    A ``workflow_run`` trigger names its predecessor by display name, so the
+    index has to answer with exactly one file. Two workflows sharing a name
+    would let the last one seen win, and a listener could then be judged
+    reachable from a workflow that never ran. Such a name is refused instead:
+    neither candidate can be proved to be the one GitHub fires.
+
+    Returns
+    -------
+    dict[str, str]
+        Each display name mapped to the one file that declares it.
+    """
+    by_display: dict[str, str] = {}
+    for file_name, document in documents.items():
+        if "name" not in document:
+            continue
+        display = str(document["name"])
+        require(
+            display not in by_display,
+            "a workflow display name must be unique: "
+            f"{display!r} is declared by {by_display.get(display)!r} and {file_name!r}",
+        )
+        by_display[display] = file_name
+    return by_display
 
 
 def _pull_request_documents(
