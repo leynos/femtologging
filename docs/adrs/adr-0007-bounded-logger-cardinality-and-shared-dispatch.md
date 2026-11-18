@@ -258,3 +258,12 @@ keeping the target space bounded.
   single-consumer design for the file handler.
 - ADR 0006 (environment seam taxonomy) — the seam discipline the dispatch
   worker's thread, channel and lock primitives follow.
+
+## Addendum: module-root paths (2026-11-18)
+
+The module-root move replaced single-file modules with directory modules, so
+the reference list above now names `rust_extension/src/manager/registry/mod.rs`
+and `rust_extension/src/logger/dispatcher/mod.rs`. Only the pointers changed;
+the decision, its drivers and its consequences remain as accepted on
+2026-10-16. This addendum records that edit rather than leaving an accepted
+record silently rewritten.

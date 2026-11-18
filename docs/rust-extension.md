@@ -64,11 +64,11 @@ The logger follows the same file-size discipline. `rust_extension/src/logger`
 now splits responsibilities between:
 
 1. `mod.rs` — the public `FemtoLogger` surface, shared state, and PyO3 methods.
-2. `producer.rs` — producer-path level checks, filter evaluation, and
+2. `producer/mod.rs` — producer-path level checks, filter evaluation, and
    dispatch.
 3. `worker.rs` — the logger's construction path: it resolves the shared pool
    and stores the shard the logger was assigned.
-4. `dispatcher.rs` — the process-wide pool of dispatch shards, its fallible
+4. `dispatcher/mod.rs` — the process-wide pool of dispatch shards, its fallible
    startup, round-robin shard assignment, and the bound on how many shards a
    machine may have.
 5. `dispatcher/shard/` — one shard: its bounded job queue and drain barrier
@@ -78,7 +78,7 @@ now splits responsibilities between:
    wait on.
 
 The split matters beyond file size: shard cardinality is now a property of the
-machine rather than of the logger count, so `dispatcher.rs` is where the
+machine rather than of the logger count, so `dispatcher/mod.rs` is where the
 thread-per-logger amplification recorded in ADR 0007 was removed. Producer and
 worker contracts also stay testable in isolation, since a test can be handed a
 pool of its own instead of the process-wide one.
