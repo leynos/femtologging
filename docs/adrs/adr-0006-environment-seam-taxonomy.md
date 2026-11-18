@@ -370,6 +370,13 @@ lane fails the target, that the driver names it and forwards every lane's
 diagnostic on standard error, and that Cargo receives the exact argument vector
 the Makefile's defaults imply, lane by lane and in order.
 
+The child still inherits this process's environment, because `uv` and Make need
+it. The helper therefore applies the rule in this ADR in the other direction:
+it clears every Make variable assigned with `?=`, since an exported value would
+replace the Makefile default the contract reads, along with the fake's own
+`FAKE_CARGO_REJECT` control. A test that needs an inherited value supplies the
+parent environment as an argument instead of editing this process's environment.
+
 Enforcement therefore remains where it compiled before —
 `rust_extension/tests/env_access_policy.rs`, its probe and `syn` source scan,
 and the `make lint` lanes — and the Consequences entries above speak for those.

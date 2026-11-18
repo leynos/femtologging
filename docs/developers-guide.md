@@ -1775,11 +1775,18 @@ therefore has 120 seconds (`MAKE_TIMEOUT_SECONDS`) for provisioning through
 policy enforcement stay with `rust_extension/tests/` and `make lint`.
 
 The child inherits this process's environment so that `uv` and Make work, but
-the helper removes `FAKE_CARGO_REJECT` before setting its own value: an
-inherited rejection would fail a lane the test expects to accept, and the
-failure would read as a wiring defect. The general rule is the one above —
-where an inherited variable could change the outcome, the child's environment
-is built explicitly.
+the helper removes every Make variable the Makefile assigns with `?=` before
+running the target: such a variable takes the environment's value over the
+Makefile's default, so an exported `CARGO` would bypass the fake and an exported
+`ENV_POLICY_FEATURE_LANES` would change which lanes run. The list is read from
+the Makefile rather than written out, so a new `?=` variable is covered when it
+is added. The helper also removes `FAKE_CARGO_REJECT` before setting its own
+value, since an inherited rejection would fail a lane the test expects to
+accept, and the failure would read as a wiring defect. The general rule is the
+one above — where an inherited variable could change the outcome, the child's
+environment is built explicitly. `run_policy_target` takes the parent
+environment as an argument for the same reason, so those contracts inject one
+instead of editing this process's environment.
 
 See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)

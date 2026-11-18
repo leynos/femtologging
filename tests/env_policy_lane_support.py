@@ -19,9 +19,15 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] contract tests r
 import sys
 import typing as typ
 
-from tests.make_contract_helpers import repo_root, sole_variable, variable_tokens
+from tests.make_contract_helpers import (
+    environment_overridable_variables,
+    repo_root,
+    sole_variable,
+    variable_tokens,
+)
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 type Tokens = tuple[str, ...]
@@ -192,14 +198,21 @@ def policy_defaults() -> tuple[str, Tokens, Tokens]:
 
 
 def run_policy_target(
-    fake: FakeCargo, *overrides: str, reject: str | None = None
+    fake: FakeCargo,
+    *overrides: str,
+    reject: str | None = None,
+    parent_environment: cabc.Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run the real `make lint-env-policy` target with a fake Cargo.
 
     Make, uv and the lane driver run for real; only Cargo is replaced. That
     preserves status propagation and argument order while keeping the test off
     the shared package cache. Make variables not overridden keep their
-    Makefile defaults.
+    Makefile defaults, whatever this process exports.
+
+    `parent_environment` replaces the process environment as the source of
+    inherited variables, so a test can inject one without changing shared
+    process state. The mapping is copied and never written to.
 
     Returns
     -------
@@ -215,14 +228,22 @@ def run_policy_target(
     if make is None:
         message = "make must be on PATH to run the policy target"
         raise RuntimeError(message)
-    environment = dict(os.environ)
+    environment = dict(os.environ if parent_environment is None else parent_environment)
+    # A `?=` Make variable takes the environment's value in preference to the
+    # Makefile's, and the child inherits this process's environment. Clearing
+    # every such name keeps the run on the defaults the contract reads from
+    # the Makefile: an exported `CARGO` would bypass the fake, and an exported
+    # `ENV_POLICY_FEATURE_LANES` would change which lanes run. Command-line
+    # overrides still apply after removal, because make ranks them above both.
+    for name in environment_overridable_variables():
+        environment.pop(name, None)
     environment["PATH"] = os.pathsep.join((
         str(fake.directory),
         environment.get("PATH", ""),
     ))
     environment["FAKE_CARGO_LOG"] = str(fake.log)
-    # The child inherits enough of this process for uv and Make to work, so an
-    # ambient rejection could fail a lane this run expects to accept. The
+    # The fake reads this one, so it is not a Make variable to strip. An
+    # ambient rejection could fail a lane this run expects to accept, and the
     # caller's choice always wins; see ADR-0006 on inherited variables.
     environment.pop("FAKE_CARGO_REJECT", None)
     if reject is not None:
