@@ -15,6 +15,7 @@ from femtologging import (
     LoggerConfigBuilder,
     PythonCallbackFilterBuilder,
     StdlibHandlerAdapter,
+    StreamHandlerBuilder,
     get_logger,
 )
 from tests.python_filter_support import (
@@ -262,3 +263,56 @@ def test_contextvar_enrichment_is_thread_local(
         "each thread's contextvar must be captured against its own record, "
         f"got {payload!r}"
     )
+
+
+def test_documented_service_configuration_enriches_records() -> None:
+    """The users' guide configuration enriches records for the service logger.
+
+    The configuration mirrors the callback-enrichment example in
+    ``docs/users-guide.md`` so that drift between the published example and
+    the supported builder API fails here.
+    """
+
+    def request_filter(record: logging.LogRecord) -> bool:
+        """Stamp the documented enrichment fields and accept the record."""
+        record.request_id = "req-123"
+        record.user_id = 42
+        record.cache_hit = False
+        return True
+
+    (
+        ConfigBuilder()
+        .with_filter(
+            "request_enrichment",
+            PythonCallbackFilterBuilder(request_filter),
+        )
+        .with_handler("console", StreamHandlerBuilder.stderr())
+        .with_root_logger(LoggerConfigBuilder().with_level("INFO"))
+        .with_logger(
+            "service",
+            LoggerConfigBuilder()
+            .with_filters(["request_enrichment"])
+            .with_handlers(["console"]),
+        )
+        .build_and_init()
+    )
+
+    collector = RecordCollector()
+    logger = get_logger("service")
+    logger.add_handler(collector)
+
+    assert logger.log("INFO", "request accepted") is not None, (
+        "the documented filter configuration must accept the record"
+    )
+    assert logger.flush_handlers(), "service handler delivery should flush"
+
+    assert len(collector.records) == 1, (
+        "the documented configuration must deliver exactly one record, got "
+        f"{collector.records!r}"
+    )
+    key_values = collector.records[0]["metadata"]["key_values"]
+    assert key_values == {
+        "request_id": "req-123",
+        "user_id": "42",
+        "cache_hit": "False",
+    }, f"the documented filter must enrich the record, got {key_values!r}"
