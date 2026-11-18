@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from femtologging import FemtoFileHandler, FileHandlerBuilder, OverflowPolicy
+from femtologging import (
+    FemtoFileHandler,
+    FileHandlerBuilder,
+    OverflowPolicy,
+)
 
 type FileHandlerFactory = cabc.Callable[
     [Path, int, int], AbstractContextManager[FemtoFileHandler]
