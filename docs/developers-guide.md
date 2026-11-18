@@ -2185,6 +2185,22 @@ assertions reusable without expanding the runtime API:
 - `test_worker.rs` provides `TestWorker`, a worker thread paired with the
   `ShutdownSignal` that reaches it, for handler tests that supply their own
   worker.
+- `json_round_trip.rs` provides `assert_json_round_trip`, a `#[track_caller]`
+  assertion that a serde value survives a JSON round trip unchanged and names
+  the direction that failed.
+- `logging_test_helpers.rs` provides the `unique_logger_name` and
+  `log_max_level` fixtures and `run_isolated_child`, which reruns one ignored
+  test in a child process and returns `io::Result<()>` rather than panicking.
+  Its items carry narrower feature gates than the module, so a suite should
+  take only the ones its own feature set provides.
+- `isolated_child.rs` launches that child, preserving the dynamic-library
+  search path Cargo supplied to the parent.
+
+One further data file is test-only without being a module:
+`rust_extension/src/logger/producer_tracing_expected_tables.rs` holds the
+expected tracing event literals, which `producer_tracing_test_helpers` splices
+in with `include!` so the array keeps its compile-time type. It therefore has no
+`//!` header; the comment at its top explains the split instead.
 
 The reusable integration-test support is owned by
 `rust_extension/tests/test_utils/`. It consists of four focused components:
@@ -2206,6 +2222,11 @@ The `heavy` root includes `shared_buffer.rs`, `shared_buffer_loom.rs`, and
 `handle_expect.rs` directly; the Loom module is gated by `cfg(loom)`. Prefer
 these fixtures and the trait over duplicating setup or
 `handle(...).expect(...)` calls in individual suites.
+
+Setup helpers return the error their step produced — `io::Error`, `ConfigError`,
+`HandlerError` or `PyResult` — and the calling test propagates it with a
+reasoned `expect`. A failing arrangement then names the step that failed
+instead of surfacing as a panic from inside the helper.
 
 ### Capturing log records in an integration test
 
