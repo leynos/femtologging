@@ -344,9 +344,11 @@ def dictConfig(
 
     Notes
     -----
-    **Security:** a ``"()"`` filter entry is trusted-code-equivalent: resolving
-    it imports modules and invokes a callable chosen by the configuration
-    author. Lower-trust configuration (tenants, HTTP APIs, remote configuration
+    **Security:** a ``"()"`` filter entry is trusted-code-equivalent. A dotted
+    string reference imports modules during resolution and then invokes the
+    resolved callable; a direct callable object is invoked without that
+    resolution step. Both run code chosen by the configuration author, so
+    lower-trust configuration (tenants, HTTP APIs, remote configuration
     services, writable files) must reject factory entries or pass
     ``allow_factories=False``; checks after resolution or invocation are too
     late. ``allow_factories=False`` rejects filter factories only and applies no
