@@ -64,6 +64,11 @@ impl FemtoFileHandler {
     /// Parses a Python record, enqueues it according to the configured
     /// overflow policy, and maps delivery failures to a Python runtime error.
     ///
+    /// PyO3 calls this with the interpreter lock already held, so no caller
+    /// supplies a token: the body attaches with `Python::attach(...)` to
+    /// obtain one, which re-enters the running interpreter rather than
+    /// selecting one, and detaches around the enqueue.
+    ///
     /// The wait for queue capacity runs with the interpreter lock released, so
     /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
     /// the "Concurrency" section of the user guide for the full contract.
