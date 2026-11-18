@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import re
 import typing as typ
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -155,8 +157,11 @@ def test_log_context_rejects_an_unsupported_scalar() -> None:
 
 
 # Mirrors RESERVED_STD_RECORD_KEYS and RESERVED_FEMTO_KEYS in
-# `rust_extension/src/log_context/reserved.rs`. Every name in the shared contract
-# appears here, so dropping one from either list fails these tests.
+# `rust_extension/src/log_context/reserved.rs`. The parameterised tests below
+# exercise every name listed here, so removing a name from this list also
+# removes its coverage. The Rust sets are pinned separately by
+# `test_reserved_extra_keys_match_the_rust_contract`, which fails when either
+# side of the contract drifts.
 RESERVED_EXTRA_KEYS = [
     # Logger identity.
     "name",
@@ -199,6 +204,26 @@ RESERVED_EXTRA_KEYS = [
 ]
 
 NEAR_MISS_KEYS = ["Name", "logger_name", "msg_id", "request_id", "Level", "MESSAGE"]
+
+RESERVED_CONTRACT_SOURCE = (
+    Path(__file__).resolve().parents[1]
+    / "rust_extension"
+    / "src"
+    / "log_context"
+    / "reserved.rs"
+)
+
+
+def test_reserved_extra_keys_match_the_rust_contract() -> None:
+    """The Python list names exactly the keys the Rust contract reserves."""
+    source = RESERVED_CONTRACT_SOURCE.read_text(encoding="utf-8")
+    rust_names = set(
+        re.findall(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)",\s*$', source, re.MULTILINE)
+    )
+    assert rust_names == set(RESERVED_EXTRA_KEYS), (
+        "the Python and Rust reserved-name lists have drifted apart"
+    )
+
 
 EMIT_METHODS = ("debug", "info", "warning", "error", "critical", "log")
 
