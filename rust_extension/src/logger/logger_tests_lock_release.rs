@@ -51,6 +51,34 @@ impl DropObservation {
     }
 }
 
+/// Record whether `lock` was free when a probe that owns it was destroyed.
+///
+/// A failed upgrade means the owning logger is already gone; in this module that
+/// would make the test meaningless, so `DropObservation::record` treats it as
+/// held.
+fn record_guard_was_free<T>(lock: &Weak<RwLock<T>>, observation: &DropObservation) {
+    let verdict = lock.upgrade().map(|lock| lock.try_write().is_some());
+    observation.record(verdict);
+}
+
+/// Build a logger named for the scenario under test.
+fn test_logger(name: &str) -> FemtoLogger {
+    FemtoLogger::new(name.into()).expect("test logger should construct")
+}
+
+/// Assert a probe was destroyed once and that its owning guard was free then.
+fn assert_dropped_after_release(observation: &DropObservation, operation: &str) {
+    assert_eq!(
+        observation.drop_count(),
+        1,
+        "{operation} must drop the probe exactly once"
+    );
+    assert!(
+        observation.lock_was_available(),
+        "{operation} must release the collection lock before dropping values"
+    );
+}
+
 /// Handler probe that checks the logger's handler lock when it is dropped.
 struct HandlerLockProbe {
     /// The collection that owns this probe.
@@ -71,11 +99,7 @@ impl FemtoHandlerTrait for HandlerLockProbe {
 
 impl Drop for HandlerLockProbe {
     fn drop(&mut self) {
-        let probe = self
-            .handlers
-            .upgrade()
-            .map(|lock| lock.try_write().is_some());
-        self.observation.record(probe);
+        record_guard_was_free(&self.handlers, &self.observation);
     }
 }
 
@@ -99,11 +123,7 @@ impl FemtoFilter for FilterLockProbe {
 
 impl Drop for FilterLockProbe {
     fn drop(&mut self) {
-        let probe = self
-            .filters
-            .upgrade()
-            .map(|lock| lock.try_write().is_some());
-        self.observation.record(probe);
+        record_guard_was_free(&self.filters, &self.observation);
     }
 }
 
@@ -131,11 +151,7 @@ impl FemtoFilter for AttachmentFilterLockProbe {
 
 impl Drop for AttachmentFilterLockProbe {
     fn drop(&mut self) {
-        let probe = self
-            .handlers
-            .upgrade()
-            .map(|lock| lock.try_write().is_some());
-        self.observation.record(probe);
+        record_guard_was_free(&self.handlers, &self.observation);
     }
 }
 
@@ -177,8 +193,7 @@ fn filter_probe(logger: &FemtoLogger) -> (Arc<FilterLockProbe>, Arc<DropObservat
 
 #[test]
 fn clear_handlers_drops_handlers_after_releasing_the_lock() {
-    let logger =
-        FemtoLogger::new("lock.clear.handlers".into()).expect("test logger should construct");
+    let logger = test_logger("lock.clear.handlers");
     let (probe, observation) = handler_probe(&logger);
     logger
         .add_handler(probe.clone() as Arc<dyn FemtoHandlerTrait>)
@@ -188,35 +203,25 @@ fn clear_handlers_drops_handlers_after_releasing_the_lock() {
 
     logger.clear_handlers();
 
-    assert_eq!(observation.drop_count(), 1, "the handler must be dropped");
-    assert!(
-        observation.lock_was_available(),
-        "clear_handlers must release the handler lock before dropping values"
-    );
+    assert_dropped_after_release(&observation, "clear_handlers");
 }
 
 #[test]
 fn clear_filters_drops_filters_after_releasing_the_lock() {
-    let logger =
-        FemtoLogger::new("lock.clear.filters".into()).expect("test logger should construct");
+    let logger = test_logger("lock.clear.filters");
     let (probe, observation) = filter_probe(&logger);
     logger.add_filter(probe.clone() as Arc<dyn FemtoFilter>);
     drop(probe);
 
     logger.clear_filters();
 
-    assert_eq!(observation.drop_count(), 1, "the filter must be dropped");
-    assert!(
-        observation.lock_was_available(),
-        "clear_filters must release the filter lock before dropping values"
-    );
+    assert_dropped_after_release(&observation, "clear_filters");
 }
 
 #[cfg(feature = "python")]
 #[test]
 fn remove_handler_drops_the_attachment_filter_chain_after_releasing_the_lock() {
-    let logger =
-        FemtoLogger::new("lock.remove.handler".into()).expect("test logger should construct");
+    let logger = test_logger("lock.remove.handler");
     let observation = DropObservation::new();
     let probe = Arc::new(AttachmentFilterLockProbe {
         handlers: Arc::downgrade(&logger.handlers),
@@ -231,17 +236,12 @@ fn remove_handler_drops_the_attachment_filter_chain_after_releasing_the_lock() {
 
     assert!(logger.remove_handler(&handler), "the handler must be found");
 
-    assert_eq!(observation.drop_count(), 1, "the filter must be dropped");
-    assert!(
-        observation.lock_was_available(),
-        "remove_handler must release the handler lock before dropping attachments"
-    );
+    assert_dropped_after_release(&observation, "remove_handler");
 }
 
 #[test]
 fn remove_filter_drops_the_removed_reference_after_releasing_the_lock() {
-    let logger =
-        FemtoLogger::new("lock.remove.filter".into()).expect("test logger should construct");
+    let logger = test_logger("lock.remove.filter");
     let (probe, observation) = filter_probe(&logger);
     // The caller must hold an `Arc` to name the filter, so removal cannot drop
     // the last owner. Keeping our own reference alive past the call proves the
@@ -259,11 +259,7 @@ fn remove_filter_drops_the_removed_reference_after_releasing_the_lock() {
 
     drop(lookup);
 
-    assert_eq!(observation.drop_count(), 1, "the filter must be dropped");
-    assert!(
-        observation.lock_was_available(),
-        "remove_filter must not leave the filter lock held once it returns"
-    );
+    assert_dropped_after_release(&observation, "remove_filter");
 }
 
 // `replace_handlers` lives in the python-gated `runtime_mutation` module. Test
@@ -272,8 +268,7 @@ fn remove_filter_drops_the_removed_reference_after_releasing_the_lock() {
 #[cfg(feature = "python")]
 #[test]
 fn replace_handlers_drops_displaced_handlers_after_releasing_the_lock() {
-    let logger =
-        FemtoLogger::new("lock.replace.handlers".into()).expect("test logger should construct");
+    let logger = test_logger("lock.replace.handlers");
     let (probe, observation) = handler_probe(&logger);
     logger
         .add_handler(probe.clone() as Arc<dyn FemtoHandlerTrait>)
@@ -283,18 +278,13 @@ fn replace_handlers_drops_displaced_handlers_after_releasing_the_lock() {
     let displaced = logger.replace_handlers(Vec::new());
     drop(displaced);
 
-    assert_eq!(observation.drop_count(), 1, "the handler must be dropped");
-    assert!(
-        observation.lock_was_available(),
-        "replace_handlers must release the handler lock before dropping displaced values"
-    );
+    assert_dropped_after_release(&observation, "replace_handlers");
 }
 
 #[cfg(feature = "python")]
 #[test]
 fn replace_filters_drops_displaced_filters_after_releasing_the_lock() {
-    let logger =
-        FemtoLogger::new("lock.replace.filters".into()).expect("test logger should construct");
+    let logger = test_logger("lock.replace.filters");
     let (probe, observation) = filter_probe(&logger);
     logger.add_filter(probe.clone() as Arc<dyn FemtoFilter>);
     drop(probe);
@@ -302,9 +292,5 @@ fn replace_filters_drops_displaced_filters_after_releasing_the_lock() {
     let displaced = logger.replace_filters(Vec::new());
     drop(displaced);
 
-    assert_eq!(observation.drop_count(), 1, "the filter must be dropped");
-    assert!(
-        observation.lock_was_available(),
-        "replace_filters must release the filter lock before dropping displaced values"
-    );
+    assert_dropped_after_release(&observation, "replace_filters");
 }
