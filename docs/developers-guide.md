@@ -2797,9 +2797,9 @@ measures against the stored baseline, but it publishes nothing and never
 contacts CodeScene: `generate-coverage` runs with `with-ratchet: 'true'` and
 `publish-artefact: 'false'`, and its job declares no environment. This change
 also newly enables the ratchet on that lane, which previously ran the action
-without `with-ratchet` and so took its `'false'` default, and it stops the
-lane publishing its report. The default branch owns both persistent outputs,
-in `coverage-main.yml`, which a push to `main` alone triggers.
+without `with-ratchet` and so took its `'false'` default, and it stops the lane
+publishing its report. The default branch owns both persistent outputs, in
+`coverage-main.yml`, which a push to `main` alone triggers.
 
 That publisher has three jobs. `coverage-measure` runs on a hosted runner once
 per required Python lane (`3.12`, `3.13` and `3.14`, the non-experimental lanes
