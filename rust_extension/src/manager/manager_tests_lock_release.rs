@@ -145,6 +145,11 @@ fn replace_runtime_state_returns_displaced_state_dropped_without_the_lock() {
 /// after the first value and pins both halves of the rule: the builder does not
 /// drop the partial batch, and the caller destroys it only after releasing the
 /// manager guard.
+///
+/// The production caller, `register_missing_ancestors`, cannot fail on a second
+/// name without a test seam in `FemtoLogger` construction, so this drives the
+/// shared `build_batch` directly. The commit path adds only its own guard
+/// disposal around the same hand-back, which a seam would not otherwise prove.
 #[test]
 #[serial]
 fn a_partial_batch_is_returned_for_the_caller_to_drop() {
