@@ -514,6 +514,35 @@ suite that fails if any drop is discarded or handed off more than once.
       stays pending, and that the flush that follows reports it cause-neutrally.
       With the ownership check removed both tests show the loser's cause
       relabelling a second warning.
+- [x] (2026-11-18) Rebased the series onto `c3bd1637` (#592, "Flush handlers
+      behind the Python wrapper") with the ambient Weave driver bypassed
+      (`-c core.attributesFile=/dev/null -c merge.conflictStyle=zdiff3`). There
+      were no conflicts; `git range-diff` reported all 48 commits unchanged,
+      the `origin/main...HEAD` diffstat matched the pre-rebase one, and the new
+      tip is `f1ae2c86`.
+- [x] (2026-11-18) Diagnosed the single hosted `log-compat` failure in
+      `logger_routes_to_multiple_handlers` — the shared buffer held
+      `core [INFO] hello` without its trailing newline — as a pre-existing
+      scheduling race, not a drop-count regression. The same test binary
+      passed in the `no-default-features` lane of the same job, and this
+      branch changes neither the test nor the dispatcher.
+- [x] (2026-11-18) Fixed that race by dropping the shard's cloned handler
+      references before the record's permit in `handle_job`. A logger's `Drop`
+      skips the drain barrier when the in-flight count is zero, so releasing
+      the permit first let it return while the shard still held the last `Arc`
+      to a stream handler, whose destructor is what waits for its worker's
+      final write. The new
+      `a_record_is_in_flight_until_its_handlers_are_released` blocks inside a
+      handler's destructor and asserts the count is still one; with the old
+      ordering it reads zero.
+- [x] (2026-11-18) All 15 commit gates passed sequentially on the rebased tree
+      with that two-file fix applied: `check-fmt`, `markdownlint` (0 issues in
+      68 files), `nixie`, `lint` (908 s), `typecheck` (93 s), `build`,
+      `makeutil`, `loom-runner-test` (14 passed), `cargo fetch --locked`,
+      `cargo fmt --check`, the `none`/`python`/`log-compat` lanes (1048 passed,
+      66 ignored each), the `tracing-compat` lane (1101 passed, 67 ignored) and
+      pytest (1234 passed, 5 skipped, 66 snapshots). The new unit test passed
+      in every lane.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
@@ -1307,6 +1336,12 @@ module; the worker is now 396 lines.
 passed on HEAD `65074bc1684636e858865b884ce2f1c3aac1a807`. Detailed gate logs
 remain under `/tmp` with the `-3.out` suffix. CodeRabbit review and draft PR
 publication remain outstanding.
+
+2026-11-18: rebased onto `c3bd1637` and fixed the one hosted `log-compat` flake
+the review surfaced by releasing a shard record's handlers before its in-flight
+permit. All 15 gates passed on the resulting tree; the change adds no
+requirement to the plan, because it repairs an existing guarantee ("a drained
+batch is fully written") rather than extending scope.
 
 2026-10-31: rebased onto `origin/main` `f26b696`, resolved the warner, logger
 and lint-contract overlaps, adapted the logger flush messages to main's current

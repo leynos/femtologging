@@ -90,6 +90,15 @@ fn handle_job(job: Job) {
                     elapsed_us = dispatch_started.elapsed().as_micros(),
                 );
             }
+            // The snapshot goes first. The permit is what a logger's `Drop`
+            // reads to decide whether the shard is still working on its
+            // records, so releasing it before the shard has let go of its
+            // handler references would let that `Drop` return while a
+            // handler's destructor was still running. A stream handler's
+            // destructor waits for its worker's last write, so a caller that
+            // read the handler's output after the drain could race a write
+            // the drain had already reported complete.
+            drop(handlers);
             // Released only now: the permit counts this record as in flight
             // until its handlers are done with it. A panic that escapes the
             // per-handler catch unwinds through here and drops the permit

@@ -72,6 +72,34 @@ impl FemtoHandlerTrait for IdleHandler {
     }
 }
 
+/// Handler whose destruction blocks until the test releases it.
+struct BlockingDropHandler {
+    /// Notifies the test that the shard has released its last reference.
+    dropping: std::sync::mpsc::Sender<()>,
+    /// Keeps the destructor blocked until the test lets it finish.
+    ///
+    /// Wrapped in a mutex because a bare receiver is not `Sync`, and the
+    /// handler trait requires it.
+    release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl FemtoHandlerTrait for BlockingDropHandler {
+    fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl Drop for BlockingDropHandler {
+    fn drop(&mut self) {
+        let _ = self.dropping.send(());
+        let _ = self.release.lock().recv();
+    }
+}
+
 #[test]
 fn a_queue_without_a_receiver_reports_a_closed_channel() {
     let (shard, jobs) = Shard::without_worker_for_test(2);
@@ -153,6 +181,54 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
     // the second barrier drains instead of inheriting the first one's verdict.
     let _ = release_tx.send(());
     assert_eq!(shard.wait_for_drain_outcome(), DrainOutcome::Drained);
+}
+
+/// A record stays in flight until the shard has released its handlers.
+///
+/// A logger's `Drop` reads the in-flight count to decide whether the shard is
+/// finished with the logger's records. If the permit were released while the
+/// shard still held its handler references, that `Drop` could return before a
+/// handler's destructor ran. A stream handler's destructor is what waits for
+/// its worker's last write, so a test that then read the handler's output
+/// could race the write — the failure this pins down. The destructor blocks
+/// here, so the ordering is observed rather than hoped for.
+#[test]
+fn a_record_is_in_flight_until_its_handlers_are_released() {
+    let shard = Shard::start(0, 2).expect("test shard should start");
+    let budget = shard.budget();
+    let (dropping_tx, dropping_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(BlockingDropHandler {
+        dropping: dropping_tx,
+        release: parking_lot::Mutex::new(release_rx),
+    });
+    if shard.admit(queued_record(&handler), &budget).is_err() {
+        panic!("a fresh test shard should accept its first record");
+    }
+    // The job now holds the only reference, so the shard's worker is what
+    // destroys the handler — exactly as it does for a logger dropped after its
+    // last record.
+    drop(handler);
+
+    dropping_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the shard should release its handler once the record is handled");
+    // Read before releasing, so the destructor cannot finish first.
+    let in_flight_while_dropping = budget.in_flight();
+    let _ = release_tx.send(());
+
+    assert_eq!(
+        in_flight_while_dropping, 1,
+        "the record must still be in flight while the shard destroys its handler",
+    );
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while budget.in_flight() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the permit must be released once the handler is gone",
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]
