@@ -95,6 +95,8 @@ from femtologging import get_logger
 
 NAME = "reentrant.clear.handlers"
 logger = get_logger(NAME)
+phase = "setup"
+dropped = []
 
 
 class FinalizingHandler:
@@ -102,15 +104,20 @@ class FinalizingHandler:
         pass
 
     def __del__(self):
+        assert phase != "setup", "the handler finalised before clear_handlers"
+        dropped.append(True)
         get_logger(NAME).info("re-entered from a handler finalizer")
-        print("clear-handlers-finalizer-complete")
 
 
 handler = FinalizingHandler()
 logger.add_handler(handler)
 del handler
 gc.collect()
+assert not dropped, "the logger did not keep the handler alive"
+phase = "clear"
 logger.clear_handlers()
+assert dropped == [True], "clear_handlers did not finalise the handler"
+print("clear-handlers-finalizer-complete")
 """
 
 REMOVE_HANDLER_MARKER = "remove-handler-finalizer-complete"
@@ -161,6 +168,8 @@ import gc
 from femtologging import basicConfig, get_logger
 
 root = get_logger("root")
+phase = "setup"
+dropped = []
 
 
 class FinalizingHandler:
@@ -168,15 +177,20 @@ class FinalizingHandler:
         pass
 
     def __del__(self):
+        assert phase != "setup", "the handler finalised before basicConfig"
+        dropped.append(True)
         get_logger("root").info("re-entered from a forced handler removal")
-        print("basic-config-finalizer-complete")
 
 
 handler = FinalizingHandler()
 root.add_handler(handler)
 del handler
 gc.collect()
+assert not dropped, "the root logger did not keep the handler alive"
+phase = "force"
 basicConfig(force=True, handlers=[])
+assert dropped == [True], "basicConfig(force=True) did not finalise the handler"
+print("basic-config-finalizer-complete")
 """
 
 CLEAR_FILTERS_MARKER = "clear-filters-finalizer-complete"
@@ -192,6 +206,8 @@ from femtologging import (
 )
 
 NAME = "reentrant.clear.filters"
+phase = "setup"
+dropped = []
 
 
 class FinalizingCallback:
@@ -199,8 +215,9 @@ class FinalizingCallback:
         return True
 
     def __del__(self):
+        assert phase != "setup", "the callback finalised before clear_filters"
+        dropped.append(True)
         get_logger(NAME).info("re-entered from a filter finalizer")
-        print("clear-filters-finalizer-complete")
 
 
 callback = FinalizingCallback()
@@ -221,7 +238,13 @@ callback = FinalizingCallback()
 )
 del callback
 gc.collect()
+# The root-only reconfiguration must not have released the logger's filter;
+# if it did, this assertion fails instead of the marker passing by accident.
+assert not dropped, "the reconfiguration already finalised the callback"
+phase = "clear"
 get_logger(NAME).clear_filters()
+assert dropped == [True], "clear_filters did not finalise the callback"
+print("clear-filters-finalizer-complete")
 """
 
 REPLACE_CONFIGURATION_MARKER = "replace-configuration-finalizer-complete"
@@ -237,6 +260,8 @@ from femtologging import (
 )
 
 NAME = "reentrant.replace.configuration"
+phase = "setup"
+dropped = []
 
 
 class FinalizingCallback:
@@ -244,8 +269,9 @@ class FinalizingCallback:
         return True
 
     def __del__(self):
+        assert phase != "setup", "the callback finalised before the replacement"
+        dropped.append(True)
         get_logger(NAME).info("re-entered during configuration replacement")
-        print("replace-configuration-finalizer-complete")
 
 
 callback = FinalizingCallback()
@@ -258,6 +284,8 @@ callback = FinalizingCallback()
 )
 del callback
 gc.collect()
+assert not dropped, "the configuration did not keep the callback alive"
+phase = "replace"
 # Reconfiguring the logger without the filter displaces it from both the
 # registry and the live logger in one transaction commit.
 (
@@ -266,6 +294,8 @@ gc.collect()
     .with_root_logger(LoggerConfigBuilder())
     .build_and_init()
 )
+assert dropped == [True], "the replacement did not finalise the callback"
+print("replace-configuration-finalizer-complete")
 """
 
 RESET_MANAGER_MARKER = "reset-manager-finalizer-complete"
@@ -282,6 +312,8 @@ from femtologging import (
 )
 
 NAME = "reentrant.reset.manager"
+phase = "setup"
+dropped = []
 
 
 class FinalizingCallback:
@@ -289,8 +321,9 @@ class FinalizingCallback:
         return True
 
     def __del__(self):
+        assert phase != "setup", "the callback finalised before reset_manager"
+        dropped.append(True)
         get_logger(NAME).info("re-entered from reset_manager")
-        print("reset-manager-finalizer-complete")
 
 
 callback = FinalizingCallback()
@@ -306,5 +339,9 @@ gc.collect()
 # Release the live logger's reference so the runtime registry is the last
 # owner; reset_manager then destroys it after dropping MANAGER.
 get_logger(NAME).clear_filters()
+assert not dropped, "clearing the live logger finalised the callback too early"
+phase = "reset"
 reset_manager()
+assert dropped == [True], "reset_manager did not finalise the callback"
+print("reset-manager-finalizer-complete")
 """
