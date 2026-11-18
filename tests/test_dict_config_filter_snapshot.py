@@ -71,8 +71,8 @@ def test_declarative_mode_reads_filters_once() -> None:
     assert config.filter_reads == 1, "the filters section must be read once"
     assert config.factory_invocations == 0, "the later factory must never run"
     app = get_logger("app")
-    assert app.log("DEBUG", "filtered") is None, (
-        "the collected INFO filter must be attached to the configured logger"
+    assert app.log("ERROR", "filtered") is None, (
+        "the collected INFO filter must reject a record above its level"
     )
     assert app.log("INFO", "allowed") is not None, (
         "records at the filter level must pass the collected filter"
