@@ -19,6 +19,9 @@ import threading
 import typing as typ
 from pathlib import Path
 
+if typ.TYPE_CHECKING:
+    from femtologging import FemtoHTTPHandler
+
 # The record whose delivery proves the installed native HTTP worker runs.
 _PROBE_MESSAGE = "release-wheel-probe"
 # The path the loopback collector expects the handler to post to.
@@ -145,7 +148,7 @@ def http_behaviour_errors() -> list[str]:
     thread = threading.Thread(target=collector.serve_forever, daemon=True)
     thread.start()
     endpoint = _collector_endpoint(collector)
-    handler: typ.Any = None
+    handler: FemtoHTTPHandler | None = None
     try:
         handler = femtologging.HTTPHandlerBuilder().with_endpoint(endpoint).build()
         handler.handle("release.wheel.probe", "INFO", _PROBE_MESSAGE)
@@ -155,6 +158,7 @@ def http_behaviour_errors() -> list[str]:
         if handler is not None:
             handler.close()
         collector.shutdown()
+        collector.server_close()
         thread.join(timeout=1)
     return errors
 

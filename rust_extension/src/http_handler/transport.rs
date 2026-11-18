@@ -83,9 +83,9 @@ fn build_agent_with_roots(
 ///
 /// A `StatusCode` error is classified like the matching success response, so a
 /// change to ureq's `http_status_as_error` setting cannot silently turn a
-/// server verdict into a transport failure. A `RedirectFailed` error is the one
-/// redirect outcome ureq 3 reports instead of a response, and it is classified
-/// as the status ureq 2 would have returned.
+/// server verdict into a transport failure. Errors that stand for a redirect
+/// ureq 3 refused to follow are classified as the status ureq 2 would have
+/// returned; see `classify_error`.
 pub(super) fn execute(
     config: &HTTPHandlerConfig,
     agent: &Agent,
@@ -100,16 +100,31 @@ pub(super) fn execute(
 
     match sent {
         Ok(response) => Ok(classify_status(response.status().as_u16())),
-        Err(err) => match *err {
-            ureq::Error::StatusCode(code) => Ok(classify_status(code)),
-            // ureq 2 returned the 307 or 308 response itself when it could not
-            // replay a request body, and any status outside 2xx, 429 and 5xx is
-            // permanent. ureq 3 reports the same refusal as `RedirectFailed`,
-            // with no response to classify, so restore the verdict rather than
-            // let it become a retryable transport error.
-            ureq::Error::RedirectFailed => Ok(ResponseClass::Permanent),
-            other => Err(other.to_string()),
-        },
+        Err(err) => classify_error(*err),
+    }
+}
+
+/// Classify a transport error, preserving the verdict ureq 2 produced.
+///
+/// ureq 2 returned a redirect response it could not follow, and the caller then
+/// classified that status: permanent for every 3xx. ureq 3 raises some of the
+/// same refusals as errors instead, and left as transport errors they would be
+/// retried until the backoff deadline. Two errors are refused redirects:
+/// `RedirectFailed` when a 307 or 308 would replay a request body, and a
+/// protocol `NoLocationHeader` or `BadLocationHeader` when the response carries
+/// no usable `Location` (ureq 2 read a non-UTF-8 header as missing). With no
+/// response to classify, restore the permanent verdict.
+///
+/// `TooManyRedirects` is deliberately absent: ureq 2 also raised that as an
+/// error, so it stays a transport error.
+fn classify_error(err: ureq::Error) -> Result<ResponseClass, String> {
+    match err {
+        ureq::Error::StatusCode(code) => Ok(classify_status(code)),
+        ureq::Error::RedirectFailed => Ok(ResponseClass::Permanent),
+        ureq::Error::Protocol(
+            ureq_proto::Error::NoLocationHeader | ureq_proto::Error::BadLocationHeader(_),
+        ) => Ok(ResponseClass::Permanent),
+        other => Err(other.to_string()),
     }
 }
 

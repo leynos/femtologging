@@ -82,3 +82,36 @@ fn allows_get_with_url_encoded_format() {
 
     assert!(result.is_ok());
 }
+
+/// Scenario: the endpoint contains a character that must be percent-encoded,
+/// such as the space in a log ingestion path.
+///
+/// Invariant: the stored endpoint is what ureq 2 sent, with the space encoded
+/// as `%20`. ureq 3 parses an `http::Uri` at send time and rejects the raw
+/// space, so leaving it unencoded would fail every attempt.
+#[test]
+fn percent_encodes_an_endpoint_the_way_ureq_two_did() {
+    let builder = HTTPHandlerBuilder::new().with_url("http://example.com/log ingest");
+
+    assert_eq!(
+        builder.normalized_url().expect("a space is encodable"),
+        "http://example.com/log%20ingest"
+    );
+}
+
+/// Scenario: the endpoint is not a URL the handler can send to.
+///
+/// Invariant: building fails with a configuration error rather than spawning a
+/// worker that would retry every record until the backoff deadline expired.
+#[test]
+fn rejects_an_unparseable_endpoint() {
+    let err = HTTPHandlerBuilder::new()
+        .with_url("not a url")
+        .build_inner()
+        .expect_err("an unparseable endpoint must reject the configuration");
+
+    assert!(
+        matches!(err, HandlerBuildError::InvalidConfig(ref message) if message.contains("endpoint")),
+        "the error must identify the endpoint: {err:?}"
+    );
+}
