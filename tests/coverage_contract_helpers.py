@@ -3,10 +3,12 @@
 CV-005 keeps coverage measurement and its ratchet in the pull-request lane and
 moves both persistent outputs, the CodeScene upload and the ratchet baseline,
 to one default-branch publisher. These readers answer the questions that split
-turns on: which workflows a pull request can reach, which jobs declare the
-protected environment, where a report is generated, handed over and uploaded,
-and whether the two lanes measure the same population. Each reader fails closed
-on a shape it cannot prove rather than assuming the safe reading.
+turns on: which workflows a pull request can reach, where a report is
+generated, handed over and uploaded, what a build matrix lists, and whether
+the two lanes measure the same population. The protected environment and the
+token it admits have their own readers in
+:mod:`tests.coverage_environment_helpers`. Each reader fails closed on a shape
+it cannot prove rather than assuming the safe reading.
 """
 
 from __future__ import annotations
@@ -18,9 +20,7 @@ from tests.workflow_document_helpers import repository_workflows, require
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-CODESCENE_ENVIRONMENT: typ.Final[str] = "codescene"
-# These name the secret, its step and its command: never a secret value.
-TOKEN_NAME: typ.Final[str] = "CS_ACCESS_TOKEN"  # ruff: ignore[hardcoded-password-string] the secret's name, not its value
+# These name the step and its command: never a secret value.
 GENERATE_MARKER: typ.Final[str] = "generate-coverage"
 BASELINE_MARKER: typ.Final[str] = "publish-coverage-baseline"
 UPLOAD_MARKER: typ.Final[str] = "upload-codescene-coverage"
@@ -131,32 +131,6 @@ def pushes_to(events: cabc.Mapping[str, typ.Any], branch: str) -> bool:
     return branch in [str(name) for name in branches]
 
 
-def environment_name(job: dict[str, typ.Any]) -> str | None:
-    """Return the environment a job deploys to, if it declares one.
-
-    Parameters
-    ----------
-    job
-        A workflow job document.
-
-    Returns
-    -------
-    str | None
-        The environment name, from either the scalar form or the mapping form
-        that also carries a deployment URL, or ``None`` when no environment is
-        declared.
-    """
-    raw = job.get("environment")
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        return raw
-    require(isinstance(raw, dict), "an environment must be a name or a mapping")
-    name = raw.get("name")
-    require(isinstance(name, str), "an environment mapping must declare a name")
-    return name
-
-
 def jobs_named(
     documents: cabc.Mapping[str, dict[str, typ.Any]],
 ) -> cabc.Iterator[tuple[str, str, dict[str, typ.Any]]]:
@@ -218,78 +192,93 @@ def steps_using(
     return matches
 
 
-def _strings(node: object) -> cabc.Iterator[str]:
-    """Yield every string nested in `node`, mapping keys included."""
-    match node:
-        case str():
-            yield node
-        case dict():
-            for key, value in typ.cast("dict[object, object]", node).items():
-                yield str(key)
-                yield from _strings(value)
-        case list():
-            for item in typ.cast("list[object]", node):
-                yield from _strings(item)
+def repository_documents() -> dict[str, dict[str, typ.Any]]:
+    """Return every repository workflow, keyed by file name.
 
+    Reads the checked-in workflow files through
+    :func:`tests.workflow_document_helpers.repository_workflows`, so this is
+    the one reader here that touches the filesystem.
 
-def env_blocks(
-    node: object, path: str = ""
-) -> cabc.Iterator[tuple[str, dict[str, typ.Any]]]:
-    """Yield every ``env`` mapping nested in `node` with its location.
-
-    Parameters
-    ----------
-    node
-        A parsed workflow document or a part of one.
-    path
-        Location prefix used to report where the mapping was found.
-
-    Yields
-    ------
-    tuple[str, dict[str, typing.Any]]
-        The location and the ``env`` mapping declared there. Workflow-, job-
-        and step-level ``env`` blocks are all found.
+    Returns
+    -------
+    dict[str, dict[str, typing.Any]]
+        Each workflow file name mapped to its parsed document.
     """
-    match node:
-        case dict():
-            for key, value in typ.cast("dict[object, object]", node).items():
-                if key == "env" and isinstance(value, dict):
-                    yield f"{path}/env", typ.cast("dict[str, typ.Any]", value)
-                yield from env_blocks(value, f"{path}/{key}")
-        case list():
-            for at, item in enumerate(typ.cast("list[object]", node)):
-                yield from env_blocks(item, f"{path}/{at}")
+    return dict(repository_workflows())
 
 
-def secret_in_env(document: dict[str, typ.Any]) -> list[str]:
-    """Return the locations whose ``env`` names the CodeScene token.
+def matrix_versions(job: dict[str, typ.Any], key: str) -> list[str]:
+    """Return the values a job's build matrix lists for `key`.
 
     Parameters
     ----------
-    document
-        A parsed workflow document.
+    job
+        A workflow job document.
+    key
+        The matrix axis to read, such as ``python-version``.
 
     Returns
     -------
     list[str]
-        One location per offending ``env`` mapping. The upload action receives
-        the token as an input, never through the environment: it is composite
-        and would hand a step's environment to its nested steps.
+        The axis values in declared order.
     """
-    return [
-        location
-        for location, mapping in env_blocks(document)
-        if any(TOKEN_NAME in value for value in _strings(mapping))
-    ]
+    strategy = job.get("strategy")
+    require(isinstance(strategy, dict), "the job must declare a strategy matrix")
+    matrix = strategy.get("matrix")
+    require(isinstance(matrix, dict), "the job must declare a matrix mapping")
+    values = matrix.get(key)
+    require(isinstance(values, list), f"the matrix must list {key}")
+    require(
+        all(isinstance(value, str) for value in values),
+        f"every {key} entry must be a string",
+    )
+    return typ.cast("list[str]", values)
 
 
-def repository_documents() -> dict[str, dict[str, typ.Any]]:
-    """Return every repository workflow, keyed by file name."""
-    return dict(repository_workflows())
+def matrix_includes(job: dict[str, typ.Any]) -> list[dict[str, typ.Any]]:
+    """Return the entries of a job's ``include`` matrix axis.
+
+    Parameters
+    ----------
+    job
+        A workflow job document.
+
+    Returns
+    -------
+    list[dict[str, typing.Any]]
+        Each included combination as its own mapping, in declared order.
+    """
+    strategy = job.get("strategy")
+    require(isinstance(strategy, dict), "the job must declare a strategy matrix")
+    matrix = strategy.get("matrix")
+    require(isinstance(matrix, dict), "the job must declare a matrix mapping")
+    includes = matrix.get("include")
+    require(isinstance(includes, list), "the matrix must declare an include list")
+    require(
+        all(isinstance(entry, dict) for entry in includes),
+        "every matrix include entry must be a mapping",
+    )
+    return typ.cast("list[dict[str, typ.Any]]", includes)
 
 
 def coverage_inputs(step: dict[str, typ.Any]) -> dict[str, typ.Any]:
-    """Return the parity inputs a coverage step declares."""
+    """Return the parity inputs a coverage step declares.
+
+    An input the step omits is represented as ``None`` rather than dropped, so
+    two steps compare equal only when they name the same inputs with the same
+    values. That is what makes an equality check a parity claim: a dropped
+    input on one side would otherwise hide behind the other side's absence.
+
+    Parameters
+    ----------
+    step
+        A coverage-generation step document.
+
+    Returns
+    -------
+    dict[str, typing.Any]
+        One entry per :data:`PARITY_INPUTS` name, ``None`` where unset.
+    """
     shared = step.get("with") or {}
     require(isinstance(shared, dict), "a coverage step's `with` must be a mapping")
     return {name: shared.get(name) for name in PARITY_INPUTS}
