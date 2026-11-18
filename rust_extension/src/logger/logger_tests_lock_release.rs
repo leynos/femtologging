@@ -266,6 +266,10 @@ fn remove_filter_drops_the_removed_reference_after_releasing_the_lock() {
     );
 }
 
+// `replace_handlers` lives in the python-gated `runtime_mutation` module. Test
+// builds currently always enable the feature through the crate's self
+// dev-dependency, but the gate keeps this file honest if that changes.
+#[cfg(feature = "python")]
 #[test]
 fn replace_handlers_drops_displaced_handlers_after_releasing_the_lock() {
     let logger =
@@ -286,6 +290,7 @@ fn replace_handlers_drops_displaced_handlers_after_releasing_the_lock() {
     );
 }
 
+#[cfg(feature = "python")]
 #[test]
 fn replace_filters_drops_displaced_filters_after_releasing_the_lock() {
     let logger =
