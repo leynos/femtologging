@@ -2799,13 +2799,23 @@ and `publish-artefact: 'false'`, and its job declares no environment. The
 default branch owns both persistent outputs, in `coverage-main.yml`, which a
 push to `main` alone triggers.
 
-That publisher has two jobs. `coverage-upload` measures on a hosted runner,
-hands its figures to the next job through the `coverage-baseline-handover`
-artefact, and uploads the report to CodeScene. `publish-baseline: never` keeps
+That publisher has three jobs. `coverage-measure` runs on a hosted runner once
+per required Python lane (`3.12`, `3.13` and `3.14`, the non-experimental lanes
+of `ci.yml`), installs `makeutil` because the measured suite parses the
+Makefile through it, and hands each lane's figures to its publisher through a
+`coverage-baseline-handover-<python>` artefact. `publish-baseline: never` keeps
 the measuring runner out of the cache store entirely, because that store is not
 the one the pull-request lanes read: a ratchet there could never fail and a
-baseline saved there would never be restored. `coverage-baseline` then ratchets
-the handed-over figures and saves the advanced baseline.
+baseline saved there would never be restored. The baseline cache key carries
+the interpreter's major.minor, so every required lane needs its own published
+entry: a lane whose entry was never written restores nothing, compares against
+zero and can never fail. `coverage-baseline` then ratchets each lane's
+handed-over figures on an Ubicloud runner and saves the advanced baseline.
+
+`coverage-upload` is a job of its own, downstream of the measurement alone, so
+a CodeScene outage cannot stop the baseline advancing; it still fails, and
+fails the workflow with it, when CodeScene refuses the report. It receives the
+newest required lane's report as an artefact, because it holds no checkout.
 
 The upload is optional and guarded twice. A token-presence step writes
 `available` and binds no secret; the upload step runs only when that output is
@@ -2822,8 +2832,11 @@ never cancels, so a newer push cannot abandon an in-flight upload or baseline
 write. `tests/test_coverage_publisher_contract.py` holds the whole split: one
 publisher, one environment holder, the single recorded call into another
 repository, the canonical guard and seven ways to weaken it, no token in any
-`env`, identical measurement inputs on both lanes, and fail-closed trigger and
-reachability readers.
+`env`, and identical measurement inputs on both lanes.
+`tests/test_coverage_reach_contract.py` holds the fail-closed trigger and
+reachability readers, including the forwards direction of a `workflow_run`
+edge: the listener becomes reachable once the workflow it watches does, not the
+other way round.
 
 Both lanes must measure the same population, so every input that defines it
 (`output-path`, `format`, `cargo-manifest`, `with-default-features`, `features`,
