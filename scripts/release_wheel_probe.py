@@ -231,8 +231,51 @@ def _stub_surface_errors(package: object) -> list[str]:
     return []
 
 
-def release_wheel_errors() -> list[str]:
+def _resolve_probe_inputs(
+    native: object | None, package: object | None
+) -> tuple[object | None, object | None]:
+    """Fill in the native module and package that the caller left unspecified.
+
+    Parameters
+    ----------
+    native : object | None
+        Injected native module, or ``None`` to import the installed one.
+    package : object | None
+        Injected ``femtologging`` package, or ``None`` to import it.
+
+    Returns
+    -------
+    tuple[object | None, object | None]
+        The native module and package to inspect.
+
+    Examples
+    --------
+    >>> native = object()
+    >>> _resolve_probe_inputs(native, object())[0] is native
+    True
+    """
+    if package is None:
+        import femtologging
+
+        package = femtologging
+    if native is None:
+        native = importlib.import_module("femtologging._femtologging_rs")
+    return native, package
+
+
+def release_wheel_errors(
+    *, native: object | None = None, package: object | None = None
+) -> list[str]:
     """Return checks that fail when this process is not using a release wheel.
+
+    Parameters
+    ----------
+    native : object | None
+        Native extension module to inspect. Defaults to the module installed
+        in this process; tests inject a stand-in so no shared import state is
+        replaced.
+    package : object | None
+        ``femtologging`` package to inspect. Defaults to the imported package.
 
     Returns
     -------
@@ -241,19 +284,24 @@ def release_wheel_errors() -> list[str]:
         extension belongs to this environment and contains no test hooks, and
         that its stub declares only the production API.
     """
-    import femtologging
-
-    native = importlib.import_module("femtologging._femtologging_rs")
+    native, package = _resolve_probe_inputs(native, package)
     errors = _native_location_errors(getattr(native, "__file__", None))
     errors.extend(_native_surface_errors(native))
-    errors.extend(_stub_surface_errors(femtologging))
-    if femtologging._has_test_util is not False:
+    errors.extend(_stub_surface_errors(package))
+    if getattr(package, "_has_test_util", None) is not False:
         errors.append("femtologging._has_test_util must be False")
     return errors
 
 
-def main() -> int:
+def main(*, native: object | None = None, package: object | None = None) -> int:
     """Print release-wheel violations and return a process status.
+
+    Parameters
+    ----------
+    native : object | None
+        Native extension module to inspect. Defaults to the installed module.
+    package : object | None
+        ``femtologging`` package to inspect. Defaults to the imported package.
 
     Returns
     -------
@@ -268,7 +316,7 @@ def main() -> int:
     release wheel probe passed
     0
     """
-    errors = release_wheel_errors()
+    errors = release_wheel_errors(native=native, package=package)
     if errors:
         for error in errors:
             print(f"release wheel probe: {error}", file=sys.stderr)

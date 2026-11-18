@@ -35,6 +35,19 @@ class _RecordingHandler:
         return True
 
 
+class _AlwaysEqual:
+    """Foreign operand whose reflected equality accepts anything.
+
+    A token can only reach this reflected check when its own ``__eq__``
+    returned ``NotImplemented``; returning ``False`` would resolve the
+    comparison before Python tried this operand.
+    """
+
+    def __eq__(self, other: object) -> bool:
+        """Accept *other* unconditionally."""
+        return True
+
+
 def test_identities_are_stable_and_address_free(reset_logger_state: None) -> None:
     """Repeated reads return equal tokens whose repr reveals no address."""
     logger = get_logger("identity.stable")
@@ -94,6 +107,9 @@ def test_identities_defer_foreign_comparisons(reset_logger_state: None) -> None:
     logger.add_handler(_RecordingHandler())
     token = logger.handler_identities_for_test()[0]
 
+    assert token == _AlwaysEqual(), (
+        "foreign equality must defer to the other operand's reflected check"
+    )
     assert token != object(), "a token must not equal an unrelated object"
     assert (token == object()) is False, "foreign equality must resolve to False"
     assert token != [], "a token must not equal an empty list"

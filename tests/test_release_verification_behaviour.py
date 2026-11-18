@@ -67,6 +67,16 @@ def test_checked_in_sdist_verification(
         assert expected in result.stderr, "Report the specific archive defect."
 
 
+def _packaged_stub(tmp_path: Path, stub_body: str = "") -> SimpleNamespace:
+    """Build a stand-in ``femtologging`` package shipping *stub_body*."""
+    package_dir = tmp_path / "femtologging"
+    package_dir.mkdir()
+    package_file = package_dir / "__init__.py"
+    package_file.write_text("", encoding="utf-8")
+    (package_dir / "_femtologging_rs.pyi").write_text(stub_body, encoding="utf-8")
+    return SimpleNamespace(__file__=str(package_file), _has_test_util=False)
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -78,7 +88,7 @@ def test_checked_in_sdist_verification(
     ],
 )
 def test_release_probe_rejects_invalid_installations(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     case: tuple[str | None, bool, bool, str],
 ) -> None:
     """Invalid module origins and test-enabled builds fail the probe."""
@@ -86,31 +96,31 @@ def test_release_probe_rejects_invalid_installations(
     native = SimpleNamespace(__file__=origin)
     if hooks:
         native.set_timed_rotation_test_times_for_test = lambda: None
-    monkeypatch.setattr(
-        release_wheel_probe.importlib, "import_module", lambda _: native
-    )
-    monkeypatch.setattr(femtologging, "_has_test_util", has_util)
+    package = _packaged_stub(tmp_path)
+    package._has_test_util = has_util
     assert any(
-        expected in error for error in release_wheel_probe.release_wheel_errors()
+        expected in error
+        for error in release_wheel_probe.release_wheel_errors(
+            native=native, package=package
+        )
     ), "Report the specific invalid installation."
 
 
 def test_release_probe_accepts_a_production_wheel(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A native extension inside the environment with no hooks passes the probe."""
     suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
     origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
     native = SimpleNamespace(__file__=str(origin))
-    monkeypatch.setattr(
-        release_wheel_probe.importlib, "import_module", lambda _: native
-    )
-    monkeypatch.setattr(femtologging, "_has_test_util", False)
+    package = _packaged_stub(tmp_path)
 
-    assert not release_wheel_probe.release_wheel_errors(), (
-        "A production native extension reports no violations."
+    assert not release_wheel_probe.release_wheel_errors(
+        native=native, package=package
+    ), "A production native extension reports no violations."
+    assert release_wheel_probe.main(native=native, package=package) == 0, (
+        "The probe exits successfully."
     )
-    assert release_wheel_probe.main() == 0, "The probe exits successfully."
     assert capsys.readouterr().out == "release wheel probe passed\n", (
         "The probe reports its success on standard output."
     )
@@ -146,28 +156,18 @@ def test_release_probe_accepts_a_production_wheel(
     ],
 )
 def test_release_probe_checks_every_stub_declaration_shape(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     stub_body: str,
     expected: str | None,
 ) -> None:
     """Class, synchronous and asynchronous declarations all face the name check."""
-    package = tmp_path / "femtologging"
-    package.mkdir()
-    package_file = package / "__init__.py"
-    package_file.write_text("", encoding="utf-8")
-    (package / "_femtologging_rs.pyi").write_text(stub_body, encoding="utf-8")
+    package = _packaged_stub(tmp_path, stub_body)
     suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
     native = SimpleNamespace(
         __file__=str(Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}")
     )
-    monkeypatch.setattr(
-        release_wheel_probe.importlib, "import_module", lambda _: native
-    )
-    monkeypatch.setattr(femtologging, "__file__", str(package_file))
-    monkeypatch.setattr(femtologging, "_has_test_util", False)
 
-    errors = release_wheel_probe.release_wheel_errors()
+    errors = release_wheel_probe.release_wheel_errors(native=native, package=package)
     if expected is None:
         assert not errors, "A production-only stub must pass the probe."
     else:
