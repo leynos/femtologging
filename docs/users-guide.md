@@ -1583,6 +1583,11 @@ code, before a later preparation error is reported. See
 - Call `dictConfig(config, allow_factories=False)` when a reload can receive a
   lower-trust document. That mode rejects `"()"` entries before import,
   resolution, or invocation.
+- Declarative-only mode checks only the incoming document. A logger omitted
+  from the reload keeps its existing filters when `disable_existing_loggers` is
+  `False`, so an installed callback filter can still run after a successful
+  declarative-only reload. Remove that logger's attachments explicitly to
+  retire the callback.
 - `fileConfig` translates INI sections and never emits `"()"` filter entries,
   so an INI reload cannot introduce a factory through that path.
 - `RuntimeConfigBuilder` mutations select registered filters by ID through
