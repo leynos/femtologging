@@ -256,31 +256,44 @@ collected" rather than inferring a result.
    conditions, then give H3 a verdict. If it is not reproducible, record "not
    collected" with the reason. Do not infer unmeasured results.
 
-**Status: collected 2026-11-18.** A competing holder was placed on
-`~/.cargo/.package-cache` with `flock -x`, and its hold was confirmed by a
-control (`cargo metadata` timed out after 3 seconds without producing output).
-The accepting lane was then run under it, with each output line timestamped.
+**Status: collected 2026-11-18.** Each run held `~/.cargo/.package-cache` with
+`flock -x` for a fixed time and confirmed the hold with a control:
+`cargo metadata --format-version 1` printed the blocking message and timed out
+after 3 seconds without producing output. The accepting lane then ran with
+every output line timestamped. No run was wrapped in an enclosing `timeout`,
+the target directory and the offline cache were warm, and each run recorded its
+exit status, lock wait, total elapsed time, load average and
+`build-limits-status` either side.
 
-| Run     | Holder released after | Total elapsed | Blocking lines |
-| ------- | --------------------- | ------------- | -------------- |
-| 1       | 90 s                  | 908 s         | 4              |
-| 2       | 120 s                 | 123 s         | 4              |
-| 3       | 60 s                  | 68 s          | 4              |
-| Control | no holder             | 1 s           | 0              |
-| 4       | 45 s (`--offline`)    | 324 s         | 4              |
+| Run | Lane arguments    | Hold | Lock wait | Elapsed | Exit | Load (before → after) | Admission           |
+| --- | ----------------- | ---- | --------- | ------- | ---- | --------------------- | ------------------- |
+| 1   | defaults          | 60 s | 56 s      | 64 s    | 0    | 24.50 → 22.28         | held 4 → 4, healthy |
+| 2   | defaults          | 90 s | 85 s      | 90 s    | 0    | 21.52 → 15.95         | held 4 → 3, healthy |
+| 3   | defaults          | none | 0 s       | 1 s     | 0    | 17.62 → 17.62         | held 4 → 4, healthy |
+| 4   | `--lib --offline` | 45 s | 41 s      | 44 s    | 0    | 17.63 → 19.44         | held 4 → 4, healthy |
+| 5   | `--lib --offline` | 75 s | 71 s      | 75 s    | 0    | 20.72 → 22.63         | held 4 → 4, healthy |
 
 Every contended run printed `Blocking waiting for file lock on package cache`
-and stayed blocked until the holder released the file. Run 2 blocked from
-01:47:56 to 01:49:53 (117 seconds) for a 120-second hold; run 3 blocked from
-01:50:24 to 01:51:29 for a 60-second hold; the uncontended control reported
-`Finished` in 0.68 seconds with no lock message. Run 1 also filled a cold
-target directory, so its total is not comparable with the others, and run 4
-compiled for the remainder of its total after a 43-second wait; the lock-wait
-window, not the total, is the measurement.
+and stayed blocked until the holder released the file, and its wait tracked the
+hold rather than the lane's own work: 56 seconds of a 60-second hold, 85 of 90,
+41 of 45 and 71 of 75. The uncontended control printed no lock message and
+reported `Finished` in 0.20 seconds. `build-limits-status` read
+`capacity 4, held 4, healthy, caching through sccache` throughout, so the waits
+are not an artefact of a stalled cache server or refused admission.
 
-Run 4 passed `--lib --offline` and still blocked for the whole hold, which is
-the evidence behind rejecting `--offline` below: it changes network and
-lockfile policy, not package-cache locking.
+Runs 4 and 5 passed `--lib --offline` and still blocked for the whole hold,
+which is the evidence behind rejecting `--offline` below: it changes network
+and lockfile policy, not package-cache locking.
+
+The holder is `flock -x` rather than a second Cargo build. That is the same
+exclusive advisory lock Cargo takes on the file, and the control shows a real
+`cargo metadata` contending with it and reporting the same message, so the
+measurement is of the operative resource rather than of a simulation. A
+concurrent build was rejected as the holder because its hold length cannot be
+chosen: its wait would measure that build's own resolve as well as the lane's.
+The natural instance is recorded already: the 2026-10-16 stall came from other
+agents' real Cargo work and lasted 420 seconds. A fixed hold supplies what a
+concurrent build cannot, a number the lane's wait can be checked against.
 
 H3 therefore survives. The lane blocks exactly while a competing job holds the
 lock and resumes as soon as it is released; it is not a stall without the
@@ -295,11 +308,12 @@ package-cache lock at all. `tests/test_env_access_policy_contract.py` now puts
 a recording fake `cargo` first on `PATH` (defined in
 `tests/env_policy_lane_support.py`). Make, uv and the lane driver still run for
 real, and the test judges exact ordered argument arrays, the named failure
-message, and a standard-error sentinel that names its lane and is written once
-per lane. Requiring each lane's own sentinel proves that the driver forwards
-every lane's diagnostics rather than swallowing one and repeating another. The
-fake compiles nothing, so the contract can no longer wait on a co-scheduled
-resolve.
+message, and a standard-error sentinel that names its lane, is written once per
+lane, and is counted on standard error alone. Requiring each lane's own
+sentinel proves that the driver forwards every lane's diagnostics rather than
+swallowing one and repeating another, and counting on standard error proves
+they arrive on the stream a diagnostic belongs to. The fake compiles nothing,
+so the contract can no longer wait on a co-scheduled resolve.
 
 Validated on 2026-11-09, with `flock -x ~/.cargo/.package-cache` holding the
 lock: `cargo metadata --format-version 1` printed
