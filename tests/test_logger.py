@@ -16,9 +16,9 @@ from femtologging import FemtoLogger
 from tests.logger_support import CollectingHandler
 from tests.reentrant_finalizer_support import (
     CLEAR_HANDLERS_MARKER,
-    CLEAR_HANDLERS_SCRIPT,
+    CLEAR_HANDLERS_SCENARIO,
     REMOVE_HANDLER_MARKER,
-    REMOVE_HANDLER_SCRIPT,
+    REMOVE_HANDLER_SCENARIO,
     run_reentrant_finalizer_script,
 )
 
@@ -222,7 +222,7 @@ def test_clear_handlers_runs_a_finalizer_after_releasing_the_lock() -> None:
     The child logs only from ``__del__``; a marker on standard output proves
     the re-entrant ``info`` call returned rather than merely avoiding a crash.
     """
-    run_reentrant_finalizer_script(CLEAR_HANDLERS_SCRIPT, CLEAR_HANDLERS_MARKER)
+    run_reentrant_finalizer_script(CLEAR_HANDLERS_SCENARIO, CLEAR_HANDLERS_MARKER)
 
 
 @pytest.mark.timeout(20)
@@ -235,4 +235,4 @@ def test_remove_handler_runs_a_finalizer_and_delivers_its_record() -> None:
     destroys it, needs an owner the caller does not hold; the Rust probes in
     ``logger_tests_lock_release`` cover it.
     """
-    run_reentrant_finalizer_script(REMOVE_HANDLER_SCRIPT, REMOVE_HANDLER_MARKER)
+    run_reentrant_finalizer_script(REMOVE_HANDLER_SCENARIO, REMOVE_HANDLER_MARKER)

@@ -25,11 +25,11 @@ from tests.python_filter_support import (
 )
 from tests.reentrant_finalizer_support import (
     CLEAR_FILTERS_MARKER,
-    CLEAR_FILTERS_SCRIPT,
+    CLEAR_FILTERS_SCENARIO,
     REPLACE_CONFIGURATION_MARKER,
-    REPLACE_CONFIGURATION_SCRIPT,
+    REPLACE_CONFIGURATION_SCENARIO,
     RESET_MANAGER_MARKER,
-    RESET_MANAGER_SCRIPT,
+    RESET_MANAGER_SCENARIO,
     run_reentrant_finalizer_script,
 )
 
@@ -281,7 +281,7 @@ def test_clear_filters_runs_a_callback_finalizer_after_releasing_the_lock() -> N
     collection as the last owner, so ``clear_filters`` is what triggers the
     finalizer's re-entrant ``info`` call.
     """
-    run_reentrant_finalizer_script(CLEAR_FILTERS_SCRIPT, CLEAR_FILTERS_MARKER)
+    run_reentrant_finalizer_script(CLEAR_FILTERS_SCENARIO, CLEAR_FILTERS_MARKER)
 
 
 @pytest.mark.timeout(20)
@@ -292,7 +292,7 @@ def test_configuration_replacement_runs_a_callback_finalizer() -> None:
     its finalizer re-enters ``get_logger`` before printing the marker.
     """
     run_reentrant_finalizer_script(
-        REPLACE_CONFIGURATION_SCRIPT,
+        REPLACE_CONFIGURATION_SCENARIO,
         REPLACE_CONFIGURATION_MARKER,
     )
 
@@ -305,4 +305,4 @@ def test_reset_manager_runs_a_callback_finalizer_after_releasing_the_manager() -
     the callback's last owner and the finalizer's ``get_logger`` call would
     deadlock on ``MANAGER`` if the snapshot were dropped under the guard.
     """
-    run_reentrant_finalizer_script(RESET_MANAGER_SCRIPT, RESET_MANAGER_MARKER)
+    run_reentrant_finalizer_script(RESET_MANAGER_SCENARIO, RESET_MANAGER_MARKER)

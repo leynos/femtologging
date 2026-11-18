@@ -136,6 +136,9 @@ extend-ignore = [
 "**/test_*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
 "tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use", "undocumented-public-function"]
 "tests/helpers.py" = ["assert"]
+# Scenario scripts fail through assertion; the runner reports the child's
+# failure with the output it captured.
+"tests/fixtures/*.py" = ["assert"]
 # Shared fixtures and assertion helpers live beside the tests they serve.
 "tests/**/conftest.py" = ["assert"]
 
