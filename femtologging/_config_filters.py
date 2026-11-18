@@ -112,7 +112,9 @@ def build_filter_from_dict(
 
     Examples
     --------
-    >>> builder = build_filter_from_dict("lvl", {"level": "INFO"})
+    >>> from femtologging._config_filters import build_filter_from_dict
+    >>> type(build_filter_from_dict("lvl", {"level": "INFO"})).__name__
+    'LevelFilterBuilder'
     >>> build_filter_from_dict("f", {"()": "pkg.Factory"}, allow_factories=False)
     Traceback (most recent call last):
     ...

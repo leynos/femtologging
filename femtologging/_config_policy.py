@@ -23,6 +23,7 @@ def factory_disallowed_message(fid: str) -> str:
 
     Examples
     --------
+    >>> from femtologging._config_policy import factory_disallowed_message
     >>> factory_disallowed_message("svc")
     "filter 'svc' uses a '()' factory, rejected by allow_factories=False"
 
@@ -51,6 +52,7 @@ def validate_allow_factories(value: object) -> bool:
 
     Examples
     --------
+    >>> from femtologging._config_policy import validate_allow_factories
     >>> validate_allow_factories(False)
     False
     >>> validate_allow_factories("false")

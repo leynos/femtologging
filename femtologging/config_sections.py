@@ -4,9 +4,8 @@ This module handles the processing of filters, formatters, handlers,
 loggers, and root logger sections in ``dictConfig``-style configuration
 dictionaries.
 
-The entry points are :func:`_reject_filter_factories`,
-:func:`_process_sections`, and :func:`_process_root_logger`, called from
-:func:`femtologging.config.dictConfig`.
+The entry points are :func:`_collect_filters`, :func:`_process_sections`, and
+:func:`_process_root_logger`, called from :func:`femtologging.config.dictConfig`.
 """
 
 from __future__ import annotations
@@ -124,15 +123,16 @@ def _attach_section(
     return builder
 
 
-def _reject_filter_factories(config: cabc.Mapping[str, object]) -> None:
-    """Reject every ``"()"`` filter entry before any builder is created.
+def _collect_filters(
+    config: cabc.Mapping[str, object], *, allow_factories: bool
+) -> dict[str, dict[str, object]]:
+    """Read the filters section once and apply the declarative-only policy.
 
-    This whole-section preflight runs before ``ConfigBuilder`` construction, so
-    declarative-only mode refuses factory entries before their target can be
-    imported, resolved, or invoked. Detection is by key presence alone: the
-    value is never inspected. A mixed entry carrying ``"()"`` alongside
-    ``level`` or ``name`` is rejected with the same error, ahead of the
-    mixed-key validation that would otherwise report it differently.
+    The returned snapshot is what construction consumes, so the preflight and
+    the builder pass inspect identical entries. A mapping that changes between
+    reads cannot introduce a factory after the preflight has passed. Key
+    detection iterates the keys rather than testing membership, so a custom
+    mapping's value accessor for ``"()"`` is never invoked.
 
     Parameters
     ----------
@@ -140,46 +140,53 @@ def _reject_filter_factories(config: cabc.Mapping[str, object]) -> None:
         The full ``dictConfig`` mapping. Section structure is validated while
         iterating, so malformed filter sections still raise their usual
         structural errors.
+    allow_factories
+        When ``False``, reject any entry carrying a ``"()"`` key. Detection is
+        by key presence alone: the factory target is never inspected.
+
+    Returns
+    -------
+    dict[str, dict[str, object]]
+        Filter entries copied for construction.
 
     Raises
     ------
     ValueError
-        If any filter entry contains a ``"()"`` key.
+        If ``allow_factories`` is ``False`` and any filter entry contains a
+        ``"()"`` key.
 
     """
+    collected: dict[str, dict[str, object]] = {}
     for fid, filter_cfg in _iter_section_items(config, "filters", "filter"):
-        if "()" in filter_cfg:
+        keys = list(filter_cfg)
+        if not allow_factories and "()" in keys:
             msg = factory_disallowed_message(fid)
             raise ValueError(msg)
+        collected[fid] = {key: filter_cfg[key] for key in keys}
+    return collected
 
 
 def _process_filters(
     builder: _ConfigBuilder,
-    config: cabc.Mapping[str, object],
+    filters: cabc.Mapping[str, dict[str, object]],
     *,
     allow_factories: bool = True,
 ) -> _ConfigBuilder:
-    """Attach filter builders to ``builder``.
+    """Attach filter builders for the collected ``filters`` entries.
 
-    Passing ``allow_factories=False`` keeps the per-entry guard active as well
-    as the caller's whole-section preflight. That guard protects direct callers
-    and any mapping that changes between the preflight and this pass.
+    The per-entry guard stays active for direct callers of
+    ``build_filter_from_dict`` and rejects a factory even if a future caller
+    supplies unscreened entries.
 
     Returns
     -------
     _ConfigBuilder
         ``builder`` with every filter entry attached.
     """
-    for fid, filter_cfg in _iter_section_items(
-        config,
-        "filters",
-        "filter",
-    ):
+    for fid, filter_cfg in filters.items():
         builder = builder.with_filter(
             fid,
-            build_filter_from_dict(
-                fid, dict(filter_cfg), allow_factories=allow_factories
-            ),
+            build_filter_from_dict(fid, filter_cfg, allow_factories=allow_factories),
         )
     return builder
 
@@ -187,11 +194,12 @@ def _process_filters(
 def _process_sections(
     builder: _ConfigBuilder,
     config: cabc.Mapping[str, object],
+    filters: cabc.Mapping[str, dict[str, object]],
     *,
     allow_factories: bool = True,
 ) -> _ConfigBuilder:
     """Attach the filter, formatter, handler, and logger sections."""
-    builder = _process_filters(builder, config, allow_factories=allow_factories)
+    builder = _process_filters(builder, filters, allow_factories=allow_factories)
     for spec in _SECTION_SPECS:
         builder = _attach_section(builder, config, spec)
     return builder
