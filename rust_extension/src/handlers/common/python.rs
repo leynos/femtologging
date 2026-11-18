@@ -217,3 +217,35 @@ impl FileLikeBuilderState {
         write_overflow_policy_fields(d, &self.overflow_policy)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the Python-visible overflow policy fields.
+
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn overflowing_timeout_saturates_instead_of_failing() {
+        Python::attach(|py| {
+            let fields = PyDict::new(py);
+            let policy = OverflowPolicy::Timeout(Duration::from_secs(u64::MAX));
+
+            write_overflow_policy_fields(&fields, &policy)
+                .expect("an overflowing timeout must still be written");
+
+            let timeout = fields
+                .get_item("timeout_ms")
+                .expect("reading the field must not raise")
+                .expect("timeout_ms must be present")
+                .extract::<u64>()
+                .expect("timeout_ms must be an integer");
+            assert_eq!(
+                timeout,
+                u64::MAX,
+                "a timeout beyond u64 milliseconds must saturate rather than wrap"
+            );
+        });
+    }
+}
