@@ -9,6 +9,7 @@ repository's 400-line module cap.
 from __future__ import annotations
 
 import dataclasses
+import shlex
 import typing as typ
 
 from tests.build_tools_support import fake_executable
@@ -66,16 +67,23 @@ def _record_prefix(options: StubOptions) -> str:
     -------
     str
         One shell fragment per requested target, in a fixed order.
+
+    Notes
+    -----
+    Each path is quoted as a shell argument rather than wrapped in literal
+    single quotes: a test directory such as ``/tmp/O'Brien`` would otherwise
+    close the quote and hand the stub a different command.
     """
     prefix = ""
     if options.argv_log is not None:
-        prefix += f"printf '%s\\n' \"$*\" >> '{options.argv_log}'; "
+        destination = shlex.quote(str(options.argv_log))
+        prefix += f"printf '%s\\n' \"$*\" >> {destination}; "
     if options.pwd_log is not None:
-        prefix += f"pwd >> '{options.pwd_log}'; "
+        prefix += f"pwd >> {shlex.quote(str(options.pwd_log))}; "
     if options.env_log is not None:
+        destination = shlex.quote(str(options.env_log))
         prefix += (
-            f"printf '%s\\n' \"${{RUSTUP_AUTO_INSTALL-unset}}\" "
-            f">> '{options.env_log}'; "
+            f"printf '%s\\n' \"${{RUSTUP_AUTO_INSTALL-unset}}\" >> {destination}; "
         )
     return prefix
 
