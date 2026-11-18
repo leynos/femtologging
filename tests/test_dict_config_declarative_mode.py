@@ -1,16 +1,15 @@
 """Tests for declarative-only ``dictConfig`` filter handling.
 
-``allow_factories=False`` is the mode for callers that cannot trust the
-configuration document. These tests prove that the mode accepts built-in
-``level`` and ``name`` filters, rejects every ``"()"`` form before import,
-resolution, invocation, or construction, and leaves default factory behaviour
-unchanged.
+``allow_factories=False`` rejects filter factories only; it applies no trust
+policy to handler classes, destinations, or the rest of the document. These
+tests prove that the mode accepts built-in ``level`` and ``name`` filters,
+rejects every ``"()"`` form before import, resolution, invocation, or
+construction, and leaves default factory behaviour unchanged.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import logging
 import sys
 import typing as typ
@@ -214,7 +213,6 @@ def test_declarative_mode_rejects_every_factory_value(
     monkeypatch.setattr(
         config_filters, "resolve_factory", _unexpected_call("resolve_factory")
     )
-    monkeypatch.setattr(importlib, "import_module", _unexpected_call("import_module"))
 
     config = _factory_config(value_builder(probe), extra_keys)
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):

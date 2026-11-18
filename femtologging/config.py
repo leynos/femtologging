@@ -369,11 +369,10 @@ def dictConfig(
 
     allow_factories = validate_allow_factories(allow_factories)
     version = _validate_dict_config(config)
-    if not allow_factories:
-        config_sections._reject_filter_factories(config)
+    filters = config_sections._collect_filters(config, allow_factories=allow_factories)
     builder = typ.cast("typ.Any", _create_config_builder(version, config))
     builder = config_sections._process_sections(
-        builder, config, allow_factories=allow_factories
+        builder, config, filters, allow_factories=allow_factories
     )
     builder = config_sections._process_root_logger(builder, config)
     builder.build_and_init()
