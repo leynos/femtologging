@@ -60,9 +60,10 @@ def resolve_factory(dotted_path: str) -> object:
     Resolution imports modules and reads attributes before the resolved object
     is invoked. Importing a module runs its top-level code, so the path is
     trusted-code-equivalent even before any callable is called. This helper
-    provides no sandbox: it cannot make an untrusted path safe. Validate or
-    allowlist a path before resolution, never after it, and prefer rejecting
-    ``"()"`` entries outright for lower-trust configuration. Factories invoked
+    provides no sandbox: it cannot make an untrusted path safe. Authorize the
+    exact target and trust the code that resolves it before resolution, never
+    after it, and prefer rejecting ``"()"`` entries outright for lower-trust
+    configuration. Factories invoked
     by :func:`femtologging.dictConfig` run with the remaining entry keys as
     keyword arguments; see ``docs/users-guide.md#filter-factory-trust-boundary``.
 

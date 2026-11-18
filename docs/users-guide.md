@@ -1279,11 +1279,12 @@ effects, which have already happened. Validate or allowlist paths before
 resolution, or reject factory entries outright.
 
 Declarative-only mode does not sandbox the rest of the configuration. Handlers
-still open files and network connections, and filters may enrich records with
-values that reach downstream systems. The atomic configuration transaction
-covers the logger changes it stages; it does not undo side effects that
-occurred while preparing the configuration, including logger changes a factory
-makes directly.
+still open files and network connections, and a Python callback filter
+installed before the call can still enrich records after a declarative-only
+reload with values that reach downstream systems. The atomic configuration
+transaction covers the logger changes it stages; it does not undo side effects
+that occurred while preparing the configuration, including logger changes a
+factory makes directly.
 
 Factories run again on each `dictConfig` call that enables factories and
 reaches factory construction, including application-managed reloads; a call
