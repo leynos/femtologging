@@ -121,6 +121,10 @@ def test_release_probe_accepts_a_production_wheel(
     [
         ("class AttachmentIdentity:\n    ...\n", "AttachmentIdentity"),
         (
+            "class AttachmentIdentity[T]:\n    ...\n",
+            "AttachmentIdentity",
+        ),
+        (
             "def wait_for_flush_entry_for_test(self) -> None: ...\n",
             "wait_for_flush_entry_for_test",
         ),
@@ -130,6 +134,7 @@ def test_release_probe_accepts_a_production_wheel(
         ),
         ("def setup_rust_logging() -> None: ...\n", None),
         ("class FemtoLogger:\n    ...\n", None),
+        ("class Broken(:\n", "cannot be parsed"),
     ],
 )
 def test_release_probe_checks_every_stub_declaration_shape(

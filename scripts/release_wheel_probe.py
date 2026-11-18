@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.machinery
-import re
 import sys
 from pathlib import Path
 
@@ -12,12 +12,6 @@ from pathlib import Path
 _TEST_ONLY_EXACT_NAMES = frozenset({"_stream_waiter_count", "AttachmentIdentity"})
 _TEST_ONLY_NAME_PREFIXES = ("_emit_rust_", "_install_test_")
 _TEST_ONLY_NAME_SUFFIX = "_for_test"
-# Stubs declare the test-only surface as functions, classes, or attributes.
-# Every shape must reach the name check, so the keyword is part of the pattern.
-_STUB_DECLARATION_RE = re.compile(
-    r"^\s*(?:(?:async\s+)?def\s+|class\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:=(]",
-    re.MULTILINE,
-)
 
 
 def _is_test_only_name(name: str) -> bool:
@@ -121,6 +115,43 @@ def _native_surface_errors(native: object) -> list[str]:
     return errors
 
 
+def _stub_declaration_names(tree: ast.AST) -> set[str]:
+    """Return every name *tree* declares as a class, function, or attribute.
+
+    Parsing the stub rather than scanning lines keeps the check correct for
+    syntax that is not a bare ``name:`` line, such as a PEP 695 generic class
+    whose name is followed by ``[``. Type parameters are not declarations of
+    the module's API, so they are not collected.
+
+    Parameters
+    ----------
+    tree : ast.AST
+        Parsed type stub.
+
+    Returns
+    -------
+    set[str]
+        Names declared anywhere in the stub, including nested ones.
+
+    Examples
+    --------
+    >>> sorted(_stub_declaration_names(ast.parse("class Token[T]: ...")))
+    ['Token']
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        match node:
+            case ast.AsyncFunctionDef() | ast.ClassDef() | ast.FunctionDef():
+                names.add(node.name)
+            case ast.AnnAssign(target=ast.Name(id=name)):
+                names.add(name)
+            case ast.Assign(targets=targets):
+                names.update(
+                    target.id for target in targets if isinstance(target, ast.Name)
+                )
+    return names
+
+
 def _stub_surface_errors(package: object) -> list[str]:
     """Return violations for test-only declarations in the shipped stub.
 
@@ -149,10 +180,12 @@ def _stub_surface_errors(package: object) -> list[str]:
     stub = Path(package_file).with_name("_femtologging_rs.pyi")
     if not stub.is_file():
         return [f"release wheel omits the type stub: {stub}"]
-    declarations = {
-        match.group("name")
-        for match in _STUB_DECLARATION_RE.finditer(stub.read_text(encoding="utf-8"))
-    }
+    try:
+        declarations = _stub_declaration_names(
+            ast.parse(stub.read_text(encoding="utf-8"))
+        )
+    except SyntaxError:
+        return [f"release wheel type stub cannot be parsed: {stub}"]
     hooks = sorted(name for name in declarations if _is_test_only_name(name))
     if hooks:
         return ["type stub declares test-only hooks: " + ", ".join(hooks)]
