@@ -108,10 +108,12 @@ skipped example is inert text, never compiled, so it cannot be trusted the way
 an executed one can.
 
 `--doctest-modules` imports every module it walks, not only `test_*.py`.
-`scripts/conftest.py` excludes `scripts/lint_rust_lanes.py`, whose dependencies
-live in its own `uv` script block and cannot be resolved from the project
-environment; `make lint-lanes-test` runs that script, and its examples, in the
-environment that can.
+`scripts/lint_rust_lanes.py` needs dependencies that live in its own `uv`
+script block and cannot be resolved from the project environment, so
+`scripts/conftest.py` leaves it out of collection unless `LINT_LANES_TEST` is
+set. `make lint-lanes-test` sets that variable and passes `--doctest-modules`
+itself, so the script's examples run in the environment that can supply what
+they import.
 
 ### Documented examples
 
@@ -172,22 +174,43 @@ alternatives that were rejected, are recorded in
   refreshes the shared en-GB-oxendict dictionary from
   `leynos/agent-helper-scripts` on its `main` branch, merges the repository
   overlay, writes `typos.toml`, then checks Markdown spelling and the shared
-  phrase corrections. Both stages always run, so a phrase finding cannot hide a
-  spelling finding.
+  phrase corrections. Both of the gate's own checks always run, so a phrase
+  finding cannot hide a spelling finding.
+- The gate enumerates the Git index, so a document that is new and still
+  unstaged is invisible to it. `make spelling` therefore runs a second stage
+  after the gate: `git ls-files --others` selects the untracked Markdown, and
+  `TYPOS` runs the Typos binary from the same pinned release against the
+  `typos.toml` the gate has just written. Both stages share one spelling
+  configuration and one dictionary revision.
 - The builder is release-pinned while the dictionary it fetches stays live:
   either half can move without repinning the other. The gate caches the
   dictionary revision in the untracked `.typos-oxendict-base.toml` and
-  `.typos-oxendict-base.json` files, and a clean checkout fetches it again.
+  `.typos-oxendict-base.json` files. When neither the cache nor the network is
+  available, the builder falls back to the snapshot bundled in the pinned
+  release and reports the refresh as `bootstrap`, so an offline checkout whose
+  tool is already provisioned can still run the gate.
 - The gate runs in write mode, so a live dictionary edit is picked up rather
   than reported as drift. When `make spelling` changes `typos.toml`, commit the
   regenerated file with the change that caused it.
 - `make markdownlint` depends on `make spelling`, so Markdown structure and
   spelling are checked in one pass.
 
-CI runs the same `make spelling` target, so a local pass and a hosted pass use
-identical inputs. The gate is deliberately not invoked with `--check` there:
-that option only reports drift, and the supported CI behaviour is to regenerate
-and then check.
+CI runs the same `make spelling` target, so a local pass and a hosted pass
+invoke the same command on the same pin. That does not make their inputs
+identical: a local run may fall back to a cached dictionary when the authority
+is unreachable, while CI may refresh to a newer revision and report a finding
+the local run did not. The gate is never invoked with `--check`: that option
+belongs to standalone configuration generation, where it reports drift, whereas
+`gate` has no drift mode and always regenerates before checking.
+
+`tests/test_spelling_gate.py` drives both recipe stages against stub
+executables, so it needs neither `uvx` nor the network.
+`tests/test_spelling_gate_end_to_end.py` is skipped unless
+`make spelling-integration-test` provisions the pin first; that target then
+runs the real builder and the pinned Typos binary against a fixture repository,
+and CI runs it once the `make spelling` step has warmed the release. It uses
+`--noconftest`, because the suite conftest imports the compiled extension and
+these tests ask for no fixture it defines.
 
 ### Configuration
 

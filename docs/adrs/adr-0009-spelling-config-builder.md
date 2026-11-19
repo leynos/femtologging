@@ -24,8 +24,10 @@ a time and the copies could drift apart without any signal.
 
 The drift had already produced a concrete defect. The fixture overlay comment
 claimed the generator withdrew the shared dictionary's broad colour-option
-pattern, but nothing did, so a mask covering every colour word stayed in force
-and a misspelt colour anywhere in the repository would have passed the gate.
+pattern, but nothing did, so the mask stayed in force. The expression requires
+a leading `--`, so it can hide a misspelt colour inside a command-line option
+such as `--mispell-color`; it cannot match a standalone `color` in prose. The
+withdrawal therefore matters for option names, not for prose.
 
 Two further constraints bear on any replacement. The gate must run on every
 supported Python lane of the hosted suite, and each `build-test` matrix job
@@ -57,24 +59,36 @@ from the ambient environment therefore behaves differently per lane.
    ```
 
    The gate refreshes the shared dictionary, merges the overlay, writes
-   `typos.toml`, then checks spelling and the shared phrase corrections.
-2. The three vendored scripts and their tests are deleted. The builder owns
+   `typos.toml`, then checks spelling and the shared phrase corrections. The
+   gate has no drift mode: `--check` belongs to standalone configuration
+   generation, so `gate --check` is not an inspection command.
+2. `make spelling` runs the gate and then checks the Markdown the gate cannot
+   see. The gate enumerates the Git index, so a new document would pass locally
+   and fail once committed; the same pinned release supplies the Typos binary
+   that checks the still-unstaged files against the configuration the gate has
+   just written.
+3. The three vendored scripts and their tests are deleted. The builder owns
    the merge, cache, offline and pattern-withdrawal behaviour and tests it at
    the pinned release; this repository keeps only its configuration and its own
    coverage.
-3. In-repository coverage moves to `tests/test_spelling_gate.py`: two
-   behavioural tests drive the real target against a stub builder, and two
-   end-to-end tests drive a forwarding builder against a fixture repository, a
-   fixture overlay and a local dictionary, including a seeded misspelling, the
-   overlay's accepted word and the withdrawn shared pattern. The Makefile text
+4. In-repository coverage is split by what it needs.
+   `tests/test_spelling_gate.py` drives both recipe stages against stub
+   executables in a scratch repository: the gate argument, an unstaged document
+   reaching the second stage, a staged document staying with the gate, and each
+   stage's failure failing the target. `tests/test_spelling_gate_end_to_end.py`
+   drives a forwarding builder and the pinned Typos binary against a fixture
+   repository, a fixture overlay and a local dictionary, including a seeded
+   misspelling, an unstaged misspelling before and after staging, the overlay's
+   accepted word and the withdrawn shared pattern. It is skipped unless
+   `make spelling-integration-test` provisions the pin first. The Makefile text
    contract in `tests/test_make_target_contract.py` stays and pins the release,
-   the interpreter and the recipe's shape.
-4. The builder's interpreter is pinned to 3.14. It requires Python 3.14 or
+   the interpreter and both recipes.
+5. The builder's interpreter is pinned to 3.14. It requires Python 3.14 or
    newer, while each hosted lane exports `UV_PYTHON`; an explicit `--python`
    outranks that variable, so the 3.12 and 3.13 lanes still hand the builder an
    interpreter it accepts. The pin appears in the `Makefile` and in the
    documented standalone command.
-5. `typos.local.toml` carries `schema = 1` and uses `[patterns] remove` to
+6. `typos.local.toml` carries `schema = 1` and uses `[patterns] remove` to
    withdraw a shared pattern that is too broad for this repository, which is
    how the colour mask is now actually removed.
 
@@ -83,12 +97,19 @@ from the ambient environment therefore behaves differently per lane.
 - The merge, cache and offline logic has one implementation, tested once at a
   pinned release, and a dictionary fix no longer waits for a script change in
   each consumer.
-- The withdrawn colour mask takes effect, so real misspellings of colour words
-  now fail the gate; the live dictionary's other new findings are corrected in
-  place rather than exempted.
-- `make spelling` needs `uvx` and either the network or the untracked
-  `.typos-oxendict-base.toml` and `.typos-oxendict-base.json` cache files. A
-  clean checkout fetches the dictionary once.
+- The withdrawn colour mask takes effect, so a misspelled colour inside a
+  command-line option name now fails the gate; the live dictionary's other new
+  findings are corrected in place rather than exempted.
+- `make spelling` needs `uvx` and the pinned release, which `uvx` fetches on
+  first use and then serves from the local uv cache. Provisioning the tool
+  therefore needs the network once per machine or cache, which is a separate
+  need from refreshing the dictionary.
+- The dictionary needs either the network or the untracked
+  `.typos-oxendict-base.toml` and `.typos-oxendict-base.json` cache files. When
+  neither is available, the builder seeds the cache from the snapshot bundled
+  in the pinned release and reports the refresh as `bootstrap`, so a checkout
+  whose tool is already provisioned can run the gate without reaching the
+  dictionary authority.
 - The interpreter floor is stricter than the project's own test floor for this
   one tool. It is a property of the builder, documented in the developers
   guide, and the pin must be revisited when the builder raises its own floor.
@@ -109,8 +130,9 @@ from the ambient environment therefore behaves differently per lane.
 - **Rely on the lane's `UV_PYTHON`.** Rejected: the builder refuses 3.12 and
   3.13, so the spelling gate failed on those hosted lanes on every run
   regardless of the repository's spelling.
-- **Invoke the gate with `--check` in CI.** Rejected: that option only reports
-  drift, while the supported behaviour is to regenerate and then check.
+- **Invoke the gate with `--check` in CI.** Rejected: `--check` is an option of
+  standalone configuration generation, where it reports drift. `gate` has no
+  drift mode; it always regenerates before checking, which is what CI needs.
 
 ## References
 
