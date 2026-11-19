@@ -29,18 +29,18 @@ impl Shard {
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
-            let record = jobs.recv_timeout(TEST_WORKER_BOUND).unwrap_or_else(|err| {
-                panic!("the test should queue a record for the stand-in worker: {err}")
-            });
+            let record = jobs
+                .recv_timeout(TEST_WORKER_BOUND)
+                .expect("the test should queue a record for the stand-in worker");
             // A refused start signal means the test stopped waiting before the
             // stand-in got here; with nobody left to tell, it is reported and
             // the worker still waits for the barrier below.
             if started_tx.send(()).is_err() {
                 log::trace!("stand-in worker: test left before the record was held");
             }
-            let barrier = jobs.recv_timeout(TEST_WORKER_BOUND).unwrap_or_else(|err| {
-                panic!("the flush should queue a barrier for the stand-in worker: {err}")
-            });
+            let barrier = jobs
+                .recv_timeout(TEST_WORKER_BOUND)
+                .expect("the flush should queue a barrier for the stand-in worker");
             // Dropping the barrier drops its acknowledgement sender without
             // answering, which is what a dead worker looks like to the waiter.
             drop(barrier);
@@ -83,9 +83,9 @@ impl TestWorker {
     /// permit is in flight; otherwise the logger could find nothing to drain
     /// and answer without ever asking the shard.
     pub(crate) fn wait_until_record_held(&self, timeout: Duration) {
-        self.started.recv_timeout(timeout).unwrap_or_else(|err| {
-            panic!("the stand-in worker should take the queued record: {err}")
-        });
+        self.started
+            .recv_timeout(timeout)
+            .expect("the stand-in worker should take the queued record");
     }
 }
 

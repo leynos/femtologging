@@ -231,8 +231,7 @@ impl FemtoLogger {
     /// rather than a public setter.
     #[cfg(all(test, feature = "python", not(loom)))]
     pub(crate) fn with_formatter_for_test(name: String, formatter: SharedFormatter) -> Self {
-        let mut logger = Self::with_parent(name, None)
-            .unwrap_or_else(|err| panic!("test dispatcher should start: {err}"));
+        let mut logger = Self::with_parent(name, None).expect("test dispatcher should start");
         logger.formatter = formatter;
         logger
     }
@@ -244,8 +243,7 @@ impl FemtoLogger {
         parent: Option<String>,
         context_snapshot_provider: std::sync::Arc<dyn ContextSnapshotProvider>,
     ) -> Self {
-        let dispatcher = Dispatcher::shared()
-            .unwrap_or_else(|err| panic!("test dispatcher should start: {err}"));
+        let dispatcher = Dispatcher::shared().expect("test dispatcher should start");
         Self::assembled(
             name,
             parent,
