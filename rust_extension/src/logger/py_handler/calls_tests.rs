@@ -33,12 +33,12 @@ const SENSITIVE_MARKER: &str = "SENSITIVE-flush-payload-7d1c";
 /// module, so one shared module name is enough to label a traceback.
 fn handler_from_source(py: Python<'_>, source: &CStr, class_name: &str) -> PyHandler {
     let module = PyModule::from_code(py, source, c"flush_handler_test.py", c"flush_handler_test")
-        .unwrap_or_else(|err| panic!("the test handler module compiles: {err}"));
+        .expect("the test handler module compiles");
     let object = module
         .getattr(class_name)
-        .unwrap_or_else(|err| panic!("the class exists: {err}"))
+        .expect("the class exists")
         .call0()
-        .unwrap_or_else(|err| panic!("the handler constructs: {err}"));
+        .expect("the handler constructs");
     PyHandler::new(py, object.unbind())
 }
 
