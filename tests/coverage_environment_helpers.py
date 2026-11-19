@@ -27,10 +27,12 @@ if typ.TYPE_CHECKING:
 CODESCENE_ENVIRONMENT: typ.Final[str] = "codescene"
 #: The secret's name, never its value. It is matched inside ``env`` blocks.
 TOKEN_NAME: typ.Final[str] = "CS_ACCESS_TOKEN"  # ruff: ignore[hardcoded-password-string] the secret's name, not its value
-#: One ``${{ ... }}`` expression, wherever it sits in a value. Secret access is
-#: only meaningful inside one, so text that merely mentions the word cannot be
-#: mistaken for an expression.
-_EXPRESSION: typ.Final[re.Pattern[str]] = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+#: The characters that open one ``${{ ... }}`` expression wherever it sits in a
+#: value. Secret access is only meaningful inside one, so text that merely
+#: mentions the word cannot be mistaken for an expression.
+_EXPRESSION_OPENING: typ.Final[str] = "${{"
+#: The characters that close an expression, once no quoted string is open.
+_EXPRESSION_CLOSING: typ.Final[str] = "}}"
 #: A reference to the `secrets` context, with the name it selects if it names
 #: one. The name group is absent for an aggregate access such as
 #: ``toJSON(secrets)`` or an index such as ``secrets[env.NAME]``, either of
@@ -38,6 +40,106 @@ _EXPRESSION: typ.Final[re.Pattern[str]] = re.compile(r"\$\{\{(.*?)\}\}", re.DOTA
 _SECRETS_ACCESS: typ.Final[re.Pattern[str]] = re.compile(
     r"\bsecrets\b(?:\.([a-z_][a-z0-9_]*))?"
 )
+
+
+def _quoted_end(value: str, start: int) -> int | None:
+    """Return the index just past the single-quoted literal at `start`.
+
+    The Actions expression grammar spells a literal in single quotes and an
+    embedded apostrophe as two adjacent quotes. Scanning for the closing quote
+    therefore has to consume ``''`` as one escaped character; treating the
+    first quote of the pair as the end would put the rest of the literal, and
+    any real access after it, outside the expression.
+
+    Parameters
+    ----------
+    value
+        Text that may contain the literal.
+    start
+        Index of the opening quote.
+
+    Returns
+    -------
+    int | None
+        The index just past the closing quote, or ``None`` when the literal is
+        never terminated.
+    """
+    index = start + 1
+    while index < len(value):
+        if value[index] != "'":
+            index += 1
+            continue
+        if value.startswith("''", index):
+            index += 2
+            continue
+        return index + 1
+    return None
+
+
+def _expression_end(value: str, start: int) -> int | None:
+    """Return the index of the ``}}`` that closes the body starting at `start`.
+
+    A closing delimiter inside a quoted literal does not end the expression.
+    The Actions runner skips quoted strings when it looks for the end, so a
+    reader that stopped at the first ``}}`` would truncate a body such as
+    ``format('}}{0}', toJSON(secrets))`` and miss the access inside it.
+
+    Returns
+    -------
+    int | None
+        The index where the closing delimiter starts, or ``None`` when the
+        expression, or a literal within it, is never terminated.
+    """
+    index = start
+    while index < len(value):
+        if value[index] == "'":
+            literal_end = _quoted_end(value, index)
+            if literal_end is None:
+                return None
+            index = literal_end
+            continue
+        if value.startswith(_EXPRESSION_CLOSING, index):
+            return index
+        index += 1
+    return None
+
+
+def _expressions(value: str) -> cabc.Iterator[str]:
+    """Yield the body of each ``${{ ... }}`` expression in `value`.
+
+    An unterminated expression yields the rest of the value as its body. The
+    runner would reject such a workflow, and this reader fails closed: scanning
+    the remainder can still report a secret access, while dropping the
+    expression would report the placement safe.
+
+    Parameters
+    ----------
+    value
+        One string nested in an ``env`` mapping.
+
+    Yields
+    ------
+    str
+        The body of one expression, without its delimiters.
+
+    Examples
+    --------
+    >>> list(_expressions("${{ secrets.A }} and ${{ secrets.B }}"))
+    [' secrets.A ', ' secrets.B ']
+    >>> list(_expressions("${{ format('}}{0}', toJSON(secrets)) }}"))
+    [" format('}}{0}', toJSON(secrets)) "]
+    >>> list(_expressions("${{ toJSON(secrets)"))
+    [' toJSON(secrets)']
+    """
+    cursor = 0
+    while (start := value.find(_EXPRESSION_OPENING, cursor)) != -1:
+        body_start = start + len(_EXPRESSION_OPENING)
+        end = _expression_end(value, body_start)
+        if end is None:
+            yield value[body_start:]
+            return
+        yield value[body_start:end]
+        cursor = end + len(_EXPRESSION_CLOSING)
 
 
 def _literal_environment(name: str) -> str:
@@ -154,7 +256,8 @@ def _reaches_whole_secrets(value: str) -> bool:
     either can hand out the CodeScene token without ever spelling it. A
     direct ``secrets.OTHER_NAME`` reference still names exactly one secret, so
     it stays acceptable. Only expression bodies are scanned: the word
-    "secrets" in ordinary text is not a reference to anything.
+    "secrets" in ordinary text is not a reference to anything, and a quoted
+    literal does not end the expression that contains it.
 
     Parameters
     ----------
@@ -171,6 +274,8 @@ def _reaches_whole_secrets(value: str) -> bool:
     --------
     >>> _reaches_whole_secrets("${{ toJSON(secrets) }}")
     True
+    >>> _reaches_whole_secrets("${{ format('}}{0}', toJSON(secrets)) }}")
+    True
     >>> _reaches_whole_secrets("${{ secrets[env.NAME] }}")
     True
     >>> _reaches_whole_secrets("${{ secrets.GITHUB_TOKEN }}")
@@ -180,8 +285,8 @@ def _reaches_whole_secrets(value: str) -> bool:
     """
     return any(
         access.group(1) is None
-        for expression in _EXPRESSION.finditer(value)
-        for access in _SECRETS_ACCESS.finditer(expression.group(1).casefold())
+        for expression in _expressions(value)
+        for access in _SECRETS_ACCESS.finditer(expression.casefold())
     )
 
 
