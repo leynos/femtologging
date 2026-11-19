@@ -403,7 +403,8 @@ The native HTTP worker uses ureq 3.4 with its default `rustls` and `gzip`
 features. The migration from ureq 2 keeps the transport's observable behaviour;
 the contracts below are pinned by
 `rust_extension/src/http_handler/request_shape_tests.rs` (with
-`request_shape_tests/redirects.rs`) and `tls_tests.rs`.
+`request_shape_tests/redirects.rs`, `request_shape_tests/redirect_responses.rs`
+and `request_shape_tests/endpoint.rs`), `redirect_tests.rs`, and `tls_tests.rs`.
 
 - **TLS trust.** The agent selects `TlsProvider::Rustls` with
   `RootCerts::WebPki`, so certificates are validated against the WebPKI roots
@@ -433,35 +434,38 @@ the contracts below are pinned by
   if that setting is ever changed.
 - **Proxy discovery.** `proxy(None)` keeps ureq 3's `Proxy::try_from_env`
   default switched off, matching ureq 2 without its `proxy-from-env` feature.
-- **Endpoint normalization.** `HTTPHandlerBuilder` parses the configured URL
-  with `url::Url`, the same parser ureq 2 used, and sends the normalized form.
-  A space or other character that must be percent-encoded is therefore encoded
-  once, at build time: `http://host/log ingest` still reaches the wire as
-  `/log%20ingest`. ureq 3 passes the string to `http::Uri`, which rejects a raw
-  space at send time, so without this step every record would be retried until
-  the backoff deadline. An endpoint that cannot be parsed is rejected when the
-  handler is built rather than failing on every attempt.
-- **Redirects.** Four redirects are followed and the fifth redirect response
-  is a transport error, so the record follows the normal retry policy. ureq 2
-  counted the original request against its five-redirect limit, so
-  `max_redirects(4)` in ureq 3 is the same boundary. Three answers that ureq 2
-  returned to the classifier are errors in ureq 3, and the transport maps each
-  to the verdict ureq 2 produced, which is permanent: a 307 or 308 answer to a
-  POST whose body cannot be replayed (`RedirectFailed`), a redirect with no
-  `Location` (`NoLocationHeader`), and a redirect whose `Location` is not valid
-  UTF-8 (`BadLocationHeader`, which ureq 2 read as a missing header). The
-  `Authorization` header is stripped on every redirect
-  (`RedirectAuthHeaders::Never`), matching ureq 2. That setting covers
-  `Authorization` only: a custom credential header such as `X-Api-Key` is
-  forwarded to the redirect target, as it was under ureq 2.
-- **One accepted redirect difference.** ureq 3 reads a redirect response body
-  before it decides whether it can follow the redirect, and exposes no hook to
-  stop it. A 307 or 308 whose body is declared but never delivered therefore
-  ends the attempt as a transport error at `write_timeout` and is retried,
-  where ureq 2 returned the response immediately and produced a permanent
-  verdict. An empty 307 or 308 body, which is what a real collector sends,
-  keeps the ureq 2 verdict. This is the one redirect behaviour the migration
-  does not reproduce.
+- **Endpoint handling.** `HTTPHandlerBuilder` validates the configured URL with
+  `url::Url`, the parser ureq 2 used for every request, and rejects a scheme
+  other than `http` or `https`, or an endpoint `http::Uri` cannot express. The
+  endpoint itself is stored as configured; the transport parses each request
+  target with `url::Url` at send time, which is when ureq 2 parsed it. A space
+  or other character that must be percent-encoded is therefore encoded once, on
+  the way to the wire: `http://host/log ingest` still reaches the collector as
+  `/log%20ingest`. ureq 3 parses the string as an `http::Uri` and rejects a raw
+  space, so parsing here keeps the accepted endpoints and the bytes sent
+  unchanged. An endpoint that cannot be parsed is rejected when the handler is
+  built rather than failing on every attempt.
+- **Redirects.** The transport follows the chain itself
+  (`http_handler/redirect.rs`) with ureq 2's rules, and gives the agent
+  `max_redirects(0)` with `max_redirects_will_error(false)` so that ureq
+  returns every 3xx response instead of following it. The
+  `RedirectAuthHeaders::Never` setting stays as the statement of the same
+  credential policy, not as the mechanism. ureq 2 followed at most four
+  redirects and then reported the fifth redirect response as a transport error;
+  the original request plus four redirects is the boundary kept here.
+  - A 301, 302 or 303 is re-requested as a GET, and a 307 or 308 only for a GET.
+    Anything else - a 300, 304 or 305, or a 307 or 308 answering a POST whose
+    body cannot be replayed - is returned to the classifier, which makes it
+    permanent. ureq 3 would follow the 300 and then record the collector's
+    `200` as a delivered record.
+  - A redirect with no `Location`, or one whose `Location` is not valid UTF-8,
+    is returned to the classifier as well; ureq 2 read both as a missing header.
+  - The `Location` is resolved with `url::Url::join`, as ureq 2 did, so a
+    relative target works and a value such as `/log ingest` is followed to
+    `/log%20ingest`. ureq 3 would refuse the unencoded space.
+  - `Authorization` and `Cookie` are removed before the target is requested, and
+    no body is sent, matching ureq 2. A custom credential header such as
+    `X-Api-Key` is forwarded, as it was under ureq 2.
 - **Headers.** Authentication, configured headers, and the POST content type
   are resolved into one case-insensitive map before the request is built,
   because ureq 3 appends a header per call instead of replacing it. Configured
@@ -473,10 +477,9 @@ the contracts below are pinned by
   rejects a header name, header value, or credential it cannot encode. The
   build fails with an invalid-configuration error, and the message never
   includes a header value.
-- **Response bodies.** The worker classifies the status and never reads the
-  body, so a final response whose declared body never arrives cannot delay the
-  attempt or turn a delivered record into a retry. The one exception is the
-  redirect body ureq 3 drains itself, described above.
+- **Response bodies.** The worker classifies the status and never reads a
+  response body, redirect or final, so a body that is declared and never
+  arrives cannot delay an attempt or turn a verdict into a retry.
 - **No internal retries.** ureq 2 retried an idempotent request once when a
   recycled connection had closed. ureq 3 does not, so a GET that hits a stale
   pooled connection surfaces as a transport error and is retried by the

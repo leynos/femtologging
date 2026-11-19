@@ -297,8 +297,19 @@ fn the_global_timeout_bounds_connection_establishment(tcp_listener: io::Result<T
     );
 }
 
-// Redirect contracts - the follow limit, credential stripping, and the one
-// redirect ureq 3 cannot follow - with their loopback fixtures.
+// Redirect contracts - the follow limit and credential stripping - with their
+// loopback fixtures.
 #[cfg(test)]
 #[path = "request_shape_tests/redirects.rs"]
 mod redirects;
+
+// Redirect responses that are classified rather than followed, which ureq 3
+// would otherwise follow or report as transport errors.
+#[cfg(test)]
+#[path = "request_shape_tests/redirect_responses.rs"]
+mod redirect_responses;
+
+// Endpoint encoding - the bytes a configured path produces on the wire.
+#[cfg(test)]
+#[path = "request_shape_tests/endpoint.rs"]
+mod endpoint;

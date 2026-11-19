@@ -46,15 +46,10 @@ ini = { package = "rust-ini", version = "0.21.3" }
 # the defaults therefore preserves both the trust store and the `Accept-Encoding`
 # behaviour the migration must not change.
 ureq = "3.4"
-# ureq 3 reports a redirect it cannot follow through a protocol error instead of
-# returning the response, so restoring the verdict ureq 2 gave needs that
-# error's variants by name. Cargo resolves this to the same crate version ureq
-# itself depends on, so the two enums are the same type.
-ureq-proto = "0.6"
-# ureq 2 parsed every endpoint with `url::Url`, which percent-encodes characters
-# such as spaces. ureq 3 parses an `http::Uri` instead, which rejects them at
-# send time, so the builder normalizes the endpoint with the same parser ureq 2
-# used to keep the accepted endpoints unchanged.
+# ureq 2 parsed every request URL with `url::Url`, which percent-encodes
+# characters such as spaces; ureq 3 parses an `http::Uri` and rejects them at
+# send time. The transport parses each target with `url::Url`, the parser ureq 2
+# used, so the accepted endpoints and the bytes on the wire stay unchanged.
 url = "2.5"
 percent-encoding = "2.3"
 base64 = "0.23"

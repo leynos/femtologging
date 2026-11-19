@@ -29,6 +29,7 @@ mod filtered;
 mod handler;
 mod queue;
 mod record;
+mod redirect;
 mod response;
 mod serialize;
 mod transport;

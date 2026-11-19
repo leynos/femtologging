@@ -453,6 +453,63 @@ marked record is a new application record, records passed directly to the
 three-argument `handle` method carry no marker, and socket handlers do not
 suppress marked records.
 
+### HTTP transport module boundaries
+
+`rust_extension/src/http_handler/transport.rs` owns one HTTP attempt. The
+worker in `http_handler/worker.rs` builds its agent through
+`transport::build_agent` and delegates each request to `transport::execute`,
+which resolves the headers, builds the first request, sends it, follows what
+the redirect chain permits, and classifies the response. Keep the retry
+deadline and the shutdown budget in `worker.rs`; they are not transport
+decisions. `transport::validate_request_headers` is the builder-facing
+validation seam. `HTTPHandlerBuilder::build_config` calls it before it applies
+the backoff overrides, so a header name, value, or credential the client cannot
+send is reported as a configuration error instead of failing on every attempt.
+
+Two decisions are deliberately not ureq's.
+
+- `http_handler/redirect.rs` decides whether a 3xx response is followed, using
+  ureq 2's rules. ureq 3 follows every 3xx with a `Location` and raises an
+  error for a redirect it will not replay, so the agent runs with
+  `max_redirects(0)` and `max_redirects_will_error(false)` and the chain is
+  walked here. The decision is a pure function of the current URL, method,
+  status, `Location` header and the number of responses already seen, which is
+  why its unit tests need no listener.
+- Each request target is parsed with `url::Url` immediately before it is sent,
+  rather than with ureq 3's `http::Uri`. ureq 2 parsed every request that way,
+  so this keeps a percent-encoded path and a GET payload's position in the
+  query identical to what the handler sent before. The builder validates the
+  configured endpoint with the same parser, in
+  `handlers/http_builder/validation.rs`, and stores it as configured.
+
+The agent also pins the settings whose ureq 3 defaults differ from the ureq 2
+behaviour the handler had: Rustls with the bundled WebPKI roots, no proxy
+discovery, status codes left to the classifier, and
+`RedirectAuthHeaders::Never` as the statement of the credential policy the
+chain applies. Each has a contract test in `request_shape_tests.rs`,
+`redirect_tests.rs` or `tls_tests.rs` that fails when the setting is dropped,
+not merely when the module stops compiling.
+
+The dependencies follow that split. `ureq` is version 3.4 with its default
+`rustls` and `gzip` features, which replace ureq 2's `native-tls` option;
+`native-tls` remains a dev-dependency, used only by the TLS fixture server.
+`ureq-proto` is no longer a direct dependency: the chain is walked in-crate, so
+no ureq protocol error variant has to be named. `rcgen` is a dev-dependency
+that only the TLS fixture uses to mint its throwaway certificate.
+
+The TLS tests are gated with `#[cfg(all(test, not(target_os = "windows")))]`
+because the fixture's rcgen ECDSA PKCS#8 identity cannot be loaded by
+native-tls's Schannel backend. The limit applies to the fixture only. The
+production client uses Rustls with the bundled roots on every platform, which
+is what `the_production_agent_trusts_the_bundled_webpki_roots` asserts.
+
+`scripts/release_wheel_probe.py` proves the installed wheel can deliver a
+record, because the location and test-hook checks cannot.
+`http_behaviour_errors` runs only after those checks pass. It starts a loopback
+collector, builds a handler through the installed extension, sends one record,
+and waits up to ten seconds. A failure means no request arrived, the request
+used the wrong path, or its body did not contain the probe message.
+
 ### Handler shutdown signal, clock and condition-variable seams
 
 `ShutdownSignal` (`rust_extension/src/shutdown_signal.rs`) is the second

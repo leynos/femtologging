@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use proptest::prelude::*;
 use rstest::rstest;
 
 use super::*;
@@ -19,7 +20,7 @@ use super::*;
 /// its connect and global timeouts, and every other behaviour-relevant setting
 /// ureq 3 defaults differently from ureq 2 is restored explicitly. A change
 /// that no loopback fixture notices - proxy discovery switching on, statuses
-/// raised as errors, the redirect boundary moving - still fails here.
+/// raised as errors, ureq following redirects itself - still fails here.
 #[test]
 fn the_agent_restores_the_ureq_2_settings() {
     let connect = Duration::from_secs(7);
@@ -33,8 +34,15 @@ fn the_agent_restores_the_ureq_2_settings() {
     assert_eq!(timeouts.global, Some(global));
     assert!(!config.http_status_as_error());
     assert!(config.proxy().is_none());
-    assert_eq!(config.max_redirects(), MAX_REDIRECTS);
-    assert!(config.max_redirects_will_error());
+    assert_eq!(
+        config.max_redirects(),
+        0,
+        "the transport follows redirects, so ureq must return every 3xx response"
+    );
+    assert!(
+        !config.max_redirects_will_error(),
+        "ureq must return the 3xx rather than raise it"
+    );
     assert_eq!(config.redirect_auth_headers(), RedirectAuthHeaders::Never);
 }
 
@@ -181,4 +189,107 @@ fn a_rejected_header_or_credential_is_never_echoed(
         !err.contains("secret-value"),
         "the error must not echo a configured secret: {err}"
     );
+}
+
+/// Scenario: a custom `Authorization` value that is not ASCII text.
+///
+/// Invariant: the builder's validation rejects it. `HeaderValue::from_str`
+/// admits any byte from `0x20` upwards, but the send path decodes the
+/// `Authorization` value as text, so `Bearer café` would build successfully and
+/// then fail every attempt. The error must not echo the credential.
+#[test]
+fn a_non_ascii_authorization_header_is_rejected() {
+    let config = config(
+        HTTPMethod::POST,
+        AuthConfig::None,
+        SerializationFormat::UrlEncoded,
+        &[("Authorization", "Bearer café")],
+    );
+
+    let err = validate_request_headers(&config).expect_err("the value cannot be sent");
+
+    assert!(
+        !err.contains("café"),
+        "the error must not echo a configured credential: {err}"
+    );
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
+
+    /// Scenario: any header pair a caller can configure.
+    ///
+    /// Invariant: validation accepts exactly the pairs the send path accepts: a
+    /// parsable name, a parsable value, and - for `Authorization`, which the
+    /// send path decodes as text - a value with no byte above `0x7e`. The
+    /// generated alphabet includes control characters, DEL, non-ASCII text and
+    /// empty strings.
+    #[test]
+    fn header_validation_matches_the_send_path(name in any::<String>(), value in any::<String>()) {
+        let config = config(
+            HTTPMethod::POST,
+            AuthConfig::None,
+            SerializationFormat::UrlEncoded,
+            &[(name.as_str(), value.as_str())],
+        );
+        let accepted = validate_request_headers(&config);
+
+        let name_ok = HeaderName::from_bytes(name.as_bytes()).is_ok();
+        let value_ok = HeaderValue::from_str(&value).is_ok();
+        let authorization_ok = !name.eq_ignore_ascii_case("authorization")
+            || value.bytes().all(|byte| byte < 0x7f);
+        prop_assert_eq!(
+            accepted.is_ok(),
+            name_ok && value_ok && authorization_ok,
+            "name={:?} value={:?}",
+            name,
+            value
+        );
+        if name_ok && !value_ok {
+            let err = accepted.expect_err("an unencodable value is rejected");
+            prop_assert!(!err.contains(&value), "the error echoed the value");
+        }
+    }
+
+    /// Scenario: any Basic or Bearer credential a caller can configure.
+    ///
+    /// Invariant: a Bearer token is accepted exactly when the rendered
+    /// `Authorization` value is ASCII text, which is what the send path
+    /// decodes; a Basic credential is always base64-encoded to ASCII. A
+    /// rejection never echoes the token.
+    #[test]
+    fn credential_validation_matches_the_send_path(
+        token in any::<String>(),
+        username in any::<String>(),
+        password in any::<String>(),
+    ) {
+        let bearer = config(
+            HTTPMethod::POST,
+            AuthConfig::Bearer { token: token.clone() },
+            SerializationFormat::UrlEncoded,
+            &[],
+        );
+        let accepted = validate_request_headers(&bearer);
+        let rendered_is_text = format!("Bearer {token}")
+            .bytes()
+            .all(|byte| byte == b'\t' || (0x20..0x7f).contains(&byte));
+        prop_assert_eq!(accepted.is_ok(), rendered_is_text, "token={:?}", token);
+        if let Err(err) = accepted {
+            prop_assert!(!token.is_empty() && !err.contains(&token));
+        }
+
+        let basic = config(
+            HTTPMethod::POST,
+            AuthConfig::Basic {
+                username,
+                password,
+            },
+            SerializationFormat::UrlEncoded,
+            &[],
+        );
+        prop_assert!(
+            validate_request_headers(&basic).is_ok(),
+            "base64 keeps a Basic credential sendable"
+        );
+    }
 }

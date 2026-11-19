@@ -86,16 +86,35 @@ fn allows_get_with_url_encoded_format() {
 /// Scenario: the endpoint contains a character that must be percent-encoded,
 /// such as the space in a log ingestion path.
 ///
-/// Invariant: the stored endpoint is what ureq 2 sent, with the space encoded
-/// as `%20`. ureq 3 parses an `http::Uri` at send time and rejects the raw
-/// space, so leaving it unencoded would fail every attempt.
+/// Invariant: the endpoint is accepted, because the transport parses every
+/// request target with `url::Url` exactly as ureq 2 did. The bytes on the wire
+/// are asserted by `request_shape_tests/endpoint.rs`; this checks that the
+/// builder does not reject what the send path can encode.
 #[test]
-fn percent_encodes_an_endpoint_the_way_ureq_two_did() {
+fn accepts_an_endpoint_whose_path_needs_percent_encoding() {
     let builder = HTTPHandlerBuilder::new().with_url("http://example.com/log ingest");
 
-    assert_eq!(
-        builder.normalized_url().expect("a space is encodable"),
-        "http://example.com/log%20ingest"
+    builder
+        .validate_endpoint()
+        .expect("a space is encodable by the send path");
+}
+
+/// Scenario: the endpoint names a scheme the transport cannot send.
+///
+/// Invariant: building fails with a configuration error naming the endpoint,
+/// rather than spawning a worker that fails every attempt.
+#[rstest::rstest]
+#[case::file("file:///var/log/records")]
+#[case::relative("/log")]
+fn rejects_an_endpoint_that_is_not_http(#[case] endpoint: &str) {
+    let err = HTTPHandlerBuilder::new()
+        .with_url(endpoint)
+        .build_inner()
+        .expect_err("a non-HTTP endpoint must reject the configuration");
+
+    assert!(
+        matches!(err, HandlerBuildError::InvalidConfig(ref message) if message.contains("endpoint")),
+        "the error must identify the endpoint: {err:?}"
     );
 }
 

@@ -179,8 +179,8 @@ fn the_production_agent_refuses_an_unknown_certificate() {
         .expect_err("the production roots must not accept a throwaway certificate");
 
     assert!(
-        !err.is_empty(),
-        "a rejected certificate must surface as a transport error"
+        err.to_lowercase().contains("certificate"),
+        "the refusal must be the certificate validation, not an unrelated failure: {err}"
     );
     server.join().expect("TLS fixture server should finish");
 }

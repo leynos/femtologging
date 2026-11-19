@@ -9,7 +9,6 @@ use std::{collections::HashMap, time::Duration};
 
 #[cfg(feature = "python")]
 use pyo3::{Bound, prelude::*, types::PyDict};
-use url::Url;
 
 use crate::http_handler::{
     AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
@@ -194,7 +193,7 @@ impl HTTPHandlerBuilder {
     /// Checks all builder values before creating worker-owned HTTP state.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         ensure_filter_ids_resolved(&self.filters)?;
-        self.normalized_url()?;
+        self.validate_endpoint()?;
         self.validate_capacity()?;
         self.validate_timeouts()?;
         self.validate_method_format_combination()?;
@@ -210,31 +209,6 @@ impl HTTPHandlerBuilder {
             ));
         }
         Ok(())
-    }
-
-    /// Parse the endpoint and return it in the form ureq 2 sent it.
-    ///
-    /// ureq 2 parsed every request URL with `url::Url`, which percent-encodes
-    /// characters such as spaces, so `http://host/log ingest` reached the wire
-    /// as `/log%20ingest`. ureq 3 builds an `http::Uri` instead, which rejects
-    /// the space at send time; every attempt would then be a retryable
-    /// transport error and the record would be dropped once the backoff
-    /// deadline expired. Parsing with the same parser keeps both the accepted
-    /// endpoints and the bytes on the wire unchanged.
-    fn normalized_url(&self) -> Result<String, HandlerBuildError> {
-        match &self.url {
-            None => Err(HandlerBuildError::InvalidConfig(
-                "HTTP handler requires a URL".into(),
-            )),
-            Some(url) if url.trim().is_empty() => Err(HandlerBuildError::InvalidConfig(
-                "URL must not be empty".into(),
-            )),
-            Some(url) => Url::parse(url)
-                .map(|parsed| parsed.to_string())
-                .map_err(|err| {
-                    HandlerBuildError::InvalidConfig(format!("invalid HTTP endpoint: {err}"))
-                }),
-        }
     }
 
     /// Rejects a zero queue capacity, which would prevent channel construction.
@@ -261,8 +235,14 @@ impl HTTPHandlerBuilder {
         self.validate()?;
 
         let defaults = HTTPHandlerConfig::default();
+        // Validation has already rejected a missing endpoint; the same error is
+        // returned here so the value is never taken on trust.
+        let url = self
+            .url
+            .clone()
+            .ok_or_else(|| HandlerBuildError::InvalidConfig(validation::MISSING_ENDPOINT.into()))?;
         let mut config = HTTPHandlerConfig {
-            url: self.normalized_url()?,
+            url,
             method: self.method.clone().unwrap_or(defaults.method),
             auth: self.auth.clone().unwrap_or(defaults.auth),
             headers: self.headers.clone(),
@@ -390,6 +370,10 @@ impl HandlerBuilderTrait for HTTPHandlerBuilder {
 
 #[cfg(feature = "python")]
 mod python_bindings;
+
+// Endpoint validation, which has to agree with the transport's own parser.
+#[path = "http_builder/validation.rs"]
+mod validation;
 
 #[cfg(test)]
 #[path = "http_builder/tests.rs"]

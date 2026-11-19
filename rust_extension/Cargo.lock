@@ -601,7 +601,6 @@ dependencies = [
  "tracing-subscriber",
  "trybuild",
  "ureq",
- "ureq-proto",
  "url",
 ]
 

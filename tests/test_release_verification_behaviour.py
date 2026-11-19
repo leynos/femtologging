@@ -1,9 +1,18 @@
-"""Exercise the release verification boundaries with invalid inputs."""
+"""Test the release verification checks in scripts/release_wheel_probe.py.
+
+The tests cover rejected invalid installations, accepted production wheels, the
+HTTP delivery check, and the delivery of a probe record through the native HTTP
+handler. The delivery check must reach a loopback endpoint, so it is exercised
+against both malformed and absent deliveries as well as the real handler. The
+sdist verification and rebuild steps in .github/workflows/build-wheels.yml are
+covered here too.
+"""
 
 from __future__ import annotations
 
 import importlib.machinery
 import io
+import queue
 import sys
 import tarfile
 import typing as typ
@@ -165,6 +174,53 @@ def test_release_probe_delivers_a_record_through_the_native_handler() -> None:
     """The installed extension's native HTTP worker delivers the probe record."""
     assert not release_wheel_probe.http_behaviour_errors(), (
         "The handler built from this installation must deliver its record."
+    )
+
+
+def _collector_receiving(pending: tuple[str, bytes] | None) -> SimpleNamespace:
+    """Build a collector stand-in that holds at most one delivered request."""
+    requests: queue.Queue[tuple[str, bytes]] = queue.Queue()
+    if pending is not None:
+        requests.put(pending)
+    return SimpleNamespace(requests=requests)
+
+
+@pytest.mark.parametrize(
+    ("delivered", "expected"),
+    [
+        (("/other", b"release-wheel-probe"), "wrong request path"),
+        (("/probe", b"unrelated"), "did not contain the record message"),
+    ],
+)
+def test_collect_delivery_reports_a_malformed_delivery(
+    delivered: tuple[str, bytes], expected: str
+) -> None:
+    """A request on the wrong path or without the record message is a failure."""
+    errors = release_wheel_probe._collect_delivery(
+        typ.cast(
+            "release_wheel_probe._RecordCollector", _collector_receiving(delivered)
+        ),
+        "http://127.0.0.1:1/probe",
+    )
+
+    assert any(expected in error for error in errors), (
+        "Report the specific defect in the delivered request."
+    )
+
+
+def test_collect_delivery_reports_an_absent_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A collector that receives nothing names the endpoint it waited on."""
+    monkeypatch.setattr(release_wheel_probe, "_DELIVERY_TIMEOUT_SECONDS", 0.01)
+
+    errors = release_wheel_probe._collect_delivery(
+        typ.cast("release_wheel_probe._RecordCollector", _collector_receiving(None)),
+        "http://127.0.0.1:1/probe",
+    )
+
+    assert errors == ["no HTTP delivery reached http://127.0.0.1:1/probe"], (
+        "A missing delivery must name the endpoint the handler was given."
     )
 
 

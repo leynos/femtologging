@@ -1,11 +1,11 @@
-//! One HTTP attempt: how its agent is configured, its headers resolved, and
-//! its response classified.
+//! One HTTP attempt: how its agent is configured, its headers resolved, its
+//! redirect chain followed, and its response classified.
 //!
 //! Split out of `worker.rs`, which owns the clock - the retry deadline and the
 //! shutdown budget - rather than the shape of a request. The settings here
 //! preserve the behaviour the handler had on ureq 2, where ureq 3's defaults
-//! differ: the TLS provider and its roots, proxy discovery, redirect limits,
-//! redirect credential stripping, and how status codes are reported.
+//! differ: the TLS provider and its roots, proxy discovery, redirect rules and
+//! credential stripping, and how status codes are reported.
 
 use std::time::Duration;
 
@@ -15,22 +15,17 @@ use ureq::{
     config::RedirectAuthHeaders,
     http::{
         HeaderMap, HeaderName, HeaderValue, Response,
-        header::{AUTHORIZATION, CONTENT_TYPE},
+        header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, HOST, LOCATION},
     },
     tls::{RootCerts, TlsConfig, TlsProvider},
 };
+use url::Url;
 
 use super::{
     config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    redirect::{self, NextHop},
     response::{ResponseClass, classify_status},
 };
-
-/// Redirect limit reproducing ureq 2.12.1's five-redirect boundary.
-///
-/// ureq 2 counted the original request against its limit: configured with
-/// five, it followed four redirects and failed on the fifth redirect response.
-/// ureq 3 counts only the redirects it follows, so four is the same boundary.
-const MAX_REDIRECTS: u32 = 4;
 
 /// A response whose body the worker deliberately never reads.
 pub(super) type HttpResponse = Response<Body>;
@@ -55,8 +50,10 @@ pub(super) fn build_agent(connect_timeout: Duration, global_timeout: Duration) -
 ///
 /// Every other behaviour-relevant ureq 3 default is set to its ureq 2
 /// equivalent here: status codes are classified by the caller rather than
-/// raised as errors, proxy discovery stays off, and redirects keep ureq 2's
-/// boundary, refusal to exceed it, and stripping of credentials.
+/// raised as errors, proxy discovery stays off, and redirect following is
+/// disabled so that [`redirect::next_hop`] applies ureq 2's rules instead. The
+/// `RedirectAuthHeaders` setting is kept because it also states the policy the
+/// chain applies: a redirect never replays a credential.
 fn build_agent_with_roots(
     connect_timeout: Duration,
     global_timeout: Duration,
@@ -71,100 +68,157 @@ fn build_agent_with_roots(
         .timeout_global(Some(global_timeout))
         .http_status_as_error(false)
         .proxy(None)
-        .max_redirects(MAX_REDIRECTS)
-        .max_redirects_will_error(true)
+        // ureq 3 follows any 3xx with a `Location`, including statuses ureq 2
+        // returned, and errors instead of returning a redirect it will not
+        // replay. With no redirects followed, ureq hands back the 3xx response
+        // and `execute` applies the ureq 2 rules to it.
+        .max_redirects(0)
+        .max_redirects_will_error(false)
         .redirect_auth_headers(RedirectAuthHeaders::Never)
         .tls_config(tls_config)
         .build();
     Agent::new_with_config(config)
 }
 
-/// Send one payload and classify the response.
+/// One request in a redirect chain.
+struct Hop<'a> {
+    /// Absolute target, parsed with the parser ureq 2 used for every request.
+    url: Url,
+    /// Method this request sends.
+    method: HTTPMethod,
+    /// Payload this request carries; only the first request carries one.
+    body: Option<&'a str>,
+}
+
+/// Send one payload and classify the final response.
 ///
-/// A `StatusCode` error is classified like the matching success response, so a
-/// change to ureq's `http_status_as_error` setting cannot silently turn a
-/// server verdict into a transport failure. Errors that stand for a redirect
-/// ureq 3 refused to follow are classified as the status ureq 2 would have
-/// returned; see `classify_error`.
+/// A 3xx response is followed while [`redirect::next_hop`] allows it; anything
+/// the chain refuses is classified by its status, which is what the ureq 2
+/// worker did with a redirect response it received. A `StatusCode` error is
+/// classified like the matching success response, so a change to ureq's
+/// `http_status_as_error` setting cannot silently turn a server verdict into a
+/// transport failure.
 pub(super) fn execute(
     config: &HTTPHandlerConfig,
     agent: &Agent,
     payload: &str,
 ) -> Result<ResponseClass, String> {
-    let headers = resolve_headers(config)?;
-    // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
-    let sent = match config.method {
-        HTTPMethod::GET => send_get(config, agent, &headers, payload),
-        HTTPMethod::POST => send_post(config, agent, &headers, payload),
-    };
+    let mut headers = resolve_headers(config)?;
+    let mut hop = first_hop(config, payload)?;
+    let mut responses_seen = 1;
+    loop {
+        let response = match send_hop(agent, &hop, &headers) {
+            Ok(response) => response,
+            Err(err) => return classify_error(*err),
+        };
+        let status = response.status().as_u16();
+        if !(300..=399).contains(&status) {
+            return Ok(classify_status(status));
+        }
+        match redirect::next_hop(
+            &hop.url,
+            &hop.method,
+            status,
+            response.headers().get(LOCATION),
+            responses_seen,
+        ) {
+            NextHop::Follow { url, method } => {
+                headers = redirected_headers(&headers);
+                hop = Hop {
+                    url,
+                    method,
+                    body: None,
+                };
+                responses_seen += 1;
+            }
+            NextHop::Refuse => return Ok(classify_status(status)),
+            NextHop::Failed(message) => return Err(message),
+        }
+    }
+}
 
-    match sent {
-        Ok(response) => Ok(classify_status(response.status().as_u16())),
-        Err(err) => classify_error(*err),
+/// Build the first request of an attempt.
+///
+/// ureq 2 parsed every request URL with `url::Url`, which percent-encodes
+/// characters such as a space in the path; ureq 3 parses an `http::Uri` and
+/// would reject the raw character at send time, turning every attempt into a
+/// retryable transport error and dropping the record once the backoff deadline
+/// expired. Parsing here keeps the accepted endpoints and the bytes on the wire
+/// unchanged. A GET payload is appended before the parse, because ureq 2
+/// appended it to the configured endpoint before ureq parsed the result.
+fn first_hop<'a>(config: &HTTPHandlerConfig, payload: &'a str) -> Result<Hop<'a>, String> {
+    // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
+    let (target, body) = match config.method {
+        HTTPMethod::GET => {
+            let separator = if config.url.contains('?') { '&' } else { '?' };
+            (format!("{}{separator}{payload}", config.url), None)
+        }
+        HTTPMethod::POST => (config.url.clone(), Some(payload)),
+    };
+    let url = Url::parse(&target).map_err(|err| format!("invalid HTTP endpoint: {err}"))?;
+    Ok(Hop {
+        url,
+        method: config.method.clone(),
+        body,
+    })
+}
+
+/// Send one request and return the response whose body is never read.
+///
+/// A followed redirect never keeps a body-bearing method, so the payload is
+/// present only on the first request of a POST attempt.
+fn send_hop(
+    agent: &Agent,
+    hop: &Hop<'_>,
+    headers: &HeaderMap,
+) -> Result<HttpResponse, Box<ureq::Error>> {
+    let target = hop.url.as_str();
+    match hop.method {
+        HTTPMethod::POST => apply_headers(agent.post(target), headers)
+            .send(hop.body.unwrap_or_default())
+            .map_err(Box::new),
+        HTTPMethod::GET => apply_headers(agent.get(target), headers)
+            .call()
+            .map_err(Box::new),
     }
 }
 
 /// Classify a transport error, preserving the verdict ureq 2 produced.
 ///
-/// ureq 2 returned a redirect response it could not follow, and the caller then
-/// classified that status: permanent for every 3xx. ureq 3 raises some of the
-/// same refusals as errors instead, and left as transport errors they would be
-/// retried until the backoff deadline. Two errors are refused redirects:
-/// `RedirectFailed` when a 307 or 308 would replay a request body, and a
-/// protocol `NoLocationHeader` or `BadLocationHeader` when the response carries
-/// no usable `Location` (ureq 2 read a non-UTF-8 header as missing). With no
-/// response to classify, restore the permanent verdict.
-///
-/// `TooManyRedirects` is deliberately absent: ureq 2 also raised that as an
-/// error, so it stays a transport error.
+/// ureq raises a status as an error only when configured to; the agent sets
+/// `http_status_as_error(false)`, so a raised status can only come from an
+/// agent a caller built itself. Classifying it like the matching response keeps
+/// that path equivalent. Every other error is a transport failure, including a
+/// redirect that exceeded the chain limit: ureq 2 raised that one as an error
+/// too, so it is not a verdict.
 fn classify_error(err: ureq::Error) -> Result<ResponseClass, String> {
     match err {
         ureq::Error::StatusCode(code) => Ok(classify_status(code)),
-        ureq::Error::RedirectFailed => Ok(ResponseClass::Permanent),
-        ureq::Error::Protocol(
-            ureq_proto::Error::NoLocationHeader | ureq_proto::Error::BadLocationHeader(_),
-        ) => Ok(ResponseClass::Permanent),
         other => Err(other.to_string()),
     }
 }
 
-/// Build and send a GET request; the payload follows any existing query data.
-fn send_get(
-    config: &HTTPHandlerConfig,
-    agent: &Agent,
-    headers: &HeaderMap,
-    payload: &str,
-) -> Result<HttpResponse, Box<ureq::Error>> {
-    let url = if config.url.contains('?') {
-        format!("{}&{}", config.url, payload)
-    } else {
-        format!("{}?{}", config.url, payload)
-    };
-    apply_headers(agent.get(&url), headers)
-        .call()
-        .map_err(Box::new)
-}
-
-/// Build and send a POST request; the resolved headers carry the content type.
-fn send_post(
-    config: &HTTPHandlerConfig,
-    agent: &Agent,
-    headers: &HeaderMap,
-    payload: &str,
-) -> Result<HttpResponse, Box<ureq::Error>> {
-    apply_headers(agent.post(config.url.as_str()), headers)
-        .send(payload)
-        .map_err(Box::new)
+/// Drop the headers ureq 2 removed from a followed redirect.
+///
+/// The agent is configured with `RedirectAuthHeaders::Never`, which is ureq 2's
+/// default: the `Authorization` header is never replayed at the redirect
+/// target. ureq 2 removed a `Cookie` header for the same reason, and ureq 3
+/// would otherwise forward one configured as a custom header.
+fn redirected_headers(headers: &HeaderMap) -> HeaderMap {
+    let mut forwarded = headers.clone();
+    forwarded.remove(AUTHORIZATION);
+    forwarded.remove(COOKIE);
+    forwarded
 }
 
 /// Apply each resolved header exactly once to a request builder.
 ///
 /// ureq 3's `header` appends rather than replaces, so the caller must have
 /// already collapsed duplicates into one case-insensitive map.
-fn apply_headers<Any>(
-    mut request: RequestBuilder<Any>,
+fn apply_headers<State>(
+    mut request: RequestBuilder<State>,
     headers: &HeaderMap,
-) -> RequestBuilder<Any> {
+) -> RequestBuilder<State> {
     for (name, value) in headers {
         request = request.header(name.clone(), value.clone());
     }
@@ -218,8 +272,24 @@ fn resolve_headers(config: &HTTPHandlerConfig) -> Result<HeaderMap, String> {
 /// deadline. `HTTPHandlerBuilder` calls this before it spawns a worker, so the
 /// defect is reported once, as a configuration error, instead. The error never
 /// includes a header value, because one of them is a credential.
+///
+/// Two of the checks are stricter than `HeaderValue::from_str`. That constructor
+/// accepts any byte from `0x20` upwards, while the send path decodes the
+/// `Authorization` and `Host` values as text: ureq 3 rejects a value it cannot
+/// read there, which would again turn every attempt into a retryable transport
+/// error. The effective value is checked *after* header precedence, so a custom
+/// `Authorization` that replaces the configured credentials is the one that
+/// must be sendable.
 pub(crate) fn validate_request_headers(config: &HTTPHandlerConfig) -> Result<(), String> {
-    resolve_headers(config).map(|_| ())
+    let headers = resolve_headers(config)?;
+    for name in [AUTHORIZATION, HOST] {
+        if let Some(value) = headers.get(&name) {
+            value.to_str().map_err(|_| {
+                format!("the {name} header cannot be sent: its value is not ASCII text")
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Render the configured authentication as an `Authorization` value.

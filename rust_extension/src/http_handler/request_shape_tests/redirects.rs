@@ -1,9 +1,9 @@
-//! Redirect contracts: the follow limit, credential stripping, and the one
-//! redirect ureq 3 cannot follow.
+//! Redirect contracts: the follow limit and credential stripping.
 //!
 //! The fixtures serve redirect chains on loopback. They live beside the request
 //! shape tests because they share the same server helpers, and in their own
-//! file so each stays readable.
+//! files so each stays readable. The sibling `redirect_responses` module covers
+//! the redirects that are classified rather than followed.
 
 use std::io::{self, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use rstest::rstest;
 
 use super::{
-    AuthConfig, CapturedRequest, ResponseClass, build_agent, execute, header_values, post_config,
-    read_http_request, spawn_held_server, spawn_mock_server, tcp_listener, test_agent,
+    AuthConfig, CapturedRequest, ResponseClass, execute, header_values, post_config,
+    read_http_request, spawn_mock_server, tcp_listener, test_agent,
 };
 
 /// Spawn a server that answers its one request with `response` verbatim.
@@ -23,7 +23,7 @@ use super::{
 /// Some redirect contracts are about responses that cannot be built with the
 /// normal helper: a redirect with no `Location`, or one whose `Location` is not
 /// valid UTF-8.
-fn spawn_raw_response(
+pub(super) fn spawn_raw_response(
     listener: TcpListener,
     response: Vec<u8>,
 ) -> io::Result<(SocketAddr, mpsc::Receiver<CapturedRequest>)> {
@@ -43,7 +43,7 @@ fn spawn_raw_response(
 }
 
 /// Spawn a server that answers its one request with `status` and `location`.
-fn spawn_redirect_server(
+pub(super) fn spawn_redirect_server(
     listener: TcpListener,
     status: u16,
     location: String,
@@ -159,16 +159,16 @@ fn execute_redirect_chain(
 }
 
 /// Scenario: the collector redirects to a second listener, and the request
-/// carries both the configured auth and a custom credential header.
+/// carries the configured auth, a cookie, and a custom credential header.
 ///
-/// Invariant: the redirect is followed, but the `Authorization` header sent to
-/// the original host is not replayed at the target. ureq 3's
-/// `RedirectAuthHeaders` setting covers only `Authorization`, so a custom
-/// credential header is forwarded; that is also what ureq 2 did, and the
-/// documentation states the distinction rather than claiming every credential
-/// is stripped.
+/// Invariant: the redirect is followed, but neither `Authorization` nor
+/// `Cookie` is replayed at the target. ureq 2 dropped both, and ureq 3's
+/// `RedirectAuthHeaders` setting covers only `Authorization`, so the chain
+/// removes the cookie itself. A custom credential header is still forwarded;
+/// that is also what ureq 2 did, and the documentation states the distinction
+/// rather than claiming every credential is stripped.
 #[rstest]
-fn a_redirect_strips_authorization_and_forwards_custom_headers(
+fn a_redirect_strips_credentials_and_forwards_custom_headers(
     tcp_listener: io::Result<TcpListener>,
 ) {
     let redirect_listener = tcp_listener.expect("bind ephemeral listener");
@@ -186,7 +186,10 @@ fn a_redirect_strips_authorization_and_forwards_custom_headers(
         AuthConfig::Bearer {
             token: "redirect-secret".to_owned(),
         },
-        &[("x-api-key", "custom-credential")],
+        &[
+            ("cookie", "session=redirect-secret"),
+            ("x-api-key", "custom-credential"),
+        ],
     );
 
     let class = execute(&config, &test_agent(), "msg=redirect").expect("redirect is followed");
@@ -200,6 +203,11 @@ fn a_redirect_strips_authorization_and_forwards_custom_headers(
         ["Bearer redirect-secret"]
     );
     assert_eq!(header_values(&first, "x-api-key"), ["custom-credential"]);
+    assert_eq!(
+        header_values(&first, "cookie"),
+        ["session=redirect-secret"],
+        "the first request carries the configured cookie"
+    );
     let second = target_requests
         .recv_timeout(Duration::from_secs(5))
         .expect("the redirect target should be reached");
@@ -209,140 +217,16 @@ fn a_redirect_strips_authorization_and_forwards_custom_headers(
         "a redirect must not replay the Authorization header: {:?}",
         header_values(&second, "authorization")
     );
+    assert!(
+        header_values(&second, "cookie").is_empty(),
+        "a redirect must not replay a cookie: {:?}",
+        header_values(&second, "cookie")
+    );
     assert_eq!(
         header_values(&second, "x-api-key"),
         ["custom-credential"],
         "a custom header is outside RedirectAuthHeaders and is forwarded"
     );
-}
-
-/// Scenario: a collector answers a POST with 307 or 308.
-///
-/// Invariant: the verdict is permanent, exactly as it was under ureq 2, which
-/// returned the redirect response instead of replaying the request body. ureq 3
-/// reports the same refusal as `RedirectFailed`; left unhandled it would become
-/// a transport error and the record would be retried until the backoff
-/// deadline. The target is never contacted, which is why the response has to be
-/// classified rather than followed.
-#[rstest]
-#[case(307)]
-#[case(308)]
-fn a_post_that_cannot_be_replayed_is_permanent(
-    tcp_listener: io::Result<TcpListener>,
-    #[case] status: u16,
-) {
-    let redirect_listener = tcp_listener.expect("bind ephemeral listener");
-    let target_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind redirect target");
-    target_listener
-        .set_nonblocking(true)
-        .expect("the target listener must not block the assertion");
-    let target_addr = target_listener.local_addr().expect("target address");
-    let (redirect_addr, requests) = spawn_redirect_server(
-        redirect_listener,
-        status,
-        format!("http://{target_addr}/moved"),
-    )
-    .expect("spawn redirect server");
-    let config = post_config(format!("http://{redirect_addr}/log"), AuthConfig::None, &[]);
-
-    let class = execute(&config, &test_agent(), "msg=redirect")
-        .expect("a refused redirect is a verdict, not a transport error");
-
-    assert_eq!(class, ResponseClass::Permanent);
-    assert!(
-        matches!(target_listener.accept(), Err(err) if err.kind() == io::ErrorKind::WouldBlock),
-        "a request body must never be replayed to the redirect target"
-    );
-    let request = requests
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the original POST is sent once");
-    assert_eq!(request.method, "POST");
-}
-
-/// Answer one attempt with `response` and return its verdict.
-fn execute_against_raw_response(
-    listener: TcpListener,
-    response: Vec<u8>,
-) -> Result<ResponseClass, String> {
-    let (addr, requests) =
-        spawn_raw_response(listener, response).expect("spawn raw response server");
-    let config = post_config(format!("http://{addr}/log"), AuthConfig::None, &[]);
-
-    let result = execute(&config, &test_agent(), "msg=redirect");
-    requests
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the original POST is sent once");
-    result
-}
-
-/// Scenario: the collector answers a redirect that ureq 3 has no usable
-/// `Location` to follow.
-///
-/// Invariant: the verdict is permanent, which is what ureq 2 produced when it
-/// returned the redirect response instead of following it. The two cases are a
-/// missing header, which ureq 3 raises as `NoLocationHeader`, and a header that
-/// is not valid UTF-8, which ureq 2 read as missing and ureq 3 raises as
-/// `BadLocationHeader`. Left unhandled, either would become a transport error
-/// and the record would be retried until the backoff deadline.
-#[rstest]
-#[case::missing(b"HTTP/1.1 302 Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec())]
-#[case::not_utf8(
-    b"HTTP/1.1 302 Found\r\nLocation: http://example.invalid/\x80\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        .to_vec()
-)]
-fn a_redirect_without_a_usable_location_is_permanent(
-    tcp_listener: io::Result<TcpListener>,
-    #[case] response: Vec<u8>,
-) {
-    let class =
-        execute_against_raw_response(tcp_listener.expect("bind ephemeral listener"), response)
-            .expect("an unusable Location is a verdict, not a transport error");
-
-    assert_eq!(class, ResponseClass::Permanent);
-}
-
-/// Scenario: a collector answers 307 with a `Location` and a body that stalls.
-///
-/// Invariant: this migration's one accepted regression in redirect handling.
-/// ureq 2 returned the 307 as soon as it saw a body-bearing method, so the
-/// verdict was permanent. ureq 3 reads a redirect body before it decides
-/// whether it can follow the redirect, so a body that never arrives ends the
-/// attempt as a retryable transport error instead. The difference is confined
-/// to a 307 or 308 that declares a body and then fails to deliver it; an empty
-/// one, which is what a real collector sends, stays permanent. It is recorded
-/// in `docs/rust-extension.md` because ureq 3 exposes no hook to read a
-/// redirect response without its body.
-#[rstest]
-fn a_stalled_redirect_body_delays_the_refusal(tcp_listener: io::Result<TcpListener>) {
-    let listener = tcp_listener.expect("bind ephemeral listener");
-    let target_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind redirect target");
-    let moved_to = format!(
-        "http://{}/moved",
-        target_listener.local_addr().expect("target address")
-    );
-    let (addr, answered, release) = spawn_held_server(listener, move |stream| {
-        read_http_request(stream)?;
-        stream.write_all(
-            format!(
-                "HTTP/1.1 307 Temporary Redirect\r\nLocation: {moved_to}\r\nContent-Length: 1048576\r\nConnection: close\r\n\r\n"
-            )
-            .as_bytes(),
-        )
-    })
-    .expect("spawn held redirect server");
-    let agent = build_agent(Duration::from_secs(5), Duration::from_millis(200));
-    let config = post_config(format!("http://{addr}/log"), AuthConfig::None, &[]);
-
-    let result = execute(&config, &agent, "msg=redirect");
-    let _ = release.send(());
-
-    assert!(
-        result.is_err(),
-        "ureq 3 reads the redirect body before it refuses the redirect: {result:?}"
-    );
-    answered
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the redirect response is answered before the client gives up");
 }
 
 /// Scenario: the collector redirects four times before answering.

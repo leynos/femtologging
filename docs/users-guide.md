@@ -624,8 +624,28 @@ socket_handler = (
   `.with_basic_auth()` and `.with_bearer_token()` setters remain available for
   compatibility.
 - `with_headers(...)`, `with_capacity(...)`, timeout setters, and
-  `.with_json_format()` mirror the socket/file builder style. Validation
-  failures raise `ValueError` before the handler is built.
+  `.with_json_format()` mirror the socket/file builder style.
+  `HTTPHandlerBuilder` rejects an invalid header name, header value, or bearer
+  token at build time with `HandlerConfigError`. The message never echoes a
+  header value.
+- The endpoint must be an absolute `http` or `https` URL. A malformed endpoint,
+  another scheme, or an endpoint the transport cannot send is rejected with
+  `HandlerConfigError` when the handler is built, instead of failing on every
+  record. A path that needs percent-encoding is accepted and encoded on the
+  wire, so `http://host/log ingest` reaches the collector as `/log%20ingest`.
+- Certificates are validated against the WebPKI roots bundled with the
+  extension, not the platform trust store. A private certificate authority is
+  not supported, and there is no setting that weakens verification.
+- `connect_timeout_ms` bounds connection establishment, including the TLS
+  handshake. `write_timeout_ms` bounds the whole attempt, so it also caps the
+  connect phase: a connection may wait for at most the smaller of the two.
+- A redirect chain is followed for at most four redirects. A 301, 302 or 303 is
+  re-requested as a GET, and a 307 or 308 only for a GET. `Authorization` and
+  `Cookie` are never replayed at the redirect target. These redirects fail
+  permanently: a 300 or any other status with no replay rule, a 307 or 308
+  answering a POST, and a redirect whose `Location` is missing or not valid
+  UTF-8. A fifth redirect is a transport failure, so the record follows the
+  normal retry policy.
 - Authoritative fields (`name`, `levelname`, `msg`, `created`, `filename`,
   `lineno`, `module`, `thread`, and the optional `threadName`, `exc_info`, and
   `stack_info`) stay at the top level in both JSON and URL-encoded payloads.
@@ -637,6 +657,9 @@ socket_handler = (
   `.with_record_fields([...])` selects built-in fields by name and projects
   permitted custom fields by their top-level name. A reserved name in that list
   selects only the built-in field, and unknown names are omitted.
+- These builder and transport rules are new in v0.2.0. See
+  [the migration guide](v0-2-0-migration-guide.md#http-handler-endpoint-validation-and-redirects)
+  before upgrading an HTTP handler.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is

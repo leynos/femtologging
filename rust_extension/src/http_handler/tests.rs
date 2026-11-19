@@ -147,6 +147,35 @@ fn sends_records_over_http(tcp_listener: io::Result<TcpListener>) {
     drop(handler);
 }
 
+/// Scenario: an endpoint built through the public builder whose path holds a
+/// character the HTTP client would reject.
+///
+/// Invariant: the built handler sends the path ureq 2 sent. The builder keeps
+/// the endpoint as configured and the transport parses each request target, so
+/// this drives both halves through the interface a caller actually uses. A
+/// space is encoded once, and an already-encoded path is left alone.
+#[rstest]
+#[case::space("/log ingest", "/log%20ingest")]
+#[case::already_encoded("/log%20ingest", "/log%20ingest")]
+fn a_built_handler_preserves_the_endpoint_encoding(
+    tcp_listener: io::Result<TcpListener>,
+    #[case] path: &str,
+    #[case] expected: &str,
+) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
+    let handler = HTTPHandlerBuilder::new()
+        .with_url(format!("http://{addr}{path}"))
+        .build_inner()
+        .expect("a percent-encodable endpoint must build");
+    send_info_record(&handler, "encoded path").expect("record should be queued");
+
+    let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
+    assert_eq!(captured.path, expected);
+
+    drop(handler);
+}
+
 #[rstest]
 fn sends_json_format(tcp_listener: io::Result<TcpListener>) {
     let tcp_listener = tcp_listener.expect("bind ephemeral listener");
