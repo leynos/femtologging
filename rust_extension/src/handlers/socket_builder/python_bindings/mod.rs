@@ -181,18 +181,21 @@ impl SocketHandlerBuilder {
     fn py_with_backoff(
         mut slf: PyRefMut<'_, Self>,
         config: BackoffOverrides,
-    ) -> PyRefMut<'_, Self> {
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let updated = slf.clone().with_backoff(config);
         *slf = updated;
-        slf
+        Ok(slf)
     }
 
     /// Attach filters to this handler by configured filter identifier.
     #[pyo3(name = "with_filters")]
-    fn py_with_filters(mut slf: PyRefMut<'_, Self>, filter_ids: Vec<String>) -> PyRefMut<'_, Self> {
+    fn py_with_filters(
+        mut slf: PyRefMut<'_, Self>,
+        filter_ids: Vec<String>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
         let updated = slf.clone().with_filters(filter_ids);
         *slf = updated;
-        slf
+        Ok(slf)
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
