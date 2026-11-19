@@ -1796,6 +1796,18 @@ reason, so those contracts inject one instead of editing this process's
 environment, and it runs the target in its own process group so a timed-out or
 interrupted run cannot leave `uv` and the driver behind.
 
+These invariants are checked with named examples and one parameterized table
+rather than generated ones, deliberately. Each example runs the real target, so
+a property test would multiply whole `uv` and driver runs to sample an input
+space that is not open-ended: the inherited names are exactly the variables the
+Makefile assigns with `?=` plus Make's three control variables, and
+`environment_overridable_variables()` already enumerates that list in full. A
+generated value adds nothing a case over that list does not already assert, and
+a generated subset of lanes would re-test the driver's loop rather than the
+contract, which pins the loop at its stop-at-first-failure boundary. The
+relative and empty `PATH` entries are covered by a parameterized table for the
+same reason: the interesting cases are two, and both are named.
+
 See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
 for the decision, and the
