@@ -249,6 +249,18 @@ def test_logical_lines_skips_here_document_bodies() -> None:
         ),
         ("(( count << 2 ))\ncargo test", ["(( count << 2 ))", "cargo test"]),
         ("(( n << shift ))\ncargo test", ["(( n << shift ))", "cargo test"]),
+        (
+            "cat <<EOF\npayload\nE\\\nOF\ncargo test",
+            ["cat <<EOF", "cargo test"],
+        ),
+        (
+            "cat <<'EOF'\npayload\nE\\\nOF\nEOF\ncargo test",
+            ["cat <<'EOF'", "cargo test"],
+        ),
+        (
+            "cat <<EOF\npayload \\\\\nEOF\ncargo test",
+            ["cat <<EOF", "cargo test"],
+        ),
     ],
     ids=[
         "single-quoted-operator",
@@ -257,19 +269,25 @@ def test_logical_lines_skips_here_document_bodies() -> None:
         "hyphenated-delimiter",
         "arithmetic-literal-shift",
         "arithmetic-identifier-shift",
+        "continued-delimiter",
+        "quoted-body-keeps-backslashes",
+        "escaped-backslash-is-not-a-continuation",
     ],
 )
 def test_only_an_unquoted_operator_opens_a_here_document(
     run: str, expected: list[str]
 ) -> None:
-    """A `<<` the shell does not read as an operator hides nothing.
+    r"""A `<<` the shell does not read as an operator hides nothing.
 
     A quoted `<<` is part of its word, and an arithmetic shift's `<<` sits
     inside `(( … ))`, where it shifts a value rather than naming a delimiter:
     its right operand may look exactly like one. Reading either as a
     here-document would skip every later line, because no delimiter line
     follows to end the skip. A bare delimiter is a whole shell word, so a
-    hyphen is part of it rather than the start of something else.
+    hyphen is part of it rather than the start of something else. An unquoted
+    body is expanded first, so `E\` and `OF` on separate lines still end a
+    `<<EOF` body; a quoted delimiter leaves its body literal, backslashes
+    included.
     """
     assert _logical_lines(run) == expected, run
 
