@@ -18,8 +18,10 @@ use crate::http_handler::queue::HTTPCommand;
 use crate::level::FemtoLevel;
 use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
 use crate::logger::FemtoLogger;
+use crate::rate_limited_warner::RateLimitedWarner;
 use crate::shutdown_signal::ShutdownSignal;
 use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::test_utils::test_worker::TestWorker;
 
 /// Records a fake HTTP worker observed on its command channel.
 type ObservedRecords = Arc<Mutex<Vec<FemtoLogRecord>>>;
@@ -41,7 +43,7 @@ fn spawn_fake_worker(
                 HTTPCommand::Record(record) => {
                     observed.lock().expect("fake worker mutex").push(record);
                 }
-                HTTPCommand::Flush(ack) => {
+                HTTPCommand::Flush(ack, _pending_drops) => {
                     let _ = ack.send(());
                 }
                 HTTPCommand::Shutdown(ack) => {
@@ -58,8 +60,12 @@ fn spawn_fake_worker(
 fn handler_with_fake_worker() -> (FemtoHTTPHandler, ObservedRecords) {
     let (tx, rx) = bounded(8);
     let (records, signal, handle) = spawn_fake_worker(rx);
-    let handler =
-        FemtoHTTPHandler::with_worker_for_test(tx, signal, handle, Duration::from_secs(1));
+    let handler = FemtoHTTPHandler::with_worker_for_test(
+        tx,
+        TestWorker::new(signal, handle),
+        Duration::from_secs(1),
+        RateLimitedWarner::new(Duration::from_secs(1)),
+    );
     (handler, records)
 }
 
