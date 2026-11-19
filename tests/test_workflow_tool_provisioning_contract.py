@@ -250,6 +250,10 @@ def test_logical_lines_skips_here_document_bodies() -> None:
         ("(( count << 2 ))\ncargo test", ["(( count << 2 ))", "cargo test"]),
         ("(( n << shift ))\ncargo test", ["(( n << shift ))", "cargo test"]),
         (
+            "(( n = 1 + (2 * (3)) << shift ))\ncargo test",
+            ["(( n = 1 + (2 * (3)) << shift ))", "cargo test"],
+        ),
+        (
             "cat <<EOF\npayload\nE\\\nOF\ncargo test",
             ["cat <<EOF", "cargo test"],
         ),
@@ -273,6 +277,7 @@ def test_logical_lines_skips_here_document_bodies() -> None:
         "hyphenated-delimiter",
         "arithmetic-literal-shift",
         "arithmetic-identifier-shift",
+        "arithmetic-nested-group-shift",
         "continued-delimiter",
         "quoted-body-keeps-backslashes",
         "escaped-backslash-is-not-a-continuation",
@@ -285,7 +290,8 @@ def test_only_an_unquoted_operator_opens_a_here_document(
     r"""A `<<` the shell does not read as an operator hides nothing.
 
     A quoted `<<` is part of its word, and an arithmetic shift's `<<` sits
-    inside `(( … ))`, where it shifts a value rather than naming a delimiter:
+    inside `(( … ))`, where it shifts a value rather than naming a delimiter,
+    even when a nested group's `))` precedes it:
     its right operand may look exactly like one. Reading either as a
     here-document would skip every later line, because no delimiter line
     follows to end the skip. A bare delimiter is a whole shell word, so a

@@ -51,6 +51,55 @@ class HereDocument(typ.NamedTuple):
     delimiter_is_quoted: bool
 
 
+def _skip_arithmetic(command: str, index: int, groups: list[int]) -> int | None:
+    """Consume one arithmetic bracket at `index`, if the shell reads one there.
+
+    `groups` holds one entry per open `((`, counting the plain `(` groups
+    opened inside it. The shell ends an arithmetic command only at the `))`
+    that matches its opening `((`, so the `)` closing a nested group has to be
+    consumed first; otherwise the `))` after `(3)` in
+    `(( n = 1 + (2 * (3)) << shift ))` would end the expression early and the
+    following `<<` would read as a here-document operator.
+
+    Parameters
+    ----------
+    command
+        One joined shell command.
+    index
+        The offset to inspect.
+    groups
+        The arithmetic nesting seen so far, updated in place.
+
+    Returns
+    -------
+    int | None
+        The next offset to scan when `index` starts an arithmetic bracket, or
+        ``None`` when it does not.
+
+    Examples
+    --------
+    >>> _skip_arithmetic("(3)) << shift", 0, [1])
+    1
+    >>> _skip_arithmetic(")) << shift", 0, [0])
+    2
+    """
+    if command.startswith("((", index):
+        groups.append(0)
+        return index + 2
+    if not groups:
+        return None
+    if command[index] == "(":
+        groups[-1] += 1
+        return index + 1
+    if command[index] == ")" and groups[-1]:
+        groups[-1] -= 1
+        return index + 1
+    if command.startswith("))", index):
+        groups.pop()
+        return index + 2
+    return None
+
+
 def _operator_offsets(command: str) -> cabc.Iterator[int]:
     """Yield where an unquoted `<<` starts in `command`, in order.
 
@@ -58,8 +107,12 @@ def _operator_offsets(command: str) -> cabc.Iterator[int]:
     inside a quoted word is data. Nor is a `<<` inside an arithmetic
     expression an operator: `(( n << shift ))` shifts `n`, and treating that
     `<<` as a here-document would make the skip consume every line below it.
-    Arithmetic nesting is therefore tracked as the scan runs. A comment ends
-    the scan, since nothing after it is shell.
+    Arithmetic nesting is therefore tracked as the scan runs, and so is the
+    nesting of plain `(` groups inside an expression: the arithmetic command
+    ends only at the `))` that matches its opening `((`, so the `))` closing
+    `(3)` in `(( n = 1 + (2 * (3)) << shift ))` leaves the context open and
+    its `<<` stays a shift. A comment ends the scan, since nothing after it is
+    shell.
 
     Yields
     ------
@@ -68,18 +121,17 @@ def _operator_offsets(command: str) -> cabc.Iterator[int]:
     """
     index = 0
     quote: str | None = None
-    arithmetic_depth = 0
+    # One entry per open `((`, counting the plain `(` groups opened inside it.
+    # Only the `))` that matches an opening `((` ends that arithmetic command,
+    # so a nested group's closing `)` must be consumed first.
+    arithmetic_groups: list[int] = []
     while index < len(command):
         if quote is None:
-            if command.startswith("((", index):
-                arithmetic_depth += 1
-                index += 2
+            arithmetic_index = _skip_arithmetic(command, index, arithmetic_groups)
+            if arithmetic_index is not None:
+                index = arithmetic_index
                 continue
-            if arithmetic_depth and command.startswith("))", index):
-                arithmetic_depth -= 1
-                index += 2
-                continue
-            if not arithmetic_depth and command.startswith("<<", index):
+            if not arithmetic_groups and command.startswith("<<", index):
                 yield index
                 index += 2
                 continue
