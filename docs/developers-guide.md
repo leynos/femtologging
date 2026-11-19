@@ -1593,7 +1593,10 @@ its addendum records the addition of the docstring-coverage tier below.
    the threshold alone can pass a lone gap. `INTERROGATE_IGNORE_REGEX`
    (`^basicConfig$`) skips every definition named `basicConfig`, which is how
    the overload stubs are exempt; Ruff still checks the implementation's
-   docstring.
+   docstring. Ruff's `undocumented-public-function` (D103) also applies to
+   `tests/steps/` without a per-file exemption. A step's docstring describes
+   its scenario-context effect or assertion contract rather than repeating the
+   `@given`/`@when`/`@then` decorator text.
 3. **Pylint** (`4.0.7`) — runs as a uv tool on managed PyPy 3.12
    (`PYLINT_PYTHON ?= pypy@3.12`), isolated from the project virtual
    environment. `syntax-error` stays enabled, so a module PyPy cannot parse
