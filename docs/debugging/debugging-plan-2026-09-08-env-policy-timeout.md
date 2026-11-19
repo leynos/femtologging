@@ -300,9 +300,10 @@ alone. Elapsed time is the lane's own clock, and it started after the holder
 had acquired the lock, so subtracting the wait leaves only the lane's work
 outside the block: its start-up before the first blocking message and whatever
 it did after release, which came to one to three seconds across the four
-contended runs. It does not contain the gap, which lies before the lane
-started; the uncontended control finished the same lane in 13 seconds in total.
-Every run began and ended with `build-limits-status` reading
+contended runs. That start-up is only the tail of the gap; its head, from the
+holder's acquisition to the lane's start, lies outside the lane's clock and so
+outside elapsed time. The uncontended control finished the same lane in 13
+seconds in total. Every run began and ended with `build-limits-status` reading
 `capacity 4, held 4, healthy, caching through sccache`, so the waits are not an
 artefact of a stalled cache server or refused admission.
 
