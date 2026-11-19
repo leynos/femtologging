@@ -16,10 +16,6 @@ use std::{
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
-// The interpreter is reachable in every lane that is not modelling it, so the
-// drop guard attaches under the same condition `FemtoLogger`'s join does.
-#[cfg(not(loom))]
-use pyo3::Python;
 
 use parking_lot::Mutex;
 
@@ -364,43 +360,5 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
     }
 }
 
-/// Drop the handler, closing it with the GIL released.
-///
-/// A handler whose worker has already gone has nothing to close, so the check
-/// keeps that case out of the GIL's way entirely. When Python can be attached,
-/// the close runs detached; during interpreter shutdown, the Rust-only close
-/// runs without attaching and remains bounded by the same budget.
-///
-/// Under `--cfg loom` there is no interpreter to attach to: no model builds one
-/// of these handlers, and attaching would initialize Python on a Loom
-/// coroutine's small stack.
-#[cfg(not(loom))]
-impl Drop for FemtoHTTPHandler {
-    fn drop(&mut self) {
-        // A handler whose worker is gone has nobody left to report the drops
-        // refused after an earlier close, and no later warning comes. While a
-        // worker is still present, `close()` reports them itself.
-        if self.handle.lock().is_none() {
-            flush_drops(&self.warner);
-            return;
-        }
-        if Python::try_attach(|py| py.detach(|| self.close())).is_none() {
-            self.close();
-        }
-    }
-}
-
-#[cfg(loom)]
-impl Drop for FemtoHTTPHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
-
-impl std::fmt::Debug for FemtoHTTPHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FemtoHTTPHandler")
-            .field("flush_timeout", &self.flush_timeout)
-            .finish()
-    }
-}
+#[path = "handler_drop.rs"]
+mod handler_drop;
