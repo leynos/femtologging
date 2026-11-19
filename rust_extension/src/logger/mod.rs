@@ -51,6 +51,10 @@ pub use dispatcher::DispatcherError;
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
+// The convenience-function test is the only caller of the diagnostic wording;
+// without the gate, `-D unused-imports` fails a build with tests compiled out.
+#[cfg(test)]
+pub(crate) use producer::context_drop_diagnostic;
 // The `log` bridge is the only caller, so the re-export follows that feature
 // or `-D unused-imports` fails a lane with the bridge compiled out.
 #[cfg(feature = "log-compat")]
