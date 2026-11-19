@@ -150,6 +150,10 @@ jobs:
         uses: leynos/shared-actions/.github/actions/df12-skylos@a0519a1476ab769ca7b8badfa794f3751213f1ea
       - name: Spelling
         run: make spelling
+      - name: Spelling integration tests
+        # The pinned builder is already provisioned by the step above, so the
+        # end-to-end gate tests can resolve it without a cold network fetch.
+        run: make spelling-integration-test
       - name: Typecheck
         run: make typecheck
       - name: API boundary
