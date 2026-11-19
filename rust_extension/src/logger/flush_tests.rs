@@ -43,9 +43,7 @@ impl FlushObserver for RecordingObserver {
     fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
         self.records
             .lock()
-            .unwrap_or_else(|err| {
-                panic!("the recording observer is not shared with a panicking thread: {err}")
-            })
+            .expect("the recording observer is not shared with a panicking thread")
             .push((outcome, elapsed));
     }
 }
@@ -55,9 +53,7 @@ impl RecordingObserver {
     fn taken(&self) -> Vec<(FlushOutcome, Duration)> {
         self.records
             .lock()
-            .unwrap_or_else(|err| {
-                panic!("the recording observer is not shared with a panicking thread: {err}")
-            })
+            .expect("the recording observer is not shared with a panicking thread")
             .drain(..)
             .collect()
     }
@@ -165,8 +161,7 @@ fn leaked(shard: Shard) -> &'static Shard {
 
 /// Build a logger on a freshly started two-deep shard.
 fn logger_on_test_shard(name: &str) -> FemtoLogger {
-    let shard =
-        leaked(Shard::start(0, 2).unwrap_or_else(|err| panic!("test shard should start: {err}")));
+    let shard = leaked(Shard::start(0, 2).expect("test shard should start"));
     FemtoLogger::assembled_for_test(name.to_owned(), shard)
 }
 
@@ -174,7 +169,7 @@ fn logger_on_test_shard(name: &str) -> FemtoLogger {
 fn with_handler(logger: FemtoLogger, handler: Arc<dyn FemtoHandlerTrait>) -> FemtoLogger {
     logger
         .add_handler(handler)
-        .unwrap_or_else(|err| panic!("the test handler should register: {err}"));
+        .expect("the test handler should register");
     logger
 }
 
