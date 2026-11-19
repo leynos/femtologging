@@ -25,6 +25,57 @@ _MARKDOWN_FILES: Tokens = (
     "-r",
 )
 
+_UNTRACKED_MARKDOWN_FILES: Tokens = (
+    "git",
+    "ls-files",
+    "-z",
+    "--others",
+    "--exclude-standard",
+    "*.md",
+    "|",
+    "xargs",
+    "-0",
+    "-r",
+)
+
+#: The two commands `spelling` must run, in order: the builder gate, then the
+#: same pinned release's Typos binary over the Markdown the gate cannot see.
+_SPELLING_COMMANDS: tuple[Tokens, ...] = (
+    ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
+    (*_UNTRACKED_MARKDOWN_FILES, "env", "$(UV_ENV)", "$(TYPOS)", "--"),
+)
+
+#: The two commands `spelling-integration-test` must run, in order.
+_SPELLING_INTEGRATION_COMMANDS: tuple[Tokens, ...] = (
+    ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "--help", ">", "/dev/null"),
+    (
+        "@$(SPELLING_INTEGRATION_ENV)",
+        "PYTHONPATH=.",
+        "$(UV_ENV)",
+        "uv",
+        "run",
+        "--no-project",
+        "--python",
+        "3.13",
+        "--with",
+        "pytest==9.0.2",
+        "--with",
+        "pytest-timeout==2.4.0",
+        "--with",
+        "pyyaml",
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_spelling_gate_end_to_end.py",
+        "-c",
+        "/dev/null",
+        "--rootdir=.",
+        "--noconftest",
+        "-p",
+        "no:cacheprovider",
+    ),
+)
+
 
 def _commands(target: str) -> tuple[Tokens, ...]:
     """Return non-comment recipe commands parsed for *target*."""
@@ -76,9 +127,29 @@ def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
         "interpreter it accepts: it declares Python >= 3.14, while a hosted "
         "suite job exports UV_PYTHON for its own lane"
     )
+    assert variable_tokens("TYPOS") == (
+        "uvx",
+        "--quiet",
+        "--python",
+        "3.14",
+        "--from",
+        "git+https://github.com/leynos/typos-config-builder.git@v0.1.3",
+        "typos",
+    ), (
+        "the unstaged-file stage must run the Typos binary the builder pins, "
+        "from the same release, so both stages apply identical spelling rules"
+    )
     assert not _prerequisites("spelling"), (
         "the gate owns dictionary refresh, generation and checking"
     )
-    assert _commands("spelling") == (
-        ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
-    ), "spelling must run the builder gate in write mode"
+    assert _commands("spelling") == _SPELLING_COMMANDS, (
+        "spelling must run the builder gate in write mode and then check the "
+        "Markdown the gate cannot see: new files that are not yet staged"
+    )
+
+
+def test_spelling_integration_target_provisions_the_pinned_builder() -> None:
+    """The end-to-end target warms the pin and sets its integration flag."""
+    assert (
+        _commands("spelling-integration-test")[:2] == _SPELLING_INTEGRATION_COMMANDS
+    ), "the integration target must provision the pin, then run its tests"
