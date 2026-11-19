@@ -39,11 +39,44 @@ GENERATE_MARKER: typ.Final[str] = "generate-coverage"
 BASELINE_MARKER: typ.Final[str] = "publish-coverage-baseline"
 UPLOAD_MARKER: typ.Final[str] = "upload-codescene-coverage"
 TOKEN_STEP_NAME: typ.Final[str] = "Check CodeScene token"  # ruff: ignore[hardcoded-password-string] a step name, not a value
-#: The canonical token-presence step: it writes a boolean output, nothing more.
+#: The canonical token-presence step. It writes the boolean output the upload
+#: guard reads and records the outcome in the log and the job summary in both
+#: branches, so a skipped upload states its own reason. It never writes the
+#: secret: only the boolean expresses it.
 TOKEN_COMMAND: typ.Final[str] = (
-    # ruff: ignore[hardcoded-password-string] names the secret in an expression
-    'echo "available=${{ secrets.CS_ACCESS_TOKEN != \'\' }}" >> "$GITHUB_OUTPUT"'
+    "\n".join((
+        "available=\"${{ secrets.CS_ACCESS_TOKEN != '' }}\"",
+        'echo "available=${available}" >> "$GITHUB_OUTPUT"',
+        "if [ \"$available\" = 'true' ]; then",
+        "  echo 'CodeScene upload: token present; upload enabled'",
+        (
+            "  echo 'CodeScene upload: token present; upload enabled' >> "
+            '"$GITHUB_STEP_SUMMARY"'
+        ),
+        "else",
+        (
+            "  echo '::notice title=CodeScene upload::"
+            "CS_ACCESS_TOKEN is absent; upload skipped'"
+        ),
+        (
+            "  echo 'CodeScene upload: token absent; upload skipped' >> "
+            '"$GITHUB_STEP_SUMMARY"'
+        ),
+        "fi",
+    ))
+    + "\n"
 )
+#: The redirection each branch of the token step must use to reach the job
+#: summary: exactly two, one per branch, so neither outcome is silent.
+SUMMARY_REDIRECT: typ.Final[str] = '>> "$GITHUB_STEP_SUMMARY"'
+#: The annotation that lets a maintainer read the reason for a skipped upload
+#: from the run log alone.
+ABSENCE_NOTICE: typ.Final[str] = (
+    "::notice title=CodeScene upload::CS_ACCESS_TOKEN is absent"
+)
+#: A bare interpolation of the secret. The step must compare it instead: an
+#: interpolated value could reach a log line or a shell trace.
+BARE_INTERPOLATION: typ.Final[str] = "secrets.CS_ACCESS_TOKEN }}"
 #: The upload must require both the token's presence and the permitted branch.
 UPLOAD_CONDITION: typ.Final[str] = (
     "${{ steps.codescene-token.outputs.available == 'true' "
