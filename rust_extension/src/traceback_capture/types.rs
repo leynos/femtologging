@@ -1,4 +1,8 @@
 //! Helpers for classifying real Python exception objects.
+//!
+//! An exception subclass can override `__class__` or expose a lying `args`
+//! property, so classification asks the object's *real* type — `PyObject_IsSubclass`
+//! on `get_type()` — rather than `isinstance`, which consults `__class__`.
 
 use pyo3::prelude::*;
 
@@ -10,7 +14,10 @@ pub(super) fn is_exception(py: Python<'_>, value: &Bound<'_, PyAny>) -> bool {
     let Ok(base_exception) = builtins.getattr("BaseException") else {
         return false;
     };
-    value.is_instance(&base_exception).unwrap_or(false)
+    value
+        .get_type()
+        .is_subclass(&base_exception)
+        .unwrap_or(false)
 }
 
 /// Return `true` when `exception` is an exception group.
@@ -22,5 +29,8 @@ pub(super) fn is_exception_group(py: Python<'_>, exception: &Bound<'_, PyAny>) -
         // Python older than 3.11 has no exception groups.
         return false;
     };
-    exception.is_instance(&group_type).unwrap_or(false)
+    exception
+        .get_type()
+        .is_subclass(&group_type)
+        .unwrap_or(false)
 }

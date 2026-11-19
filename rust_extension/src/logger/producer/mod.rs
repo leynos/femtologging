@@ -23,7 +23,6 @@ mod handler_filters;
 
 #[cfg(all(test, not(loom)))]
 use super::HandlerAttachment;
-use super::deferred_capture::deferred_prefix;
 use super::{FemtoLogger, QueuedRecord};
 
 impl FemtoLogger {
@@ -245,27 +244,38 @@ impl FemtoLogger {
 
     /// Apply the configured filter chain, running `capture` at the split point.
     ///
-    /// Filters keep their configured order. The leading run that cannot inspect
-    /// traceback data runs first; `capture` then attaches the payloads, and the
-    /// remaining filters run against the captured record. The two segments
-    /// share one [`FilterContext`], so a Python record view built by one filter
-    /// is reused by the next. A rejection in either segment rejects the record,
-    /// and a callback failure counts as rejection.
+    /// Filters keep their configured order and are evaluated one at a time.
+    /// Capture runs immediately before the first filter that can inspect
+    /// traceback data, or after the last filter when none can. A record rejected
+    /// earlier therefore pays neither for capture nor for the checks that would
+    /// have found the split. One [`FilterContext`] is shared by the whole chain,
+    /// so a Python record view built by one filter is reused by the next. A
+    /// callback failure counts as rejection.
     fn apply_filters_with_capture<F>(&self, record: &mut FemtoLogRecord, capture: F) -> bool
     where
         F: FnOnce(&mut FemtoLogRecord),
     {
         let filters = self.filters.read().clone();
-        let split = deferred_prefix(&filters);
         let mut context = FilterContext::default();
-        if handler_filters::apply_filter_segment(record, &filters[..split], &mut context)
-            != handler_filters::FilterChainOutcome::Accepted
-        {
-            return false;
+        let mut capture = Some(capture);
+        for filter in &filters {
+            if filter.inspects_traceback()
+                && let Some(run_capture) = capture.take()
+            {
+                run_capture(record);
+            }
+            let decision = filter.decision(record, &mut context);
+            if decision.callback_failed || !decision.accepted {
+                return false;
+            }
+            record.metadata_mut().key_values.extend(decision.enrichment);
         }
-        capture(record);
-        handler_filters::apply_filter_segment(record, &filters[split..], &mut context)
-            == handler_filters::FilterChainOutcome::Accepted
+        // No filter inspects traceback data, so capture runs only once every
+        // filter has accepted; a rejected record never pays for it.
+        if let Some(run_capture) = capture.take() {
+            run_capture(record);
+        }
+        true
     }
 
     /// Return whether this logger forwards records to its configured parent.

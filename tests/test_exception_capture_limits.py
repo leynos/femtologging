@@ -238,10 +238,10 @@ def test_deeply_nested_groups_are_bounded_and_marked() -> None:
     assert len(output) < 100_000, "the formatted output must stay bounded"
 
 
-def _assert_rejected_without_stringification(
+def _configure_with_filter(
     filter_name: str, filter_builder: object, logger_name: str
-) -> None:
-    """Install *filter_builder* so INFO is rejected, then probe stringification."""
+) -> FemtoLogger:
+    """Install a single named filter on *logger_name* and return the logger."""
     (
         ConfigBuilder()
         .with_filter(filter_name, filter_builder)
@@ -249,8 +249,15 @@ def _assert_rejected_without_stringification(
         .with_root_logger(LoggerConfigBuilder().with_level("DEBUG"))
         .build_and_init()
     )
+    return get_logger(logger_name)
+
+
+def _assert_rejected_without_stringification(
+    filter_name: str, filter_builder: object, logger_name: str
+) -> None:
+    """Install *filter_builder* so INFO is rejected, then probe stringification."""
+    logger = _configure_with_filter(filter_name, filter_builder, logger_name)
     _HugeValue.reset()
-    logger = get_logger(logger_name)
 
     output = _log_once(logger, ValueError(_HugeValue()))
 
@@ -264,18 +271,38 @@ def _assert_rejected_without_stringification(
 
 
 @pytest.mark.parametrize(
-    "filter_builder",
+    ("rejecting", "accepting"),
     [
-        LevelFilterBuilder().with_max_level("DEBUG"),
-        NameFilterBuilder().with_prefix("elsewhere"),
+        (
+            LevelFilterBuilder().with_max_level("DEBUG"),
+            LevelFilterBuilder().with_max_level("INFO"),
+        ),
+        (
+            NameFilterBuilder().with_prefix("elsewhere"),
+            NameFilterBuilder().with_prefix("limits.native"),
+        ),
     ],
     ids=["level-filter", "name-filter"],
 )
 def test_native_filter_rejection_skips_capture(
-    filter_builder: LevelFilterBuilder | NameFilterBuilder,
+    rejecting: LevelFilterBuilder | NameFilterBuilder,
+    accepting: LevelFilterBuilder | NameFilterBuilder,
 ) -> None:
     """A native filter that rejects INFO must avoid all capture work."""
-    _assert_rejected_without_stringification("native", filter_builder, "limits.native")
+    _assert_rejected_without_stringification("native", rejecting, "limits.native")
+
+    # Positive control: the same logger name and level let an accepting native
+    # filter pass INFO to capture. Without it, an earlier threshold check that
+    # never consulted the filter would also produce the zero conversions above.
+    logger = _configure_with_filter("native", accepting, "limits.native")
+    _HugeValue.reset()
+
+    output = _log_once(logger, ValueError(_HugeValue()))
+
+    assert output is not None, "the accepting control must pass the record"
+    assert _HugeValue.str_calls == 1, (
+        "the accepting control must stringify the exception once"
+    )
 
 
 def test_below_threshold_record_is_not_captured() -> None:
@@ -297,14 +324,18 @@ def test_below_threshold_record_is_not_captured() -> None:
 
 def test_rejecting_callback_sees_a_bounded_payload() -> None:
     """A callback filter runs after capture and must receive bounded data."""
-    seen: dict[str, bool] = {}
+    seen: dict[str, int | bool] = {}
 
     def reject(record: logging.LogRecord) -> bool:
-        """Record the marker the captured payload carries, then reject it."""
+        """Record the payload's marker and sizes, then reject the record."""
         payload = typ.cast("dict[str, typ.Any]", record.exc_info)
         marker = typ.cast("dict[str, typ.Any]", payload.get("truncation", {}))
         seen["message_truncated"] = bool(marker.get("message_truncated"))
         seen["args_truncated"] = bool(marker.get("args_truncated"))
+        message = typ.cast("str", payload.get("message", ""))
+        seen["message_bytes"] = len(message.encode("utf-8"))
+        args_repr = typ.cast("list[str]", payload.get("args_repr", []))
+        seen["arg_bytes"] = len(args_repr[0].encode("utf-8")) if args_repr else 0
         return False
 
     (
@@ -321,8 +352,21 @@ def test_rejecting_callback_sees_a_bounded_payload() -> None:
     output = _log_once(get_logger("limits.callback"), ValueError(_HugeValue()))
 
     assert output is None, "the rejecting callback must drop the record"
-    assert seen == {"message_truncated": True, "args_truncated": True}, (
-        "the callback must observe the bounded marker"
+    assert seen["message_truncated"] is True, (
+        "the callback must observe the message marker"
+    )
+    assert seen["args_truncated"] is True, (
+        "the callback must observe the argument marker"
+    )
+    # The marker alone does not prove the data is bounded: a callback handed
+    # both two-megabyte strings would still see the flags set.
+    message_bytes = seen["message_bytes"]
+    assert 0 < message_bytes <= 4096, (
+        f"the callback received a {message_bytes}-byte message"
+    )
+    arg_bytes = seen["arg_bytes"]
+    assert 0 < arg_bytes <= 512, (
+        f"the callback received a {arg_bytes}-byte argument representation"
     )
     assert _HugeValue.str_calls == 1, "the accepted record must stringify once"
     assert _HugeValue.repr_calls == 1, (

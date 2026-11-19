@@ -86,9 +86,14 @@ fn dropped_cause_and_context_render_their_own_markers() {
     let context = output
         .find("... exception context omitted ...\n")
         .expect("context marker should be present");
+    // The markers stand in for exceptions that would have been rendered before
+    // the current traceback, so they belong ahead of its header.
+    let header = output
+        .find("Traceback (most recent call last):\n")
+        .expect("traceback header should be present");
     assert!(
-        cause < context,
-        "cause must render before context: {output}"
+        cause < context && context < header,
+        "cause and context must render before the owning traceback: {output}"
     );
 }
 
@@ -166,6 +171,30 @@ fn group_omission_marker_reports_dropped_members() {
     assert!(
         output.contains("  ... and 4 more exceptions ...\n"),
         "group marker should report the dropped members: {output}"
+    );
+}
+
+#[test]
+fn group_omission_marker_follows_retained_members() {
+    let mut payload =
+        ExceptionPayload::new("ExceptionGroup", "several").with_truncation(PayloadTruncation {
+            exceptions_omitted: 2,
+            members_truncated: true,
+            ..Default::default()
+        });
+    payload.exceptions = vec![ExceptionPayload::new("ValueError", "first member")];
+
+    let output = format_exception_payload(&payload);
+
+    let member = output
+        .find("ValueError: first member")
+        .expect("retained member should be present");
+    let marker = output
+        .find("  ... and 2 more exceptions ...\n")
+        .expect("group marker should report the dropped members");
+    assert!(
+        member < marker,
+        "the marker must follow the members it reports on: {output}"
     );
 }
 

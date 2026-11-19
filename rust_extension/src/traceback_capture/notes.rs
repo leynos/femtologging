@@ -13,19 +13,20 @@
 
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyIterator, PyList, PyString, PyTuple};
+use pyo3::types::{PyIterator, PyString};
 
-use super::attrs::as_u32;
+use super::attrs::{self, as_u32};
 use super::limits::{CaptureBudget, CaptureLimits};
 use super::values;
 use crate::exception_schema::PayloadTruncation;
 
 /// Collect `__notes__` entries, stopping at the count and byte limits.
 ///
-/// Built-in lists and tuples expose their length without invoking user code, so
-/// their omitted count is exact without scanning the tail. Other iterables are
-/// probed only through `max_notes + 1` items and report one omitted item when
-/// that probe shows a tail.
+/// Exact built-in lists and tuples expose their C-level length without invoking
+/// user code, so their omitted count is exact without scanning the tail. A
+/// subclass may override `__iter__`, so it is probed like any other iterable:
+/// through `max_notes + 1` items, reporting one omitted item when that probe
+/// shows a tail.
 ///
 /// Returns `(retained, exhausted)`.
 pub(super) fn retain_notes(
@@ -45,7 +46,7 @@ pub(super) fn retain_notes(
             return (Vec::new(), false);
         }
     };
-    let known_len = collection_len(&notes);
+    let known_len = attrs::exact_collection_len(&notes);
     let Ok(iterator) = PyIterator::from_object(&notes) else {
         // A `__notes__` attribute that is not iterable is ignored, keeping the
         // existing degradation contract.
@@ -100,13 +101,4 @@ pub(super) fn retain_notes(
     );
     marker.notes_omitted = marker.notes_omitted.saturating_add(as_u32(omitted));
     (retained, exhausted)
-}
-
-/// Return the size of a built-in collection without invoking custom `__len__`.
-fn collection_len(notes: &Bound<'_, PyAny>) -> Option<usize> {
-    notes
-        .cast::<PyList>()
-        .map(|list| list.len())
-        .or_else(|_| notes.cast::<PyTuple>().map(|tuple| tuple.len()))
-        .ok()
 }

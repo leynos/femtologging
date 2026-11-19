@@ -118,6 +118,8 @@ impl Default for CaptureLimits {
 pub struct CaptureBudget {
     /// Node slots left for exception and group traversal.
     remaining_nodes: usize,
+    /// Visit slots left for traceback-chain walking.
+    remaining_visits: usize,
     /// UTF-8 bytes left for retained payload text.
     remaining_bytes: usize,
     /// Whether any allowance has been exhausted.
@@ -130,6 +132,7 @@ impl CaptureBudget {
     pub fn new(limits: &CaptureLimits) -> Self {
         Self {
             remaining_nodes: limits.max_nodes,
+            remaining_visits: limits.max_nodes,
             remaining_bytes: limits.max_aggregate_bytes,
             exhausted: false,
         }
@@ -145,6 +148,24 @@ impl CaptureBudget {
             return false;
         }
         self.remaining_nodes -= 1;
+        true
+    }
+
+    /// Claim one traceback-chain visit.
+    ///
+    /// Chain walking reads Python attributes at every node, so its work is
+    /// bounded separately from how many frames are retained. Visits have their
+    /// own allowance rather than consuming exception-node slots: `max_nodes`
+    /// describes the number of payload nodes a capture may build, and a
+    /// thousand-node traceback behind one exception must not spend it.
+    ///
+    /// Returns `false` when the visit allowance is spent, in which case the
+    /// caller stops walking and records that a tail was omitted.
+    pub fn charge_visit(&mut self) -> bool {
+        if self.remaining_visits == 0 {
+            return false;
+        }
+        self.remaining_visits -= 1;
         true
     }
 

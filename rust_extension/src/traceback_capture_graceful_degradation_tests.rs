@@ -8,9 +8,7 @@ use pyo3::types::{PyDict, PyTuple};
 use rstest::rstest;
 
 use crate::exception_schema::ExceptionPayload;
-use crate::test_utils::traceback_test_helpers::{
-    builtin_type, create_base_exception, create_value_error,
-};
+use crate::test_utils::traceback_test_helpers::{create_base_exception, create_value_error};
 use crate::traceback_capture::capture_exception;
 
 // --------------------------------
@@ -320,16 +318,44 @@ class BadRepr:
 #[rstest]
 fn a_lookalike_traceback_yields_no_frames() {
     Python::attach(|py| {
-        let exc_type = builtin_type(py, "ValueError").expect("ValueError should exist");
-        let exc_value = create_value_error(py, "fake traceback").expect("exception should build");
+        let error = py
+            .run(
+                c"def fail():\n    raise ValueError('fake traceback')\nfail()\n",
+                None,
+                None,
+            )
+            .expect_err("source should raise");
+        let exc_value = error.value(py);
+
+        // Control: the exception has a real traceback, and direct capture keeps
+        // its frames. Without this step the test would pass if capture simply
+        // ignored tracebacks altogether.
+        let direct = capture_exception(py, exc_value)
+            .expect("direct capture should succeed")
+            .expect("payload should be present");
+        assert!(
+            !direct.frames.is_empty(),
+            "the control exception must contribute real frames"
+        );
+
+        let exc_type = exc_value.get_type();
+        let real_frame = exc_value
+            .getattr("__traceback__")
+            .expect("the exception should carry a traceback")
+            .getattr("tb_frame")
+            .expect("the traceback should describe a frame");
         let fake = py
             .eval(
-                c"type('Fake', (), {'tb_frame': object(), 'tb_next': None})()",
+                c"type('Fake', (), {'tb_frame': None, 'tb_next': None})()",
                 None,
                 None,
             )
             .expect("fake traceback should build");
-        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value.as_any(), fake.as_any()])
+        // Give the lookalike a real frame, so only its non-traceback type can
+        // make capture reject it.
+        fake.setattr("tb_frame", real_frame)
+            .expect("the lookalike should accept a frame");
+        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value, fake.as_any()])
             .expect("tuple creation should succeed");
 
         let payload = capture_exception(py, tuple.as_any())
@@ -340,7 +366,10 @@ fn a_lookalike_traceback_yields_no_frames() {
         // object. One that is neither a real traceback nor a frame ends the
         // walk: it contributes no frames, and because nothing was dropped it is
         // not reported as an omission either.
-        assert!(payload.frames.is_empty());
+        assert!(
+            payload.frames.is_empty(),
+            "an explicit override that is not a traceback must not be followed"
+        );
         assert!(
             payload.truncation.is_none(),
             "a lookalike traceback should not be reported as omitted: {:?}",

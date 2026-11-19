@@ -1,5 +1,10 @@
 //! Bounded frame collection for tracebacks and live stacks.
 //!
+//! This module walks the chain and decides which frames to keep; converting a
+//! kept frame into a schema value lives in [`super::frame_build`]. Splitting the
+//! two keeps each file under the module-size ceiling without mixing chain
+//! traversal with the attribute reads that produce a payload.
+//!
 //! Frames are built from real Python frame objects rather than from a
 //! `traceback.FrameSummary`, so the traversal stays under our own control: the
 //! end-line and column span come from the code object's public `co_positions()`
@@ -28,13 +33,13 @@
 use std::collections::VecDeque;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyFrame, PyIterator, PyString, PyTraceback};
+use pyo3::types::{PyFrame, PyTraceback};
 
 use crate::exception_schema::{PayloadTruncation, StackFrame};
 
 use super::attrs::{as_u32, optional_attr};
+use super::frame_build::{FrameRequest, PositionSource, PreparedSources, append_frame};
 use super::limits::{CaptureBudget, CaptureLimits};
-use super::values;
 
 /// One entry of a traceback or frame chain, resolved to the frame it describes.
 struct ChainEntry<'py> {
@@ -111,7 +116,19 @@ pub(super) fn collect_traceback_frames(
     let mut omitted = 0usize;
     let mut current = Some(head.clone());
     while let Some(entry) = current {
+        // Every node visited costs one unit of the visit allowance, so a
+        // caller-supplied chain is bounded rather than followed to its full
+        // length. The ring keeps the innermost window; extra visits past it
+        // still add to the omission count while the allowance lasts.
+        if !budget.charge_visit() {
+            // The tail is unvisited, so only the fact that something was left is
+            // recorded, not an exact count.
+            omitted = omitted.saturating_add(1);
+            break;
+        }
         let Some(resolved) = resolve(&entry) else {
+            // A link that is neither a traceback nor a frame ends the walk.
+            // There is no frame to count as omitted: the object was never one.
             break;
         };
         current = resolved.following;
@@ -128,19 +145,18 @@ pub(super) fn collect_traceback_frames(
         }
     }
 
+    let mut prepared = PreparedSources::default();
     let mut frames = Vec::with_capacity(retained.len());
     for descriptor in retained.into_iter().rev() {
-        if budget.is_exhausted()
-            || !append_frame(
-                &linecache,
-                &descriptor.frame,
-                descriptor.lasti,
-                descriptor.lineno,
-                limits,
-                budget,
-                &mut frames,
-            )
-        {
+        let request = FrameRequest {
+            linecache: &linecache,
+            frame: &descriptor.frame,
+            lasti: descriptor.lasti,
+            lineno: descriptor.lineno,
+            position_source: PositionSource::Instruction,
+            prepared: &mut prepared,
+        };
+        if budget.is_exhausted() || !append_frame(request, limits, budget, &mut frames) {
             omitted += 1;
         }
     }
@@ -167,6 +183,7 @@ pub(super) fn collect_stack_frames(
 
     let mut omitted = 0usize;
     let mut visited = 0usize;
+    let mut prepared = PreparedSources::default();
     let mut frames = Vec::with_capacity(limits.max_frames);
     let mut current = Some(head);
     while let Some(entry) = current {
@@ -174,33 +191,28 @@ pub(super) fn collect_stack_frames(
             break;
         };
         current = resolved.following;
-        visited += 1;
-        if visited > limits.max_frames || budget.is_exhausted() {
+        // The walk starts at the innermost frame, so once the window or the
+        // budget is full there is nothing left to convert. The current frame is
+        // dropped, and the rest of the stack is left unresolved: the count
+        // records that a tail was omitted without claiming how long it is.
+        if visited == limits.max_frames || budget.is_exhausted() {
             omitted += 1;
-            continue;
+            break;
         }
-        if !append_frame(
-            &linecache,
-            &resolved.frame,
-            resolved.lasti,
-            resolved.lineno,
-            limits,
-            budget,
-            &mut frames,
-        ) {
+        visited += 1;
+        let request = FrameRequest {
+            linecache: &linecache,
+            frame: &resolved.frame,
+            lasti: resolved.lasti,
+            lineno: resolved.lineno,
+            position_source: PositionSource::LineOnly,
+            prepared: &mut prepared,
+        };
+        if !append_frame(request, limits, budget, &mut frames) {
             omitted += 1;
         }
     }
     marker.frames_omitted = marker.frames_omitted.saturating_add(as_u32(omitted));
-
-    // `traceback.format_stack()` renders no column underline, and
-    // `traceback.extract_stack()` leaves `colno`/`end_colno` unset. Keeping the
-    // positions here would make the human-readable stack diverge from the
-    // standard library, so a live stack reports the end line only.
-    for frame in &mut frames {
-        frame.colno = None;
-        frame.end_colno = None;
-    }
 
     // Collected innermost first; callers expect the outermost frame first.
     frames.reverse();
@@ -224,133 +236,6 @@ fn caller_frame(py: Python<'_>) -> Option<Bound<'_, PyAny>> {
     let sys = py.import("sys").ok()?;
     let frame = sys.call_method1("_getframe", (0,)).ok()?;
     (!frame.is_none()).then_some(frame)
-}
-
-/// Convert one frame and append it, charging the bytes it retains.
-///
-/// Returns `false` when the frame was not retained, either because it could not
-/// be built or because the aggregate budget refused it. Either way the caller
-/// counts it as omitted, so the reported total matches the payload.
-fn append_frame(
-    linecache: &Bound<'_, PyAny>,
-    frame: &Bound<'_, PyAny>,
-    lasti: isize,
-    lineno: u32,
-    limits: &CaptureLimits,
-    budget: &mut CaptureBudget,
-    frames: &mut Vec<StackFrame>,
-) -> bool {
-    let Ok(converted) = build_frame(linecache, frame, lasti, lineno, limits) else {
-        return false;
-    };
-    if !budget.charge_bytes(retained_bytes(&converted)) {
-        return false;
-    }
-    frames.push(converted);
-    true
-}
-
-/// Sum the retained text of a frame, used for aggregate accounting.
-fn retained_bytes(frame: &StackFrame) -> usize {
-    frame.filename.len() + frame.function.len() + frame.source_line.as_ref().map_or(0, String::len)
-}
-
-/// Build a schema frame from a live Python frame object.
-fn build_frame(
-    linecache: &Bound<'_, PyAny>,
-    frame: &Bound<'_, PyAny>,
-    lasti: isize,
-    lineno: u32,
-    limits: &CaptureLimits,
-) -> PyResult<StackFrame> {
-    let code = frame.getattr("f_code")?;
-    let filename = bounded_text(&code.getattr("co_filename")?, limits.max_filename_bytes);
-    let function = bounded_text(&code.getattr("co_name")?, limits.max_function_bytes);
-    let (end_lineno, colno, end_colno) = code_positions(&code, lasti);
-
-    Ok(StackFrame {
-        source_line: lookup_source_line(linecache, &filename, lineno, limits.max_source_line_bytes),
-        filename,
-        lineno,
-        // CPython's own `FrameSummary` substitutes the start line when the end
-        // line is unavailable, so consumers always see a complete span.
-        end_lineno: Some(end_lineno.unwrap_or(lineno)),
-        colno,
-        end_colno,
-        function,
-        // Capture never enables local-variable collection.
-        locals: None,
-    })
-}
-
-/// Read the end-line and column span for the instruction at `lasti`.
-///
-/// Returns three `None`s when the code object carries no position table, which
-/// happens for code compiled without `co_positions` support.
-fn code_positions(
-    code: &Bound<'_, PyAny>,
-    lasti: isize,
-) -> (Option<u32>, Option<u32>, Option<u32>) {
-    const NO_POSITION: (Option<u32>, Option<u32>, Option<u32>) = (None, None, None);
-    if lasti < 0 {
-        return NO_POSITION;
-    }
-    let Ok(positions) = code.call_method0("co_positions") else {
-        return NO_POSITION;
-    };
-    let Ok(mut iterator) = PyIterator::from_object(&positions) else {
-        return NO_POSITION;
-    };
-    // `co_positions()` yields one entry per instruction pair, which is the same
-    // index CPython's own traceback walk uses.
-    let Some(Ok(entry)) = iterator.nth((lasti / 2) as usize) else {
-        return NO_POSITION;
-    };
-    (
-        optional_u32(&entry, 1),
-        optional_u32(&entry, 2),
-        optional_u32(&entry, 3),
-    )
-}
-
-/// Extract one `co_positions()` field, treating `None` as absent.
-fn optional_u32(entry: &Bound<'_, PyAny>, index: usize) -> Option<u32> {
-    entry.get_item(index).ok()?.extract::<u32>().ok()
-}
-
-/// Resolve a frame's source line through `linecache`.
-///
-/// Mirrors `traceback.FrameSummary.line`: the first physical line of the span,
-/// stripped, or `None` when the source is unavailable. Code compiled from a
-/// string (`exec`, `python -c`, a REPL) has no linecache entry and therefore
-/// reports no source line.
-fn lookup_source_line(
-    linecache: &Bound<'_, PyAny>,
-    filename: &str,
-    lineno: u32,
-    limit: usize,
-) -> Option<String> {
-    let raw = linecache.call_method1("getline", (filename, lineno)).ok()?;
-    let raw = raw.cast::<PyString>().ok()?;
-    let raw = values::bounded_string(raw, limit).text;
-    let first_line = raw
-        .split_once('\n')
-        .map_or(raw.as_str(), |(line, _)| line)
-        .trim();
-    if first_line.is_empty() {
-        return None;
-    }
-    Some(first_line.to_string())
-}
-
-/// Extract a string attribute, shortened to `limit` bytes.
-fn bounded_text(value: &Bound<'_, PyAny>, limit: usize) -> String {
-    let Ok(text) = value.cast::<PyString>() else {
-        // `co_filename` and `co_name` are always strings; anything else is a
-        // synthetic code object with nothing useful to report.
-        return String::new();
-    };
-    values::bounded_string(text, limit).text
 }
 
 /// Read a `u32` attribute, treating a missing or negative value as absent.

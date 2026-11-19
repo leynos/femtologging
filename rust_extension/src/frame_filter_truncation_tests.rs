@@ -78,6 +78,23 @@ fn stack_payload_preserves_truncation_marker() -> PyResult<()> {
     })
 }
 
+/// Build a two-frame list for a nested payload.
+fn two_frames<'py>(py: Python<'py>, prefix: &str) -> PyResult<Bound<'py, PyList>> {
+    let frames = PyList::empty(py);
+    frames.append(frame(py, &format!("{prefix}_app.py"))?)?;
+    frames.append(frame(py, &format!("{prefix}_lib.py"))?)?;
+    Ok(frames)
+}
+
+/// Return the number of frames retained in `payload`.
+fn frame_count(payload: &Bound<'_, PyDict>) -> PyResult<usize> {
+    Ok(payload
+        .get_item("frames")?
+        .expect("filtered payload should still carry frames")
+        .cast::<PyList>()?
+        .len())
+}
+
 #[test]
 #[serial]
 fn exception_payload_preserves_markers_at_every_level() -> PyResult<()> {
@@ -85,19 +102,29 @@ fn exception_payload_preserves_markers_at_every_level() -> PyResult<()> {
         let frames = PyList::empty(py);
         frames.append(frame(py, "app.py")?)?;
 
+        // Every nested payload starts with two frames, so the depth ceiling has
+        // something to remove. Otherwise the test would pass even if the filter
+        // left nested payloads untouched.
         let cause = PyDict::new(py);
         cause.set_item("schema_version", 1u16)?;
         cause.set_item("type_name", "OSError")?;
         cause.set_item("message", "root")?;
         cause.set_item("truncation", truncation(py, 2, false)?)?;
-        cause.set_item("frames", PyList::empty(py))?;
+        cause.set_item("frames", two_frames(py, "cause")?)?;
+
+        let context = PyDict::new(py);
+        context.set_item("schema_version", 1u16)?;
+        context.set_item("type_name", "RuntimeError")?;
+        context.set_item("message", "handled")?;
+        context.set_item("truncation", truncation(py, 4, false)?)?;
+        context.set_item("frames", two_frames(py, "context")?)?;
 
         let member = PyDict::new(py);
         member.set_item("schema_version", 1u16)?;
         member.set_item("type_name", "ValueError")?;
         member.set_item("message", "member")?;
         member.set_item("truncation", truncation(py, 1, false)?)?;
-        member.set_item("frames", PyList::empty(py))?;
+        member.set_item("frames", two_frames(py, "member")?)?;
 
         let payload = PyDict::new(py);
         payload.set_item("schema_version", 1u16)?;
@@ -106,6 +133,7 @@ fn exception_payload_preserves_markers_at_every_level() -> PyResult<()> {
         payload.set_item("frames", frames)?;
         payload.set_item("truncation", truncation(py, 3, true)?)?;
         payload.set_item("cause", cause)?;
+        payload.set_item("context", context)?;
         payload.set_item("exceptions", {
             let members = PyList::empty(py);
             members.append(member)?;
@@ -138,6 +166,15 @@ fn exception_payload_preserves_markers_at_every_level() -> PyResult<()> {
             .cast::<PyDict>()?
             .clone();
         assert_eq!(frames_omitted(&cause)?, 2);
+        assert_eq!(frame_count(&cause)?, 1, "the cause should be filtered");
+
+        let context = result
+            .get_item("context")?
+            .expect("context should survive")
+            .cast::<PyDict>()?
+            .clone();
+        assert_eq!(frames_omitted(&context)?, 4);
+        assert_eq!(frame_count(&context)?, 1, "the context should be filtered");
 
         let member = result
             .get_item("exceptions")?
@@ -147,6 +184,7 @@ fn exception_payload_preserves_markers_at_every_level() -> PyResult<()> {
             .cast::<PyDict>()?
             .clone();
         assert_eq!(frames_omitted(&member)?, 1);
+        assert_eq!(frame_count(&member)?, 1, "the member should be filtered");
         Ok(())
     })
 }

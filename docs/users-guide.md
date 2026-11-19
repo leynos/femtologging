@@ -271,15 +271,25 @@ optional fixed-size `truncation` mapping. It reports shortened messages,
 arguments, or notes; omitted arguments, notes, frames, causes, contexts, and
 exception-group members; failed elements; and aggregate-budget exhaustion. For
 example, text formatters can show `... 2 earlier frames omitted ...` before
-retained frames. Payloads without omissions do not include the marker, and
-existing formatted output is unchanged.
+retained frames. The mapping is absent only when every marker field is at its
+default: a message that was shortened without dropping any component still
+carries `message_truncated`, as does a capture cut short by the aggregate
+budget with no positive omission count. Existing formatted output is unchanged.
 
 The logger threshold is checked before record construction or exception/stack
 capture. Native level and name filters can also reject without capture when
-they form the leading filter prefix. If that prefix accepts, capture runs
-before the remaining filters so callback filters can inspect the same bounded
-payload in their configured order. Filters are never reordered; a callback
-filter that comes first receives the payload before any later native filter.
+they form the leading filter prefix. That exemption applies only to logger
+filters: for a record the logger accepts, capture runs before handler filters
+are evaluated, so a native filter attached only to a handler cannot skip
+capture. If the leading prefix accepts, capture runs before the remaining
+filters so callback filters can inspect the same bounded payload in their
+configured order. Filters are never reordered; a callback filter that comes
+first receives the payload before any later native filter.
+
+A malformed `exc_info` value is reported before filtering, so a record that
+passes the logger threshold raises `TypeError` even when a leading native
+filter would have rejected it. Validation happens first so an invalid argument
+cannot be hidden by filter configuration.
 
 The Python frame-filtering API applies its `max_depth` option after capture.
 The capture frame limit bounds the original payload; `max_depth` can shorten

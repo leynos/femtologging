@@ -33,7 +33,7 @@ use crate::traceback_capture::{CaptureLimits, capture_stack_with_limits};
 fn capture_stack_with_test_limits(
     py: Python<'_>,
     max_frames: usize,
-) -> PyResult<(Vec<String>, u32)> {
+) -> PyResult<(Vec<String>, Option<u32>)> {
     let limits = CaptureLimits {
         max_frames,
         ..CaptureLimits::default()
@@ -44,7 +44,13 @@ fn capture_stack_with_test_limits(
         .iter()
         .map(|frame| frame.function.clone())
         .collect();
-    let omitted = payload.truncation.as_ref().map_or(0, |m| m.frames_omitted);
+    // Keep `None` distinct from a marker with a zero count: a complete capture
+    // must not carry a marker at all, and a helper that flattened both to `0`
+    // could not show the difference.
+    let omitted = payload
+        .truncation
+        .as_ref()
+        .map(|marker| marker.frames_omitted);
     Ok((functions, omitted))
 }
 
@@ -66,7 +72,7 @@ fn capture_stack_from(
     source: &std::ffi::CStr,
     entry: &str,
     max_frames: usize,
-) -> (Vec<String>, u32) {
+) -> (Vec<String>, Option<u32>) {
     let globals = PyDict::new(py);
     let module = PyModule::new(py, "_capture_limit_test_support")
         .expect("scratch module should be creatable");
@@ -129,7 +135,12 @@ def capstack():
             ],
             "the innermost frames should survive, in oldest-first order"
         );
-        assert_eq!(omitted, 2, "the two outermost frames should be reported");
+        assert_eq!(
+            omitted,
+            Some(1),
+            "a cut stack reports that a tail was omitted; the remaining frames \
+             are not walked to count them"
+        );
     });
 }
 
@@ -157,7 +168,7 @@ def one():
 
         assert_eq!(functions.len(), 2, "the ceiling should bound the payload");
         assert_eq!(functions, vec!["two".to_string(), "one".to_string()]);
-        assert_eq!(omitted, 2);
+        assert_eq!(omitted, Some(1));
     });
 }
 
@@ -182,6 +193,9 @@ def inner():
             vec!["outer".to_string(), "inner".to_string()],
             "a stack shorter than the ceiling is captured whole"
         );
-        assert_eq!(omitted, 0, "a complete capture should report no omissions");
+        assert_eq!(
+            omitted, None,
+            "a complete capture should carry no truncation marker at all"
+        );
     });
 }

@@ -90,8 +90,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod filtering;
+
 mod truncation;
+
 mod version_validation;
+
 mod versioning;
 
 pub use self::truncation::PayloadTruncation;
@@ -170,12 +173,22 @@ pub struct StackFrame {
 pub struct StackTracePayload {
     /// Schema version for forward compatibility.
     pub schema_version: u16,
-    /// Stack frames from innermost to outermost.
+    /// Stack frames ordered outermost first, innermost last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<StackFrame>,
     /// Bounded record of omitted or shortened components, absent when capture
     /// retained everything it saw.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "is_absent")]
     pub truncation: Option<PayloadTruncation>,
+}
+
+/// Serde predicate that omits a marker that is absent or empty.
+///
+/// Callers can build a payload by assigning `truncation` directly, bypassing
+/// [`ExceptionPayload::with_truncation`]; an all-default marker is then
+/// equivalent to no marker and should not appear on the wire.
+fn is_absent(marker: &Option<PayloadTruncation>) -> bool {
+    marker.as_ref().is_none_or(PayloadTruncation::is_empty)
 }
 
 /// Bounded structured representation of a Python exception.
@@ -200,7 +213,7 @@ pub struct ExceptionPayload {
     /// Exception notes (`__notes__`, Python 3.11+).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
-    /// Stack frames from innermost to outermost.
+    /// Stack frames ordered outermost first, innermost last.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<StackFrame>,
     /// Explicit exception cause (`__cause__` from `raise ... from ...`).
@@ -217,7 +230,7 @@ pub struct ExceptionPayload {
     pub exceptions: Vec<ExceptionPayload>,
     /// Bounded record of omitted or shortened components, absent when capture
     /// retained everything it saw.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "is_absent")]
     pub truncation: Option<PayloadTruncation>,
 }
 

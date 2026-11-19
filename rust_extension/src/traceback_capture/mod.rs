@@ -46,6 +46,7 @@ use crate::exception_schema::{
 // points and the limit types are reachable from elsewhere in the crate.
 mod attrs;
 mod fallback;
+mod frame_build;
 mod frames;
 mod limits;
 mod message;
@@ -70,6 +71,15 @@ fn note_capture() {
 #[cfg(not(test))]
 #[inline]
 fn note_capture() {}
+
+/// Where a capture's traceback comes from.
+enum Traceback<'py> {
+    /// The caller supplied the traceback explicitly, as in an `exc_info`
+    /// triple; `None` means the caller supplied no traceback at all.
+    Explicit(Option<Bound<'py, PyAny>>),
+    /// Read the exception's own `__traceback__` during the guarded traversal.
+    FromException,
+}
 
 /// How `exc_info` was supplied by the caller.
 enum ExcInfoKind {
@@ -158,15 +168,14 @@ pub fn capture_exception_with_limits(
         ExcInfoKind::Current => capture_current_exception(py, limits),
         ExcInfoKind::Nothing => Ok(None),
         ExcInfoKind::Tuple(tuple) => capture_from_tuple(py, tuple.bind(py), limits),
-        ExcInfoKind::Instance => {
-            let traceback = optional_attr(exc_info, "__traceback__");
-            Ok(Some(capture_with_fallback(
-                py,
-                exc_info,
-                traceback.as_ref(),
-                limits,
-            )))
-        }
+        // The traceback read runs user code, so it happens inside the guarded
+        // traversal rather than beside it.
+        ExcInfoKind::Instance => Ok(Some(capture_with_fallback(
+            py,
+            exc_info,
+            Traceback::FromException,
+            limits,
+        ))),
     }
 }
 
@@ -198,18 +207,42 @@ pub fn capture_stack_with_limits(
     limits: &CaptureLimits,
 ) -> PyResult<StackTracePayload> {
     note_capture();
-    let mut budget = CaptureBudget::new(limits);
-    let mut marker = PayloadTruncation::default();
-    let frames = frames::collect_stack_frames(py, limits, &mut budget, &mut marker)?;
-    if budget.is_exhausted() {
-        marker.budget_exhausted = true;
-    }
+    // Walking the stack reads frames the application can influence: an audit
+    // hook on `sys._getframe` runs user code, and a panic there must not escape
+    // into the logging call.
+    let collected = catch_unwind(AssertUnwindSafe(|| {
+        let mut budget = CaptureBudget::new(limits);
+        let mut marker = PayloadTruncation::default();
+        let frames = frames::collect_stack_frames(py, limits, &mut budget, &mut marker)?;
+        Ok::<_, PyErr>((frames, budget, marker))
+    }));
 
-    Ok(StackTracePayload {
-        schema_version: EXCEPTION_SCHEMA_VERSION,
-        frames,
-        truncation: marker.into_option(),
-    })
+    match collected {
+        Ok(Ok((frames, budget, mut marker))) => {
+            if budget.is_exhausted() {
+                marker.budget_exhausted = true;
+            }
+            Ok(StackTracePayload {
+                schema_version: EXCEPTION_SCHEMA_VERSION,
+                frames,
+                truncation: marker.into_option(),
+            })
+        }
+        // Only an interpreter-level import failure is reported; unusable
+        // frames are skipped inside the collector.
+        Ok(Err(error)) => Err(error),
+        Err(_) => {
+            let _ = PyErr::take(py);
+            Ok(StackTracePayload {
+                schema_version: EXCEPTION_SCHEMA_VERSION,
+                frames: Vec::new(),
+                truncation: Some(PayloadTruncation {
+                    budget_exhausted: true,
+                    ..Default::default()
+                }),
+            })
+        }
+    }
 }
 
 /// Capture `exc_value` with `traceback`, degrading on traversal failure.
@@ -221,12 +254,16 @@ pub fn capture_stack_with_limits(
 fn capture_with_fallback(
     py: Python<'_>,
     exc_value: &Bound<'_, PyAny>,
-    traceback: Option<&Bound<'_, PyAny>>,
+    traceback: Traceback<'_>,
     limits: &CaptureLimits,
 ) -> ExceptionPayload {
     note_capture();
     let captured = catch_unwind(AssertUnwindSafe(|| {
-        walker::capture_exception_payload(py, exc_value, traceback, limits)
+        let traceback = match traceback {
+            Traceback::Explicit(traceback) => traceback,
+            Traceback::FromException => optional_attr(exc_value, "__traceback__"),
+        };
+        walker::capture_exception_payload(py, exc_value, traceback.as_ref(), limits)
     }));
     match captured {
         Ok(payload) => payload,
@@ -266,10 +303,13 @@ fn capture_from_tuple(
         return Ok(None);
     }
     let exc_tb = tuple.get_item(2)?;
-    let traceback = (!exc_tb.is_none()).then_some(&exc_tb);
+    let traceback = (!exc_tb.is_none()).then_some(exc_tb);
 
     Ok(Some(capture_with_fallback(
-        py, &exc_value, traceback, limits,
+        py,
+        &exc_value,
+        Traceback::Explicit(traceback),
+        limits,
     )))
 }
 
@@ -299,9 +339,11 @@ fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<Ex
 }
 
 /// Check whether `obj` is an exception instance.
+///
+/// The check uses the object's real type rather than `isinstance`, which
+/// consults a `__class__` property that an ordinary object can fake.
 fn is_exception_instance(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-    let base_exception = py.import("builtins")?.getattr("BaseException")?;
-    obj.is_instance(&base_exception)
+    Ok(types::is_exception(py, obj))
 }
 
 /// Read an attribute, treating a missing attribute or `None` as absent.

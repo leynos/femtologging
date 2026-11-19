@@ -14,6 +14,15 @@
 //! still delegated to Python, because `str(argument)` reaches an argument's
 //! `__str__` — a hook no representation here would otherwise call.
 //!
+//! `KeyError` is the exception: its own `__str__` is `repr(args[0])`, which is
+//! the representation already taken, so the bounded copy is used directly
+//! rather than asking Python to build the whole thing again.
+//!
+//! The arguments are read through `BaseException.args` rather than the
+//! instance, so a subclass cannot substitute a property that lies about the
+//! tuple or costs an unbounded read. `__str__` identity is likewise read with
+//! `type.__getattribute__`, keeping an interposing metaclass out of the check.
+//!
 //! # Overridden `__str__` wins
 //!
 //! The `repr(args)` shape is what the *default* `__str__` produces, so it is
@@ -25,7 +34,7 @@
 //! rather than one per argument.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple};
+use pyo3::types::{PyString, PyTuple, PyType};
 
 use super::attrs::as_u32;
 use super::limits::{CaptureBudget, CaptureLimits, STR_FAILURE_SENTINEL, TRUNCATION_SUFFIX};
@@ -105,7 +114,7 @@ pub(super) fn render_args(
     limits: &CaptureLimits,
     should_render: bool,
 ) -> RenderedArgs {
-    let args = match exception.getattr("args") {
+    let args = match exception_args(exception) {
         Ok(args) if !args.is_none() => args,
         Ok(_) => return RenderedArgs::none(),
         Err(_) => return RenderedArgs::failed(),
@@ -147,6 +156,20 @@ pub(super) fn render_args(
     rendered
 }
 
+/// Read the exception's real `args` tuple through `BaseException`'s descriptor.
+///
+/// Reading `exception.args` consults the instance and then its class, so a
+/// subclass can expose a property that lies about the arguments or builds an
+/// arbitrarily large value. The base descriptor reads the C-level field that
+/// `BaseException.__str__` itself uses, and calling it directly keeps a
+/// user-defined `args` property out of the capture.
+fn exception_args<'py>(exception: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    let py = exception.py();
+    let base = py.import("builtins")?.getattr("BaseException")?;
+    let descriptor = base.getattr("args")?;
+    descriptor.call_method1("__get__", (exception, exception.get_type()))
+}
+
 /// Charge the rendered arguments against `budget`, keeping what still fits.
 ///
 /// Arguments that do not fit are reported as omitted, so the marker accounts for
@@ -186,6 +209,9 @@ pub(super) fn build_message(
     if let Some(message) = syntax_error_message(exception, limit) {
         return message;
     }
+    if let Some(message) = key_error_message(exception, args, limit) {
+        return message;
+    }
     if uses_default_str(exception).unwrap_or(false) {
         if args.total > 1 {
             return values::clamp(joined_args(args), limit);
@@ -223,11 +249,63 @@ fn uses_default_str(exception: &Bound<'_, PyAny>) -> Option<bool> {
         .import("builtins")
         .and_then(|builtins| builtins.getattr("BaseException"))
         .ok()?;
-    let inherited = base.getattr("__str__").ok()?;
-    let actual = exception.get_type().getattr("__str__").ok()?;
+    let inherited = class_attribute(&base, "__str__")?;
+    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
     // Identity, not equality: a subclass that copied the body but redefined the
     // slot still counts as overriding, which is the conservative reading.
     Some(actual.is(&inherited))
+}
+
+/// Read a class attribute through the ordinary type lookup.
+///
+/// `cls.__str__` goes through the metaclass's `__getattribute__`, which
+/// application code can override, so the value compared here could be produced
+/// by user code rather than read from the class's method-resolution order.
+/// Calling `type.__getattribute__` directly performs the MRO lookup the
+/// comparison needs.
+fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
+    let py = class.py();
+    let type_type = py.get_type::<PyType>();
+    let getattribute = type_type.getattr("__getattribute__").ok()?;
+    getattribute.call1((class, name)).ok()
+}
+
+/// Reproduce `KeyError.__str__` from the argument representations already taken.
+///
+/// CPython renders a single-argument `KeyError` as `repr(args[0])` and the
+/// multi-argument form as the default `repr(args)`. Both are exactly what
+/// [`render_args`] and [`joined_args`] already produce, so using them avoids a
+/// second trip through user code — and avoids the unbounded intermediate string
+/// that `str(a_large_key)` would build before the ceiling could apply.
+///
+/// A subclass that overrides `__str__` is left alone: its own rendering is the
+/// correct message, so the identity check fails and the caller falls back to
+/// `str`.
+fn key_error_message(
+    exception: &Bound<'_, PyAny>,
+    args: &RenderedArgs,
+    limit: usize,
+) -> Option<BoundedText> {
+    let py = exception.py();
+    let key_error = py.import("builtins").ok()?.getattr("KeyError").ok()?;
+    if !exception
+        .get_type()
+        .is_subclass(&key_error)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let inherited = class_attribute(&key_error, "__str__")?;
+    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
+    if !actual.is(&inherited) {
+        return None;
+    }
+    if args.total > 1 {
+        return Some(values::clamp(joined_args(args), limit));
+    }
+    args.texts
+        .first()
+        .map(|text| values::clamp(text.clone(), limit))
 }
 
 /// Assemble CPython's multi-argument message from bounded representations.
@@ -256,93 +334,5 @@ fn joined_args(args: &RenderedArgs) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Unit tests for the message shapes built without running user code.
-
-    use super::*;
-
-    /// Build a `RenderedArgs` from `texts` and a larger total.
-    fn rendered(texts: &[&str], total: usize) -> RenderedArgs {
-        RenderedArgs {
-            texts: texts.iter().map(|text| (*text).to_string()).collect(),
-            total,
-            failed: 0,
-            truncated: false,
-            first_arg: None,
-        }
-    }
-
-    #[test]
-    fn complete_arguments_render_as_a_tuple() {
-        assert_eq!(
-            joined_args(&rendered(&["'a'", "'b'"], 2)),
-            "('a', 'b')".to_string()
-        );
-    }
-
-    #[test]
-    fn dropped_arguments_are_shown_as_a_prefix() {
-        assert_eq!(
-            joined_args(&rendered(&["'a'"], 5)),
-            "('a', ...)".to_string()
-        );
-    }
-
-    #[test]
-    fn a_wholly_dropped_argument_list_still_reads_as_a_tuple() {
-        assert_eq!(joined_args(&rendered(&[], 5)), "(...)".to_string());
-    }
-
-    #[test]
-    fn failed_renders_do_not_mark_unretained_args_as_truncated() {
-        let args = RenderedArgs {
-            texts: Vec::new(),
-            total: 0,
-            failed: 3,
-            truncated: true,
-            first_arg: None,
-        };
-        let mut marker = PayloadTruncation::default();
-        args.report_failures(&mut marker);
-
-        assert_eq!(marker.failed_elements, 3);
-        assert!(!marker.args_truncated);
-    }
-
-    #[test]
-    fn unrenderable_arguments_are_not_also_counted_as_omitted() {
-        Python::attach(|py| {
-            let error = py
-                .run(
-                    c"
-class Hostile:
-    def __repr__(self):
-        raise RuntimeError('no repr')
-
-raise ValueError('a', Hostile(), 'c')
-",
-                    None,
-                    None,
-                )
-                .expect_err("source should raise");
-            let limits = CaptureLimits::default();
-            let exception = error.value(py);
-            let rendered = render_args(exception.as_any(), &limits, true);
-            let mut budget = CaptureBudget::new(&limits);
-            let mut marker = PayloadTruncation::default();
-            rendered.report_failures(&mut marker);
-
-            let retained = retain_args(rendered, &mut budget, &mut marker);
-
-            assert_eq!(retained.len(), 2);
-            assert_eq!(
-                marker.failed_elements, 1,
-                "the raising repr should be reported as a failed conversion"
-            );
-            assert_eq!(
-                marker.args_omitted, 0,
-                "a failed conversion is not also an argument dropped by the ceiling"
-            );
-        });
-    }
-}
+#[path = "message_tests.rs"]
+mod tests;

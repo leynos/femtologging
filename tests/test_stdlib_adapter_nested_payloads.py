@@ -56,20 +56,62 @@ def test_group_member_frame_omission_reaches_exc_text() -> None:
                     "message": "bad",
                     "frames": [],
                     "truncation": {"frames_omitted": 2},
-                }
+                },
+                {
+                    "schema_version": 1,
+                    "type_name": "TypeError",
+                    "message": "intact",
+                    "frames": [],
+                },
             ],
         }
     })
 
     lines = exc_text.splitlines()
     member_heading = "  +---- [1] "
+    second_heading = "  +---- [2] "
     member_marker = "  |     ... 2 earlier frames omitted ..."
     assert member_heading in lines, f"member block missing from {exc_text!r}"
+    assert second_heading in lines, f"second member missing from {exc_text!r}"
     assert member_marker in lines, (
         f"a nested member's frame omission should reach the emitted text: {exc_text!r}"
     )
-    assert lines.index(member_heading) < lines.index(member_marker), (
-        "the member marker should sit inside the member's block"
+    # Bounding the marker between the two headings shows it belongs to the
+    # first member: a marker emitted after the whole group would still follow
+    # the first heading but would land past the second.
+    assert (
+        lines.index(member_heading)
+        < lines.index(member_marker)
+        < lines.index(second_heading)
+    ), "the member marker should sit inside the affected member's block"
+
+
+def test_multiline_group_member_stays_inside_its_block() -> None:
+    """Every physical line of a member message should carry the block indent."""
+    exc_text = _exc_text({
+        "exc_info": {
+            "schema_version": 1,
+            "type_name": "ExceptionGroup",
+            "message": "several",
+            "frames": [],
+            "exceptions": [
+                {
+                    "schema_version": 1,
+                    "type_name": "ValueError",
+                    "message": "first\nsecond",
+                    "frames": [],
+                }
+            ],
+        }
+    })
+
+    lines = exc_text.splitlines()
+    assert "  |     ValueError: first" in lines, (
+        f"the member heading line is missing from {exc_text!r}"
+    )
+    assert "  |     second" in lines, (
+        f"every physical line of a member's message should stay inside its "
+        f"block: {exc_text!r}"
     )
 
 

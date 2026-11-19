@@ -21,7 +21,7 @@
 use pyo3::prelude::*;
 use rstest::rstest;
 
-use crate::exception_schema::ExceptionPayload;
+use crate::exception_schema::{ExceptionPayload, StackFrame};
 use crate::test_utils::capture_limit_helpers::{capture_raised, marker, tiny_limits};
 use crate::traceback_capture::CaptureLimits;
 
@@ -257,18 +257,50 @@ level_four()
 #[rstest]
 fn every_frame_field_respects_its_ceiling() {
     Python::attach(|py| {
-        let payload = capture_raised(py, c"raise ValueError('sized')", &tiny_limits());
+        // The fixture needs a real file so `linecache` can supply a source
+        // line, and every frame field must exceed its ceiling: a 300-character
+        // function name, a path longer than the filename ceiling, and a raise
+        // line padded past the source ceiling. Without all three, the test
+        // would pass even if a clamp were missing.
+        let payload = capture_raised(
+            py,
+            c"
+import pathlib, tempfile
+root = pathlib.Path(tempfile.mkdtemp())
+path = root
+for _ in range(4):
+    path = path / ('d' * 120)
+path.mkdir(parents=True)
+name = 'f' * 300
+source = (
+    'def ' + name + '():\\n'
+    '    raise ValueError(\"sized\")  # ' + 'x' * 600 + '\\n'
+    + name + '()\\n'
+)
+target = path / 'long_module.py'
+target.write_text(source)
+exec(compile(source, str(target), 'exec'), {'__name__': 'long_module'})
+",
+            &tiny_limits(),
+        );
 
+        let long_frame = payload
+            .frames
+            .iter()
+            .find(|frame| frame.function.starts_with('f'))
+            .expect("the oversized frame should be retained");
+        assert!(long_frame.filename.len() <= 24);
+        assert!(long_frame.function.len() <= 24);
+        let source = long_frame
+            .source_line
+            .as_ref()
+            .expect("the long source line should be retained");
+        assert!(
+            source.len() <= 32,
+            "source line of {} bytes exceeded the ceiling",
+            source.len()
+        );
         for frame in &payload.frames {
-            assert!(frame.filename.len() <= 24);
-            assert!(frame.function.len() <= 24);
-            if let Some(source) = frame.source_line.as_ref() {
-                assert!(
-                    source.len() <= 32,
-                    "source line of {} bytes exceeded the ceiling",
-                    source.len()
-                );
-            }
             // Capture never collects locals, so no frame pays for rendering a
             // binding's `__repr__`.
             assert!(frame.locals.is_none());
@@ -296,12 +328,7 @@ raise error
             &limits,
         );
 
-        let retained: usize = payload
-            .notes
-            .iter()
-            .map(|note| note.len())
-            .chain(payload.args_repr.iter().map(String::len))
-            .sum();
+        let retained = retained_text_bytes(&payload);
         assert!(
             retained <= 256,
             "retained {retained} bytes exceeded the aggregate allowance"
@@ -309,4 +336,36 @@ raise error
         assert!(payload.notes.len() < 40);
         assert!(marker(&payload).budget_exhausted);
     });
+}
+
+/// Total text a payload retains, including every descendant.
+///
+/// This mirrors what capture charges to the aggregate budget: the type name and
+/// module, the message, each argument and note, and each frame field. Summing
+/// only notes and arguments, as an earlier version of the test did, would miss
+/// an overrun in any other field the budget also pays for.
+fn retained_text_bytes(payload: &ExceptionPayload) -> usize {
+    let own = payload.type_name.len()
+        + payload.module.as_deref().map_or(0, str::len)
+        + payload.message.len()
+        + payload.args_repr.iter().map(String::len).sum::<usize>()
+        + payload.notes.iter().map(String::len).sum::<usize>()
+        + payload.frames.iter().map(frame_text_bytes).sum::<usize>();
+    let descendants = payload
+        .cause
+        .iter()
+        .chain(payload.context.iter())
+        .map(|nested| retained_text_bytes(nested))
+        .sum::<usize>()
+        + payload
+            .exceptions
+            .iter()
+            .map(retained_text_bytes)
+            .sum::<usize>();
+    own + descendants
+}
+
+/// Text one frame charges to the aggregate budget.
+fn frame_text_bytes(frame: &StackFrame) -> usize {
+    frame.filename.len() + frame.function.len() + frame.source_line.as_deref().map_or(0, str::len)
 }

@@ -70,13 +70,10 @@ pub(super) fn capture_exception_payload(
         py,
         limits,
         budget: CaptureBudget::new(limits),
-        seen: HashSet::new(),
+        active: HashSet::new(),
         exhausted: false,
     };
     let root_has_budget = walker.budget.charge_node();
-    // The root counts as visited so an exception that names itself as its own
-    // cause or context is reported as a dropped link rather than followed.
-    walker.mark_visited(exception);
     let mut payload = if root_has_budget {
         walker.visit(exception, traceback, Recursion::root())
     } else {
@@ -91,20 +88,6 @@ pub(super) fn capture_exception_payload(
     payload
 }
 
-/// Report whether a link is the exception the cause link already holds.
-///
-/// Identity, not equality: a distinct exception with equal contents is a real
-/// context and still worth capturing. Only a context link can duplicate the
-/// cause; the cause edge itself is never redundant.
-fn is_duplicate_context(
-    link: Link,
-    exception: &Bound<'_, PyAny>,
-    linked: &Bound<'_, PyAny>,
-) -> bool {
-    matches!(link, Link::Context)
-        && optional_attr(exception, "__cause__").is_some_and(|cause| cause.is(linked))
-}
-
 /// State threaded through one traversal.
 struct Walker<'a> {
     /// Interpreter handle the traversal runs under.
@@ -113,8 +96,8 @@ struct Walker<'a> {
     limits: &'a CaptureLimits,
     /// Aggregate allowance shared by every node.
     budget: CaptureBudget,
-    /// Identities already visited, used to break cycles.
-    seen: HashSet<usize>,
+    /// Identities on the current descent path, used to break cycles.
+    active: HashSet<usize>,
     /// Whether any step recorded that the aggregate budget ran out.
     exhausted: bool,
 }
@@ -130,6 +113,11 @@ impl Walker<'_> {
         traceback: Option<&Bound<'_, PyAny>>,
         at: Recursion,
     ) -> ExceptionPayload {
+        // Identity is tracked for the active descent path only, so a group that
+        // lists the same exception twice captures both positions while an edge
+        // back to an ancestor is still rejected.
+        let identity = identity(exception);
+        self.active.insert(identity);
         let mut marker = PayloadTruncation::default();
         let (type_name, module) = type_identity(exception, self.limits);
         let (type_name, type_was_shortened) = self.budget.retain_text(type_name);
@@ -159,12 +147,20 @@ impl Walker<'_> {
         let args_repr = self.retain_args(at, rendered_args, &mut marker);
         let notes = self.retain_notes(exception, at, &mut marker);
 
-        let cause = self.retain_link(exception, Link::Cause, at, &mut marker, false);
+        let (cause, retained_cause) =
+            self.retain_link(exception, Link::Cause, at, &mut marker, None);
         // The context edge only checks for a duplicate when the cause edge kept
         // the same exception; otherwise the context is the only record of it.
-        let context = self.retain_link(exception, Link::Context, at, &mut marker, cause.is_some());
+        let (context, _) = self.retain_link(
+            exception,
+            Link::Context,
+            at,
+            &mut marker,
+            retained_cause.as_ref(),
+        );
         let exceptions = self.retain_group(exception, at, &mut marker);
         self.exhausted |= self.budget.is_exhausted();
+        self.active.remove(&identity);
 
         ExceptionPayload {
             schema_version: EXCEPTION_SCHEMA_VERSION,
@@ -205,6 +201,13 @@ impl Walker<'_> {
             marker.failed_elements = marker.failed_elements.saturating_add(1);
         }
         marker.message_truncated |= text.truncated;
+        // When the aggregate allowance is smaller than the message ceiling, a
+        // shortened message means the budget ran out even though the clipped
+        // text now fits the bytes that remain. `retain_text` cannot report that
+        // second clipping, so the comparison is made here.
+        if text.truncated && message_limit < self.limits.max_message_bytes {
+            self.exhausted = true;
+        }
         let (retained, aggregate_truncated) = self.budget.retain_text(text.text);
         marker.message_truncated |= aggregate_truncated;
         self.exhausted |= aggregate_truncated;
@@ -252,57 +255,70 @@ impl Walker<'_> {
 
     /// Follow one cause or context link, or record why it was dropped.
     ///
-    /// `cause_retained` tells the context edge whether the cause edge already
-    /// captured the same exception. Only then is a shared context redundant; a
-    /// cause that was itself dropped leaves the context as the only record of that
-    /// exception, so it is still followed or reported.
-    fn retain_link(
+    /// `retained_cause` is the object the cause edge captured, if any. Only then
+    /// is a shared context redundant; a cause that was itself dropped leaves the
+    /// context as the only record of that exception, so it is still followed or
+    /// reported. The retained object — rather than a re-read of `__cause__` — is
+    /// what the duplicate check compares, because the attribute can change
+    /// between the two edges.
+    ///
+    /// Returns the payload, when one was built, together with the linked object
+    /// so the caller can hand it to the next edge.
+    fn retain_link<'py>(
         &mut self,
-        exception: &Bound<'_, PyAny>,
+        exception: &Bound<'py, PyAny>,
         link: Link,
         at: Recursion,
         marker: &mut PayloadTruncation,
-        cause_retained: bool,
-    ) -> Option<Box<ExceptionPayload>> {
+        retained_cause: Option<&Bound<'py, PyAny>>,
+    ) -> (Option<Box<ExceptionPayload>>, Option<Bound<'py, PyAny>>) {
         let linked = match exception.getattr(link.attribute()) {
             Ok(linked) if !linked.is_none() => linked,
-            Ok(_) => return None,
+            Ok(_) => return (None, None),
             Err(_) => {
                 marker.failed_elements = marker.failed_elements.saturating_add(1);
                 link.mark_omitted(marker);
-                return None;
+                return (None, None);
             }
         };
+        // A property can return any object at all. Following one would build an
+        // "exception" payload for something that is not an exception, so an
+        // invalid target is reported as both a failed read and a dropped link.
+        if !is_exception(self.py, &linked) {
+            marker.failed_elements = marker.failed_elements.saturating_add(1);
+            link.mark_omitted(marker);
+            return (None, None);
+        }
         // `raise X from e` inside `except ... as e` sets `__cause__` and
         // `__context__` to the same exception. When the cause edge already carried
         // it, the context edge adds nothing and leaving it out loses no data;
         // marking it omitted would put a marker on every such payload. The check
         // runs before the chain-depth test so a shared context at the ceiling is
         // also not reported as lost.
-        if cause_retained && is_duplicate_context(link, exception, &linked) {
-            return None;
+        if link.is_duplicate_context(retained_cause, &linked) {
+            return (None, None);
         }
         if at.chain_depth >= self.limits.max_chain_depth {
             link.mark_omitted(marker);
             self.exhausted = true;
-            return None;
+            return (None, None);
         }
-        // A chain that points back at an exception already captured would
+        // A chain that points back at an exception on the active path would
         // otherwise be followed forever, so the edge is simply dropped. That is a
         // cycle in the object graph rather than a spent allowance, so the budget is
         // left as it was found.
-        if !self.mark_visited(&linked) {
+        if self.active.contains(&identity(&linked)) {
             link.mark_omitted(marker);
-            return None;
+            return (None, None);
         }
         if !self.budget.charge_node() {
             link.mark_omitted(marker);
             self.exhausted = true;
-            return None;
+            return (None, None);
         }
         let traceback = optional_attr(&linked, "__traceback__");
         let payload = self.visit(&linked, traceback.as_ref(), at.through_link());
-        Some(Box::new(payload))
+        (Some(Box::new(payload)), Some(linked))
     }
 
     /// Collect an exception group's children within the width and depth limits.
@@ -351,7 +367,7 @@ impl Walker<'_> {
                 marker.failed_elements = marker.failed_elements.saturating_add(1);
                 continue;
             }
-            if !self.mark_visited(child) || !self.budget.charge_node() {
+            if self.active.contains(&identity(child)) || !self.budget.charge_node() {
                 omitted = omitted.saturating_add(1);
                 self.exhausted |= self.budget.is_exhausted();
                 continue;
@@ -368,13 +384,5 @@ impl Walker<'_> {
         // dropped member has no payload left to report them.
         marker.members_truncated |= member_cut || omitted > 0 || bounded.failed;
         retained
-    }
-
-    /// Record `exception`'s identity, reporting whether it is new.
-    ///
-    /// A repeated identity means the graph is circular, so the edge that would
-    /// revisit it is dropped.
-    fn mark_visited(&mut self, exception: &Bound<'_, PyAny>) -> bool {
-        self.seen.insert(identity(exception))
     }
 }

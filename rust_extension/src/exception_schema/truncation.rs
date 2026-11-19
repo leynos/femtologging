@@ -75,7 +75,16 @@ pub struct PayloadTruncation {
     /// One or more retained notes were shortened.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub notes_truncated: bool,
-    /// Number of frames dropped from the innermost edge of this traceback.
+    /// Number of outermost frames dropped from this traceback or stack.
+    ///
+    /// Capture retains the frames nearest the failure, so the dropped frames
+    /// are the earliest ones and the retained frames stay in outermost-first
+    /// order.
+    ///
+    /// A traceback walk counts each frame it visits and drops. A live-stack
+    /// walk stops at the ceiling rather than walking the remainder, so its
+    /// count says a tail was omitted without claiming how long it is: the
+    /// value is then a lower bound of at least one.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub frames_omitted: u32,
     /// The exception cause was dropped because a traversal ceiling was hit.
@@ -136,7 +145,8 @@ impl PayloadTruncation {
     ///
     /// Group members report their own omissions to a parent that also has
     /// omissions of its own, so the parent has to combine both. Counters add
-    /// rather than saturate so that `members_truncated` stays meaningful.
+    /// with saturation: a merged count stops at [`u32::MAX`] rather than
+    /// wrapping or panicking, which keeps the marker fixed-size.
     pub fn merge(&mut self, other: &Self) {
         self.message_truncated |= other.message_truncated;
         self.args_omitted = self.args_omitted.saturating_add(other.args_omitted);

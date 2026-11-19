@@ -15,7 +15,9 @@
 //! the one wrong answer a consumer cannot detect.
 
 use crate::exception_schema::*;
+use rmp_serde::Serializer;
 use rstest::rstest;
+use serde::Serialize;
 
 #[rstest]
 fn truncation_marker_omits_default_fields() {
@@ -91,6 +93,63 @@ fn empty_truncation_marker_is_dropped() {
         ExceptionPayload::new("Error", "msg").with_truncation(PayloadTruncation::default());
     assert!(payload.truncation.is_none());
     assert!(PayloadTruncation::default().is_empty());
+}
+
+#[rstest]
+fn truncation_marker_msgpack_round_trip() {
+    let marker = PayloadTruncation {
+        frames_omitted: 3,
+        budget_exhausted: true,
+        ..Default::default()
+    };
+
+    // Match the encoder used by the socket handler and the payload round-trip
+    // tests, so field names survive on the wire.
+    let mut buf = Vec::new();
+    marker
+        .serialize(&mut Serializer::new(&mut buf).with_struct_map())
+        .expect("serialize msgpack");
+    let decoded: PayloadTruncation = rmp_serde::from_slice(&buf).expect("deserialize msgpack");
+    assert_eq!(marker, decoded);
+}
+
+#[rstest]
+fn directly_assigned_empty_marker_is_not_serialized() {
+    // `with_truncation` drops an empty marker, but the field is public, so a
+    // caller can assign one directly. Serialization applies the same rule.
+    let exception = ExceptionPayload {
+        truncation: Some(PayloadTruncation::default()),
+        ..ExceptionPayload::new("Error", "msg")
+    };
+    let stack = StackTracePayload {
+        truncation: Some(PayloadTruncation::default()),
+        ..StackTracePayload::new(Vec::new())
+    };
+
+    for json in [
+        serde_json::to_string(&exception).expect("serialize exception"),
+        serde_json::to_string(&stack).expect("serialize stack"),
+    ] {
+        assert!(
+            !json.contains("truncation"),
+            "an empty marker should be absent: {json}"
+        );
+    }
+}
+
+#[rstest]
+fn empty_marker_in_json_input_is_normalized_away_on_output() {
+    let payload: ExceptionPayload = serde_json::from_str(
+        r#"{"schema_version":1,"type_name":"Error","message":"m","truncation":{}}"#,
+    )
+    .expect("deserialize");
+    assert_eq!(payload.truncation, Some(PayloadTruncation::default()));
+
+    let json = serde_json::to_string(&payload).expect("serialize");
+    assert!(
+        !json.contains("truncation"),
+        "an all-default marker should not be written back: {json}"
+    );
 }
 
 #[rstest]

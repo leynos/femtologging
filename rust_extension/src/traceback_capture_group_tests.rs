@@ -24,6 +24,14 @@ raise ExceptionGroup('wide', members)
         );
 
         assert_eq!(payload.exceptions.len(), 2);
+        // The retained members are the *first* two, in order. A length check
+        // alone would also pass if capture kept the last two instead.
+        let messages: Vec<&str> = payload
+            .exceptions
+            .iter()
+            .map(|member| member.message.as_str())
+            .collect();
+        assert_eq!(messages, vec!["0", "1"]);
         assert_eq!(marker(&payload).exceptions_omitted, 4);
         assert!(marker(&payload).members_truncated);
     });

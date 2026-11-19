@@ -122,9 +122,10 @@ perform **no** capture today. The residual defect is narrower:
 - [x] Build frames from frame objects, positions and `linecache`; use `None` for
       unavailable positions/source lines/locals; keep innermost traceback entries
       with a fixed-capacity ring buffer; honour explicit tuple tracebacks.
-- [x] Bound stack capture through `inspect.currentframe()`/`f_back`, then
-      reverse
-      retained frames to oldest-first; record omitted frames.
+- [x] Bound stack capture through `sys._getframe(0)`/`f_back`, then reverse
+      retained frames to oldest-first; record omitted frames. An absent Python
+      frame — a Rust test thread or a C caller — yields an empty stack rather
+      than an error.
 - [x] Remove the old frame-summary converter and its tests only if unused.
 - [x] Split input resolution from non-failing traversal; preserve invalid-input
       errors; on internal walker error attach the minimal type-only payload with
@@ -511,3 +512,21 @@ before moving on.
   Whitaker's `module_max_lines` ceiling: the `Recursion` position moved to
   `traceback_capture/recursion.rs`, and the exception-group limit tests moved to
   `traceback_capture_group_tests.rs`.
+- 2026-11-18 — Applied the second CodeRabbit pass (fifty-eight findings). The
+  security-relevant ones changed capture rather than prose: type names, module
+  names and `KeyError` messages are now read through base descriptors so an
+  overridden `__name__`, `__class__`, `args` or `__str__` cannot substitute
+  unbounded or misleading data; string, bytes and bytearray fast paths apply
+  only to exact built-ins, so a subclass keeps its own `__str__`/`__repr__`
+  dispatch and cannot smuggle a full string through a prefix slice; live-stack
+  capture skips `co_positions()` and stops walking once the ceiling or budget
+  is reached; traceback visits are charged to the shared node budget; and
+  `linecache.lazycache`/`checkcache` run once per retained filename, matching
+  `traceback.StackSummary`. Marker handling now omits all-default markers from
+  Rust and Python payloads alike, `frames_omitted` on a live stack documents
+  itself as a lower bound, and the text formatter renders the aggregate-budget
+  summary for stack payloads. The remaining findings were test-quality fixes:
+  oversized frame-field and aggregate-budget fixtures, ordered group-member
+  assertions, a MessagePack marker round trip, an `rstest` fixture for the
+  deferred-capture observations, byte-length assertions at the callback
+  boundary, a positive filter control, and multiline group-member rendering.

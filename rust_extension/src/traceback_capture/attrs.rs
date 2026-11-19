@@ -18,7 +18,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyIterator, PyList, PyString, PyTuple};
 
-use super::limits::{CaptureLimits, truncate_to_limit};
+use super::limits::CaptureLimits;
 use super::values;
 use crate::exception_schema::PayloadTruncation;
 
@@ -47,6 +47,24 @@ impl Link {
             Self::Context => marker.context_omitted = true,
         }
     }
+
+    /// Report whether this link is the exception the cause edge already holds.
+    ///
+    /// Identity, not equality: a distinct exception with equal contents is a
+    /// real context and still worth capturing. Only a context link can
+    /// duplicate the cause; the cause edge itself is never redundant.
+    ///
+    /// The comparison is against the object the cause edge *retained*, not
+    /// against a fresh read of `__cause__`. Between the two reads a property can
+    /// replace the cause, and comparing the replacement with itself would drop a
+    /// context that the payload does not actually contain.
+    pub(super) fn is_duplicate_context(
+        self,
+        retained_cause: Option<&Bound<'_, PyAny>>,
+        linked: &Bound<'_, PyAny>,
+    ) -> bool {
+        matches!(self, Self::Context) && retained_cause.is_some_and(|cause| cause.is(linked))
+    }
 }
 
 /// Read the exception's type name and module, clamped to the identifier limit.
@@ -58,53 +76,60 @@ pub(super) fn type_identity(
     limits: &CaptureLimits,
 ) -> (String, Option<String>) {
     let exc_type = exception.get_type();
-    let type_name = leaf_type_name(&exc_type);
-    let module = optional_string_attr(&exc_type, "__module__", limits.max_function_bytes)
-        .filter(|name: &String| name != "builtins");
-
     (
-        clamp_identifier(type_name, limits.max_function_bytes),
-        module.map(|name| clamp_identifier(name, limits.max_function_bytes)),
+        leaf_type_name(&exc_type, limits.max_function_bytes),
+        module_name(&exc_type, limits.max_function_bytes),
     )
 }
 
-/// Read a type's leaf name before any clamping happens.
+/// Read a type's module name, dropping the uninformative `builtins` value.
 ///
-/// `__name__` already holds the leaf, so a very long class name cannot lose it
-/// to truncation and a cut suffix can never be mistaken for part of a dotted
-/// path. The qualname is only split when `__name__` is missing, and that split
-/// happens here so the caller's clamp applies to the leaf alone.
-fn leaf_type_name(exc_type: &Bound<'_, PyAny>) -> String {
-    if let Some(name) = raw_string_attr(exc_type, "__name__") {
-        return name;
+/// The comparison happens on the Python string, before the module name is
+/// clamped: a three-byte ceiling would otherwise turn `builtins` into `...` and
+/// defeat the elision.
+fn module_name(obj: &Bound<'_, PyAny>, limit: usize) -> Option<String> {
+    let value = string_attr(obj, "__module__")?;
+    if value.eq("builtins") {
+        return None;
     }
-    let Some(qualname) = raw_string_attr(exc_type, "__qualname__") else {
+    Some(values::bounded_string(&value, limit).text)
+}
+
+/// Read a type's leaf name, bounded to `limit` bytes.
+///
+/// `__name__` already holds the leaf, so its bounded prefix is the retained
+/// name and a very long class name costs the ceiling rather than its own size.
+/// The qualname is only consulted when `__name__` is missing, and the leaf is
+/// selected with the native `str` method so a dotted path is split before the
+/// byte ceiling can remove the part worth keeping.
+fn leaf_type_name(exc_type: &Bound<'_, PyAny>, limit: usize) -> String {
+    if let Some(name) = string_attr(exc_type, "__name__") {
+        return values::bounded_string(&name, limit).text;
+    }
+    let Some(qualname) = string_attr(exc_type, "__qualname__") else {
         return String::new();
     };
-    // A nested class reports `Outer.Inner`; the leaf name is the useful part.
-    qualname
-        .rsplit_once('.')
-        .map_or_else(|| qualname.clone(), |(_, name)| name.to_owned())
+    let leaf = last_component(&qualname).unwrap_or(qualname);
+    values::bounded_string(&leaf, limit).text
 }
 
-/// Read a string attribute in full, so callers can cut it after inspection.
-fn raw_string_attr(obj: &Bound<'_, PyAny>, attr: &str) -> Option<String> {
-    let value = optional_attr(obj, attr)?;
-    let value = value.cast::<PyString>().ok()?;
-    Some(value.to_string_lossy().into_owned())
+/// Return the last dot-separated component of `value`, using the `str` method
+/// itself so a subclass cannot override the split.
+fn last_component<'py>(value: &Bound<'py, PyString>) -> Option<Bound<'py, PyString>> {
+    let py = value.py();
+    let rsplit = py.get_type::<PyString>().getattr("rsplit").ok()?;
+    let parts = rsplit.call1((value, ".", 1)).ok()?;
+    let parts = parts.cast::<PyList>().ok()?;
+    parts
+        .get_item(parts.len().checked_sub(1)?)
+        .ok()?
+        .cast_into()
+        .ok()
 }
 
-/// Read and clamp an optional string attribute without returning a borrowed
-/// PyO3 view from a closure that owns its temporary `Bound` value.
-fn optional_string_attr(obj: &Bound<'_, PyAny>, attr: &str, limit: usize) -> Option<String> {
-    let value = optional_attr(obj, attr)?;
-    let value = value.cast::<PyString>().ok()?;
-    Some(values::bounded_string(value, limit).text)
-}
-
-/// Shorten an identifier-like field to `limit` bytes.
-fn clamp_identifier(value: String, limit: usize) -> String {
-    truncate_to_limit(&value, limit).unwrap_or(value)
+/// Read a string attribute, without converting it to Rust.
+fn string_attr<'py>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<Bound<'py, PyString>> {
+    optional_attr(obj, attr)?.cast_into::<PyString>().ok()
 }
 
 /// Read an attribute, treating a missing attribute or `None` as absent.
@@ -143,11 +168,7 @@ pub(super) fn bounded_sequence<'py>(
     sequence: &Bound<'py, PyAny>,
     limit: usize,
 ) -> BoundedSequence<'py> {
-    let known_len = sequence
-        .cast::<PyList>()
-        .map(|list| list.len())
-        .or_else(|_| sequence.cast::<PyTuple>().map(|tuple| tuple.len()))
-        .ok();
+    let known_len = exact_collection_len(sequence);
     let scan_limit = known_len.map_or_else(|| limit.saturating_add(1), |len| len.min(limit));
     let mut items = Vec::with_capacity(scan_limit.min(limit));
     let mut failed = false;
@@ -186,4 +207,19 @@ pub(super) fn bounded_sequence<'py>(
         omitted,
         failed,
     }
+}
+
+/// Return the C-level length of an exact built-in list or tuple.
+///
+/// Only the exact types qualify. A subclass can override `__iter__`, so its
+/// container length need not describe what iteration yields; treating it as
+/// exact would report an omitted count that contradicts the items scanned.
+pub(super) fn exact_collection_len(collection: &Bound<'_, PyAny>) -> Option<usize> {
+    if collection.is_exact_instance_of::<PyList>() {
+        return collection.cast::<PyList>().ok().map(|list| list.len());
+    }
+    if collection.is_exact_instance_of::<PyTuple>() {
+        return collection.cast::<PyTuple>().ok().map(|tuple| tuple.len());
+    }
+    None
 }

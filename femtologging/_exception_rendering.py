@@ -234,6 +234,12 @@ def _render_exception_group(exc_info: cabc.Mapping[str, object]) -> list[str]:
     lines: list[str] = []
     for index, member in enumerate(nested, start=1):
         lines.append(f"  +---- [{index}] ")
-        lines.extend(f"  |     {line}" for line in _render_exception(member))
+        # A member's message can span several physical lines; prefix each one so
+        # the whole member stays inside its block.
+        lines.extend(
+            f"  |     {part}"
+            for line in _render_exception(member)
+            for part in line.split("\n")
+        )
     lines.extend(omissions)
     return lines

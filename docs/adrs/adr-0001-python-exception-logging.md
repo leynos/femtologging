@@ -227,10 +227,13 @@ marker is optional and defaults to absent. Absent markers leave existing
 formatter output unchanged.
 
 Built-in strings, bytes, and bytearrays are sliced or escaped from bounded
-prefixes before capture retains them. General user-defined `str()` and `repr()`
-calls still execute on the caller thread. Their *number* is bounded by the item
-and traversal limits, and their failures are contained, but a single user
-conversion can take arbitrary time or allocate internally before it returns.
+prefixes before capture retains them. `KeyError` is handled without invoking
+its built-in `__str__`, because that implementation calls `repr` on the whole
+argument; the message is rebuilt from the same bounded argument rendering
+instead. General user-defined `str()` and `repr()` calls still execute on the
+caller thread. Their *number* is bounded by the item and traversal limits, and
+their failures are contained, but a single user conversion can take arbitrary
+time or allocate internally before it returns.
 
 Capture spends the aggregate budget in this order: type, message, frames,
 arguments, notes, cause, context, and group children. It keeps the innermost

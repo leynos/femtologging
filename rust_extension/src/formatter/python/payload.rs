@@ -67,12 +67,16 @@ fn set_optional_exception_items(
 }
 
 /// Set the `truncation` marker, unless the payload omitted nothing.
+///
+/// A caller can set the public `truncation` field directly and leave an
+/// all-default marker behind; it is skipped for the same reason as `None`, so
+/// the Python dict keeps the documented "absent means nothing omitted" rule.
 fn set_truncation_item(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
     truncation: Option<&PayloadTruncation>,
 ) -> PyResult<()> {
-    if let Some(marker) = truncation {
+    if let Some(marker) = truncation.filter(|marker| !marker.is_empty()) {
         dict.set_item("truncation", truncation_to_py(py, marker)?)?;
     }
     Ok(())

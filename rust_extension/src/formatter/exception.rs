@@ -95,6 +95,9 @@ impl ExceptionFormat for StackTracePayload {
         for frame in &self.frames {
             output.push_str(&frame.format_exception());
         }
+        // A spent budget can cut a stack short without dropping whole frames,
+        // so the frame marker alone would leave the reader unaware.
+        output.push_str(&format_exception_summary(self.truncation.as_ref()));
         output
     }
 }

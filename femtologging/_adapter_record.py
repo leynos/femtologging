@@ -2,11 +2,12 @@
 
 Femtologging hands its handlers plain dictionaries; stdlib handlers expect
 ``LogRecord`` instances.  This module owns the schema for those dictionaries,
-the femtologging-to-stdlib level mapping, and the translation itself.  Payload
-text rendering, including any capture-omission markers, lives in
-:mod:`femtologging._payload_formatting`.  The adapter in
-:mod:`femtologging.adapter` supplies the handler-protocol plumbing and the
-severity gate that decides whether a translated record is dispatched.
+the femtologging-to-stdlib level mapping, and the translation itself.
+Exception traversal and its rendered text live in
+:mod:`femtologging._exception_rendering`; the shared capture-omission marker
+helpers and stack text live in :mod:`femtologging._payload_formatting`.  The
+adapter in :mod:`femtologging.adapter` supplies the handler-protocol plumbing
+and the severity gate that decides whether a translated record is dispatched.
 """
 
 from __future__ import annotations

@@ -107,16 +107,25 @@ pub(super) fn bounded_string(value: &Bound<'_, PyString>, limit: usize) -> Bound
         return clamp(value.to_string_lossy().into_owned(), limit);
     }
 
-    let stop = isize::try_from(limit).unwrap_or(isize::MAX);
-    let slice = PySlice::new(value.py(), 0, stop, 1);
-    let Ok(prefix) = value.as_any().get_item(slice) else {
-        return BoundedText::failure("<string conversion failed>", limit);
-    };
-    let Ok(prefix) = prefix.cast::<PyString>() else {
+    let Some(prefix) = native_prefix(value, limit) else {
         return BoundedText::failure("<string conversion failed>", limit);
     };
     let text = prefix.to_string_lossy().into_owned();
     BoundedText::ok(force_truncate(&text, limit), true)
+}
+
+/// Return `value[:stop]` evaluated by `str` itself.
+///
+/// Slicing through the instance would dispatch to a subclass's `__getitem__`,
+/// which runs user code and may return anything at all. The unbound
+/// `str.__getitem__` reads the string's own storage, so the bounded prefix is
+/// always a real string and never a user-defined result.
+fn native_prefix<'py>(value: &Bound<'py, PyString>, stop: usize) -> Option<Bound<'py, PyString>> {
+    let py = value.py();
+    let getitem = py.get_type::<PyString>().getattr("__getitem__").ok()?;
+    let stop = isize::try_from(stop).unwrap_or(isize::MAX);
+    let slice = PySlice::new(py, 0, stop, 1);
+    getitem.call1((value, slice)).ok()?.cast_into().ok()
 }
 
 /// Convert the single argument used by `BaseException.__str__` safely.
@@ -125,7 +134,11 @@ pub(super) fn bounded_string(value: &Bound<'_, PyString>, limit: usize) -> Bound
 /// value in CPython. Render their bounded prefix directly so a large binary
 /// argument cannot allocate an oversized intermediate message.
 pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> BoundedText {
-    if let Ok(text) = value.cast::<PyString>() {
+    // Only the exact type takes the copy path: a subclass may override
+    // `__str__`, and `str(argument)` is the semantic this function reproduces.
+    if value.is_exact_instance_of::<PyString>()
+        && let Ok(text) = value.cast::<PyString>()
+    {
         return bounded_string(text, limit);
     }
     if let Some((rendered, truncated)) = render_byte_like(value) {
@@ -136,12 +149,20 @@ pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> Boun
 
 /// Render a `bytes` or `bytearray` value from a bounded copy.
 ///
-/// Returns `None` for any other type. An oversized `bytearray` is summarised
-/// from its length alone, so its buffer is copied only when it is small enough
-/// to render inline and no borrowed slice outlives the check.
+/// Returns `None` for any other type, including subclasses of `bytes` and
+/// `bytearray`: a subclass may override `__str__` or `__repr__`, so rendering
+/// its buffer directly would ignore the representation it defines. An oversized
+/// exact `bytearray` is summarised from its length alone, so its buffer is
+/// copied only when it is small enough to render inline and no borrowed slice
+/// outlives the check.
 fn render_byte_like(value: &Bound<'_, PyAny>) -> Option<(String, bool)> {
-    if let Ok(bytes) = value.cast::<PyBytes>() {
+    if value.is_exact_instance_of::<PyBytes>()
+        && let Ok(bytes) = value.cast::<PyBytes>()
+    {
         return Some(render_blob(bytes.as_bytes()));
+    }
+    if !value.is_exact_instance_of::<PyByteArray>() {
+        return None;
     }
     let bytearray = value.cast::<PyByteArray>().ok()?;
     if bytearray.len() > MAX_INLINE_BLOB {
@@ -194,15 +215,19 @@ fn render_builtin(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText>
 
 /// Render an oversized `str` from a bounded prefix.
 ///
-/// Returns `None` when the value is not a `str`, still fits the ceiling, or is
-/// not exposed as UTF-8 — a string holding lone surrogates — leaving the caller
-/// to take the general path.
+/// Returns `None` when the value is not an exact `str`, still fits the ceiling,
+/// or is not exposed as UTF-8 — a string holding lone surrogates — leaving the
+/// caller to take the general path. A `str` subclass is excluded because it may
+/// override `__repr__`, which this bounded prefix would bypass.
 ///
 /// The prefix leaves room for the two quotes and the truncation marker, so the
 /// assembled literal lands inside the ceiling rather than being cut a second
 /// time; escapes that expand the prefix past that allowance are still caught by
 /// [`truncate_literal`], which keeps the literal's closing quote.
 fn render_long_string(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    if !value.is_exact_instance_of::<PyString>() {
+        return None;
+    }
     let text = value.cast::<PyString>().ok()?;
     let Ok(code_points) = text.code_point_len() else {
         return Some(BoundedText::failure("<repr conversion failed>", limit));
@@ -211,12 +236,8 @@ fn render_long_string(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedT
         return None;
     }
     let reserve = TRUNCATION_SUFFIX_LEN.saturating_add(2);
-    let stop = isize::try_from(limit.saturating_sub(reserve)).unwrap_or(isize::MAX);
-    let slice = PySlice::new(value.py(), 0, stop, 1);
-    let Ok(prefix) = value.get_item(slice) else {
-        return Some(BoundedText::failure("<repr conversion failed>", limit));
-    };
-    let Ok(prefix) = prefix.cast::<PyString>() else {
+    let stop = limit.saturating_sub(reserve);
+    let Some(prefix) = native_prefix(text, stop) else {
         return Some(BoundedText::failure("<repr conversion failed>", limit));
     };
     let Ok(rendered) = prefix.repr() else {
@@ -242,6 +263,11 @@ fn prefix_within(value: &str, budget: usize) -> &str {
 /// from the end instead would strip the closing quote, leaving something that
 /// no longer reads as Python; the quote and wrapper survive even when the
 /// ceiling leaves no room for the marker.
+///
+/// The body is cut with [`truncated_body`], so the shortened literal never ends
+/// halfway through an escape such as `\x41`. When the ceiling cannot even hold
+/// the closing quote and wrapper, the ceiling wins and the text is cut from the
+/// end: a truncated literal is better than one that claims a close it lost.
 fn truncate_literal(rendered: &str, limit: usize) -> String {
     let Some(quote_start) = rendered.rfind(['\'', '"']) else {
         return force_truncate(rendered, limit);
@@ -250,16 +276,61 @@ fn truncate_literal(rendered: &str, limit: usize) -> String {
     let body = &rendered[..quote_start];
     let tail = &rendered[quote_start + 1..];
     let closing = quote.len() + tail.len();
+    if closing > limit {
+        return force_truncate(rendered, limit);
+    }
     let overhead = TRUNCATION_SUFFIX_LEN + closing;
     if limit <= overhead {
-        let budget = limit.saturating_sub(closing);
-        return format!("{}{quote}{tail}", prefix_within(body, budget));
+        let budget = limit - closing;
+        return format!("{}{quote}{tail}", truncated_body(body, budget));
     }
     let budget = limit - overhead;
     format!(
         "{}{TRUNCATION_SUFFIX}{quote}{tail}",
-        prefix_within(body, budget)
+        truncated_body(body, budget)
     )
+}
+
+/// Longest prefix of a literal body within `budget` that ends between escapes.
+///
+/// An escape that would extend past the budget is dropped whole, because a cut
+/// escape such as `\x4` no longer means the character it started to describe.
+fn truncated_body(body: &str, budget: usize) -> &str {
+    let mut index = 0;
+    let mut safe = 0;
+    while index < body.len() && index < budget {
+        let Some(ch) = body[index..].chars().next() else {
+            break;
+        };
+        let width = if ch == '\\' {
+            let Some(width) = completed_escape(&body[index..]) else {
+                break;
+            };
+            width
+        } else {
+            ch.len_utf8()
+        };
+        if index + width > budget {
+            break;
+        }
+        index += width;
+        safe = index;
+    }
+    &body[..safe]
+}
+
+/// Byte width of the complete escape sequence at the start of `rest`.
+///
+/// Returns `None` when `rest` begins with a backslash that is not followed by
+/// the rest of its escape, which is how a literal body cut short would look.
+fn completed_escape(rest: &str) -> Option<usize> {
+    let width = match rest.as_bytes().get(1)? {
+        b'x' => 4,
+        b'u' => 6,
+        b'U' => 10,
+        _ => 2,
+    };
+    (rest.len() >= width).then_some(width)
 }
 
 /// Render a byte string in CPython's own `bytes` repr form.
