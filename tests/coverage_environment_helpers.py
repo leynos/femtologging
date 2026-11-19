@@ -7,10 +7,16 @@ case-insensitively and accepts an expression in place of a literal, so a
 reader that returned the declaration verbatim could report no protected
 environment for a job that declares one. Both readers therefore fail closed:
 an expression they cannot resolve is refused rather than reported as safe.
+The ``env`` scan fails closed the same way. A declaration that is not a
+mapping is refused, because an expression there can expand to a mapping the
+reader never sees. A reference that reaches the whole ``secrets`` context,
+through ``toJSON(secrets)`` or an index this reader cannot evaluate, is
+reported as carrying the token even though it never spells the name.
 """
 
 from __future__ import annotations
 
+import re
 import typing as typ
 
 from tests.workflow_document_helpers import require
@@ -21,6 +27,17 @@ if typ.TYPE_CHECKING:
 CODESCENE_ENVIRONMENT: typ.Final[str] = "codescene"
 #: The secret's name, never its value. It is matched inside ``env`` blocks.
 TOKEN_NAME: typ.Final[str] = "CS_ACCESS_TOKEN"  # ruff: ignore[hardcoded-password-string] the secret's name, not its value
+#: One ``${{ ... }}`` expression, wherever it sits in a value. Secret access is
+#: only meaningful inside one, so text that merely mentions the word cannot be
+#: mistaken for an expression.
+_EXPRESSION: typ.Final[re.Pattern[str]] = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+#: A reference to the `secrets` context, with the name it selects if it names
+#: one. The name group is absent for an aggregate access such as
+#: ``toJSON(secrets)`` or an index such as ``secrets[env.NAME]``, either of
+#: which can reach the token without spelling it.
+_SECRETS_ACCESS: typ.Final[re.Pattern[str]] = re.compile(
+    r"\bsecrets\b(?:\.([a-z_][a-z0-9_]*))?"
+)
 
 
 def _literal_environment(name: str) -> str:
@@ -96,6 +113,11 @@ def env_blocks(
 ) -> cabc.Iterator[tuple[str, dict[str, typ.Any]]]:
     """Yield every ``env`` mapping nested in `node` with its location.
 
+    An ``env`` declaration that is not a mapping is refused, not skipped: the
+    runner expands an expression there into a mapping before the job starts, so
+    this reader cannot see what the job would receive, and passing over it
+    would report a workflow safe that may hand the token to a step.
+
     Parameters
     ----------
     node
@@ -112,7 +134,11 @@ def env_blocks(
     match node:
         case dict():
             for key, value in typ.cast("dict[object, object]", node).items():
-                if key == "env" and isinstance(value, dict):
+                if key == "env":
+                    require(
+                        isinstance(value, dict),
+                        f"an env expression is not verifiable: {path}/env",
+                    )
                     yield f"{path}/env", typ.cast("dict[str, typ.Any]", value)
                 yield from env_blocks(value, f"{path}/{key}")
         case list():
@@ -120,13 +146,15 @@ def env_blocks(
                 yield from env_blocks(item, f"{path}/{at}")
 
 
-def _names_token(value: str) -> bool:
-    """Report whether `value` names the CodeScene secret, folded for case.
+def _reaches_whole_secrets(value: str) -> bool:
+    """Report whether an expression in `value` reads more than one secret.
 
-    GitHub resolves secret references without case sensitivity, so
-    ``secrets.cs_access_token`` reads the same secret as the uppercase
-    spelling. A case-sensitive scan would pass that ``env`` entry as safe and
-    miss the prohibited placement it is looking for.
+    ``toJSON(secrets)`` serialises every available secret, and
+    ``secrets[env.NAME]`` selects one by a name this reader cannot evaluate;
+    either can hand out the CodeScene token without ever spelling it. A
+    direct ``secrets.OTHER_NAME`` reference still names exactly one secret, so
+    it stays acceptable. Only expression bodies are scanned: the word
+    "secrets" in ordinary text is not a reference to anything.
 
     Parameters
     ----------
@@ -136,7 +164,47 @@ def _names_token(value: str) -> bool:
     Returns
     -------
     bool
-        Whether the string names the secret in any case.
+        Whether an expression reaches the whole ``secrets`` context or
+        indexes it with a name the reader cannot resolve.
+
+    Examples
+    --------
+    >>> _reaches_whole_secrets("${{ toJSON(secrets) }}")
+    True
+    >>> _reaches_whole_secrets("${{ secrets[env.NAME] }}")
+    True
+    >>> _reaches_whole_secrets("${{ secrets.GITHUB_TOKEN }}")
+    False
+    >>> _reaches_whole_secrets("the secrets are safe here")
+    False
+    """
+    return any(
+        access.group(1) is None
+        for expression in _EXPRESSION.finditer(value)
+        for access in _SECRETS_ACCESS.finditer(expression.group(1).casefold())
+    )
+
+
+def _names_token(value: str) -> bool:
+    """Report whether `value` names the CodeScene secret, folded for case.
+
+    GitHub resolves secret references without case sensitivity, so
+    ``secrets.cs_access_token`` reads the same secret as the uppercase
+    spelling. A case-sensitive scan would pass that ``env`` entry as safe and
+    miss the prohibited placement it is looking for. Naming the token is not
+    the only way to reach it, so a value that reads the whole secret context
+    is reported as carrying the token too.
+
+    Parameters
+    ----------
+    value
+        One string nested in an ``env`` mapping.
+
+    Returns
+    -------
+    bool
+        Whether the string names the secret in any case, or reaches the whole
+        ``secrets`` context.
 
     Examples
     --------
@@ -144,8 +212,10 @@ def _names_token(value: str) -> bool:
     True
     >>> _names_token("${{ secrets.GITHUB_TOKEN }}")
     False
+    >>> _names_token("${{ toJSON(secrets) }}")
+    True
     """
-    return TOKEN_NAME.casefold() in value.casefold()
+    return TOKEN_NAME.casefold() in value.casefold() or _reaches_whole_secrets(value)
 
 
 def secret_in_env(document: dict[str, typ.Any]) -> list[str]:
