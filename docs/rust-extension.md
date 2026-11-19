@@ -400,9 +400,10 @@ retains responsibility for importing arbitrary user-defined factories.
 ## HTTP handler shutdown contract
 
 `FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs` is
-bounded by `flush_timeout`, which the handler takes from `write_timeout`.
-`Drop` calls `close`, so the same bound applies to a handler that is simply
-dropped.
+bounded by `flush_timeout`, which the handler takes from `write_timeout`, apart
+from the drop-warning report described below, which runs first and is not
+covered by it. `Drop` calls `close`, so the same bound applies to a handler
+that is simply dropped.
 
 `close` first reports any pending handler-side dropped-record count through the
 process-wide `log` adapter. That report runs before the bounded shutdown

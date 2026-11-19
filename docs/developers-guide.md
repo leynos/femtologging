@@ -1014,9 +1014,10 @@ The drop-reporting work adds two Rust-side seams beside those hooks.
 `RateLimitedWarner::pending_drops()` returns the count a warner still holds,
 and is compiled under `test` or the `test-util` feature; the handler
 drop-report tests assert conservation on it. `FemtoLogger`'s internal
-`set_drain_hook_for_test` (`pub(super)`) runs a closure on the flushing thread
-once the in-flight check has passed and before the drain wait begins, which is
-how `producer_rejection_tests` proves that a drop recorded during the drain is
+`set_drain_hook_for_test` (`pub(super)`, compiled under
+`#[cfg(all(test, not(loom)))]`) runs a closure on the flushing thread once the
+in-flight check has passed and before the drain wait begins, which is how
+`producer_rejection_tests` proves that a drop recorded during the drain is
 reported by the same flush rather than left pending. Both are internal or
 feature-gated test seams: normal builds omit them, and neither is part of the
 Python API.
@@ -1543,14 +1544,16 @@ between winning its claim and publishing its report time; if another caller
 claims and reports in that window, the first caller's exchange fails because a
 later interval is already published. It then restores its batch and reports
 nothing, so the interval belongs to the caller that actually emitted the
-warning and two warnings cannot land back to back. The batch travels in a guard
-that adds it back on unwind, and the guard is disarmed only immediately before
-the callback: a `Clock` that panics therefore costs a retry rather than the
-count, while a callback that panics has already been handed the count and so
-abandons it, which keeps the "handed off once" guarantee. A panic in the
-publication sample can leave its interval claimed, because that sample is the
-only thing that would move it forward; the count, which is what must survive,
-is restored.
+warning and no two callers publish reports for the same interval. Publication
+is spaced, callback invocation is not: a caller delayed after publishing still
+runs its callback, so two callbacks can land back to back even though each
+report belongs to its own interval. The batch travels in a guard that adds it
+back on unwind, and the guard is disarmed only immediately before the callback:
+a `Clock` that panics therefore costs a retry rather than the count, while a
+callback that panics has already been handed the count and so abandons it,
+which keeps the "handed off once" guarantee. A panic in the publication sample
+can leave its interval claimed, because that sample is the only thing that
+would move it forward; the count, which is what must survive, is restored.
 
 The helpers live beside the modules that own the wording, not on the warner.
 HTTP keeps `warn_drops`, `flush_drops`, `warn_drops_naming_cause`,

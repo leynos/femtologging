@@ -6,13 +6,15 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 be kept up to date as work proceeds.
 
 Status: IN PROGRESS — ready PR #613 carries the implementation and the repairs
-for every finding from CodeRabbit's review of `42c3abe1`, plus `d6dab01e`,
-which fixes a self-deadlocking shard test that timed out the hosted
-`build-test (3.14)` job. Every deterministic gate that can complete on this
-host has passed on the repaired tree; the four trybuild UI suites are recorded
-as unexecuted locally because the saturated compile pool admitted only a few of
-their eleven cases per 590 s window. All required hosted checks pass on
-`d6dab01e`; the merge now waits on CodeRabbit's review of that head.
+for every finding from CodeRabbit's reviews. The branch is rebased onto
+`origin/main` at `01516202`, and the post-rebase tree `518c79b1` passed every
+deterministic gate: the four cargo lanes, pytest with doctests, `fmt`,
+`check-fmt`, `typecheck`, `markdownlint`, `nixie` and `lint`, including
+Whitaker. Two merge defects the rebase introduced — a duplicate `pending_drops`
+accessor and an over-size `handler.rs` — were fixed in `560e8191` and
+`518c79b1`. CodeRabbit then corrected four documentation over-claims in a
+manual assessment of the pre-rebase head; those corrections are applied and the
+final head awaits a fresh review.
 
 ## Purpose / big picture
 
@@ -1756,3 +1758,30 @@ step passed with 1209 passed and 5 skipped; `make typecheck` (113 s) and
 concurrent agent sessions throughout, so several invocations were cut by time
 bounds mid-lane; each resumed or repeated invocation ended green, and no lane
 reported a failure.
+
+2026-11-19: rebased the series onto `origin/main` at `01516202` (`fb68e36c` →
+`518c79b1`) with Weave bypassed and `zdiff3`, resolving four textual conflicts
+by keeping both sides. `range-diff` shows commits 40, 43 and 50 changed only in
+import lists and doc wording; every other commit is unchanged. Two defects the
+clean textual merge introduced were caught by the gates and fixed:
+`rate_limited_warner.rs` defined `pending_drops` twice once main's
+`#[cfg(test)] pub(crate)` accessor met this branch's broader
+`#[cfg(any(test, feature = "test-util"))]` one (E0592), so main's was removed in
+`560e8191`; and `handler.rs` reached 406 lines, so its `Drop` and `Debug`
+impls moved to `http_handler/handler_drop.rs` in `518c79b1`, bringing the
+parent to 364 lines. Gates on `518c79b1`: `make check-fmt`, `make typecheck`,
+`make markdownlint`, `make nixie` and every `make lint` sub-target passed, and
+all four cargo lanes plus `pytest --doctest-modules` passed (1677 passed, 7
+skipped). Logs carry the `-3.out` suffix.
+
+CodeRabbit's manual assessment of `fb68e36c` then raised four documentation
+over-claims, each verified against the implementation and corrected: the logger
+flush is not a barrier against a concurrently restored batch, and it still
+reports drop counts when the drain fails; the HTTP `close()` bound excludes the
+handler-side drop report that runs first; the drain hook is gated on
+`#[cfg(all(test, not(loom)))]`; and warnings are spaced by publication, not by
+callback invocation, so callbacks can still land back to back. The corrections
+touch `docs/users-guide.md`, `docs/rust-extension.md`,
+`docs/developers-guide.md` and
+`docs/rust-multithreaded-logging-framework-for-python-design.md`. `make fmt`,
+`check-fmt`, `markdownlint` and `nixie` pass on the corrected tree.

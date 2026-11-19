@@ -215,20 +215,22 @@ The logging process will follow these steps:
    early and the next report is correspondingly sooner. That second exchange is
    also the ownership check: a caller overtaken between its claim and its
    report finds a later interval published, restores its batch and stays
-   silent, so two warnings cannot arrive back to back. A panicking clock sample
-   restores the batch through a guard, while a panicking callback has already
-   been handed the count and abandons it rather than risking a second report.
-   Nothing is held across a thread boundary, which is what makes `fork` safe:
-   `multiprocessing` children inherit plain counters rather than a lock word
-   some parent thread held, so a child has nothing to reclaim and cannot block
-   on it. A count still in the counter when the parent forks exists twice
-   afterwards and both processes may report it, so conservation is per process.
-   A batch a warning or flush has already drained is the exception: it is not
-   in the child's counter, and the child does not own the draining thread's
-   in-flight batch, so only the parent can report that count. The copied
-   counter is not necessarily zero, though: another thread may record drops
-   between the swap and the fork, and those newer counts are duplicated like
-   any other.
+   silent, so no two callers publish reports for the same interval. Publication
+   is spaced rather than callback invocation: a caller delayed after publishing
+   still runs its callback, so two callbacks can still arrive back to back. A
+   panicking clock sample restores the batch through a guard, while a panicking
+   callback has already been handed the count and abandons it rather than
+   risking a second report. Nothing is held across a thread boundary, which is
+   what makes `fork` safe: `multiprocessing` children inherit plain counters
+   rather than a lock word some parent thread held, so a child has nothing to
+   reclaim and cannot block on it. A count still in the counter when the parent
+   forks exists twice afterwards and both processes may report it, so
+   conservation is per process. A batch a warning or flush has already drained
+   is the exception: it is not in the child's counter, and the child does not
+   own the draining thread's in-flight batch, so only the parent can report
+   that count. The copied counter is not necessarily zero, though: another
+   thread may record drops between the swap and the fork, and those newer
+   counts are duplicated like any other.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.

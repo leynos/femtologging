@@ -225,9 +225,14 @@ any handler flush fails. A failing handler does not stop the remaining handlers
 from being flushed.
 
 `logger.flush_handlers()` also reports the drop counts that rate-limited drop
-warnings are still holding back. It does so after the dispatch queue drains and
-the handlers flush, so a count recorded while the flush was waiting is included
-in the same report rather than left pending. Both counters are covered: the
+warnings are still holding back. The report is made last, after the dispatch
+queue drains and the handlers flush, so a count recorded before that point is
+included in the same report instead of being left pending. The report is still
+made when the drain fails and the configured handlers are skipped: those
+handlers were not flushed, but the drop counters are reported either way. The
+report is not a barrier against a concurrent rate-limited warning: a caller
+that has already taken a batch and then restores it after the flush's swap
+leaves its count pending for the next report. Both counters are covered: the
 dispatch-admission drop counter reported by `get_dropped()`, and the
 context-capture failure counter reported by `get_context_capture_failures()`.
 Each counter has its own wording:
@@ -712,11 +717,15 @@ socket_handler = (
   rather than joined past the deadline. Records still queued when the deadline
   passes are discarded, and the count is warned about, so a queue that cannot
   be delivered inside the timeout costs those records rather than extending the
-  close. The bound is on `close()` itself, not on the detached worker's exit: a
+  close. The bound is on the worker wait, not on the detached worker's exit: a
   request already in flight when the deadline falls may outlive it, and TCP
-  hostname resolution has no interruptible timeout. The same bound applies when
-  the handler is dropped without an explicit `close()`, and the wait runs with
-  the GIL released.
+  hostname resolution has no interruptible timeout. One part of `close()` runs
+  outside the bound: before the wait begins, it reports the drops the handler
+  itself refused through the process-wide `log` sink. A blocking sink can delay
+  the close past the write timeout, because bounding that report would mean
+  discarding the count. The same bound, and the same report before it, apply
+  when the handler is dropped without an explicit `close()`, and the wait runs
+  with the GIL released.
 - `handler.flush()` forces the worker to flush what it has queued, and returns
   `True` only when the worker acknowledges within the handler's flush timeout.
   Python `flush()` releases the GIL while it waits, so other Python threads
