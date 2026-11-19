@@ -1214,18 +1214,19 @@ The `flush()` and `close()` boundary is described in
 this section covers `handle()`, whose wait is the unbounded one, and the
 mechanics all three operations share. `FemtoFileHandler::py_handle` takes no
 interpreter token. PyO3 invokes a `#[pymethods]` function with the interpreter
-lock already held, so the caller has no token to hand over; the method attaches
-with `Python::attach(...)` to obtain one and detaches around the enqueue. That
-attach re-enters the running interpreter rather than selecting one, so the
-dependency is the call boundary itself and not a value a caller could supply.
-Its `close()` boundary, and the rotating and timed-rotating wrappers that
-delegate to `handle()`, still take a `py: Python<'_>` token and use
-`py.detach(...)` around the operation. `handle()` waits on channel capacity,
-unbounded under `OverflowPolicy::Block` (`Sender::send`) and bounded by the
-deadline under `OverflowPolicy::Timeout` (`send_timeout`). Other Python-exposed
-handler families also have operations that may block. The stream, socket and
-HTTP bindings detach both their `flush()` and their `close()` waits. The socket
-and HTTP `close()` methods take an exclusive PyO3 borrow (`&mut self`) for the
+lock already held, and it can inject `py: Python<'_>` into such a method, as
+`py_flush` does below; `py_handle` instead attaches with `Python::attach(...)`
+to obtain a token and detaches around the enqueue. Either mechanism yields the
+same token, so attaching here is this binding's choice rather than a
+requirement of PyO3, and the token is not a value a caller could supply. Its
+`close()` boundary, and the rotating and timed-rotating wrappers that delegate
+to `handle()`, still take a `py: Python<'_>` token and use `py.detach(...)`
+around the operation. `handle()` waits on channel capacity, unbounded under
+`OverflowPolicy::Block` (`Sender::send`) and bounded by the deadline under
+`OverflowPolicy::Timeout` (`send_timeout`). Other Python-exposed handler
+families also have operations that may block. The stream, socket and HTTP
+bindings detach both their `flush()` and their `close()` waits. The socket and
+HTTP `close()` methods take an exclusive PyO3 borrow (`&mut self`) for the
 whole wait, so a second `close()`, or a `close()` overlapping a detached
 `flush()`, is refused by the borrow check rather than queued; the file and
 stream families use a shared borrow and allow those overlaps.
