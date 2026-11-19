@@ -46,6 +46,19 @@ struct StoredSpanFields {
     fields: BTreeMap<String, String>,
 }
 
+/// One event's captured payload, taken before the interpreter is attached.
+///
+/// The transport origin travels with the fields because both are captured at
+/// the same point, before any user code can run, and both are consumed only by
+/// [`FemtoTracingLayer::dispatch_event`]. Keeping them together leaves that
+/// hand-off with one payload instead of two arguments that must stay paired.
+struct CapturedEvent {
+    /// String representations of the event's fields, keyed by field name.
+    fields: visitor::CapturedFields,
+    /// Transport marker observed before field capture.
+    origin: RecordOrigin,
+}
+
 /// A `tracing_subscriber::Layer` that forwards tracing events to femtologging.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FemtoTracingLayer;
@@ -159,15 +172,14 @@ impl FemtoTracingLayer {
     ///
     /// A target that cannot be resolved, or a logger that refuses the event by
     /// level, drops the event silently, matching the layer's enablement
-    /// decision. `origin` is the transport marker the caller captured before
-    /// field capture, so HTTP-worker diagnostics keep their provenance through
-    /// the queue.
+    /// decision. `captured.origin` is the transport marker taken before field
+    /// capture, so HTTP-worker diagnostics keep their provenance through the
+    /// queue.
     fn dispatch_event<S>(
         py: Python<'_>,
         event: &Event<'_>,
         ctx: &Context<'_, S>,
-        captured: visitor::CapturedFields,
-        origin: RecordOrigin,
+        captured: CapturedEvent,
     ) where
         S: Subscriber + for<'span> LookupSpan<'span>,
     {
@@ -184,12 +196,13 @@ impl FemtoTracingLayer {
         }
 
         let message = captured
+            .fields
             .message
-            .unwrap_or_else(|| Self::fallback_message(&captured.key_values));
-        let metadata = Self::build_record_metadata(event, ctx, captured.key_values);
+            .unwrap_or_else(|| Self::fallback_message(&captured.fields.key_values));
+        let metadata = Self::build_record_metadata(event, ctx, captured.fields.key_values);
         let guarded = logger.borrow(py);
         let prebuilt = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
-            .with_origin(origin);
+            .with_origin(captured.origin);
         let _ = guarded.log_prebuilt(prebuilt);
     }
 
@@ -296,7 +309,10 @@ where
         let origin = transport_origin::capture_record_origin();
         let _suspended = transport_origin::suspend_http_transport();
 
-        let captured = visitor::capture_event(event);
-        Python::attach(|py| Self::dispatch_event(py, event, &ctx, captured, origin));
+        let captured = CapturedEvent {
+            fields: visitor::capture_event(event),
+            origin,
+        };
+        Python::attach(|py| Self::dispatch_event(py, event, &ctx, captured));
     }
 }
