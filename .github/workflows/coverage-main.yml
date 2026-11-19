@@ -18,10 +18,28 @@ name: Coverage (main)
 # the cache store entirely and hands its figures to the publisher through a
 # workflow artefact.
 #
+# A fork or Dependabot pull request cannot obtain an Ubicloud runner, so
+# `ci.yml` falls back to the hosted pool for it, and that lane restores from
+# GitHub's cache store instead. `coverage-baseline-hosted` publishes the same
+# hand-overs there; without it a hosted lane would restore nothing, start its
+# baseline at zero and never fail. Both publishers ratchet the same figure and
+# each writes only the store its own runner provider serves.
+#
+# A failed lane must not withdraw a successful sibling's publication.
+# Measurement uses `fail-fast: false`, so every other lane still finishes; each
+# publisher also runs after the matrix whenever the run was not cancelled, and
+# a lane publishes only when its own hand-over artefact is present. A missing
+# hand-over while every lane succeeded stays a failure, because that is a lost
+# publication rather than a lane that measured nothing.
+#
 # The CodeScene upload is a job of its own, downstream of the measurement
 # alone: a CodeScene outage must not stop the baseline advancing, because the
 # ratchet is the trunk's regression gate and the report is not. The upload job
-# still fails when CodeScene refuses the report, and so fails the workflow.
+# still fails when CodeScene refuses the report, and so fails the workflow. It
+# checks out the measured commit, because the uploader attributes the report to
+# a branch and commit from the clone it runs in, not from the report alone. A
+# failure in a lane other than 3.14 still publishes the trunk's report: only
+# that lane produces it, and only its absence prevents the upload.
 #
 # Known exception: a Dependabot pull request merged by dependabot-automerge
 # with GITHUB_TOKEN fires no push event, so that merge publishes nothing until
@@ -170,16 +188,31 @@ jobs:
 
   coverage-upload:
     needs: coverage-measure
+    # Measurement keeps running its other lanes after a failure, but a failed
+    # dependency would still skip this job even when 3.14 produced the report.
+    # `!cancelled()` is the one condition that runs after a failed dependency.
+    # A missing report then fails the fetch below, so no upload happens.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The CodeScene token lives in this environment, whose deployment policy
     # admits `main` alone. No pull-request-reachable job may declare it, so a
     # change on a branch can never read the token; the workflow contracts hold
-    # that split. This job compiles and tests nothing, so it needs no
-    # repository contents.
+    # that split.
     environment: codescene
-    permissions: {}
+    # The uploader attributes the report to a branch and commit by reading the
+    # clone it runs in, so this job needs the measured revision, though it
+    # compiles and tests nothing.
+    permissions:
+      contents: read
     steps:
+      - name: Check out the measured commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The measurement checked out this commit; the upload must describe
+          # the same revision, not whatever the default ref resolves to.
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Fetch the measured report
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -205,15 +238,22 @@ jobs:
           mode: upload
           access-token: ${{ secrets.CS_ACCESS_TOKEN }}
 
+  # Both publishers ratchet the same hand-over and each writes the cache store
+  # its own runner provider serves. Two jobs rather than one, because a cache
+  # written on one provider is not read by the other: the Ubicloud lanes
+  # restore from the first store, and a fork or Dependabot pull request, which
+  # ci.yml places on the hosted pool, restores from the second.
   coverage-baseline:
     needs: coverage-measure
+    # A failed sibling lane would otherwise skip this whole matrix. The probe
+    # below decides which lanes have a figure to publish.
+    if: ${{ !cancelled() }}
     # The pull-request lanes run on Ubicloud, and they restore the baseline
-    # from the cache store they can read. This job therefore runs there too and
-    # compiles nothing; it only ratchets the handed-over figures and saves the
-    # advanced baseline.
-    # A push has no pull request, so both halves of the condition are empty and
-    # the expression selects Ubicloud, which is the cache store the
-    # pull-request lanes read.
+    # from the cache store they can read, so this job runs there too and
+    # compiles nothing. A push has no pull request, so both halves of the
+    # condition are empty and the expression selects Ubicloud; the hosted arm
+    # exists because the placement contract reads this shape as the estate's
+    # fallback rule, not because this push-only workflow can reach it.
     runs-on: >-
       ${{ (github.event.pull_request.head.repo.fork
       || github.event.pull_request.user.login == 'dependabot[bot]')
@@ -231,7 +271,54 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check for this lane's hand-over
+        id: handover
+        # Only a partial failure needs the probe. When every lane succeeded, a
+        # lost hand-over must fail the publisher, so the action's own download
+        # stays unguarded and reports it. Under a partial failure, an absent
+        # hand-over is this lane's own failure, and this lane publishes
+        # nothing.
+        if: ${{ needs.coverage-measure.result != 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-baseline-handover-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/coverage-handover-probe
       - name: Publish the ratchet baseline
+        if: ${{ needs.coverage-measure.result == 'success' || steps.handover.outcome == 'success' }}
+        uses: leynos/shared-actions/.github/actions/publish-coverage-baseline@203eedc136c14c28041e92c06a929383807b3a3f
+        with:
+          artefact-name: coverage-baseline-handover-${{ matrix.python-version }}
+
+  coverage-baseline-hosted:
+    needs: coverage-measure
+    # The same figures, ratcheted again for GitHub's cache store, which is what
+    # a fork or Dependabot pull request restores from. Without this publisher
+    # that lane would restore nothing, start its baseline at zero, and never
+    # fail.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check for this lane's hand-over
+        id: handover
+        if: ${{ needs.coverage-measure.result != 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-baseline-handover-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/coverage-handover-probe
+      - name: Publish the ratchet baseline
+        if: ${{ needs.coverage-measure.result == 'success' || steps.handover.outcome == 'success' }}
         uses: leynos/shared-actions/.github/actions/publish-coverage-baseline@203eedc136c14c28041e92c06a929383807b3a3f
         with:
           artefact-name: coverage-baseline-handover-${{ matrix.python-version }}
