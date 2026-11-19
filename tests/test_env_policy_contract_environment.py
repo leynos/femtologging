@@ -8,9 +8,10 @@ Makefile's `?=` default, `MAKEFLAGS=-i` would swallow a rejected lane's status,
 and an inherited `FAKE_CARGO_REJECT` would fail a lane the test expects to
 accept. Each failure would read as a wiring defect rather than as leaked
 environment. Every test here injects the environment it means to test, so no
-shared process state changes. One test also pins how the helper reads a
-relative `PATH` entry, because the search path it hands to `shutil.which` has
-to agree with the directory the child actually runs in.
+shared process state changes. Two tests also pin how the helper reads a
+relative `PATH` entry: the search path it hands to `shutil.which` has to agree
+with the directory the child actually runs in, and the executable that runs has
+to be the one that lookup selected.
 
 See [ADR-0006](../docs/adrs/adr-0006-environment-seam-taxonomy.md) on inherited
 variables that could change a child's outcome, and the
@@ -28,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import env_policy_lane_support
 from tests.env_policy_lane_support import (
     CONTRACT_TIMEOUT_SECONDS,
     _search_path_of,
@@ -65,6 +67,62 @@ FAILING_OVERRIDES: typ.Final = (
     f"ENV_POLICY_FEATURE_LANES={' '.join(FAILING_LANES)}",
     "ENV_POLICY_CARGO_ARGS=--lib --offline",
 )
+
+
+def write_marking_make(directory: Path, label: str) -> Path:
+    """Write a Make that records which copy ran, and return its directory.
+
+    The two copies differ only in the label they record, so the marker left
+    behind says which one the helper selected rather than which path string it
+    computed.
+
+    Returns
+    -------
+    Path
+        The directory holding the stand-in, for use as a `PATH` entry.
+    """
+    directory.mkdir(parents=True)
+    executable = directory / "make"
+    executable.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{label}' > \"${{0%/*}}/ran\"\nexit 0\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return directory
+
+
+@pytest.mark.timeout(CONTRACT_TIMEOUT_SECONDS)
+def test_the_child_runs_the_make_its_search_path_finds(
+    fake_cargo: FakeCargo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario: pytest was started outside the repository.
+
+    Invariant: with a relative `PATH` entry, the executable that actually runs
+    is the one in the child's working directory, not the same-named one in the
+    caller's. Two distinct stand-ins make a wrong selection visible: only the
+    one the helper chose leaves its label behind.
+    """
+    caller_root = tmp_path / "caller-root"
+    child_root = tmp_path / "child-root"
+    caller_make = write_marking_make(caller_root / "tools" / "bin", "caller")
+    child_make = write_marking_make(child_root / "tools" / "bin", "child")
+    monkeypatch.chdir(caller_root)
+    # The child runs in the repository root, so that is the directory a
+    # relative entry must mean; point it at a temporary stand-in so the test
+    # never writes into the checkout.
+    monkeypatch.setattr(env_policy_lane_support, "repo_root", lambda: child_root)
+    completed = run_policy_target(fake_cargo, parent_environment={"PATH": "tools/bin"})
+    assert completed.returncode == 0, (
+        f"the selected stand-in must exit 0\n{captured_output(completed)}"
+    )
+    assert (child_make / "ran").read_text(encoding="utf-8").strip() == "child", (
+        "the child directory's make must be the one that ran"
+    )
+    assert not (caller_make / "ran").exists(), (
+        "the caller directory's make must not run for a relative PATH entry"
+    )
 
 
 def inherited_environment(**additions: str) -> dict[str, str]:
