@@ -3,7 +3,7 @@
 ``strip_external_stack_frames`` is documented to delete whole frame blocks and
 to leave everything else byte-identical, including an exception traceback's
 line endings. These Hypothesis properties hold that claim across arbitrary line
-text and terminators, rather than only at the hand-written cases in
+text and terminators, rather than only at the handwritten cases in
 :mod:`tests.steps.test_external_stack_frames`.
 """
 
