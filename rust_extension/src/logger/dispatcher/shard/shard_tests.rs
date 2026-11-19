@@ -243,17 +243,15 @@ impl StandInWorker {
         let (release, released) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             go.recv_timeout(BARRIER_TIMEOUT * 2)
-                .unwrap_or_else(|err| panic!("the test should start the enqueue spend: {err}"));
+                .expect("the test should start the enqueue spend");
             std::thread::sleep(ENQUEUE_SPEND);
             let record = jobs
                 .recv_timeout(BARRIER_TIMEOUT * 2)
-                .unwrap_or_else(|err| panic!("the queued record should still be there: {err}"));
+                .expect("the queued record should still be there");
             drop(record);
             let barrier = jobs
                 .recv_timeout(BARRIER_TIMEOUT * 2)
-                .unwrap_or_else(|err| {
-                    panic!("the barrier should arrive once the queue has room: {err}")
-                });
+                .expect("the barrier should arrive once the queue has room");
             // Keeping the barrier alive without answering is what the waiter
             // must time out on rather than see as a closed channel.
             // The test releases the worker by dropping its sender, and a
