@@ -100,9 +100,7 @@ impl Schedule {
         let closer = spawn_close(case.handler);
         expect_stage(case.entered, Stage::Flush);
         case.writer.release();
-        closer
-            .join()
-            .unwrap_or_else(|_| panic!("the closer thread must not panic"));
+        closer.join().expect("the closer thread must not panic");
         assert_eq!(
             count(case.handler, "close_completed"),
             1,
@@ -205,12 +203,8 @@ impl Schedule {
         );
 
         case.writer.release();
-        flusher
-            .join()
-            .unwrap_or_else(|_| panic!("the flush thread must not panic"));
-        closer
-            .join()
-            .unwrap_or_else(|_| panic!("the closer thread must not panic"));
+        flusher.join().expect("the flush thread must not panic");
+        closer.join().expect("the closer thread must not panic");
 
         assert_eq!(
             count(case.handler, "flush_acknowledged"),
@@ -268,12 +262,8 @@ impl Schedule {
         );
 
         case.writer.release();
-        blocked
-            .join()
-            .unwrap_or_else(|_| panic!("the blocked call must not panic"));
-        closer
-            .join()
-            .unwrap_or_else(|_| panic!("the closer must not panic"));
+        blocked.join().expect("the blocked call must not panic");
+        closer.join().expect("the closer must not panic");
 
         // The fill accepted one record per slot plus the one the worker took;
         // the blocked call is the only other acceptance.
@@ -311,7 +301,7 @@ pub(super) fn sends(handler: &Py<PyAny>) -> u64 {
         handler
             .call_method0(py, SENDS_IN_FLIGHT)
             .and_then(|value| value.extract::<u64>(py))
-            .unwrap_or_else(|err| panic!("the handler must expose the test-only send gauge: {err}"))
+            .expect("the handler must expose the test-only send gauge")
     })
 }
 
@@ -324,7 +314,7 @@ fn spawn_call(
     let owned_handler = Python::attach(|py| handler.clone_ref(py));
     std::thread::spawn(move || {
         Python::attach(|py| {
-            call(py, &owned_handler).unwrap_or_else(|err| panic!("{expectation}: {err}"));
+            call(py, &owned_handler).expect(expectation);
         });
     })
 }
@@ -363,9 +353,7 @@ fn spawn_handle(handler: &Py<PyAny>, message: &'static str) -> JoinHandle<()> {
 /// Join every closer, failing if one panicked.
 fn join_closers(closers: Vec<JoinHandle<()>>) {
     for closer in closers {
-        closer
-            .join()
-            .unwrap_or_else(|_| panic!("a closer thread must not panic"));
+        closer.join().expect("a closer thread must not panic");
     }
 }
 
