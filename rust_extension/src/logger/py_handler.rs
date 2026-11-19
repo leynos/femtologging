@@ -226,7 +226,11 @@ impl FemtoHandlerTrait for PyHandler {
     ///
     /// The barrier's deadline bounds the wait for the handler to answer, not
     /// the duration of the handler's own `flush` call, which runs to
-    /// completion on the shard worker.
+    /// completion on the shard worker. Attaching the interpreter can itself
+    /// consume the last of the budget, so a custom `flush` starts only while
+    /// time remains: once the caller has been told the flush was not confirmed,
+    /// starting the callback would keep the worker busy for a verdict already
+    /// delivered.
     fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
         // The barrier path keeps the diagnostics the legacy `flush` path has:
         // one span around the wait, and an interpreter that cannot be attached
@@ -235,6 +239,11 @@ impl FemtoHandlerTrait for PyHandler {
         self.flush_with_interpreter(|| {
             Python::try_attach(|py| match self.native_handler {
                 Some(native_handler) => native_handler.flush_until(py, self.obj.bind(py), context),
+                // A built-in handler checks the deadline inside its own
+                // `flush_until`; a custom callable has no such check, so the
+                // decision belongs here, after the attach that may have used
+                // up the budget.
+                None if context.is_expired() => false,
                 None => self.call_python_flush(py),
             })
         })

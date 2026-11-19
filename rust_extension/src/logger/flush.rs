@@ -164,9 +164,11 @@ impl FemtoLogger {
     /// handler's own flush, so the whole call is bounded once rather than once
     /// per stage. Built-in handlers keep their shorter per-handler timeouts.
     ///
-    /// Every handler in the snapshot is still offered whatever budget remains
-    /// after an earlier one reports failure, so one broken handler does not
-    /// leave records buffered in the handlers after it.
+    /// A handler that reports failure does not stop the ones after it: the
+    /// sequence continues while budget remains, so one broken handler does not
+    /// leave records buffered in the handlers after it. A failure that uses up
+    /// the last of the budget ends the sequence, and the remaining handlers
+    /// keep whatever they had buffered.
     ///
     /// When Python handlers can be attached, callers that currently hold
     /// Python access must detach before calling this method. Otherwise the

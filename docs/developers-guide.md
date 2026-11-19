@@ -1188,9 +1188,11 @@ and no in-flight records returns without queueing anything. One absolute
 two-second deadline spans dispatch resolution, the marker's admission, the
 handler snapshot, the worker's acknowledgement, and each handler's flush, so
 the call is bounded once rather than once per stage. Built-in handlers keep
-their shorter per-handler timeouts, and every handler in the snapshot is
-offered whatever budget remains after an earlier one reports failure, so one
-broken handler does not leave records buffered in the handlers after it. The
+their shorter per-handler timeouts, and a handler that fails does not stop the
+ones after it: the sequence continues while budget remains, so one broken
+handler does not leave records buffered in the handlers after it. A failure
+that consumes the last of the budget ends the sequence, and the remaining
+handlers keep whatever they had buffered. The
 [flush barrier](#logger-handler-flush-barrier) section describes the handshake
 in more detail.
 

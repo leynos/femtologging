@@ -1,7 +1,7 @@
 //! Tests for native handler recognition and flushing in the Python wrapper.
 
 use super::{NativeHandlerKind, PyHandler};
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, FlushContext};
 use crate::{
     FemtoFileHandler, FemtoHTTPHandler, FemtoSocketHandler, HTTPHandlerConfig, SocketHandlerConfig,
 };
@@ -9,6 +9,7 @@ use pyo3::types::{PyAny, PyAnyMethods, PyModule};
 use pyo3::{Py, Python};
 use rstest::rstest;
 use std::ffi::CString;
+use std::time::Instant;
 
 /// Python handler classes covering each shape of `flush` the wrapper meets.
 ///
@@ -162,6 +163,30 @@ fn py_handler_reports_failure_when_the_interpreter_cannot_be_attached() {
         assert!(
             !wrapper.report_flush(|| None),
             "an unattachable interpreter must report a failed flush"
+        );
+    });
+}
+
+/// A custom `flush` does not start once the barrier deadline has passed.
+///
+/// Attaching the interpreter can use up the last of the budget, and by then the
+/// caller may already have been told the flush was not confirmed. Starting the
+/// callback anyway would keep the shard worker busy for a verdict already
+/// delivered, so the wrapper reports failure without calling the handler.
+#[test]
+fn py_handler_does_not_start_a_custom_flush_after_the_deadline() {
+    Python::attach(|py| {
+        let (wrapper, handler) = user_defined_handler(py, "Succeeding");
+        let deadline = Instant::now();
+        let expired = FlushContext::new(deadline, deadline);
+        assert!(
+            !wrapper.flush_until(&expired),
+            "an expired deadline must report a failed flush"
+        );
+        assert_eq!(
+            flush_calls(&handler, py),
+            0,
+            "a custom flush must not start after the deadline"
         );
     });
 }

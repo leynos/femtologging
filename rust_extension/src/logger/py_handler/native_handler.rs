@@ -49,13 +49,7 @@ where
             let flushed =
                 crate::py_detach::detach_for_wait(py, || FemtoHandlerTrait::flush(handler_ref));
             if !flushed {
-                // `flush_handlers()` reports these failures, so an operator
-                // needs a bounded record of the handler failing to flush
-                // rather than only a `False` return.
-                warn!(
-                    "PyHandler: flush failed: handler_kind={}, category=flush_failed",
-                    kind.label()
-                );
+                warn_flush_failed(kind);
             }
             flushed
         }
@@ -64,6 +58,19 @@ where
             false
         }
     }
+}
+
+/// Record a built-in handler that did not confirm its flush.
+///
+/// `flush_handlers()` reports these failures, so an operator needs a bounded
+/// record of the handler failing to flush, naming which built-in did, rather
+/// than only a `False` return. Both flush paths use this so the warning is the
+/// same whichever entry point reached the handler.
+fn warn_flush_failed(kind: NativeHandlerKind) {
+    warn!(
+        "PyHandler: flush failed: handler_kind={}, category=flush_failed",
+        kind.label()
+    );
 }
 
 /// Built-in handlers that can retain the original Rust record across Python registration.
@@ -203,6 +210,9 @@ impl NativeHandlerKind {
     /// wrapped handler still buffers records, so the handler's own
     /// deadline-aware flush runs here. Failing to extract the wrapped handler
     /// returns `false`: the barrier cannot confirm a flush it did not perform.
+    /// A handler that declines the flush is recorded with the same handler-kind
+    /// warning the legacy `flush` path emits, so the barrier's `False` still
+    /// points at one built-in handler.
     pub(super) fn flush_until(
         self,
         py: Python<'_>,
@@ -220,7 +230,11 @@ impl NativeHandlerKind {
             Self::Http => flush_detached::<FemtoHTTPHandler>(py, obj, context),
         };
         match confirmed {
-            Ok(confirmed) => confirmed,
+            Ok(true) => true,
+            Ok(false) => {
+                warn_flush_failed(self);
+                false
+            }
             Err(err) => {
                 let _ = map_py_err(py, err, "extract native handler for flush");
                 false
