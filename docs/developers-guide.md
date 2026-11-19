@@ -2259,7 +2259,7 @@ without `with-ratchet` and so took its `'false'` default, and it stops the lane
 publishing its report. The default branch owns both persistent outputs, in
 `coverage-main.yml`, which a push to `main` alone triggers.
 
-That publisher has three jobs. `coverage-measure` runs on a hosted runner once
+That publisher has four jobs. `coverage-measure` runs on a hosted runner once
 per required Python lane (`3.12`, `3.13` and `3.14`, the non-experimental lanes
 of `ci.yml`), installs `makeutil` because the measured suite parses the
 Makefile through it, and hands each lane's figures to its publisher through a
@@ -2269,13 +2269,36 @@ the one the pull-request lanes read: a ratchet there could never fail and a
 baseline saved there would never be restored. The baseline cache key carries
 the interpreter's major.minor, so every required lane needs its own published
 entry: a lane whose entry was never written restores nothing, compares against
-zero and can never fail. `coverage-baseline` then ratchets each lane's
-handed-over figures on an Ubicloud runner and saves the advanced baseline.
+zero and can never fail.
+
+Two publishers then ratchet each lane's handed-over figures, because a cache
+entry written on one runner provider is not read by the other.
+`coverage-baseline` runs on an Ubicloud runner, where the same-repository
+pull-request lanes run. `coverage-baseline-hosted` runs on `ubuntu-latest` and
+writes GitHub's cache store, which is what a fork or Dependabot pull request
+restores from: `ci.yml` places those lanes on the hosted pool, so without the
+second publisher that lane would restore nothing, start its baseline at zero
+and never fail. Each publisher ratchets the same figure and writes only its own
+provider's store.
+
+A failed lane must not withdraw a successful sibling's publication. Measurement
+uses `fail-fast: false`, so every other lane still finishes, and each publisher
+is conditioned on `!cancelled()` rather than on its dependency succeeding,
+which is the one form that still runs after a failed `needs`. Each lane then
+publishes only when the matrix as a whole succeeded or its own hand-over is
+present: under a partial failure a `continue-on-error` probe decides, and an
+absent hand-over means that lane measured nothing and publishes nothing. When
+every lane succeeded the probe does not run, so a lost hand-over reaches the
+action's own download unguarded and fails the publisher: that is a lost
+publication, not an empty lane.
 
 `coverage-upload` is a job of its own, downstream of the measurement alone, so
 a CodeScene outage cannot stop the baseline advancing; it still fails, and
 fails the workflow with it, when CodeScene refuses the report. It receives the
-newest required lane's report as an artefact, because it holds no checkout.
+newest required lane's report as an artefact, because only that lane produces
+one, and checks out the measured revision because the uploader takes its branch
+and commit from the clone it runs in rather than from the report alone. A
+failure in another lane therefore still uploads the trunk's report.
 
 The upload is optional and guarded twice. A token-presence step writes
 `available` and binds no secret; the upload step runs only when that output is
@@ -2289,8 +2312,8 @@ token cannot hide a coverage regression.
 The `codescene` environment admits `main` alone, and no pull-request-reachable
 job may declare it. The publisher's concurrency group is keyed on the ref and
 never cancels, so a newer push cannot abandon an in-flight upload or baseline
-write. `tests/test_coverage_publisher_contract.py` holds the whole split: one
-publisher, one environment holder, the single recorded call into another
+write. `tests/test_coverage_publisher_contract.py` holds the whole split: both
+publishers, one environment holder, the single recorded call into another
 repository, the canonical guard and seven ways to weaken it, no token in any
 `env`, and identical measurement inputs on both lanes.
 `tests/test_coverage_reach_contract.py` holds the fail-closed trigger and
@@ -2300,10 +2323,12 @@ other way round.
 
 Both lanes must measure the same population, so every input that defines it
 (`output-path`, `format`, `cargo-manifest`, `with-default-features`, `features`,
-`pytest-workers`) is identical. The baseline is published from an Ubicloud
-runner because the pull-request lanes run there and a cache written on one
-runner provider is not read by the other; a push has no pull request, so the
-placement expression selects Ubicloud.
+`pytest-workers`) is identical. The pull-request lanes run on Ubicloud and
+restore from that provider's cache store, so `coverage-baseline` runs there
+too; a push has no pull request, so both arms of the placement expression are
+empty and it selects Ubicloud. The expression is kept because the placement
+contract reads exactly that shape as the estate's fallback rule, and
+`coverage-baseline-hosted` states `ubuntu-latest` literally.
 
 Known exception: a Dependabot pull request merged by `dependabot-automerge` with
 `GITHUB_TOKEN` fires no push event, so that merge publishes nothing until the

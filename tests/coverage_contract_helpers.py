@@ -20,6 +20,20 @@ from tests.workflow_document_helpers import repository_workflows, require
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+#: A parsed workflow document, or the part of one a trigger reader inspects.
+#: PyYAML resolves a bare ``on`` key to the boolean ``True`` under YAML 1.1, so
+#: a document may be keyed by strings, by that boolean, or by both when it is
+#: malformed. The value type stays ``object`` because the readers narrow each
+#: shape they accept. Each arm is a separate mapping because a mapping's key
+#: type is invariant: a caller's plain ``dict[str, object]`` matches the first
+#: arm without a cast, and the fixture that carries the boolean key matches the
+#: second.
+type WorkflowDocument = (
+    cabc.Mapping[str, object]
+    | cabc.Mapping[bool, object]
+    | cabc.Mapping[str | bool, object]
+)
+
 # These name the step and its command: never a secret value.
 GENERATE_MARKER: typ.Final[str] = "generate-coverage"
 BASELINE_MARKER: typ.Final[str] = "publish-coverage-baseline"
@@ -35,6 +49,17 @@ UPLOAD_CONDITION: typ.Final[str] = (
     "${{ steps.codescene-token.outputs.available == 'true' "
     "&& github.ref == 'refs/heads/main' }}"
 )
+#: A publisher runs after a failed sibling lane, but never after cancellation.
+PARTIAL_FAILURE_CONDITION: typ.Final[str] = "${{ !cancelled() }}"
+#: A lane publishes only when every lane succeeded or its own hand-over exists.
+LANE_HANDOVER_CONDITION: typ.Final[str] = (
+    "${{ needs.coverage-measure.result == 'success' "
+    "|| steps.handover.outcome == 'success' }}"
+)
+#: The probe that decides whether this lane handed a figure over.
+LANE_PROBE_CONDITION: typ.Final[str] = (
+    "${{ needs.coverage-measure.result != 'success' }}"
+)
 #: Inputs that define what a coverage run measures; both lanes must agree on
 #: every one, or the baseline describes another population than the ratchet's.
 PARITY_INPUTS: typ.Final[tuple[str, ...]] = (
@@ -47,15 +72,26 @@ PARITY_INPUTS: typ.Final[tuple[str, ...]] = (
 )
 #: Events that let pull-request content influence a run. `pull_request_target`
 #: runs from the base branch but is triggered by a pull request, so it carries
-#: the same risk to the protected environment.
+#: the same risk to the protected environment. A review or a comment on a pull
+#: request reaches the same content, so those routes count too. `issue_comment`
+#: also fires for plain issues, so it over-approximates reachability; a false
+#: alarm costs one isolation check, while missing a route would hide a job that
+#: can read the protected environment.
 PULL_REQUEST_EVENTS: typ.Final[frozenset[str]] = frozenset({
     "pull_request",
     "pull_request_target",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "issue_comment",
 })
 SELF_REPOSITORY: typ.Final[str] = "leynos/femtologging"
+#: The two workflow files the coverage split names: the pull-request lane and
+#: the default-branch publisher it must not reach.
+CI_WORKFLOW: typ.Final[str] = "ci.yml"
+PUBLISHER_WORKFLOW: typ.Final[str] = "coverage-main.yml"
 
 
-def triggers(document: dict[str, typ.Any]) -> dict[str, typ.Any]:
+def triggers(document: WorkflowDocument) -> dict[str, object]:
     """Return a workflow's trigger mapping, keyed by event name.
 
     PyYAML resolves a bare ``on`` key to the boolean ``True`` under YAML 1.1,
@@ -66,11 +102,12 @@ def triggers(document: dict[str, typ.Any]) -> dict[str, typ.Any]:
     Parameters
     ----------
     document
-        A parsed workflow document.
+        A parsed workflow document. Its keys may be strings or PyYAML's
+        boolean ``on``, which is why the parameter admits both.
 
     Returns
     -------
-    dict[str, typing.Any]
+    dict[str, object]
         One entry per trigger event. A scalar trigger maps to ``None``, a
         sequence to ``None`` per name, and a mapping keeps its settings.
 
@@ -80,55 +117,31 @@ def triggers(document: dict[str, typ.Any]) -> dict[str, typ.Any]:
         If both spellings appear, no trigger is declared, or the trigger is
         not a name, a sequence of names or a mapping.
     """
-    documented = "on" in document
-    resolved = True in document
+    # One spelling of each key must be readable together, and a mapping's key
+    # type is invariant, so the union is narrowed to the arm that admits both
+    # spellings before either is looked up.
+    declared_document = typ.cast("cabc.Mapping[str | bool, object]", document)
+    documented = "on" in declared_document
+    resolved = True in declared_document
     require(not (documented and resolved), "refuse both `on` spellings together")
-    raw = document["on"] if documented else document.get(True)
+    raw = declared_document["on"] if documented else declared_document.get(True)
     require(raw is not None, "the workflow must declare triggers")
     match raw:
         case str():
             return {raw: None}
         case list():
+            names = typ.cast("list[object]", raw)
             require(
-                all(isinstance(name, str) for name in raw),
+                all(isinstance(name, str) for name in names),
                 "trigger names must all be strings",
             )
-            return dict.fromkeys(str(name) for name in raw)
+            return dict.fromkeys(str(name) for name in names)
         case dict():
-            declared = typ.cast("dict[object, typ.Any]", raw)
+            declared = typ.cast("dict[object, object]", raw)
             return {str(name): settings for name, settings in declared.items()}
         case _:
             message = "triggers must be a name, a sequence or a mapping"
             raise AssertionError(message)
-
-
-def pushes_to(events: cabc.Mapping[str, typ.Any], branch: str) -> bool:
-    """Report whether `events` runs on a push to `branch`.
-
-    Parameters
-    ----------
-    events
-        A trigger mapping, such as ``triggers(document)``.
-    branch
-        The branch name a push must name, such as ``main``.
-
-    Returns
-    -------
-    bool
-        Whether a push trigger accepts `branch`. A push trigger without a
-        branch filter accepts every branch.
-    """
-    if "push" not in events:
-        return False
-    settings = events["push"]
-    if settings is None:
-        return True
-    require(isinstance(settings, dict), "a push trigger must be a mapping")
-    branches = settings.get("branches")
-    if branches is None:
-        return True
-    require(isinstance(branches, list), "push branches must be a sequence")
-    return branch in [str(name) for name in branches]
 
 
 def jobs_named(
