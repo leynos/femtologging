@@ -131,6 +131,28 @@ def variable_tokens(name: str) -> tuple[str, ...]:
     return tuple(token for token in shlex.split(value) if token.strip())
 
 
+def environment_overridable_variables() -> tuple[str, ...]:
+    """Return the Makefile variables an inherited environment value replaces.
+
+    A `?=` assignment applies only when the variable is unset, and the
+    environment counts as set, so an exported value wins over the Makefile's
+    default. Every other assignment operator defines the value outright. A
+    contract test that runs a target through `make` therefore has to clear
+    exactly these names to see the defaults it reads from the Makefile.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The names of variables assigned with `?=`, in Makefile order.
+    """
+    variables = objects(makefile_report().get("variables"), subject="variables")
+    return tuple(
+        typ.cast("str", variable["name"])
+        for variable in variables
+        if variable.get("operator") == "?="
+    )
+
+
 def sole_recipe_rule(target: str, *, require_recipes: bool = True) -> dict[str, object]:
     """Return the only parsed rule for `target`, optionally requiring recipes."""
     rules = objects(makefile_report().get("rules"), subject="rules")

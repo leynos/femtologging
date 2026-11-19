@@ -1859,6 +1859,67 @@ contract. See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
 for the decision and its rationale.
 
+### The policy contract test
+
+`tests/test_env_access_policy_contract.py` judges the target's wiring from
+outside: it runs the real `make lint-env-policy` target, so Make, `uv` and the
+lane driver all execute. It then checks that a failing lane fails the target,
+that the driver names that lane, that every lane's diagnostic reaches the
+caller on standard error, and that Cargo receives the exact argument vector the
+Makefile's defaults imply, lane by lane and in order. Cargo itself is the one
+part replaced: `tests/fake_cargo.py` writes a recording fake `cargo`, which
+`run_policy_target` in `tests/env_policy_lane_support.py` puts first on the
+child's `PATH`; its `cargo_runner.py` companion does the recording and rejects
+only the lane a test names.
+
+The fake compiles nothing, so the contract never takes Cargo's package-cache
+lock and cannot wait on another job's resolve
+([#537](https://github.com/leynos/femtologging/issues/537)). Each run
+therefore has 120 seconds (`MAKE_TIMEOUT_SECONDS`) for provisioning through
+`uv` and the real Make run, and each test carries the
+`CONTRACT_TIMEOUT_SECONDS` marker above that budget. Real compilation and
+policy enforcement stay with `rust_extension/tests/` and `make lint`.
+
+The child inherits this process's environment so that `uv` and Make work, but
+the helper removes every Make variable the Makefile assigns with `?=` before
+running the target: such a variable takes the environment's value over the
+Makefile's default, so an exported `ENV_POLICY_FEATURE_LANES` would change
+which lanes run and an exported `ENV_POLICY_LINT_ARGS` would change what Clippy
+is asked to do. `CARGO` is in that list because it is assigned with `?=` as
+well, but the target never expands it into a recipe, so the fake is selected by
+`PATH` either way. The list is read from the Makefile rather than written out,
+so a new `?=` variable is covered when it is added. It also removes Make's own
+controls, `MAKEFLAGS`, `GNUMAKEFLAGS` and `MAKEFILES`: `MAKEFLAGS=-i` would
+make the target ignore a rejected lane's exit status, and either variable can
+carry assignments the Makefile parse cannot see. The helper removes
+`FAKE_CARGO_REJECT` before setting its own value too, since an inherited
+rejection would fail a lane the test expects to accept, and the failure would
+read as a wiring defect. The general rule is the one above — where an inherited
+variable could change the outcome, the child's environment is built explicitly.
+`run_policy_target` takes the parent environment as an argument for the same
+reason, so those contracts inject one instead of editing this process's
+environment, and it runs the target in its own process group so a timed-out or
+interrupted run cannot leave `uv` and the driver behind.
+
+These invariants are checked with named examples and one parameterized table
+rather than generated ones, deliberately. Each example runs the real target, so
+a property test would multiply whole `uv` and driver runs to sample an input
+space that is not open-ended: the inherited names are exactly the variables the
+Makefile assigns with `?=` plus Make's three control variables, and
+`environment_overridable_variables()` already enumerates that list in full. A
+generated value adds nothing a case over that list does not already assert, and
+a generated subset of lanes would re-test the driver's loop rather than the
+contract, which pins the loop at its stop-at-first-failure boundary. The
+relative and empty `PATH` entries are covered by a parameterized table for the
+same reason: the interesting cases are two, and both are named.
+
+See
+[adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
+for the decision, and the
+[2026-09-08 debugging plan revision](./debugging/debugging-plan-2026-09-08-env-policy-timeout.md)
+for the measurements that led to the fake and the alternatives that were
+rejected.
+
 ### The source scan
 
 Clippy cannot see an attribute that switches its own lint off, so
