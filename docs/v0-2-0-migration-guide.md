@@ -17,22 +17,23 @@ ______________________________________________________________________
 
 ## Impact at a glance
 
-| Priority           | Area                            | What to do                                                                                                                               |
-| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).          |
-| Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                       |
-| Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                              |
-| Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                 |
-| Review if enabled  | Async `log_context` use         | Replace reliance on thread-local leakage between tasks with `contextvars`-aware code.                                                    |
-| Review if enabled  | Shared dispatch                 | Review handlers that keep per-logger state in `threading.local`; use `contextvars` or keep the state with the handler.                   |
-| Review if enabled  | `StdlibHandlerAdapter`          | Review handler levels and `contextvars`-dependent filters now that dispatch honours both.                                                |
-| Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                                     |
-| Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                 |
-| Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger. |
-| Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                   |
-| Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                           |
-| Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                              |
-| Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                 |
+| Priority           | Area                            | What to do                                                                                                                                                                                       |
+| ------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).                                                                  |
+| Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                                                                               |
+| Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                                                                                      |
+| Required if called | Reserved structured-field names | Rename any `extra=`, `log_context(...)`, `push_log_context`, or `RecordMetadata::key_values` name that uses a built-in record name; those names now raise, or the record is dropped and counted. |
+| Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                                                                         |
+| Review if enabled  | Async `log_context` use         | Replace reliance on thread-local leakage between tasks with `contextvars`-aware code.                                                                                                            |
+| Review if enabled  | Shared dispatch                 | Review handlers that keep per-logger state in `threading.local`; use `contextvars` or keep the state with the handler.                                                                           |
+| Review if enabled  | `StdlibHandlerAdapter`          | Review handler levels and `contextvars`-dependent filters now that dispatch honours both.                                                                                                        |
+| Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                                                                                             |
+| Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                                                                         |
+| Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger.                                                         |
+| Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                                                                           |
+| Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                                                                                   |
+| Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                                                                                      |
+| Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                                                                         |
 
 _Table 1: Obligations when moving to v0.2.0._
 
@@ -100,6 +101,43 @@ exception instead of being silently discarded.
 When a field is present both in `extra` and in an active `log_context`, the
 inline value takes precedence. `exception()` is unchanged and does not accept
 `extra`.
+
+Field names that belong to the record itself are reserved. `name`, `msg`,
+`args`, `levelname`, `levelno`, `pathname`, `filename`, `module`, `exc_info`,
+`exc_text`, `stack_info`, `lineno`, `funcName`, `created`, `msecs`,
+`relativeCreated`, `thread`, `threadName`, `process`, `processName`, `message`,
+`asctime`, `taskName`, `logger`, `level`, `metadata`, `module_path`,
+`line_number`, `timestamp`, `thread_id`, `thread_name`, and `key_values` all
+raise `ValueError` when used as an `extra` key or a `log_context(...)` key.
+Matching is exact and case-sensitive, so `Name` and `logger_name` remain
+legitimate custom fields. Rust callers see the same contract:
+`push_log_context` returns `LogContextError::ReservedKey`, and
+`log_with_metadata` drops a record whose context contains a reserved name and
+counts it through `get_context_dropped()`. An enabled logger counts that drop
+even when the record is below its severity threshold, because context admission
+runs before the level gate. A logger that configuration disabled never reaches
+admission: it returns first and increments the disabled-logger counter instead.
+
+Renaming the field fixes admission, but an HTTP handler that selected the old
+name must be updated with it, because `with_record_fields` matches top-level
+wire names.
+
+Before:
+
+```python
+logger.info("order accepted", extra={"message": "accepted"})
+handler = HTTPHandlerBuilder().with_record_fields(["name", "message"]).build()
+```
+
+After:
+
+```python
+logger.info("order accepted", extra={"message_id": "accepted"})
+handler = HTTPHandlerBuilder().with_record_fields(["name", "message_id"]).build()
+```
+
+Selections of authoritative fields such as `msg` need no change: they name the
+built-in field rather than a custom one.
 
 ______________________________________________________________________
 
@@ -649,6 +687,11 @@ Each item carries the same obligation label as the matching row in
       attributes.
 - [ ] **Required if called:** Check dynamically built logger names against the
       shape and registry limits.
+- [ ] **Required if called:** Rename structured fields that use a built-in
+      record name, whether they arrive through `extra=`, `log_context(...)`,
+      Rust `push_log_context`, or `RecordMetadata::key_values` passed to
+      `log_with_metadata`, and update any `with_record_fields` selection that
+      named the old key.
 - [ ] **Review if enabled:** Move handler state that relied on a per-logger
       thread to `contextvars` or into the handler itself.
 - [ ] **Review if enabled:** Review `StdlibHandlerAdapter` levels, filters, and

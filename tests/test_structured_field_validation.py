@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import collections.abc as cabc
+import re
 import typing as typ
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -152,3 +154,150 @@ def test_log_context_rejects_an_unsupported_scalar() -> None:
         log_context(value=Decimal("1.5")),
     ):
         pytest.fail("unsupported scoped scalar unexpectedly entered context")
+
+
+# Mirrors RESERVED_STD_RECORD_KEYS and RESERVED_FEMTO_KEYS in
+# `rust_extension/src/log_context/reserved.rs`. The parameterised tests below
+# exercise every name listed here, so removing a name from this list also
+# removes its coverage. The Rust sets are pinned separately by
+# `test_reserved_extra_keys_match_the_rust_contract`, which fails when either
+# side of the contract drifts.
+RESERVED_EXTRA_KEYS = [
+    # Logger identity.
+    "name",
+    "logger",
+    # Severity.
+    "levelname",
+    "level",
+    "levelno",
+    # Message.
+    "msg",
+    "message",
+    "args",
+    # Timing and threading.
+    "created",
+    "msecs",
+    "relativeCreated",
+    "thread",
+    "threadName",
+    "thread_id",
+    "thread_name",
+    "timestamp",
+    "process",
+    "processName",
+    # Source information.
+    "filename",
+    "pathname",
+    "lineno",
+    "module",
+    "module_path",
+    "line_number",
+    "funcName",
+    # Optional built-in payloads and femtologging metadata.
+    "exc_info",
+    "exc_text",
+    "stack_info",
+    "asctime",
+    "taskName",
+    "metadata",
+    "key_values",
+]
+
+NEAR_MISS_KEYS = ["Name", "logger_name", "msg_id", "request_id", "Level", "MESSAGE"]
+
+RESERVED_CONTRACT_SOURCE = (
+    Path(__file__).resolve().parents[1]
+    / "rust_extension"
+    / "src"
+    / "log_context"
+    / "reserved.rs"
+)
+
+
+def test_reserved_extra_keys_match_the_rust_contract() -> None:
+    """The Python list names exactly the keys the Rust contract reserves."""
+    source = RESERVED_CONTRACT_SOURCE.read_text(encoding="utf-8")
+    rust_names = set(
+        re.findall(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)",\s*$', source, re.MULTILINE)
+    )
+    assert rust_names == set(RESERVED_EXTRA_KEYS), (
+        "the Python and Rust reserved-name lists have drifted apart"
+    )
+
+
+EMIT_METHODS = ("debug", "info", "warning", "error", "critical", "log")
+
+
+def _emit_with_extra(
+    logger: FemtoLogger, method: str, extra: dict[str, StructuredScalar]
+) -> None:
+    """Invoke one logging route with a reserved structured field."""
+    if method == "log":
+        logger.log("DEBUG", "reserved field", extra=extra)
+    else:
+        getattr(logger, method)("reserved field", extra=extra)
+
+
+@pytest.mark.parametrize("key", RESERVED_EXTRA_KEYS)
+@pytest.mark.parametrize("method", EMIT_METHODS)
+@pytest.mark.parametrize("logger_level", ["ERROR", "CRITICAL"])
+def test_reserved_extra_keys_raise_value_error_before_level_filtering(
+    *, key: str, method: str, logger_level: str
+) -> None:
+    """Every logging route rejects reserved names even when its level is disabled."""
+    logger = FemtoLogger(f"ctx.reserved.{method}.{logger_level}.{key}")
+    logger.set_level(logger_level)
+
+    with pytest.raises(ValueError, match="reserved"):
+        _emit_with_extra(logger, method, {key: "value"})
+
+
+@pytest.mark.parametrize("key", RESERVED_EXTRA_KEYS)
+def test_log_context_rejects_reserved_keys(*, key: str) -> None:
+    """Scoped context refuses a reserved name at entry, before any record exists."""
+    with pytest.raises(ValueError, match="reserved"), log_context(**{key: "value"}):
+        pass
+
+
+def test_rejected_nested_log_context_leaves_outer_context_active() -> None:
+    """A rejected nested context must not disturb the active outer frame."""
+    logger = FemtoLogger("ctx.nested.rejected")
+    logger.set_level("INFO")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    with log_context(request_id="outer"):
+        with pytest.raises(ValueError, match="reserved"), log_context(name="inner"):
+            pass
+        assert logger.info("after rejected nested context") is not None, (
+            "the outer context should still admit records after the rejection"
+        )
+
+    assert emitted_key_values(logger, collector) == {"request_id": "outer"}, (
+        "the rejected inner frame must not replace or drop the outer context"
+    )
+
+
+@pytest.mark.parametrize("route", ["extra", "log_context"])
+@pytest.mark.parametrize("key", NEAR_MISS_KEYS)
+def test_near_miss_names_are_accepted_and_preserved_as_strings(
+    *, route: str, key: str
+) -> None:
+    """Case-sensitive near misses remain legitimate custom structured fields."""
+    logger = FemtoLogger(f"ctx.near.{route}.{key}")
+    logger.set_level("INFO")
+    collector = RecordCollector()
+    logger.add_handler(collector)
+
+    if route == "extra":
+        output = logger.info("near miss", extra={key: 7})
+    else:
+        with log_context(**{key: 7}):
+            output = logger.info("near miss")
+
+    assert output is not None, "INFO-level near-miss record should be emitted"
+    key_values = emitted_key_values(logger, collector)
+    assert key_values == {key: "7"}, "near-miss field should survive as a string"
+    assert all(isinstance(value, str) for value in key_values.values()), (
+        "structured values should be stored as strings"
+    )

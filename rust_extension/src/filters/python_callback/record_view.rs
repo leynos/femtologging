@@ -195,10 +195,25 @@ fn try_validate_and_insert_enrichment(
 ) -> PyResult<bool> {
     let previous = context.before.get(&key);
     let has_changed = match previous {
+        // A reserved attribute whose comparison raises is treated as changed so
+        // the callback is warned about and the change is discarded, rather than
+        // rejecting the record through the comparison error.
+        Some(previous) if is_reserved_enrichment_key(&key) => {
+            !python_values_equal(context.py, previous, value).unwrap_or(false)
+        }
         Some(previous) => !python_values_equal(context.py, previous, value)?,
         None => true,
     };
     if !has_changed {
+        return Ok(false);
+    }
+    // Validate the key before the value so a changed reserved attribute is
+    // reported as reserved even when its new value cannot be serialized.
+    if let Err(err) = validate_enrichment_key(&key) {
+        warn!(
+            "Python filter callback '{}' ignored enrichment: {err}",
+            context.description
+        );
         return Ok(false);
     }
     let candidate = match extract_supported_value(&key, value) {
@@ -211,13 +226,6 @@ fn try_validate_and_insert_enrichment(
             return Ok(false);
         }
     };
-    if let Err(err) = validate_enrichment_key(&key) {
-        warn!(
-            "Python filter callback '{}' ignored enrichment: {err}",
-            context.description
-        );
-        return Ok(false);
-    }
     if let Err(err) = validate_enrichment_value(&key, &candidate) {
         warn!(
             "Python filter callback '{}' ignored enrichment: {err}",
@@ -262,9 +270,8 @@ pub(super) fn extract_enrichment(
         };
         for (key, value) in after.iter() {
             let key = key.extract::<String>()?;
-            if is_reserved_enrichment_key(&key) {
-                continue;
-            }
+            // Unchanged attributes, including the built-in fields, are skipped
+            // before validation; a changed reserved attribute is warned about.
             let _ = try_validate_and_insert_enrichment(&mut context, key, &value)?;
         }
     }
