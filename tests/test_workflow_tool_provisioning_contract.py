@@ -261,6 +261,10 @@ def test_logical_lines_skips_here_document_bodies() -> None:
             "cat <<EOF\npayload \\\\\nEOF\ncargo test",
             ["cat <<EOF", "cargo test"],
         ),
+        (
+            "cat <<-EOF\npayload\nE\\\n\tOF\ncat <<END\nEOF\ncargo test\nEND",
+            ["cat <<-EOF", "cargo test", "END"],
+        ),
     ],
     ids=[
         "single-quoted-operator",
@@ -272,6 +276,7 @@ def test_logical_lines_skips_here_document_bodies() -> None:
         "continued-delimiter",
         "quoted-body-keeps-backslashes",
         "escaped-backslash-is-not-a-continuation",
+        "tab-before-continuation-keeps-tab",
     ],
 )
 def test_only_an_unquoted_operator_opens_a_here_document(
@@ -287,7 +292,9 @@ def test_only_an_unquoted_operator_opens_a_here_document(
     hyphen is part of it rather than the start of something else. An unquoted
     body is expanded first, so `E\` and `OF` on separate lines still end a
     `<<EOF` body; a quoted delimiter leaves its body literal, backslashes
-    included.
+    included. A `<<-` document joins continuations before it strips leading
+    tabs, so a tab that starts a continuation line survives into the middle
+    of the joined line and keeps the halves of a delimiter apart.
     """
     assert _logical_lines(run) == expected, run
 

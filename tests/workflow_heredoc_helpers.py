@@ -196,6 +196,12 @@ def _unquoted_body_line(
     `<<EOF`; comparing physical lines would miss that terminator and read the
     commands below as body.
 
+    The join comes first and the `<<-` tab strip second. A tab that starts a
+    continuation line therefore ends up inside the joined line, where it
+    keeps ``E`` and ``OF`` apart: the line is not the delimiter. Stripping
+    each physical line beforehand would join them into ``EOF`` and end the
+    document early.
+
     Parameters
     ----------
     lines
@@ -203,7 +209,8 @@ def _unquoted_body_line(
     start
         Index of the first physical line of this body line.
     strip_tabs
-        Whether `<<-` makes the shell strip leading tabs from each line.
+        Whether `<<-` makes the shell strip leading tabs from the joined
+        line.
 
     Returns
     -------
@@ -216,13 +223,12 @@ def _unquoted_body_line(
     while index < len(lines):
         piece = lines[index]
         index += 1
-        if strip_tabs:
-            piece = piece.lstrip("\t")
         continues = _ends_with_continuation(piece)
         pieces.append(piece[:-1] if continues else piece)
         if not continues:
             break
-    return "".join(pieces), index
+    joined = "".join(pieces)
+    return (joined.lstrip("\t") if strip_tabs else joined), index
 
 
 def _quoted_body_line(
