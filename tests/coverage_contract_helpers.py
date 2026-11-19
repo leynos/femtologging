@@ -207,6 +207,29 @@ def repository_documents() -> dict[str, dict[str, typ.Any]]:
     return dict(repository_workflows())
 
 
+def job_matrix(job: dict[str, typ.Any]) -> dict[str, typ.Any]:
+    """Return a job's ``strategy.matrix`` mapping, or fail closed.
+
+    ``require`` proves the shape at run time but is not a type guard, so the
+    casts make the proven shape visible to the type checker as well.
+
+    Parameters
+    ----------
+    job
+        A workflow job document.
+
+    Returns
+    -------
+    dict[str, typing.Any]
+        The job's declared matrix axes.
+    """
+    strategy = job.get("strategy")
+    require(isinstance(strategy, dict), "the job must declare a strategy matrix")
+    matrix = typ.cast("dict[str, typ.Any]", strategy).get("matrix")
+    require(isinstance(matrix, dict), "the job must declare a matrix mapping")
+    return typ.cast("dict[str, typ.Any]", matrix)
+
+
 def matrix_versions(job: dict[str, typ.Any], key: str) -> list[str]:
     """Return the values a job's build matrix lists for `key`.
 
@@ -222,17 +245,17 @@ def matrix_versions(job: dict[str, typ.Any], key: str) -> list[str]:
     list[str]
         The axis values in declared order.
     """
-    strategy = job.get("strategy")
-    require(isinstance(strategy, dict), "the job must declare a strategy matrix")
-    matrix = strategy.get("matrix")
-    require(isinstance(matrix, dict), "the job must declare a matrix mapping")
-    values = matrix.get(key)
+    values = job_matrix(job).get(key)
     require(isinstance(values, list), f"the matrix must list {key}")
+    # `require` proves the shape at run time, but it is not a type guard, so the
+    # cast states the proven shape for the checker and the second `require`
+    # still checks every entry.
+    entries = typ.cast("list[typ.Any]", values)
     require(
-        all(isinstance(value, str) for value in values),
+        all(isinstance(entry, str) for entry in entries),
         f"every {key} entry must be a string",
     )
-    return typ.cast("list[str]", values)
+    return typ.cast("list[str]", entries)
 
 
 def matrix_includes(job: dict[str, typ.Any]) -> list[dict[str, typ.Any]]:
@@ -248,17 +271,14 @@ def matrix_includes(job: dict[str, typ.Any]) -> list[dict[str, typ.Any]]:
     list[dict[str, typing.Any]]
         Each included combination as its own mapping, in declared order.
     """
-    strategy = job.get("strategy")
-    require(isinstance(strategy, dict), "the job must declare a strategy matrix")
-    matrix = strategy.get("matrix")
-    require(isinstance(matrix, dict), "the job must declare a matrix mapping")
-    includes = matrix.get("include")
+    includes = job_matrix(job).get("include")
     require(isinstance(includes, list), "the matrix must declare an include list")
+    entries = typ.cast("list[typ.Any]", includes)
     require(
-        all(isinstance(entry, dict) for entry in includes),
+        all(isinstance(entry, dict) for entry in entries),
         "every matrix include entry must be a mapping",
     )
-    return typ.cast("list[dict[str, typ.Any]]", includes)
+    return typ.cast("list[dict[str, typ.Any]]", entries)
 
 
 def coverage_inputs(step: dict[str, typ.Any]) -> dict[str, typ.Any]:
