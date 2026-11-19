@@ -57,6 +57,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0008-release-pipeline.md](./adrs/adr-0008-release-pipeline.md)
   - Records the attested release pipeline, production feature set and
     idempotent PyPI/GitHub Release reconciliation.
+- [adrs/adr-0009-main-branch-coverage-publication.md](./adrs/adr-0009-main-branch-coverage-publication.md)
+  - Records the split between pull-request measurement and main-branch
+    publication of the coverage baseline and CodeScene report.
 
 ## Logging Architecture
 
