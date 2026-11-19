@@ -112,3 +112,8 @@ required-features = ["log-compat"]
 name = "log_bridge_config_tests"
 path = "tests/log_bridge_config_tests.rs"
 required-features = ["log-compat"]
+
+[[test]]
+name = "http_transport_feedback_tests"
+path = "tests/http_transport_feedback_tests.rs"
+required-features = ["log-compat"]

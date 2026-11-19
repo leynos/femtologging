@@ -11,7 +11,7 @@ use super::{FemtoLogger, HandlerAttachment, TestFilter};
 use crate::filters::FemtoFilter;
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
-use crate::log_record::FemtoLogRecord;
+use crate::log_record::{FemtoLogRecord, RecordOrigin};
 
 proptest! {
     #[test]
@@ -19,9 +19,14 @@ proptest! {
         filter_chains in prop::collection::vec(
             prop::collection::vec((any::<bool>(), any::<u8>()), 0..5),
             1..6,
-        )
+        ),
+        origin in prop_oneof![
+            Just(RecordOrigin::Application),
+            Just(RecordOrigin::SelfDiagnostic),
+        ],
     ) {
-        let base_record = FemtoLogRecord::new("producer", FemtoLevel::Info, "property");
+        let base_record = FemtoLogRecord::new("producer", FemtoLevel::Info, "property")
+            .with_origin(origin);
         let mut expected_record = base_record.clone();
         let mut record = base_record.clone();
         let mut attachments = Vec::with_capacity(filter_chains.len());
@@ -77,6 +82,11 @@ proptest! {
             let records = collector.collected();
             prop_assert_eq!(records.len(), 1);
             prop_assert_eq!(&records[0].metadata().key_values, &expected_fields);
+            prop_assert_eq!(
+                records[0].origin(),
+                origin,
+                "the snapshot clone keeps the transport origin whatever the filter chain does"
+            );
         }
     }
 }

@@ -25,6 +25,17 @@ use super::HandlerAttachment;
 use super::{FemtoLogger, QueuedRecord};
 
 impl FemtoLogger {
+    /// Returns the logger's name.
+    ///
+    /// The bridge adapters build their own records so the core logger never has
+    /// to name a record's origin; building one needs the name the producer
+    /// would otherwise apply. Only those adapters ask, so a build with neither
+    /// bridge would otherwise carry this as dead code under `-D warnings`.
+    #[inline]
+    #[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
     /// Core logging logic shared between Python and Rust APIs.
     ///
     /// Checks level threshold and filters, formats the record, and dispatches
@@ -87,27 +98,40 @@ impl FemtoLogger {
         &self,
         level: FemtoLevel,
         message: &str,
-        mut metadata: RecordMetadata,
+        metadata: RecordMetadata,
     ) -> Option<String> {
+        self.log_prebuilt(FemtoLogRecord::with_metadata(
+            &self.name, level, message, metadata,
+        ))
+    }
+
+    /// Log a record the caller has already assembled.
+    ///
+    /// The bridge adapters build their records themselves, which keeps any
+    /// record-origin vocabulary out of this module: a record's origin is
+    /// attached before it arrives, and every stage from here on carries it
+    /// unchanged through filtering, the handler-filter snapshot and parent
+    /// propagation.
+    pub(crate) fn log_prebuilt(&self, mut record: FemtoLogRecord) -> Option<String> {
         if self.refuse_if_disabled() {
             return None;
         }
         // Context admission runs before the level gate so a reserved or
         // over-limit field is counted even when the record's level is disabled.
-        let merged_key_values = match log_context::merge_context_values(&metadata.key_values) {
-            Ok(merged_key_values) => merged_key_values,
-            Err(err) => {
-                self.context_dropped_records
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return None;
-            }
-        };
-        if !self.is_enabled_for(level) {
+        let merged_key_values =
+            match log_context::merge_context_values(&record.metadata().key_values) {
+                Ok(merged_key_values) => merged_key_values,
+                Err(err) => {
+                    self.context_dropped_records
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                    return None;
+                }
+            };
+        if !self.is_enabled_for(record.level()) {
             return None;
         }
-        metadata.key_values = merged_key_values;
-        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
+        record.metadata_mut().key_values = merged_key_values;
         self.log_record(record)
     }
 

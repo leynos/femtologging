@@ -13,10 +13,20 @@
 //! back, live in `queue.rs` and `response.rs`. What is left here is the part
 //! that owns the clock: how long an attempt may run, and how long the loop
 //! around it may go on.
+//!
+//! The whole thread runs inside `transport_origin::enter_http_transport()`.
+//! `ureq` reports its progress through the `log` and `tracing` facades, and
+//! those diagnostics are ordinary records to a process-wide bridge. The
+//! marker lets every HTTP handler recognise and drop a record produced by
+//! transport work, so a delivery cannot manufacture its own next delivery.
+//! Crate-target warnings remain excluded by the bridges' own-target checks;
+//! the marker covers the dependencies those targets do not name. A bridge
+//! suspends the scope before running user code, so a formatter, filter, or
+//! handler callback reached during dispatch emits an ordinary record instead
+//! of inheriting the marker.
 
 use std::{io, sync::Arc, time::Instant};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
 use ureq::{Agent, AgentBuilder};
@@ -30,10 +40,12 @@ use crate::{
 };
 
 use super::{
-    config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
+    request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
+    transport_origin::enter_http_transport,
 };
 
 /// Spawns a background worker thread to process HTTP commands.
@@ -58,7 +70,14 @@ pub fn spawn_worker(
     signal: Arc<ShutdownSignal>,
 ) -> (Sender<HTTPCommand>, std::thread::JoinHandle<()>) {
     let (tx, rx) = bounded(config.capacity);
-    let handle = std::thread::spawn(move || worker_loop(rx, config, signal));
+    let handle = std::thread::spawn(move || {
+        // Covers the worker, agent construction, requests, retries, the drain
+        // and destruction: every diagnostic this thread emits while delivering
+        // is a transport diagnostic. Detached workers keep the marker too,
+        // because the scope lives as long as the closure.
+        let _transport_scope = enter_http_transport();
+        worker_loop(rx, config, signal);
+    });
     (tx, handle)
 }
 
@@ -210,8 +229,8 @@ impl Worker {
             format!("{}?{}", self.config.url, payload)
         };
         let mut req = agent.get(&url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
+        req = apply_auth(&self.config, req);
+        req = apply_headers(&self.config, req);
         req.call().map_err(Box::new)
     }
 
@@ -222,8 +241,8 @@ impl Worker {
         agent: &Agent,
     ) -> Result<ureq::Response, Box<ureq::Error>> {
         let mut req = agent.post(&self.config.url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
+        req = apply_auth(&self.config, req);
+        req = apply_headers(&self.config, req);
 
         let content_type = match self.config.format {
             SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
@@ -231,27 +250,6 @@ impl Worker {
         };
         req = req.set("Content-Type", content_type);
         req.send_string(payload).map_err(Box::new)
-    }
-
-    /// Add authentication; bearer configuration sets an `Authorization` header.
-    fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
-        match &self.config.auth {
-            AuthConfig::None => req,
-            AuthConfig::Basic { username, password } => {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64_encode(credentials.as_bytes());
-                req.set("Authorization", &format!("Basic {}", encoded))
-            }
-            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {}", token)),
-        }
-    }
-
-    /// Apply every configured custom header to the request.
-    fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
-        for (key, value) in &self.config.headers {
-            req = req.set(key, value);
-        }
-        req
     }
 
     /// Logs a retryable failure, then says whether this record gets another
@@ -381,11 +379,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// Base64-encode a byte slice for Basic auth.
-fn base64_encode(input: &[u8]) -> String {
-    BASE64_STANDARD.encode(input)
 }
 
 #[cfg(test)]

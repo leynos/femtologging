@@ -334,6 +334,88 @@ wait durations and outcome counters that would support alerting remain the
 bounded telemetry specified by issue #551, which this handler does not yet
 export.
 
+### HTTP transport-origin suppression
+
+An HTTP handler delivers on a dedicated worker thread, and `ureq` reports its
+own progress through the `log` and `tracing` facades as DEBUG records under
+`ureq.unit`, `ureq.stream`, and `ureq.pool`. With either bridge installed those
+records are ordinary records that a target route can send back to the handler
+that produced them, so each successful delivery would manufacture the next one.
+`rust_extension/src/http_handler/transport_origin.rs` is the guard that stops
+the loop. It lives under the HTTP adapter, because the worker is its only
+producer.
+
+The module holds a thread-local `Cell<bool>` rather than process-wide state:
+two HTTP handlers on different threads must not hide each other's ordinary
+records, and a record emitted from an application thread stays deliverable
+while some other thread is inside a request. Callers reach the state only
+through three crate-private functions and one guard:
+
+- `enter_http_transport()` marks the rest of the thread's work.
+- `suspend_http_transport()` suspends marking for nested work.
+- `capture_record_origin()` turns the current state into a `RecordOrigin`.
+- `TransportScope` is the `#[must_use]` RAII guard both entries return. Its
+  drop restores whatever state was current before the scope began, which also
+  covers a panic unwinding through a suspended bridge call. Its
+  `PhantomData<Rc<()>>` keeps it out of `Send` and `Sync`, because the state it
+  restores belongs to one OS thread. `transport_origin_tests.rs` pins that with
+  a compile-time assertion and with a property over arbitrary enter, suspend
+  and drop sequences.
+
+`spawn_worker` enters the transport scope once and holds the guard for the
+whole worker lifetime, so agent construction, requests, retries, drain and
+destruction all run marked. The bridges use the opposite ordering: each
+captures the origin at entry, attaches it to the record, and then suspends the
+scope for the rest of the call. A filter, formatter, or handler callback that
+logs during dispatch therefore emits an application record instead of
+inheriting the transport origin.
+
+`RecordOrigin` (`rust_extension/src/log_record.rs`) is a crate-private
+`Application`/`SelfDiagnostic` field on `FemtoLogRecord`. The variant names the
+relationship — the logger reporting on its own work — rather than the component
+that emits it, so the core record type carries no HTTP vocabulary and the
+adapter keeps that vocabulary to itself. `Clone`, the handler-filter snapshot,
+and parent propagation all preserve it, and no other consumer reads it, so it
+never reaches the Python record view, formatted output or an HTTP payload.
+
+The producer path only carries the value. The ordinary entry points attach
+`RecordOrigin::Application`, and `log_prebuilt` accepts a record a bridge
+assembled and returns it to the producer unchanged, so no core logger API names
+an origin. A bridge therefore builds its record, attaches the origin it
+captured at entry, and hands it over; nothing downstream rewrites it.
+
+`FemtoHTTPHandler::handle` checks the origin after its closed-handler check and
+returns `Ok(())` for a self-diagnostic record. The record is not queued, warned
+about, nor counted as a drop: it never entered this handler's queue, so
+reporting it as a loss would misdescribe a healthy worker. Non-HTTP handlers
+still receive the record, which keeps independent diagnostics available.
+
+Suppression is silent and has no counter or summary of its own. Most of the
+records it discards are the transport library's own DEBUG output, so a
+maintainer who needs to see them raises the `ureq` targets (`ureq.unit`,
+`ureq.stream`, `ureq.pool`) to DEBUG and watches a non-HTTP sink. A record that
+appears there and never arrives at the endpoint is evidence of suppression
+rather than an exact count, because a filter or a failed delivery can also
+account for an absence; comparing the two sinks is the route
+`tests/http_transport_feedback_tests.rs` takes. A counter would need a
+diagnostics surface this handler does not have. Its only existing signal is the
+drop warner, and a suppressed record is deliberately not a drop; bounded
+handler telemetry is tracked separately by #551.
+
+The behavioural regression is `tests/http_transport_feedback_tests.rs`. Each
+variant runs in a fresh child process under a watchdog against a local TCP
+collector, enables real `ureq` DEBUG diagnostics, and requires delivery to stop
+after the initiating records: two application requests arrive, the `ureq.unit`
+diagnostic reaches a non-HTTP file sink, and a quiet window then passes with no
+further request and no overflow. The child, its assertions, and the process
+supervisor live in `tests/http_transport_feedback/`, where Cargo treats them as
+modules rather than as separate test crates.
+
+The marker is deliberately narrow. A record that Python code rebuilds from a
+marked record is a new application record, records passed directly to the
+three-argument `handle` method carry no marker, and socket handlers do not
+suppress marked records.
+
 ### Handler shutdown signal, clock and condition-variable seams
 
 `ShutdownSignal` (`rust_extension/src/shutdown_signal.rs`) is the second
@@ -1099,6 +1181,13 @@ behaviour, the filter chain and `emit()` invocation run synchronously in the
 captured producer context, as does formatting performed during that call. A
 handler that defers formatting or emission to another thread or process needs
 separate context propagation.
+
+The HTTP transport origin travels through the same path at no extra cost. The
+origin is a field on the queued `FemtoLogRecord` itself, so the handler-filter
+snapshot, the `QueuedRecord`, parent propagation, and each handler's own clone
+all carry it without a second thread-local read. Nothing after bridge entry
+consults thread state to recover it, which is why a record marked there stays
+marked as far as the HTTP handler's admission check.
 
 ### Standard-library handler adapter
 

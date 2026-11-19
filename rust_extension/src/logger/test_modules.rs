@@ -18,6 +18,9 @@ mod producer_context_tests;
 #[path = "producer_disabled_tests.rs"]
 mod producer_disabled_tests;
 #[cfg(not(loom))]
+#[path = "producer_origin_tests.rs"]
+mod producer_origin_tests;
+#[cfg(not(loom))]
 #[path = "producer_rejection_tests.rs"]
 mod producer_rejection_tests;
 #[cfg(not(loom))]

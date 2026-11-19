@@ -654,6 +654,25 @@ socket_handler = (
   `True` only when the worker acknowledges within the handler's flush timeout.
   Python `flush()` releases the GIL while it waits, so other Python threads
   keep running during a flush that blocks on a full queue or a slow endpoint.
+- A handler's worker marks its thread as HTTP transport while it delivers.
+  `ureq` reports its progress at `DEBUG` through the Rust `log` and `tracing`
+  facades, using targets such as `ureq.unit`, `ureq.stream`, and `ureq.pool`.
+  When a Rust bridge is installed, those records carry a transport-origin
+  marker. Every `FemtoHTTPHandler` silently ignores a marked record after its
+  closed-handler check, so a delivery cannot manufacture the next request. The
+  ignored record is not counted as a drop. Non-HTTP handlers still receive it,
+  and records emitted by application code on other threads are unaffected even
+  while a worker is sending. To see what an endpoint suppresses, put a non-HTTP
+  sink in place and raise the worker's targets (`ureq.unit`, `ureq.stream`,
+  `ureq.pool`) to `DEBUG`. A record that reaches that sink and never reaches
+  the endpoint is evidence of suppression, not an exact count: a filter or a
+  failed delivery can also account for an absence.
+- The marker is narrow on purpose. A record that Python code rebuilds from a
+  marked record is a new application record, records passed directly to the
+  three-argument `handler.handle(logger, level, message)` Python method carry
+  no marker, and socket handlers do not suppress marked records. Those paths
+  remain the caller's responsibility when they could loop back into the same
+  HTTP endpoint.
 
 ### Custom Python handlers
 
@@ -1284,7 +1303,17 @@ them. Arguments for a target held below the process-wide maximum are therefore
 still evaluated. Add a `log::log_enabled!` guard for the target when an
 argument is expensive. The target check does not inspect filters or handlers:
 an enabled record can still be rejected or dropped during dispatch. It does not
-create a logger or enter Python while checking the threshold. See the
+create a logger or enter Python while checking the threshold.
+
+The bridge also carries an HTTP transport-origin marker. While an HTTP worker
+is delivering a record, `ureq` diagnostics such as the DEBUG records under
+`ureq.unit`, `ureq.stream`, and `ureq.pool` are bridge records too. The bridge
+marks the records produced during that work, and HTTP handlers silently ignore
+them, so the transport cannot feed itself. The bridge suspends the marker
+before running filters, formatters, or handlers, so a callback that logs during
+dispatch still produces an ordinary record. Records from application threads,
+records rebuilt by Python code, and records passed directly to
+`FemtoHTTPHandler.handle` are not marked. See the
 [Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
 behaviour and build-feature details.
 

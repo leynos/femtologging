@@ -29,8 +29,12 @@ mod filtered;
 mod handler;
 mod queue;
 mod record;
+mod request_auth;
 mod response;
 mod serialize;
+// The bridges suspend this marker as well as the worker setting it, so the
+// module is crate-visible even though it belongs to the HTTP adapter.
+pub(crate) mod transport_origin;
 mod url_encoding;
 mod worker;
 

@@ -17,6 +17,7 @@ pub(crate) mod flush_test;
 #[cfg(not(loom))]
 mod pid_reservation;
 mod producer;
+
 mod py_handler;
 mod python_api;
 mod python_helpers;

@@ -479,6 +479,17 @@ Warnings from femtologging's own Rust targets are written to stderr when this
 bridge is installed. They are kept out of the handler pipeline to prevent a
 warning from recursively entering the logger that emitted it.
 
+The bridge also records whether a record was produced by HTTP transport work.
+An HTTP handler marks its worker thread for the whole delivery lifetime, which
+covers `ureq`'s DEBUG records under `ureq.unit`, `ureq.stream`, and
+`ureq.pool`. A marked record reaches non-HTTP handlers but every HTTP handler
+silently ignores it after its closed-handler check, so a delivery cannot
+manufacture the next request. The marker is captured at bridge entry and
+suspended for the rest of the call, so a filter, formatter, or handler that
+logs during dispatch produces an ordinary application record. Only bridge
+records created on a marked worker thread are marked. Records rebuilt in Python
+and records passed directly to `FemtoHTTPHandler.handle` are not.
+
 The bridge's `enabled()` check applies the target logger's current level
 threshold. The `log` crate reaches it only after the process-wide maximum has
 admitted the level and the macro's arguments have been evaluated, so an
@@ -533,6 +544,13 @@ span context is merged into the same map using deterministic keys such as
 outermost active span inward. Targets in the `femtologging` namespace are
 ignored to prevent recursive feedback loops from the library's own internal
 diagnostics.
+
+The layer applies the same transport-origin rule as the `log` bridge. A tracing
+event emitted on an HTTP worker thread while it delivers a record is marked, so
+HTTP handlers ignore it after their closed-handler check while non-HTTP
+handlers still receive it. The marker is captured before field capture and
+suspended for the rest of `on_event`, so user code reached during dispatch does
+not inherit it.
 
 For Python-first start-up flows, `femtologging.setup_rust_tracing()` installs a
 process-global subscriber backed by `tracing_subscriber::registry().with(...)`.

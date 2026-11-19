@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 
 use crate::{
     handler::{FemtoHandlerTrait, HandlerError},
-    log_record::FemtoLogRecord,
+    log_record::{FemtoLogRecord, RecordOrigin},
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
 };
@@ -40,7 +40,7 @@ pub struct FemtoHTTPHandler {
     /// Owns the worker until it finishes or is detached after a timeout.
     handle: Mutex<Option<thread::JoinHandle<()>>>,
     /// Counts dropped records and limits warning frequency.
-    warner: RateLimitedWarner,
+    pub(crate) warner: RateLimitedWarner,
     /// The shutdown signal shared with the worker.
     ///
     /// `Some` for as long as the handler is open. `None` once `close` has
@@ -338,6 +338,12 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
             });
             return Err(HandlerError::Closed);
         };
+        // Intentional suppression, not a drop: queueing one of our own
+        // diagnostics would let a delivery manufacture the next, and counting
+        // it would misreport a connected worker. Other sinks still receive it.
+        if record.origin() == RecordOrigin::SelfDiagnostic {
+            return Ok(());
+        }
         enqueue_record(&tx, record, &self.warner)
     }
 
