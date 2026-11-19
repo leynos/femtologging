@@ -228,6 +228,47 @@ def _ignored_step_decorators(patterns: list[str]) -> list[str]:
     ]
 
 
+def _ruff_ignore_lists(ruff: dict[str, object]) -> list[list[str]]:
+    """Return every Ruff ignore list across current and deprecated scopes.
+
+    Ruff 0.16.4 still merges deprecated top-level `[tool.ruff]` ignore settings
+    into `[tool.ruff.lint]` when the nested table leaves them unset, so both
+    scopes must be inspected for an exemption that Ruff would still apply.
+
+    Returns
+    -------
+        Every ignore list configured in either scope.
+    """
+    lint = typ.cast("dict[str, object]", ruff["lint"])
+    per_file = [
+        ignores
+        for scope in (ruff, lint)
+        for key in ("per-file-ignores", "extend-per-file-ignores")
+        for ignores in typ.cast("dict[str, list[str]]", scope.get(key, {})).values()
+    ]
+    global_ignores = [
+        typ.cast("list[str]", scope.get(key, []))
+        for scope in (ruff, lint)
+        for key in ("ignore", "extend-ignore")
+    ]
+    return [*per_file, *global_ignores]
+
+
+def test_ruff_ignore_lists_include_deprecated_top_level_scope() -> None:
+    """Deprecated top-level ignores must be inspected as Ruff still applies them."""
+    ignore_lists = _ruff_ignore_lists({
+        "ignore": ["D103"],
+        "lint": {
+            "per-file-ignores": {"tests/steps/*.py": ["assert"]},
+        },
+    })
+
+    assert ["D103"] in ignore_lists, (
+        "the deprecated top-level ignore must still be inspected"
+    )
+    assert ["assert"] in ignore_lists, "nested per-file ignores must still be inspected"
+
+
 def test_ruff_requires_docstrings_in_step_modules() -> None:
     """Ruff must not exempt pytest-bdd step modules from D103.
 
@@ -237,14 +278,11 @@ def test_ruff_requires_docstrings_in_step_modules() -> None:
     """
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    lint = config["tool"]["ruff"]["lint"]
+    ruff = config["tool"]["ruff"]
+    lint = ruff["lint"]
 
-    exempting_lists = [
-        *lint.get("per-file-ignores", {}).values(),
-        *lint.get("extend-per-file-ignores", {}).values(),
-        lint.get("ignore", []),
-        lint.get("extend-ignore", []),
-    ]
+    scopes = (ruff, lint)
+    exempting_lists = _ruff_ignore_lists(ruff)
     for exempting_list in exempting_lists:
         offenders = [selector for selector in exempting_list if _exempts_d103(selector)]
         assert not offenders, (
@@ -258,9 +296,11 @@ def test_ruff_requires_docstrings_in_step_modules() -> None:
         "Ruff must select the D docstring rules so D103 applies to steps"
     )
 
-    ignored_step_decorators = _ignored_step_decorators(
-        lint.get("pydocstyle", {}).get("ignore-decorators", [])
-    )
+    ignored_step_decorators = _ignored_step_decorators([
+        pattern
+        for scope in scopes
+        for pattern in scope.get("pydocstyle", {}).get("ignore-decorators", [])
+    ])
     assert not ignored_step_decorators, (
         "Ruff must not ignore pytest-bdd step decorators when checking for "
         f"docstrings: {ignored_step_decorators!r}; steps must still require "
