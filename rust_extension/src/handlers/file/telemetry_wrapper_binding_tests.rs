@@ -36,16 +36,16 @@ fn rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
         test_config(),
         RotationConfig::new(1 << 20, 2),
     )
-    .unwrap_or_else(|err| panic!("the rotating handler must open its file: {err}"));
+    .expect("the rotating handler must open its file");
     Py::new(py, PyRotatingFileHandler::from_core(core))
-        .unwrap_or_else(|err| panic!("the rotating handler must be a valid pyclass: {err}"))
+        .expect("the rotating handler must be a valid pyclass")
         .into_any()
 }
 
 /// Build a timed-rotating wrapper over a real file.
 fn timed_rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
-        .unwrap_or_else(|err| panic!("an hourly schedule is valid: {err}"));
+        .expect("an hourly schedule is valid");
     let core = FemtoTimedRotatingFileHandler::with_capacity_flush_policy(
         path,
         DefaultFormatter,
@@ -55,9 +55,9 @@ fn timed_rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
             backup_count: 2,
         },
     )
-    .unwrap_or_else(|err| panic!("the timed-rotating handler must open its file: {err}"));
+    .expect("the timed-rotating handler must open its file");
     Py::new(py, PyTimedRotatingFileHandler::from_core(core))
-        .unwrap_or_else(|err| panic!("the timed-rotating handler must be a valid pyclass: {err}"))
+        .expect("the timed-rotating handler must be a valid pyclass")
         .into_any()
 }
 
@@ -107,7 +107,7 @@ pub(super) fn rotating_over_writer_with_capacity(
     let core =
         FemtoRotatingFileHandler::with_writer_for_test(scripted_config(writer, policy, capacity));
     Py::new(py, PyRotatingFileHandler::from_core(core))
-        .unwrap_or_else(|err| panic!("the rotating handler must be a valid pyclass: {err}"))
+        .expect("the rotating handler must be a valid pyclass")
         .into_any()
 }
 
@@ -129,10 +129,10 @@ pub(super) fn timed_rotating_over_writer_with_capacity(
 ) -> Py<PyAny> {
     let inner = FemtoFileHandler::with_writer_for_test(scripted_config(writer, policy, capacity));
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Hours, 1, true, None)
-        .unwrap_or_else(|err| panic!("an hourly schedule is valid: {err}"));
+        .expect("an hourly schedule is valid");
     let core = FemtoTimedRotatingFileHandler::new_with_schedule(inner, schedule, 2);
     Py::new(py, PyTimedRotatingFileHandler::from_core(core))
-        .unwrap_or_else(|err| panic!("the timed-rotating handler must be a valid pyclass: {err}"))
+        .expect("the timed-rotating handler must be a valid pyclass")
         .into_any()
 }
 
@@ -140,9 +140,9 @@ pub(super) fn timed_rotating_over_writer_with_capacity(
 pub(super) fn diagnostics_map(py: Python<'_>, handler: &Py<PyAny>) -> BTreeMap<String, u64> {
     handler
         .call_method0(py, "wait_diagnostics")
-        .unwrap_or_else(|err| panic!("wait_diagnostics must not raise: {err}"))
+        .expect("wait_diagnostics must not raise")
         .extract(py)
-        .unwrap_or_else(|err| panic!("wait_diagnostics must return a counter map: {err}"))
+        .expect("wait_diagnostics must return a counter map")
 }
 
 /// Each wrapper's successful waits are counted and labelled with its own kind.
@@ -170,7 +170,7 @@ fn each_wrapper_labels_its_own_waits(
 fn drive_wrapper(
     make_wrapper: fn(Python<'_>, &Path) -> Py<PyAny>,
 ) -> (BTreeMap<String, u64>, Vec<CapturedEvent>) {
-    let directory = TempDir::new().unwrap_or_else(|err| panic!("a temporary directory: {err}"));
+    let directory = TempDir::new().expect("a temporary directory");
     let path = directory.path().join("wrapper.log");
 
     let collector = EventCollector::default();
@@ -180,16 +180,16 @@ fn drive_wrapper(
             let handler = make_wrapper(py, &path);
             handler
                 .call_method1(py, "handle", ("core", "INFO", "hello"))
-                .unwrap_or_else(|err| panic!("the first record must be accepted: {err}"));
+                .expect("the first record must be accepted");
             let flushed: bool = handler
                 .call_method0(py, "flush")
-                .unwrap_or_else(|err| panic!("flush must not raise: {err}"))
+                .expect("flush must not raise")
                 .extract(py)
-                .unwrap_or_else(|err| panic!("flush must return a bool: {err}"));
+                .expect("flush must return a bool");
             assert!(flushed, "an idle worker must acknowledge the flush");
             handler
                 .call_method0(py, "close")
-                .unwrap_or_else(|err| panic!("close must not raise: {err}"));
+                .expect("close must not raise");
             diagnostics_map(py, &handler)
         })
     });
