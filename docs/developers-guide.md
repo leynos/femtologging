@@ -254,11 +254,15 @@ alternatives that were rejected, are recorded in
   phrase corrections. Both of the gate's own checks always run, so a phrase
   finding cannot hide a spelling finding.
 - The gate enumerates the Git index, so a document that is new and still
-  unstaged is invisible to it. `make spelling` therefore runs a second stage
-  after the gate: `git ls-files --others` selects the untracked Markdown, and
-  `TYPOS` runs the Typos binary from the same pinned release against the
-  `typos.toml` the gate has just written. Both stages share one spelling
-  configuration and one dictionary revision.
+  unstaged is invisible to it. `make spelling` therefore runs two more checks
+  after the gate, both against the configuration the gate has just written and
+  the dictionary revision it used. First, `git ls-files --others` selects the
+  untracked Markdown and `TYPOS` checks it with the Typos binary from the same
+  pinned release. Second, Typos tokenizes on punctuation, so it cannot see a
+  hyphenated prohibited phrase; the gate's phrase check is therefore run again
+  over a throwaway index that holds only the untracked Markdown, added as
+  intent-to-add entries. The real index is never modified, and a phrase finding
+  in a new document fails the target before it is committed.
 - The builder is release-pinned while the dictionary it fetches stays live:
   either half can move without repinning the other. The gate caches the
   dictionary revision in the untracked `.typos-oxendict-base.toml` and

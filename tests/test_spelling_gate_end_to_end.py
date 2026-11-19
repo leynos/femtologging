@@ -20,14 +20,14 @@ import typing as typ
 
 import pytest
 
-from tests.spelling_gate_support import (
+from tests.spelling_gate_fixtures import (
     BROAD_COLOUR_PATTERN,
+    CORRECTED_PHRASE,
+    PROHIBITED_PHRASE,
     ScenarioFactory,
-    make_spelling,
-    quoted,
     scenario_factory,
-    stage,
 )
+from tests.spelling_gate_support import make_spelling, quoted, stage
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -130,3 +130,33 @@ def test_an_unstaged_misspelling_fails_before_and_after_staging(
     staged = make_spelling(scenario.repository, *assignments)
     assert staged.returncode == 2, staged.stdout + staged.stderr
     assert "mispell" in staged.stdout + staged.stderr, staged.stdout
+
+
+@requires_pinned_builder
+@pytest.mark.timeout(600)
+def test_a_phrase_the_unstaged_document_carries_fails_before_and_after_staging(
+    gate_scenario: ScenarioFactory,
+) -> None:
+    """A shared phrase correction reaches a new document whether staged or not.
+
+    Typos tokenizes on punctuation, so the hyphenated prohibited phrase is
+    invisible to the second stage. Before staging, only the phrase check over
+    the throwaway index can catch it; after staging, the gate's own phrase
+    check does. Both runs must fail, or a contributor would learn about the
+    finding only after committing.
+    """
+    notes = f"# Notes\n\nA {PROHIBITED_PHRASE} example.\n"
+    scenario = gate_scenario(notes, staged=False)
+    assignments = (quoted("TYPOS_CONFIG_BUILDER", scenario.builder),)
+    finding = f"{PROHIBITED_PHRASE} -> {CORRECTED_PHRASE}"
+
+    unstaged = make_spelling(scenario.repository, *assignments)
+    assert unstaged.returncode == 2, unstaged.stdout + unstaged.stderr
+    assert finding in unstaged.stdout + unstaged.stderr, (
+        unstaged.stdout + unstaged.stderr
+    )
+
+    stage(scenario.repository, "notes.md")
+    staged = make_spelling(scenario.repository, *assignments)
+    assert staged.returncode == 2, staged.stdout + staged.stderr
+    assert finding in staged.stdout + staged.stderr, staged.stdout + staged.stderr

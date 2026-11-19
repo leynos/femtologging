@@ -1,72 +1,31 @@
-"""Fixtures and helpers shared by the `make spelling` gate tests.
+"""Stub executables and Make invocations for the `make spelling` gate tests.
 
-`make spelling` runs the pinned `typos-config-builder gate` and then checks the
-Markdown the gate cannot see: files that are new and still unstaged. The tests
-that hold that recipe need the same scratch repository, stub executables, Make
-variable assignments and pinned-release wrapper, so they are built here once
-rather than copied into each module.
+`make spelling` runs the pinned `typos-config-builder gate`, then checks the
+Markdown the gate cannot see: files that are new and still unstaged. Typos
+cannot express the shared phrase corrections, so the gate's phrase check runs
+again over a throwaway index that holds those files. These helpers build the
+scratch repository, stub executables and Make variable assignments that drive
+that recipe; the dictionary fixtures and pinned-release wrapper they are paired
+with live in :mod:`tests.spelling_gate_fixtures`.
 
-The stub helpers record every invocation as NUL-separated arguments, so an
-empty argument stays distinguishable from a missing one and a second invocation
+The stubs record every invocation as NUL-separated arguments, so an empty
+argument stays distinguishable from a missing one and a second invocation
 cannot overwrite the first record.
 """
 
 from __future__ import annotations
 
-import dataclasses as dc
 import shlex
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argv
 import typing as typ
 
 from tests.build_tools_support import ROOT, fake_executable, make_environment
-from tests.make_contract_helpers import variable_tokens
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-#: A minimal shared dictionary. It carries the broad colour-option mask the
-#: overlay withdraws, a sentinel mask it leaves alone, and one misspelling the
-#: fixture document repeats.
-FIXTURE_DICTIONARY = """\
-schema = 1
-
-[oxford]
-stems = []
-
-[words]
-accepted = []
-
-[words.corrections]
-mispell = "misspell"
-
-[patterns]
-ignore = [
-    '--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\\b|_)',
-    'zzgatefixture-sentinel',
-]
-
-[phrases.corrections]
-
-[files]
-exclude = []
-"""
-
-#: The overlay accepts one fixture word and withdraws the colour mask.
-FIXTURE_OVERLAY = """\
-schema = 1
-
-[words]
-accepted = ["zzgatefixture"]
-
-[patterns]
-remove = ['--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\\b|_)']
-"""
-
-#: The exact shared expression the overlay withdraws.
-BROAD_COLOUR_PATTERN = r"--[A-Za-z0-9_-]*color(?:ed|s|ing|ize[ds]?|izing)?(?:\b|_)"
-
-#: File the stubs append their records to. One file serves both stages, so the
+#: File the stubs append their records to. One file serves every stage, so the
 #: recorded order is the order the recipe ran them in.
 INVOCATION_RECORD = "invocations.txt"
 
@@ -76,35 +35,6 @@ RECORD_ARGUMENTS = """\
 for argument in "$@"; do printf '%s\\000' "$argument" >> {record}; done
 printf '\\n' >> {record}
 """
-
-
-@dc.dataclass(frozen=True, slots=True)
-class GateScenario:
-    """A fixture repository wired to the pinned builder.
-
-    Attributes
-    ----------
-    repository
-        Fixture repository the gate operates on.
-    builder
-        Wrapper that forwards to the pinned builder for this repository.
-    """
-
-    repository: Path
-    builder: Path
-
-
-class ScenarioFactory(typ.Protocol):
-    """Build one gate fixture and the builder wired to it from *notes*.
-
-    `notes` is the Markdown body the gate scans; `staged` decides whether the
-    gate itself or the recipe's second stage is expected to see the fixture. A
-    plain `Callable[[str, bool], GateScenario]` would claim both parameters are
-    required and positional, which the keyword-only `staged` default denies.
-    """
-
-    def __call__(self, notes: str, *, staged: bool = True) -> GateScenario:
-        """Create a fixture repository and its forwarding builder."""
 
 
 def recorded_invocations(scratch: Path) -> list[list[str]]:
@@ -197,14 +127,60 @@ def shared_environment() -> str:
 
     A fixture runs Make from its own directory, so Make's default cache
     locations would resolve inside the fixture and re-resolve the pin. Naming
-    the repository's own cache keeps the provisioned release in use.
+    the repository's own cache keeps the provisioned release in use. Make
+    inserts the value into the recipe unquoted, so each path is quoted for the
+    recipe's shell: a checkout under a directory whose name contains a space
+    would otherwise split into a second command.
 
     Returns
     -------
     str
         A `UV_ENV` assignment pointing at the repository's caches.
     """
-    return f"UV_ENV=UV_CACHE_DIR={ROOT / '.uv-cache'} UV_TOOL_DIR={ROOT / '.uv-tools'}"
+    cache = shlex.quote(str(ROOT / ".uv-cache"))
+    tools = shlex.quote(str(ROOT / ".uv-tools"))
+    return f"UV_ENV=UV_CACHE_DIR={cache} UV_TOOL_DIR={tools}"
+
+
+def phrase_scan(tmp_path: Path, status: int = 0) -> str:
+    """Return a Make assignment for a phrase-scan stub with *status*.
+
+    The target's third stage runs the shared phrase check. The stub records
+    the `check-phrases` argument the real command receives and reports
+    *status*, so a test can stand in for a clean scan or a phrase finding.
+
+    Returns
+    -------
+    str
+        A `SPELLING_PHRASE_SCAN` assignment naming the stub.
+    """
+    stub = recording_stub(tmp_path, "stub-phrase-scan", status)
+    return f"SPELLING_PHRASE_SCAN={shlex.quote(str(stub))} check-phrases"
+
+
+def phrase_index_probe(tmp_path: Path) -> str:
+    """Return a Make assignment for a phrase scan that inspects its index.
+
+    The target hands the phrase check a throwaway index. This probe succeeds
+    only when one is set and it lists the fixture's untracked document, so the
+    target's exit status reports whether the temporary index was wired
+    correctly.
+
+    Returns
+    -------
+    str
+        A `SPELLING_PHRASE_SCAN` assignment naming the probe.
+    """
+    probe = fake_executable(
+        tmp_path / "stub-phrase-index-probe",
+        "\n".join((
+            'test -n "$GIT_INDEX_FILE" || exit 3',
+            "git ls-files | grep -qx new-notes.md || exit 4",
+            "exit 0",
+        ))
+        + "\n",
+    )
+    return f"SPELLING_PHRASE_SCAN={shlex.quote(str(probe))}"
 
 
 def make_spelling(
@@ -301,94 +277,3 @@ def stage(repository: Path, *names: str) -> None:
         check=True,
         env=make_environment(),
     )
-
-
-def forwarding_builder(scratch: Path, repository: Path, dictionary: Path) -> Path:
-    """Write a builder that runs the pinned release against the fixture.
-
-    The Makefile recipe passes exactly one argument, `gate`. Forwarding it to
-    the pinned command with the gate's own `--repository` and `--source`
-    options exercises the real gate end to end without changing the recipe.
-
-    Parameters
-    ----------
-    scratch
-        Directory receiving the wrapper script.
-    repository
-        Fixture repository the gate should operate on.
-    dictionary
-        Local dictionary authority for the gate.
-
-    Returns
-    -------
-    Path
-        The wrapper executable.
-    """
-    pinned = shlex.join(variable_tokens("TYPOS_CONFIG_BUILDER"))
-    return fake_executable(
-        scratch / "forwarding-builder",
-        f'exec {pinned} "$@"'
-        f" --repository={shlex.quote(str(repository))}"
-        f" --source={shlex.quote(str(dictionary))}",
-    )
-
-
-def fixture_repository(
-    repository: Path,
-    notes: str,
-    *,
-    staged: bool,
-) -> Path:
-    """Fill the fixture repository with a document and its policy files.
-
-    Parameters
-    ----------
-    repository
-        Fixture repository root, already initialised.
-    notes
-        Markdown body the gate scans.
-    staged
-        Whether to stage the fixture files. An unstaged document is visible
-        only to `make spelling`'s own Typos stage.
-
-    Returns
-    -------
-    Path
-        The fixture repository root.
-    """
-    (repository / "typos.local.toml").write_text(FIXTURE_OVERLAY, encoding="utf-8")
-    (repository / "notes.md").write_text(notes, encoding="utf-8")
-    (repository / "typos.toml").write_text("", encoding="utf-8")
-    if staged:
-        stage(repository, "notes.md", "typos.local.toml", "typos.toml")
-    return repository
-
-
-def scenario_factory(scratch: Path) -> ScenarioFactory:
-    """Return a factory that builds a fixture with its own builder.
-
-    Building the repository, the local dictionary and the wrapper in one place
-    keeps the clean, seeded and unstaged cases on the same gate configuration.
-
-    Parameters
-    ----------
-    scratch
-        Directory receiving the repository, the dictionary and the wrapper.
-
-    Returns
-    -------
-    ScenarioFactory
-        Factory taking the Markdown body to check and whether to stage it.
-    """
-    dictionary = scratch / "dictionary.toml"
-    dictionary.write_text(FIXTURE_DICTIONARY, encoding="utf-8")
-
-    def build(notes: str, *, staged: bool = True) -> GateScenario:
-        """Create one fixture repository and its forwarding builder."""
-        repository = fixture_repository(
-            scratch_repository(scratch), notes, staged=staged
-        )
-        builder = forwarding_builder(scratch, repository, dictionary)
-        return GateScenario(repository=repository, builder=builder)
-
-    return build
