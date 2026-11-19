@@ -221,10 +221,21 @@ jobs:
       # Whether the token is set, as a plain step output. The expression is
       # evaluated before the shell runs, so this step binds nothing: the token
       # sits in no `env` in this workflow, because the upload action is
-      # composite and hands its step's `env` to the nested steps it runs.
+      # composite and hands its step's `env` to the nested steps it runs. Only
+      # the boolean is written, never the secret, and both branches say in the
+      # log and the job summary why the upload did or did not run.
       - name: Check CodeScene token
         id: codescene-token
-        run: echo "available=${{ secrets.CS_ACCESS_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+        run: |
+          available="${{ secrets.CS_ACCESS_TOKEN != '' }}"
+          echo "available=${available}" >> "$GITHUB_OUTPUT"
+          if [ "$available" = 'true' ]; then
+            echo 'CodeScene upload: token present; upload enabled'
+            echo 'CodeScene upload: token present; upload enabled' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '::notice title=CodeScene upload::CS_ACCESS_TOKEN is absent; upload skipped'
+            echo 'CodeScene upload: token absent; upload skipped' >> "$GITHUB_STEP_SUMMARY"
+          fi
       # The push trigger is already restricted to main; the ref conjunct keeps
       # the upload confined there if a dispatch trigger is ever added. A
       # missing token skips the upload without failing the job, and the

@@ -4,9 +4,12 @@ The upload is optional and guarded twice: a token-presence step writes a
 boolean output, and the upload step runs only when that output is true and the
 ref is ``main``. The token itself reaches the uploader as its ``access-token``
 input and sits in no ``env``, because the upload action is composite and hands
-a step's environment to the nested steps it runs. These contracts state the
-canonical guard, pin seven ways to weaken it, and check that the guard reader
-reports every one, so the real publisher can pass the same reader.
+a step's environment to the nested steps it runs. That step also reports its
+decision to the log and the job summary in both branches, so a skipped upload
+states its own reason, and it compares the secret rather than interpolating it.
+These contracts state the canonical guard, pin every way to weaken it, and
+check that the guard reader reports each one, so the real publisher can pass
+the same reader.
 """
 
 from __future__ import annotations
@@ -16,8 +19,11 @@ import typing as typ
 import pytest
 
 from tests.coverage_contract_helpers import (
+    ABSENCE_NOTICE,
+    BARE_INTERPOLATION,
     BASELINE_MARKER,
     PUBLISHER_WORKFLOW,
+    SUMMARY_REDIRECT,
     TOKEN_COMMAND,
     TOKEN_STEP_NAME,
     UPLOAD_CONDITION,
@@ -27,6 +33,24 @@ from tests.coverage_contract_helpers import (
     steps_using,
 )
 from tests.coverage_environment_helpers import CODESCENE_ENVIRONMENT, secret_in_env
+
+#: The shape the step had before it reported its decision: one echo to the step
+#: output, so a skipped upload left no reason in the run log or summary.
+SILENT_TOKEN_COMMAND: typ.Final[str] = (
+    # ruff: ignore[hardcoded-password-string] an expression, not a value
+    'echo "available=${{ secrets.CS_ACCESS_TOKEN != \'\' }}" >> "$GITHUB_OUTPUT"'
+)
+#: The canonical command with the absent branch's summary line removed.
+UNSUMMARISED_ABSENCE: typ.Final[str] = TOKEN_COMMAND.replace(
+    f"  echo 'CodeScene upload: token absent; upload skipped' {SUMMARY_REDIRECT}\n",
+    "",
+)
+#: The canonical command with the annotation removed, leaving only a log line.
+UNANNOTATED_ABSENCE: typ.Final[str] = TOKEN_COMMAND.replace(ABSENCE_NOTICE, "")
+#: The canonical command interpolating the secret instead of comparing it.
+INTERPOLATED_TOKEN: typ.Final[str] = TOKEN_COMMAND.replace(
+    "secrets.CS_ACCESS_TOKEN != ''", "secrets.CS_ACCESS_TOKEN"
+)
 
 
 def _token_steps(document: dict[str, typ.Any]) -> list[tuple[str, dict[str, typ.Any]]]:
@@ -53,8 +77,21 @@ def _token_guard_problems(
         problems.append("the token step must expose the `codescene-token` id")
     if token_step.get("run") != TOKEN_COMMAND:
         problems.append("the token step must run the canonical command alone")
+    problems.extend(_observability_problems(str(token_step.get("run") or "")))
     if not any(upload_job == job_id for _, upload_job, _ in uploads):
         problems.append("the upload must run beside the token-presence step")
+    return problems
+
+
+def _observability_problems(command: str) -> list[str]:
+    """Return one complaint per missing signal that the skip states its reason."""
+    problems: list[str] = []
+    if command.count(SUMMARY_REDIRECT) != 2:
+        problems.append("both token branches must write the job summary")
+    if ABSENCE_NOTICE not in command:
+        problems.append("the absent branch must raise a notice annotation")
+    if BARE_INTERPOLATION in command:
+        problems.append("the token step must compare the secret, never interpolate it")
     return problems
 
 
@@ -141,6 +178,10 @@ def test_the_upload_is_guarded_by_token_presence_and_the_trunk() -> None:
             UPLOAD_CONDITION,
             {"CS_ACCESS_TOKEN": "${{ secrets.CS_ACCESS_TOKEN }}"},
         ),
+        (SILENT_TOKEN_COMMAND, UPLOAD_CONDITION, None),
+        (UNSUMMARISED_ABSENCE, UPLOAD_CONDITION, None),
+        (UNANNOTATED_ABSENCE, UPLOAD_CONDITION, None),
+        (INTERPOLATED_TOKEN, UPLOAD_CONDITION, None),
     ],
     ids=[
         "canonical",
@@ -150,6 +191,10 @@ def test_the_upload_is_guarded_by_token_presence_and_the_trunk() -> None:
         "ref-conjunct-dropped",
         "always",
         "token-in-job-env",
+        "silent-skip",
+        "one-branch-unsummarised",
+        "annotation-dropped",
+        "secret-interpolated",
     ],
 )
 def test_the_guard_reader_notices_each_way_the_upload_can_be_exposed(
