@@ -2799,7 +2799,9 @@ contacts CodeScene: `generate-coverage` runs with `with-ratchet: 'true'` and
 also newly enables the ratchet on that lane, which previously ran the action
 without `with-ratchet` and so took its `'false'` default, and it stops the lane
 publishing its report. The default branch owns both persistent outputs, in
-`coverage-main.yml`, which a push to `main` alone triggers.
+`coverage-main.yml`, which a push to `main` alone triggers. The decision, its
+drivers and the alternatives it rejected are recorded in
+[ADR-0009](adrs/adr-0009-main-branch-coverage-publication.md).
 
 That publisher has four jobs. `coverage-measure` runs on a hosted runner once
 per required Python lane (`3.12`, `3.13` and `3.14`, the non-experimental lanes
@@ -2812,6 +2814,22 @@ baseline saved there would never be restored. The baseline cache key carries
 the interpreter's major.minor, so every required lane needs its own published
 entry: a lane whose entry was never written restores nothing, compares against
 zero and can never fail.
+
+A cache miss still fails open. `generate-coverage` writes `0` into a baseline
+file its restore did not supply
+([leynos/shared-actions#699](https://github.com/leynos/shared-actions/issues/699)),
+so an evicted entry starts that lane at zero and its ratchet cannot fail while
+the run still looks green. The pinned action makes the miss visible but neither
+this repository nor the action fails closed on it; the repair belongs in the
+action. Its `Report ratchet baseline cache decisions` step prints
+`metric ratchet-cache.restore=<hit|miss|skipped|error>`, raises a
+`::notice title=generate-coverage ratchet cache::restore=… save=…` annotation,
+and adds a `### generate-coverage ratchet cache` block with a
+`- baseline restore:` line to the job summary, so the run log and the summary
+record which comparison the lane actually made. `ci.yml` cites that line at the
+ratchet input, because the baseline file cannot answer the question afterwards:
+`ratchet_coverage.py` rewrites the file to the measured figure on the same run,
+so a zero is no longer observable once the step has finished.
 
 Two publishers then ratchet each lane's handed-over figures, because a cache
 entry written on one runner provider is not read by the other.
@@ -2846,10 +2864,12 @@ The upload is optional and guarded twice. A token-presence step writes
 `available` and binds no secret; the upload step runs only when that output is
 `'true'` and `github.ref` is `refs/heads/main`. The token reaches the uploader
 as its `access-token` input and sits in no `env`, because the upload action is
-composite and hands its step's environment to the nested steps it runs. Until
-the owner provisions `CS_ACCESS_TOKEN` in the `codescene` environment, the step
-reports `available=false` and skips; the baseline job still runs, so a missing
-token cannot hide a coverage regression.
+composite and hands its step's environment to the nested steps it runs. The
+presence step records the boolean and its consequence in the run log and the
+job summary in both branches, so a skipped upload states its own reason, and it
+never writes the secret. Until the owner provisions `CS_ACCESS_TOKEN` in the
+`codescene` environment, the step reports `available=false` and skips; the
+baseline job still runs, so a missing token cannot hide a coverage regression.
 
 The `codescene` environment admits `main` alone, and no pull-request-reachable
 job may declare it. The publisher's concurrency group is keyed on the ref and
@@ -2862,6 +2882,14 @@ repository, the canonical guard and seven ways to weaken it, no token in any
 reachability readers, including the forwards direction of a `workflow_run`
 edge: the listener becomes reachable once the workflow it watches does, not the
 other way round.
+
+The readers behind those contracts live in `tests/coverage_contract_helpers.py`,
+`tests/coverage_reach_helpers.py`, `tests/coverage_environment_helpers.py` and
+`tests/coverage_push_filter_helpers.py`. They are test-only readers: the
+package imports none of them, and each fails closed on a declaration it cannot
+resolve. That includes an expression-valued `env` and an aggregate `secrets`
+access such as `toJSON(secrets)`, which are refused or reported as carrying the
+token rather than passed as safe.
 
 Both lanes must measure the same population, so every input that defines it
 (`output-path`, `format`, `cargo-manifest`, `with-default-features`, `features`,
