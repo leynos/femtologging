@@ -1783,10 +1783,17 @@ as it cannot for a record the application emits itself.
 
 Rate-limit policy and flush transport are separate concerns.
 `rust_extension/src/rate_limited_warner.rs` owns only the policy: which drops
-are due (`take_due`), when the next warning may fire, and the retry bookkeeping
+are due (`take_due` for ordinary warnings, `take_pending` for an explicit
+flush), when the next warning may fire, and the retry bookkeeping
 (`restore_drops`, and the internal `retry_drops` counter) that restarts the
-interval when a restored count is reported. `take_due` is destructive, so a
+interval when a restored count is reported. Both takes are destructive, so a
 caller that cannot deliver its count must hand it back.
+
+The two takes answer different questions. `take_due` is the ordinary warning
+path, so the interval decides whether it returns anything. `take_pending` backs
+an explicit flush: a flush asks what has been lost since the last report, so it
+must not withhold a drop recorded inside the interval, and it reports restored
+and freshly recorded counts as one figure.
 
 The transport is `handler::flush_command::flush_handler_until`, which puts the
 pending count on the flush marker so the worker, not the flush caller, invokes
@@ -1795,8 +1802,8 @@ taking it is destructive: a handler whose worker has gone must leave the drops
 pending for the next flush. If the marker never entered the queue,
 `flush_handler_until` hands the count back through the `PendingDrops` restore
 half. `warn_if_due` keeps suppressed drops pending until the interval expires,
-and `RateLimitedWarner::flush` reports any restored count, so neither path
-loses a drop.
+and `RateLimitedWarner::flush` reports every pending count immediately, so
+neither path loses a drop.
 
 The warner's `Clock` trait reports milliseconds since the warner was
 constructed, an opaque counter used only to decide whether an interval has

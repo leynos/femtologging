@@ -33,7 +33,7 @@ where
 {
     /// Pair a destructive take with the restore that undoes it.
     ///
-    /// Example: `PendingDrops::new(|| warner.take_due(), |n| warner.restore_drops(n))`.
+    /// Example: `PendingDrops::new(|| warner.take_pending(), |n| warner.restore_drops(n))`.
     pub(crate) fn new(take: T, restore: R) -> Self {
         Self { take, restore }
     }

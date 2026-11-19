@@ -2,11 +2,12 @@
 //!
 //! A `FakeClock` fixture drives `RateLimitedWarner` deterministically. The
 //! `rstest` cases check `record_drop` accumulation, interval suppression,
-//! the `take_due` and `restore_drops` retry path, and `flush`. The proptest
-//! `every_drop_is_pending_in_flight_or_emitted_once` and
-//! `failed_flush_enqueue_restores_the_due_drop_count` extend the same ledger
-//! to `flush_handler_until` and `FlushCap`, so every drop is pending, in
-//! flight or emitted exactly once.
+//! the `take_due` and `restore_drops` retry path, `take_pending` for explicit
+//! flushes, and `flush`. The proptest
+//! `every_drop_is_pending_in_flight_or_emitted_once` extends the same ledger
+//! across both take paths, so every drop is pending, in flight or emitted
+//! exactly once. The restore-on-failed-enqueue case lives with the flush
+//! transport it exercises, in `handler_tests.rs`.
 
 use super::*;
 use proptest::prelude::*;
@@ -218,6 +219,51 @@ fn flush_with_no_drops_does_nothing(
     assert!(warnings.is_empty());
 }
 
+/// An explicit flush reports a drop recorded inside the warning interval.
+///
+/// The interval limits how often ordinary warnings are emitted; it must not
+/// withhold a count from a caller who asked for the pending figure. A flush
+/// that took the interval-gated `take_due` path instead would return success
+/// without reporting this drop, and the suppressed warning that followed
+/// would leave it unreported until the interval elapsed.
+#[rstest]
+fn flush_reports_a_drop_recorded_inside_the_interval(
+    warner: (RateLimitedWarner, Arc<FakeClock>),
+    mut warnings: Vec<u64>,
+) {
+    let (warner, clock) = warner;
+    warner.record_drop();
+    warner.warn_if_due(|count| warnings.push(count));
+    assert_eq!(warnings, vec![1]);
+
+    clock.advance(500);
+    warner.record_drop();
+    warner.flush(|count| warnings.push(count));
+    assert_eq!(
+        warnings,
+        vec![1, 1],
+        "a flush must report the drop recorded inside the interval"
+    );
+}
+
+/// `take_pending` reports restored and freshly recorded counts together.
+#[rstest]
+fn take_pending_combines_restored_and_pending_counts(warner: (RateLimitedWarner, Arc<FakeClock>)) {
+    let (warner, clock) = warner;
+    warner.record_drop();
+    let due = warner.take_due().expect("the first drop should be due");
+    warner.restore_drops(due);
+
+    clock.advance(100);
+    warner.record_drop();
+    assert_eq!(
+        warner.take_pending(),
+        Some(2),
+        "a flush reports the restored count and the new drop as one figure"
+    );
+    assert_eq!(warner.take_pending(), None, "the take is destructive");
+}
+
 /// One generated step in a drop-warning retry sequence.
 #[derive(Clone, Debug)]
 enum WarnerOp {
@@ -227,6 +273,8 @@ enum WarnerOp {
     Advance(u64),
     /// Take a due count without invoking a callback.
     TakeDue,
+    /// Take every pending count, as an explicit flush does.
+    TakePending,
     /// Emit through the ordinary warning path.
     WarnIfDue,
     /// Return the outstanding taken count to the retry state.
@@ -238,6 +286,7 @@ fn arb_warner_op() -> impl Strategy<Value = WarnerOp> {
         (0usize..=3).prop_map(WarnerOp::Record),
         (0u64..=2_000).prop_map(WarnerOp::Advance),
         Just(WarnerOp::TakeDue),
+        Just(WarnerOp::TakePending),
         Just(WarnerOp::WarnIfDue),
         Just(WarnerOp::RestoreLast),
     ]
@@ -246,11 +295,12 @@ fn arb_warner_op() -> impl Strategy<Value = WarnerOp> {
 proptest! {
     /// Every recorded drop stays pending, in flight, or emitted exactly once.
     ///
-    /// `take_due` models a flush handing its count to a worker queue: the
-    /// count leaves the pending state and is either emitted or restored
-    /// after a failed enqueue. A count taken twice without a restore is
-    /// accounted as emitted, because production has already transferred
-    /// it. Repeated restores must not duplicate the same drop.
+    /// `take_pending` models a flush handing its count to a worker queue and
+    /// `take_due` models an ordinary warning: either way the count leaves the
+    /// pending state and is either emitted or restored after a failed enqueue.
+    /// A count taken twice without a restore is accounted as emitted, because
+    /// production has already transferred it. Repeated restores must not
+    /// duplicate the same drop.
     #[test]
     fn every_drop_is_pending_in_flight_or_emitted_once(
         ops in prop::collection::vec(arb_warner_op(), 0..60),
@@ -279,6 +329,12 @@ proptest! {
                     }
                     in_flight = warner.take_due();
                 }
+                WarnerOp::TakePending => {
+                    if let Some(previous) = in_flight.take() {
+                        emitted += previous;
+                    }
+                    in_flight = warner.take_pending();
+                }
                 WarnerOp::WarnIfDue => {
                     warner.warn_if_due(|count| emitted += count);
                 }
@@ -299,54 +355,4 @@ proptest! {
             prop_assert!(emitted <= recorded);
         }
     }
-}
-
-/// A flush whose command never enters a saturated queue must hand its due
-/// drop count back, so the next warning still reports those records.
-#[test]
-fn failed_flush_enqueue_restores_the_due_drop_count() {
-    let clock = Arc::new(FakeClock::default());
-    let warner = RateLimitedWarner::with_clock(Duration::from_secs(5), clock);
-    for _ in 0..3 {
-        warner.record_drop();
-    }
-    // A fresh warner reports its first count immediately, so the flush below
-    // takes all three drops and must put them back.
-    let (tx, _rx) = crate::sync::bounded::<()>(1);
-    tx.try_send(())
-        .expect("the queue should accept its one item");
-
-    let start = Instant::now();
-    let deadline = start + Duration::from_millis(50);
-    let mut now = || start;
-    let mut cap = crate::handler::FlushCap::new(deadline, Duration::from_millis(50), &mut now);
-    let outcome: Option<Result<(), crate::handler::QueueFlushFailure>> =
-        crate::handler::flush_handler_until(
-            crate::handler::PendingDrops::new(
-                || warner.take_due(),
-                |count| warner.restore_drops(count),
-            ),
-            &mut cap,
-            || Some(tx.clone()),
-            |tx, pending_drops, budget| {
-                assert_eq!(
-                    pending_drops,
-                    Some(3),
-                    "the flush must carry the count it took"
-                );
-                tx.send_timeout((), budget).ok()?;
-                Some(|_: Duration| Some(()))
-            },
-        );
-
-    assert_eq!(
-        outcome,
-        Some(Err(crate::handler::QueueFlushFailure::Enqueue)),
-        "a full queue refuses the flush command"
-    );
-    assert_eq!(
-        warner.take_due(),
-        Some(3),
-        "the restored count must be the next warning's figure"
-    );
 }

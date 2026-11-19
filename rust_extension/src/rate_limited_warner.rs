@@ -10,8 +10,10 @@
 //! warning may be emitted. It does not carry them anywhere: the flush transport
 //! that caps a handler's deadline and puts the count on a marker lives in
 //! [`flush_handler_until`](crate::handler::flush_handler_until). A handler asks
-//! for the due count with [`RateLimitedWarner::take_due`] and hands it back with
-//! [`RateLimitedWarner::restore_drops`] if the marker never entered its queue.
+//! for the pending count with [`RateLimitedWarner::take_pending`] and hands it
+//! back with [`RateLimitedWarner::restore_drops`] if the marker never entered
+//! its queue. Ordinary warnings keep the interval: they ask
+//! [`RateLimitedWarner::take_due`], which declines while the interval runs.
 //! Retry bookkeeping stays here because a restored count is not merely pending
 //! again: reporting it restarts the warning interval, which is rate-limit
 //! policy.
@@ -145,6 +147,10 @@ impl RateLimitedWarner {
 
     /// Take a due warning count without invoking its callback.
     ///
+    /// This is the ordinary warning path, so the interval decides whether a
+    /// count may be taken. An explicit flush asks for the pending figure
+    /// regardless of the interval, and uses [`Self::take_pending`] instead.
+    ///
     /// The number is destructive: the count leaves the warner here, so a caller
     /// that cannot deliver it must give it back with [`Self::restore_drops`].
     /// Flush handlers hand it to
@@ -173,7 +179,8 @@ impl RateLimitedWarner {
         }
     }
 
-    /// Hand back a count that [`Self::take_due`] removed but could not deliver.
+    /// Hand back a count that [`Self::take_due`] or [`Self::take_pending`]
+    /// removed but could not deliver.
     ///
     /// A restored count is reported by the next [`Self::take_due`] or
     /// [`Self::flush`] even inside the warning interval, because the interval
@@ -183,19 +190,37 @@ impl RateLimitedWarner {
         self.retry_drops.fetch_add(count, Ordering::Relaxed);
     }
 
-    /// Immediately warn about pending drops and restart the rate limit interval.
+    /// Take every pending warning count, ignoring the interval.
     ///
-    /// A count held back because an earlier flush could not enter the worker
-    /// queue is reported here too, so a restored count is never stranded.
-    pub fn flush(&self, mut warn: impl FnMut(u64)) {
+    /// An explicit flush asks what has been lost since the last report, so the
+    /// interval must not withhold the figure: a drop recorded moments after a
+    /// warning is still one the caller is owed, and a flush that returned
+    /// success without it would undercount. Reporting the count restarts the
+    /// interval, exactly as [`Self::flush`] does.
+    ///
+    /// The number is destructive for the same reason as [`Self::take_due`], so
+    /// a caller that cannot deliver it must restore it with
+    /// [`Self::restore_drops`].
+    pub(crate) fn take_pending(&self) -> Option<u64> {
         let retry_count = self.retry_drops.swap(0, Ordering::Relaxed);
         let count = self
             .dropped
             .swap(0, Ordering::Relaxed)
             .saturating_add(retry_count);
-        if count > 0 {
-            self.last_warn
-                .store(self.clock.now_millis(), Ordering::Relaxed);
+        if count == 0 {
+            return None;
+        }
+        self.last_warn
+            .store(self.clock.now_millis(), Ordering::Relaxed);
+        Some(count)
+    }
+
+    /// Immediately warn about pending drops and restart the rate limit interval.
+    ///
+    /// A count held back because an earlier flush could not enter the worker
+    /// queue is reported here too, so a restored count is never stranded.
+    pub fn flush(&self, mut warn: impl FnMut(u64)) {
+        if let Some(count) = self.take_pending() {
             warn(count);
         }
     }

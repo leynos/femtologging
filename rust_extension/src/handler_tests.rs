@@ -8,7 +8,8 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{QueueFlushFailure, flush_command_until};
+use super::{FlushCap, PendingDrops, QueueFlushFailure, flush_command_until, flush_handler_until};
+use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{Sender, bounded};
 use crate::test_utils::flush_budget::ScriptedClock;
 
@@ -205,5 +206,55 @@ fn a_ready_answer_received_with_no_budget_left_does_not_confirm() {
         clock.samples(),
         3,
         "admission, acknowledgement and the lateness check must each sample the clock"
+    );
+}
+
+/// A flush whose command never enters a saturated queue must hand its taken
+/// drop count back, so the next warning still reports those records.
+///
+/// An explicit flush takes every pending count, so the take is destructive even
+/// when no warning was due; the restore half is what stops a saturated queue
+/// from swallowing the figure.
+#[test]
+fn failed_flush_enqueue_restores_the_taken_drop_count() {
+    let warner = RateLimitedWarner::new(Duration::from_secs(5));
+    for _ in 0..3 {
+        warner.record_drop();
+    }
+    let (tx, _rx) = bounded::<()>(1);
+    tx.try_send(())
+        .expect("the queue should accept its one item");
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(50);
+    let mut now = || start;
+    let mut cap = FlushCap::new(deadline, Duration::from_millis(50), &mut now);
+    let outcome: Option<Result<(), QueueFlushFailure>> = flush_handler_until(
+        PendingDrops::new(
+            || warner.take_pending(),
+            |count| warner.restore_drops(count),
+        ),
+        &mut cap,
+        || Some(tx.clone()),
+        |tx, pending_drops, budget| {
+            assert_eq!(
+                pending_drops,
+                Some(3),
+                "the flush must carry the count it took"
+            );
+            tx.send_timeout((), budget).ok()?;
+            Some(|_: Duration| Some(()))
+        },
+    );
+
+    assert_eq!(
+        outcome,
+        Some(Err(QueueFlushFailure::Enqueue)),
+        "a full queue refuses the flush command"
+    );
+    assert_eq!(
+        warner.take_due(),
+        Some(3),
+        "the restored count must be the next warning's figure"
     );
 }

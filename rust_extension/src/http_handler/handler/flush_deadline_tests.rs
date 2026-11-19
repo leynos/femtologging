@@ -86,6 +86,34 @@ fn handler_with_answering_worker(capacity: usize, flush_timeout: Duration) -> Fe
     )
 }
 
+/// Build a handler whose worker answers every flush marker and records the
+/// pending drop count that marker carried.
+///
+/// The counts travel out of the worker rather than being logged, so the test
+/// observes exactly what the flush handed to the queue.
+fn handler_with_recording_worker(
+    capacity: usize,
+    flush_timeout: Duration,
+    warner: RateLimitedWarner,
+) -> (FemtoHTTPHandler, crossbeam_channel::Receiver<Option<u64>>) {
+    let (tx, rx) = bounded(capacity);
+    let (seen_tx, seen_rx) = bounded(capacity);
+    let worker = thread::spawn(move || {
+        while let Ok(HTTPCommand::Flush(ack, pending_drops)) = rx.recv() {
+            let _ = seen_tx.send(pending_drops);
+            let _ = ack.send(());
+        }
+    });
+    let signal = Arc::new(ShutdownSignal::new());
+    let handler = FemtoHTTPHandler::with_worker_for_test(
+        tx,
+        TestWorker::new(signal, worker),
+        flush_timeout,
+        warner,
+    );
+    (handler, seen_rx)
+}
+
 /// An answer the caller only observes after the deadline must not confirm the
 /// flush, even though the worker sent it and the receive took it.
 ///
@@ -200,6 +228,38 @@ fn a_caller_deadline_shorter_than_the_handler_timeout_bounds_the_flush() {
     // handler takes the immediate path instead of waiting out its timeout.
     drop(unread);
     let mut handler = handler;
+    handler.close();
+}
+
+/// An explicit flush must carry a drop recorded inside the warning interval.
+///
+/// The interval limits how often ordinary warnings are emitted; it does not
+/// make a drop unreportable. The first drop warns through the ordinary path,
+/// the second is recorded half an interval later, and the warning that follows
+/// would be suppressed, so only the flush can report the second count.
+#[test]
+fn flush_carries_a_drop_recorded_inside_the_warning_interval() {
+    let clock = Arc::new(WarningClock::default());
+    let warner = RateLimitedWarner::with_clock(Duration::from_secs(5), clock.clone());
+    let (mut handler, counts) =
+        handler_with_recording_worker(2, Duration::from_millis(200), warner);
+
+    handler.warner.record_drop();
+    handler.warner.warn_if_due(|_| {});
+    clock.advance(Duration::from_millis(500));
+    handler.warner.record_drop();
+
+    assert!(
+        handler.flush(),
+        "the recording worker acknowledges the flush marker"
+    );
+    let carried = counts.recv_timeout(Duration::from_secs(1));
+    assert_eq!(
+        carried,
+        Ok(Some(1)),
+        "the marker must carry the drop recorded inside the interval"
+    );
+
     handler.close();
 }
 

@@ -131,7 +131,7 @@ impl FemtoHTTPHandler {
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
         let outcome = flush_handler_until(
             PendingDrops::new(
-                || self.warner.take_due(),
+                || self.warner.take_pending(),
                 |count| self.warner.restore_drops(count),
             ),
             &mut cap,
