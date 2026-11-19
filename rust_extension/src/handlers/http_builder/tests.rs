@@ -99,35 +99,21 @@ fn accepts_an_endpoint_whose_path_needs_percent_encoding() {
         .expect("a space is encodable by the send path");
 }
 
-/// Scenario: the endpoint names a scheme the transport cannot send.
+/// Scenario: the endpoint is not one the transport can send.
 ///
 /// Invariant: building fails with a configuration error naming the endpoint,
-/// rather than spawning a worker that fails every attempt.
+/// rather than spawning a worker that fails every attempt and retries each
+/// record until the backoff deadline expires. The cases are a scheme other than
+/// HTTP, a relative path, and a string that is not a URL.
 #[rstest::rstest]
 #[case::file("file:///var/log/records")]
 #[case::relative("/log")]
-fn rejects_an_endpoint_that_is_not_http(#[case] endpoint: &str) {
+#[case::unparseable("not a url")]
+fn rejects_an_endpoint_the_transport_cannot_send(#[case] endpoint: &str) {
     let err = HTTPHandlerBuilder::new()
         .with_url(endpoint)
         .build_inner()
         .expect_err("a non-HTTP endpoint must reject the configuration");
-
-    assert!(
-        matches!(err, HandlerBuildError::InvalidConfig(ref message) if message.contains("endpoint")),
-        "the error must identify the endpoint: {err:?}"
-    );
-}
-
-/// Scenario: the endpoint is not a URL the handler can send to.
-///
-/// Invariant: building fails with a configuration error rather than spawning a
-/// worker that would retry every record until the backoff deadline expired.
-#[test]
-fn rejects_an_unparseable_endpoint() {
-    let err = HTTPHandlerBuilder::new()
-        .with_url("not a url")
-        .build_inner()
-        .expect_err("an unparseable endpoint must reject the configuration");
 
     assert!(
         matches!(err, HandlerBuildError::InvalidConfig(ref message) if message.contains("endpoint")),

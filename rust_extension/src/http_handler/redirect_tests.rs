@@ -4,20 +4,40 @@
 //! the wire. What lives here is the decision itself, including the statuses and
 //! header shapes a loopback fixture cannot easily produce.
 
+use std::sync::OnceLock;
+
 use rstest::rstest;
 use ureq::http::HeaderValue;
 use url::Url;
 
 use super::*;
 
-/// The base URL a redirect is resolved against.
-fn base() -> Url {
-    Url::parse("http://collector.example/log").expect("the base parses")
+/// The base URL a redirect is resolved against, shared so attempts can borrow
+/// it for the lifetime of a test.
+fn base() -> &'static Url {
+    static BASE: OnceLock<Url> = OnceLock::new();
+    BASE.get_or_init(|| Url::parse("http://collector.example/log").expect("the base parses"))
 }
 
 /// A `Location` header carrying `value`.
 fn location(value: &str) -> HeaderValue {
     HeaderValue::from_str(value).expect("the test value is a header value")
+}
+
+/// One response in a chain rooted at [`base`], with `method` and `status`.
+fn attempt<'a>(
+    method: &'a HTTPMethod,
+    status: u16,
+    location: Option<&'a HeaderValue>,
+    responses_seen: usize,
+) -> RedirectAttempt<'a> {
+    RedirectAttempt {
+        base: base(),
+        method,
+        status,
+        location,
+        responses_seen,
+    }
 }
 
 /// Scenario: a redirect response that carries a usable `Location`.
@@ -36,7 +56,7 @@ fn a_replayable_redirect_is_followed(
     #[case] method: HTTPMethod,
     #[case] target: &str,
 ) {
-    let hop = next_hop(&base(), &method, status, Some(&location(target)), 1);
+    let hop = next_hop(attempt(&method, status, Some(&location(target)), 1));
 
     let NextHop::Follow { url, method } = hop else {
         panic!("a replayable redirect must be followed: {hop:?}");
@@ -49,39 +69,21 @@ fn a_replayable_redirect_is_followed(
 /// Scenario: a 3xx that ureq 2 returned to the caller instead of following.
 ///
 /// Invariant: the status is left for the classifier, as it was under ureq 2,
-/// which broke out of its loop. A 307 or 308 would replay a request body, and
-/// 300, 304 and 305 have no replay rule at all.
+/// which broke out of its loop. A 307 or 308 answering a POST would replay the
+/// request body, and 300, 304 and 305 have no replay rule at all.
 #[rstest]
 #[case::multiple_choices(300)]
 #[case::not_modified(304)]
 #[case::use_proxy(305)]
-fn a_status_without_a_replay_rule_is_refused(#[case] status: u16) {
-    let hop = next_hop(
-        &base(),
+#[case::temporary_redirect_of_a_post(307)]
+#[case::permanent_redirect_of_a_post(308)]
+fn a_redirect_ureq_two_would_not_replay_is_refused(#[case] status: u16) {
+    let hop = next_hop(attempt(
         &HTTPMethod::POST,
         status,
         Some(&location("http://other.example/a")),
         1,
-    );
-
-    assert!(matches!(hop, NextHop::Refuse), "{hop:?}");
-}
-
-/// Scenario: a 307 or 308 whose method carries a body.
-///
-/// Invariant: ureq 2 refused to replay the body and returned the response, so
-/// the status must reach the classifier rather than the redirect target.
-#[rstest]
-#[case(307)]
-#[case(308)]
-fn a_body_bearing_redirect_is_refused(#[case] status: u16) {
-    let hop = next_hop(
-        &base(),
-        &HTTPMethod::POST,
-        status,
-        Some(&location("http://other.example/a")),
-        1,
-    );
+    ));
 
     assert!(matches!(hop, NextHop::Refuse), "{hop:?}");
 }
@@ -95,7 +97,7 @@ fn a_body_bearing_redirect_is_refused(#[case] status: u16) {
 #[case::missing(None)]
 #[case::not_utf8(Some(HeaderValue::from_bytes(b"http://other.example/\x80").expect("opaque bytes are a header value")))]
 fn a_redirect_without_a_location_is_refused(#[case] location: Option<HeaderValue>) {
-    let hop = next_hop(&base(), &HTTPMethod::POST, 302, location.as_ref(), 1);
+    let hop = next_hop(attempt(&HTTPMethod::POST, 302, location.as_ref(), 1));
 
     assert!(matches!(hop, NextHop::Refuse), "{hop:?}");
 }
@@ -109,13 +111,12 @@ fn a_redirect_without_a_location_is_refused(#[case] location: Option<HeaderValue
 #[case::with_a_location(Some(location("http://other.example/a")))]
 #[case::without_a_location(None)]
 fn the_chain_limit_is_checked_first(#[case] location: Option<HeaderValue>) {
-    let hop = next_hop(
-        &base(),
+    let hop = next_hop(attempt(
         &HTTPMethod::GET,
         302,
         location.as_ref(),
         MAX_RESPONSES,
-    );
+    ));
 
     assert!(
         matches!(hop, NextHop::Failed(ref message) if message.contains("max redirects")),

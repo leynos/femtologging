@@ -34,18 +34,21 @@ fn execute_against_raw_response(
     result
 }
 
-/// Scenario: a collector answers a POST with 307 or 308.
+/// Scenario: a collector answers a POST with a redirect ureq 2 returned
+/// instead of following.
 ///
-/// Invariant: the verdict is permanent, exactly as it was under ureq 2, which
-/// returned the redirect response instead of replaying the request body. ureq 3
-/// reports the same refusal as `RedirectFailed`; left unhandled it would become
-/// a transport error and the record would be retried until the backoff
-/// deadline. The target is never contacted, which is why the response has to be
-/// classified rather than followed.
+/// Invariant: the verdict is permanent and the alternative the response names
+/// is never requested, exactly as under ureq 2, which returned the redirect
+/// response instead of replaying the request body. ureq 3 would follow the
+/// `Location`, send a GET, and record the collector's `200` as a delivered
+/// record even though the original POST was never accepted. A 307 or 308
+/// answering a POST is refused because replaying it would resend the body; a
+/// 300 has no replay rule at all.
 #[rstest]
-#[case(307)]
-#[case(308)]
-fn a_post_that_cannot_be_replayed_is_permanent(
+#[case::multiple_choices(300)]
+#[case::temporary_redirect_of_a_post(307)]
+#[case::permanent_redirect_of_a_post(308)]
+fn a_redirect_ureq_two_would_not_replay_is_permanent(
     tcp_listener: io::Result<TcpListener>,
     #[case] status: u16,
 ) {
@@ -191,38 +194,6 @@ fn a_stalled_redirect_body_does_not_delay_the_refusal(tcp_listener: io::Result<T
     answered
         .recv_timeout(Duration::from_secs(5))
         .expect("the redirect response is answered before the client gives up");
-}
-
-/// Scenario: a collector answers a POST with `300 Multiple Choices`.
-///
-/// Invariant: the response is returned for classification and the alternative
-/// it names is never requested, which is what ureq 2 did. ureq 3 would follow
-/// the `Location`, send a GET, and record the collector's `200` as a delivered
-/// record even though the original POST was never accepted.
-#[rstest]
-fn a_multiple_choices_response_is_not_followed(tcp_listener: io::Result<TcpListener>) {
-    let redirect_listener = tcp_listener.expect("bind ephemeral listener");
-    let target_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind redirect target");
-    target_listener
-        .set_nonblocking(true)
-        .expect("the target listener must not block the assertion");
-    let target_addr = target_listener.local_addr().expect("target address");
-    let (redirect_addr, _requests) = spawn_redirect_server(
-        redirect_listener,
-        300,
-        format!("http://{target_addr}/alternate"),
-    )
-    .expect("spawn redirect server");
-    let config = post_config(format!("http://{redirect_addr}/log"), AuthConfig::None, &[]);
-
-    let class = execute(&config, &test_agent(), "msg=redirect")
-        .expect("a status ureq 2 returned is a verdict, not a transport error");
-
-    assert_eq!(class, ResponseClass::Permanent);
-    assert!(
-        matches!(target_listener.accept(), Err(err) if err.kind() == io::ErrorKind::WouldBlock),
-        "a 300 must not become a second request"
-    );
 }
 
 /// Scenario: the collector names its redirect target with an unencoded space.

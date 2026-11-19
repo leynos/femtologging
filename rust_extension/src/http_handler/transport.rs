@@ -115,13 +115,13 @@ pub(super) fn execute(
         if !(300..=399).contains(&status) {
             return Ok(classify_status(status));
         }
-        match redirect::next_hop(
-            &hop.url,
-            &hop.method,
+        match redirect::next_hop(redirect::RedirectAttempt {
+            base: &hop.url,
+            method: &hop.method,
             status,
-            response.headers().get(LOCATION),
+            location: response.headers().get(LOCATION),
             responses_seen,
-        ) {
+        }) {
             NextHop::Follow { url, method } => {
                 headers = redirected_headers(&headers);
                 hop = Hop {

@@ -42,6 +42,24 @@ pub(super) enum NextHop {
     Failed(String),
 }
 
+/// One response in a redirect chain, as the redirect rules need to see it.
+///
+/// The request that produced the response and the response's own redirect
+/// evidence travel together because every rule reads at least two of them, and
+/// the chain limit is counted on the same walk.
+pub(super) struct RedirectAttempt<'a> {
+    /// URL of the request that produced the response.
+    pub(super) base: &'a Url,
+    /// Method of the request that produced the response.
+    pub(super) method: &'a HTTPMethod,
+    /// Status of the response.
+    pub(super) status: u16,
+    /// `Location` header, when the response carried one.
+    pub(super) location: Option<&'a HeaderValue>,
+    /// Responses seen in this chain, counting the original request.
+    pub(super) responses_seen: usize,
+}
+
 /// Decide what a 3xx response means for the request that produced it.
 ///
 /// The checks run in ureq 2's order: the chain limit first, then whether a
@@ -49,13 +67,14 @@ pub(super) enum NextHop {
 /// URL, and only then whether the status and method may be replayed. A header
 /// that is not valid UTF-8 counts as absent, which is what ureq 2's
 /// `header("location")` returned.
-pub(super) fn next_hop(
-    base: &Url,
-    method: &HTTPMethod,
-    status: u16,
-    location: Option<&HeaderValue>,
-    responses_seen: usize,
-) -> NextHop {
+pub(super) fn next_hop(attempt: RedirectAttempt<'_>) -> NextHop {
+    let RedirectAttempt {
+        base,
+        method,
+        status,
+        location,
+        responses_seen,
+    } = attempt;
     if responses_seen >= MAX_RESPONSES {
         return NextHop::Failed(format!("reached max redirects ({MAX_RESPONSES})"));
     }
