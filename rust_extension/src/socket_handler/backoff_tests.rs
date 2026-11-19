@@ -119,12 +119,35 @@ fn equal_seeds_reproduce_equal_delays() {
     assert_eq!(first_delays, second_delays);
 }
 
+/// Draw eight delays, requiring every one to be a valid sample.
+///
+/// Comparing raw `Option`s would let a rejected draw (one state returns `None`
+/// while the other returns `Some`) or an out-of-range delay look like proof
+/// that the two streams diverge. Both are separate defects, so validate each
+/// draw before comparing the sequences.
+fn eight_valid_delays(state: &mut BackoffState, base: Duration, start: Instant) -> Vec<Duration> {
+    (0..8)
+        .map(|_| {
+            let sleep = state
+                .next_sleep(start)
+                .expect("every draw must be within the deadline");
+            assert!(
+                (Duration::from_millis(10)..=base).contains(&sleep),
+                "a production state sampled outside 10 ms..={base:?}: {sleep:?}"
+            );
+            sleep
+        })
+        .collect()
+}
+
 /// The production constructor seeds independent random sources.
 ///
 /// [`BackoffState::new`] draws a seed through `rand::make_rng`, so two states
 /// constructed on the same thread must not produce the same sequence. A
 /// fixed-seed fallback would put every state, and every process, in lockstep.
-/// Eight draws from a 1000 ms bound are practically certain to differ.
+/// Eight draws from a 1000 ms bound are practically certain to differ, but a
+/// chance collision is possible, so the failure message reports the sampled
+/// sequences for a human to judge.
 #[rstest]
 fn independent_production_states_do_not_share_a_stream() {
     let base = Duration::from_millis(1000);
@@ -132,12 +155,13 @@ fn independent_production_states_do_not_share_a_stream() {
     let start = Instant::now();
     let mut first = BackoffState::new(make_policy());
     let mut second = BackoffState::new(make_policy());
-    let first_draws: Vec<_> = (0..8).map(|_| first.next_sleep(start)).collect();
-    let second_draws: Vec<_> = (0..8).map(|_| second.next_sleep(start)).collect();
+    let first_draws = eight_valid_delays(&mut first, base, start);
+    let second_draws = eight_valid_delays(&mut second, base, start);
 
     assert_ne!(
         first_draws, second_draws,
-        "two production states shared a stream, so seeding is fixed"
+        "two production states sampled an identical stream, which a fixed seed \
+         would also produce; re-run before concluding that seeding is fixed"
     );
 }
 
