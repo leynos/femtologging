@@ -223,9 +223,12 @@ The logging process will follow these steps:
    some parent thread held, so a child has nothing to reclaim and cannot block
    on it. A count still in the counter when the parent forks exists twice
    afterwards and both processes may report it, so conservation is per process.
-   A batch a warning or flush has already drained is the exception: the child
-   copies a zero counter and does not own the draining thread's in-flight
-   batch, so only the parent can report that count.
+   A batch a warning or flush has already drained is the exception: it is not
+   in the child's counter, and the child does not own the draining thread's
+   in-flight batch, so only the parent can report that count. The copied
+   counter is not necessarily zero, though: another thread may record drops
+   between the swap and the fork, and those newer counts are duplicated like
+   any other.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.
