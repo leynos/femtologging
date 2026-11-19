@@ -375,12 +375,12 @@ export.
 
 An HTTP handler delivers on a dedicated worker thread, and `ureq` reports its
 own progress through the `log` and `tracing` facades as DEBUG records under
-`ureq.unit`, `ureq.stream`, and `ureq.pool`. With either bridge installed those
-records are ordinary records that a target route can send back to the handler
-that produced them, so each successful delivery would manufacture the next one.
-`rust_extension/src/http_handler/transport_origin.rs` is the guard that stops
-the loop. It lives under the HTTP adapter, because the worker is its only
-producer.
+`ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver`. With either bridge
+installed those records are ordinary records that a target route can send back
+to the handler that produced them, so each successful delivery would
+manufacture the next one. `rust_extension/src/http_handler/transport_origin.rs`
+is the guard that stops the loop. It lives under the HTTP adapter, because the
+worker is its only producer.
 
 The module holds a thread-local `Cell<bool>` rather than process-wide state:
 two HTTP handlers on different threads must not hide each other's ordinary
@@ -429,11 +429,11 @@ still receive the record, which keeps independent diagnostics available.
 
 Suppression is silent and has no counter or summary of its own. Most of the
 records it discards are the transport library's own DEBUG output, so a
-maintainer who needs to see them raises the `ureq` targets (`ureq.unit`,
-`ureq.stream`, `ureq.pool`) to DEBUG and watches a non-HTTP sink. A record that
-appears there and never arrives at the endpoint is evidence of suppression
-rather than an exact count, because a filter or a failed delivery can also
-account for an absence; comparing the two sinks is the route
+maintainer who needs to see them raises the `ureq` targets (`ureq.run`,
+`ureq.pool`, `ureq.unversioned.resolver`) to DEBUG and watches a non-HTTP sink.
+A record that appears there and never arrives at the endpoint is evidence of
+suppression rather than an exact count, because a filter or a failed delivery
+can also account for an absence; comparing the two sinks is the route
 `tests/http_transport_feedback_tests.rs` takes. A counter would need a
 diagnostics surface this handler does not have. Its only existing signal is the
 drop warner, and a suppressed record is deliberately not a drop; bounded
@@ -442,8 +442,8 @@ handler telemetry is tracked separately by #551.
 The behavioural regression is `tests/http_transport_feedback_tests.rs`. Each
 variant runs in a fresh child process under a watchdog against a local TCP
 collector, enables real `ureq` DEBUG diagnostics, and requires delivery to stop
-after the initiating records: two application requests arrive, the `ureq.unit`
-diagnostic reaches a non-HTTP file sink, and a quiet window then passes with no
+after the initiating records: two application requests arrive, the `ureq.run`
+diagnostics reach a non-HTTP file sink, and a quiet window then passes with no
 further request and no overflow. The child, its assertions, and the process
 supervisor live in `tests/http_transport_feedback/`, where Cargo treats them as
 modules rather than as separate test crates.

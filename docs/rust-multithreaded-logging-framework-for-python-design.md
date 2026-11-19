@@ -1248,21 +1248,21 @@ while maximum refresh reads the index without taking the manager lock.
 **HTTP Transport Origin:**
 
 HTTP handlers deliver on a dedicated worker thread. `ureq` reports DEBUG
-diagnostics under `ureq.unit`, `ureq.stream`, and `ureq.pool`; with the bridge
-installed those records would otherwise route back to an HTTP handler, and
-every delivery would manufacture more requests. The worker therefore marks its
-OS thread as HTTP transport for the whole delivery lifetime. The bridge
-captures that marker once at entry and attaches it to the `FemtoLogRecord`. The
-marker survives filtering, handler-selection snapshots, cloning, and parent
-propagation. Every HTTP handler silently discards a marked record after its
-closed-handler check, so the record is not queued, warned about, or counted as
-a drop, while non-HTTP handlers still receive it. The bridge suspends the
-marker for the rest of its entry call, so filters, formatters, and handler
-callbacks that log during dispatch emit application records instead of
-inheriting the transport origin. The mechanism covers bridge-produced records
-on a marked worker thread; it does not mark records rebuilt in Python, records
-passed directly to the three-argument `handle` method, or records delivered by
-socket handlers.
+diagnostics under `ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver`;
+with the bridge installed those records would otherwise route back to an HTTP
+handler, and every delivery would manufacture more requests. The worker
+therefore marks its OS thread as HTTP transport for the whole delivery
+lifetime. The bridge captures that marker once at entry and attaches it to the
+`FemtoLogRecord`. The marker survives filtering, handler-selection snapshots,
+cloning, and parent propagation. Every HTTP handler silently discards a marked
+record after its closed-handler check, so the record is not queued, warned
+about, or counted as a drop, while non-HTTP handlers still receive it. The
+bridge suspends the marker for the rest of its entry call, so filters,
+formatters, and handler callbacks that log during dispatch emit application
+records instead of inheriting the transport origin. The mechanism covers
+bridge-produced records on a marked worker thread; it does not mark records
+rebuilt in Python, records passed directly to the three-argument `handle`
+method, or records delivered by socket handlers.
 
 **GIL Acquisition and Error Handling:**
 

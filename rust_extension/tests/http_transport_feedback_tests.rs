@@ -6,9 +6,9 @@
 //! every assertion about delivery.
 //!
 //! Regression: before transport-origin suppression, a diagnostic such as
-//! `ureq::unit`'s "sending request" was routed back to the same HTTP handler.
-//! Every delivery then manufactured more diagnostics, so the worker kept
-//! sending until the collector was overwhelmed.
+//! `ureq::run`'s request line was routed back to the same HTTP handler. Every
+//! delivery then manufactured more diagnostics, so the worker kept sending
+//! until the collector was overwhelmed.
 
 #![cfg(feature = "log-compat")]
 

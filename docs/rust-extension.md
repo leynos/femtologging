@@ -569,14 +569,14 @@ warning from recursively entering the logger that emitted it.
 
 The bridge also records whether a record was produced by HTTP transport work.
 An HTTP handler marks its worker thread for the whole delivery lifetime, which
-covers `ureq`'s DEBUG records under `ureq.unit`, `ureq.stream`, and
-`ureq.pool`. A marked record reaches non-HTTP handlers but every HTTP handler
-silently ignores it after its closed-handler check, so a delivery cannot
-manufacture the next request. The marker is captured at bridge entry and
-suspended for the rest of the call, so a filter, formatter, or handler that
-logs during dispatch produces an ordinary application record. Only bridge
-records created on a marked worker thread are marked. Records rebuilt in Python
-and records passed directly to `FemtoHTTPHandler.handle` are not.
+covers `ureq`'s DEBUG records under `ureq.run`, `ureq.pool`, and
+`ureq.unversioned.resolver`. A marked record reaches non-HTTP handlers but
+every HTTP handler silently ignores it after its closed-handler check, so a
+delivery cannot manufacture the next request. The marker is captured at bridge
+entry and suspended for the rest of the call, so a filter, formatter, or
+handler that logs during dispatch produces an ordinary application record. Only
+bridge records created on a marked worker thread are marked. Records rebuilt in
+Python and records passed directly to `FemtoHTTPHandler.handle` are not.
 
 The bridge's `enabled()` check applies the target logger's current level
 threshold. The `log` crate reaches it only after the process-wide maximum has
