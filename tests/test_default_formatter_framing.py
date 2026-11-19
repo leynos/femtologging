@@ -16,19 +16,59 @@ if typ.TYPE_CHECKING:
     ("message", "escaped"),
     [
         pytest.param(
-            "forged\ncore [ERROR] second",
-            "forged\\ncore [ERROR] second",
+            "forged\nother [ERROR] second",
+            "forged\\nother [ERROR] second",
             id="line-feed",
         ),
         pytest.param(
-            "forged\rcore [ERROR] second",
-            "forged\\rcore [ERROR] second",
+            "forged\u000bother [ERROR] second",
+            "forged\\u{b}other [ERROR] second",
+            id="vertical-tab",
+        ),
+        pytest.param(
+            "forged\u000cother [ERROR] second",
+            "forged\\u{c}other [ERROR] second",
+            id="form-feed",
+        ),
+        pytest.param(
+            "forged\rother [ERROR] second",
+            "forged\\rother [ERROR] second",
             id="carriage-return",
         ),
         pytest.param(
-            "forged\r\ncore [ERROR] second",
-            "forged\\r\\ncore [ERROR] second",
+            "forged\r\nother [ERROR] second",
+            "forged\\r\\nother [ERROR] second",
             id="carriage-return-line-feed",
+        ),
+        pytest.param(
+            "forged\u001cother [ERROR] second",
+            "forged\\u{1c}other [ERROR] second",
+            id="file-separator",
+        ),
+        pytest.param(
+            "forged\u001dother [ERROR] second",
+            "forged\\u{1d}other [ERROR] second",
+            id="group-separator",
+        ),
+        pytest.param(
+            "forged\u001eother [ERROR] second",
+            "forged\\u{1e}other [ERROR] second",
+            id="record-separator",
+        ),
+        pytest.param(
+            "forged\u0085other [ERROR] second",
+            "forged\\u{85}other [ERROR] second",
+            id="next-line",
+        ),
+        pytest.param(
+            "forged\u2028other [ERROR] second",
+            "forged\\u{2028}other [ERROR] second",
+            id="line-separator",
+        ),
+        pytest.param(
+            "forged\u2029other [ERROR] second",
+            "forged\\u{2029}other [ERROR] second",
+            id="paragraph-separator",
         ),
         pytest.param("trailing\n", "trailing\\n", id="trailing-line-feed"),
     ],

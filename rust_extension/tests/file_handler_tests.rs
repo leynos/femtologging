@@ -151,16 +151,16 @@ fn file_handler_writes_to_file() {
 
 #[rstest]
 #[case(
-    "forged\ncore [ERROR] second",
-    "core [INFO] forged\\ncore [ERROR] second\n"
+    "forged\nother [ERROR] second",
+    "core [INFO] forged\\nother [ERROR] second\n"
 )]
 #[case(
-    "forged\rcore [ERROR] second",
-    "core [INFO] forged\\rcore [ERROR] second\n"
+    "forged\rother [ERROR] second",
+    "core [INFO] forged\\rother [ERROR] second\n"
 )]
 #[case(
-    "forged\r\ncore [ERROR] second",
-    "core [INFO] forged\\r\\ncore [ERROR] second\n"
+    "forged\r\nother [ERROR] second",
+    "core [INFO] forged\\r\\nother [ERROR] second\n"
 )]
 #[case("trailing\n", "core [INFO] trailing\\n\n")]
 fn file_handler_escapes_message_line_separators(#[case] message: &str, #[case] expected: &str) {
