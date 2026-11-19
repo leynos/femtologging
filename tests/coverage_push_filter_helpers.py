@@ -136,6 +136,73 @@ def _branch_filter(settings: cabc.Mapping[str, typ.Any], key: str) -> list[str] 
     return patterns
 
 
+def _declared_filters(
+    declared: cabc.Mapping[str, typ.Any],
+) -> tuple[list[str] | None, list[str] | None]:
+    """Return a push trigger's branch filters, refusing a contradictory pair.
+
+    Parameters
+    ----------
+    declared
+        A push trigger's settings mapping.
+
+    Returns
+    -------
+    tuple[list[str] | None, list[str] | None]
+        The ``branches`` and ``branches-ignore`` patterns, each ``None`` when
+        that half is absent.
+
+    Raises
+    ------
+    AssertionError
+        If both halves of one filter pair are declared, which GitHub imposes no
+        order on, so neither reading could be called the source of truth.
+    """
+    included = _branch_filter(declared, "branches")
+    excluded = _branch_filter(declared, "branches-ignore")
+    # Raised explicitly, rather than through `require`, so the documented
+    # `AssertionError` stays visible to the docstring linter.
+    if included is not None and excluded is not None:
+        message = "a push trigger cannot name both branches and branches-ignore"
+        raise AssertionError(message)
+    if "tags" in declared and "tags-ignore" in declared:
+        message = "a push trigger cannot name both tags and tags-ignore"
+        raise AssertionError(message)
+    return included, excluded
+
+
+def _accepts_branch(
+    declared: cabc.Mapping[str, typ.Any],
+    branch: str,
+) -> bool:
+    """Decide one push trigger's acceptance of `branch` from its filters.
+
+    An absent branch filter accepts, a ``branches`` filter accepts the branches
+    its patterns match, and a ``branches-ignore`` filter accepts every branch
+    it does not exclude. Naming only a tag filter accepts no branch push at
+    all: the workflow does not run for one, which is a definite "no" rather
+    than an unreadable shape.
+
+    Parameters
+    ----------
+    declared
+        A push trigger's settings mapping.
+    branch
+        The branch name a push must name.
+
+    Returns
+    -------
+    bool
+        Whether the trigger accepts `branch`.
+    """
+    included, excluded = _declared_filters(declared)
+    if included is not None:
+        return _matches_filter(included, branch)
+    if excluded is not None:
+        return not _matches_filter(excluded, branch)
+    return "tags" not in declared and "tags-ignore" not in declared
+
+
 def pushes_to(events: cabc.Mapping[str, typ.Any], branch: str) -> bool:
     """Report whether `events` runs on a push to `branch`.
 
@@ -165,28 +232,4 @@ def pushes_to(events: cabc.Mapping[str, typ.Any], branch: str) -> bool:
     if settings is None:
         return True
     require(isinstance(settings, dict), "a push trigger must be a mapping")
-    declared = typ.cast("cabc.Mapping[str, typ.Any]", settings)
-    included = _branch_filter(declared, "branches")
-    excluded = _branch_filter(declared, "branches-ignore")
-    require(
-        included is None or excluded is None,
-        "a push trigger cannot name both branches and branches-ignore",
-    )
-    require(
-        not ("tags" in declared and "tags-ignore" in declared),
-        "a push trigger cannot name both tags and tags-ignore",
-    )
-    tags_only = (
-        included is None
-        and excluded is None
-        and ("tags" in declared or "tags-ignore" in declared)
-    )
-    if tags_only:
-        # Naming only a tag filter means the workflow does not run for a
-        # branch push at all; this is a definite "no", not an unreadable shape.
-        return False
-    if included is not None:
-        return _matches_filter(included, branch)
-    if excluded is not None:
-        return not _matches_filter(excluded, branch)
-    return True
+    return _accepts_branch(typ.cast("cabc.Mapping[str, typ.Any]", settings), branch)
