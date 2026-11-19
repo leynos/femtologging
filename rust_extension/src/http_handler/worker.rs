@@ -30,11 +30,13 @@ use crate::{
 };
 
 use super::{
-    config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
-    response::{ResponseClass, classify_status},
+    response::ResponseClass,
     serialize::{serialize_json, serialize_url_encoded},
 };
+
+mod requests;
 
 /// Spawns a background worker thread to process HTTP commands.
 ///
@@ -150,7 +152,7 @@ impl Worker {
                     self.warn_permanent_drops();
                     return;
                 }
-                Err(err) => match self.should_retry(&err, now) {
+                Err(err) => match self.should_retry(err, now) {
                     true => continue,
                     false => return,
                 },
@@ -181,79 +183,6 @@ impl Worker {
         )
     }
 
-    /// Execute one request; HTTP 503 is classified as retryable.
-    fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
-        // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
-        let request = match self.config.method {
-            HTTPMethod::GET => self.build_get_request(payload, agent),
-            HTTPMethod::POST => self.build_post_request(payload, agent),
-        };
-
-        match request {
-            Ok(response) => Ok(classify_status(response.status())),
-            Err(err) => match *err {
-                ureq::Error::Status(code, _) => Ok(classify_status(code)),
-                ureq::Error::Transport(transport_err) => Err(transport_err.to_string()),
-            },
-        }
-    }
-
-    /// Build a GET request; the payload follows any existing query data.
-    fn build_get_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let url = if self.config.url.contains('?') {
-            format!("{}&{}", self.config.url, payload)
-        } else {
-            format!("{}?{}", self.config.url, payload)
-        };
-        let mut req = agent.get(&url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
-        req.call().map_err(Box::new)
-    }
-
-    /// Build a POST request; JSON format sends an `application/json` body.
-    fn build_post_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let mut req = agent.post(&self.config.url);
-        req = self.apply_auth(req);
-        req = self.apply_headers(req);
-
-        let content_type = match self.config.format {
-            SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
-            SerializationFormat::Json => "application/json",
-        };
-        req = req.set("Content-Type", content_type);
-        req.send_string(payload).map_err(Box::new)
-    }
-
-    /// Add authentication; bearer configuration sets an `Authorization` header.
-    fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
-        match &self.config.auth {
-            AuthConfig::None => req,
-            AuthConfig::Basic { username, password } => {
-                let credentials = format!("{}:{}", username, password);
-                let encoded = base64_encode(credentials.as_bytes());
-                req.set("Authorization", &format!("Basic {}", encoded))
-            }
-            AuthConfig::Bearer { token } => req.set("Authorization", &format!("Bearer {}", token)),
-        }
-    }
-
-    /// Apply every configured custom header to the request.
-    fn apply_headers(&self, mut req: ureq::Request) -> ureq::Request {
-        for (key, value) in &self.config.headers {
-            req = req.set(key, value);
-        }
-        req
-    }
-
     /// Logs a retryable failure, then says whether this record gets another
     /// attempt.
     ///
@@ -265,7 +194,12 @@ impl Worker {
     ///
     /// The backoff sleep is the signal's, not `thread::sleep`'s, so a close
     /// that lands mid-delay is observed now rather than after it.
-    fn should_retry(&mut self, err: &str, now: Instant) -> bool {
+    ///
+    /// `err` is always application-owned static text: a transport
+    /// classification, or the fixed retryable-status message. It is never a
+    /// dependency's formatted error, which can carry URL userinfo, query
+    /// values, or a rejected header's value.
+    fn should_retry(&mut self, err: &'static str, now: Instant) -> bool {
         warn!("FemtoHTTPHandler request failed: {err}");
         if self.signal.is_shutting_down() {
             self.warn_shutdown_drops();
