@@ -5,10 +5,12 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS — implementation complete on draft PR #613. The CodeRabbit
-completeness assessment's findings are addressed in the working tree, and the
-deterministic and ignored lanes are being re-run on the resulting candidate
-before the assessment follow-up.
+Status: IN PROGRESS — ready PR #613 carries the implementation and the repairs
+for every finding from CodeRabbit's review of `42c3abe1`. Every deterministic
+gate that can complete on this host has passed on the repaired tree; the four
+trybuild UI suites are recorded as unexecuted locally because the saturated
+compile pool admitted only a few of their eleven cases per 590 s window. The
+review follow-up and merge now wait on the hosted checks for that candidate.
 
 ## Purpose / big picture
 
@@ -359,7 +361,11 @@ suite that fails if any drop is discarded or handed off more than once.
       and `run_stream_worker` moved to `stream_handler/worker.rs`, matching
       the `http_handler/worker.rs` and `socket_handler/worker.rs` layout; the
       handler file is now 346 lines.
-- [ ] Obtain a clean CodeRabbit review on the exact candidate.
+- [ ] Obtain a clean CodeRabbit review on the exact candidate. Partial: the
+      review of `42c3abe1` is answered in full (26 findings, none skipped), and
+      a review of the repaired head follows once its gates finish. This stays
+      unticked until a review of the current head completes with no unaddressed
+      finding; see the 2026-11-18 entries at the end of this list.
 - [x] (2026-11-17) Draft PR #613 is open on the rebased candidate.
 - [x] (2026-11-17) CodeRabbit's saved pre-merge check and assessment raised two
       blocking findings, both fixed on the branch: HTTP and socket warnings
@@ -543,6 +549,114 @@ suite that fails if any drop is discarded or handed off more than once.
       66 ignored each), the `tracing-compat` lane (1101 passed, 67 ignored) and
       pytest (1234 passed, 5 skipped, 66 snapshots). The new unit test passed
       in every lane.
+
+- [x] (2026-11-18) Triaged CodeRabbit's review of `42c3abe1`: 26 findings (22
+      inline, three outside the diff, one minor) plus two failed pre-merge
+      checks, all Minor or Trivial. Each was checked against the tree before
+      repair. All 26 were still valid and are fixed; none was skipped, and four
+      were fixed by documenting a deliberate exclusion rather than by changing
+      code. Repairs were split across four bounded agents by file ownership
+      (warner and core tests, HTTP, socket, documentation), plus a scribe for
+      the migration-guide entry, so no two agents edited the same file.
+- [x] (2026-11-18) Restated `RateLimitedWarner`'s guarantee as publication, not
+      callback spacing, in the module doc, the `interval_ms` field,
+      `warn_if_due` and `publish_report_time`, and added
+      `a_caller_paused_after_publication_still_reports_its_own_interval`: a
+      caller paused after publishing still reports its own batch after a later
+      interval publishes. The `# Concurrency` contract now also says a
+      re-entrant clock must not re-enter a path that samples the clock again,
+      because nothing guards that recursion, while re-entry through `flush` is
+      safe. Production behaviour is unchanged; only the contract text moved.
+- [x] (2026-11-18) Removed the review's timing dependencies from the tests. The
+      logger drop test freezes time through
+      `RateLimitedWarner::with_clock`; the HTTP refusal fixture pins
+      `warn_interval` to an hour through `HTTPHandlerConfig`; the socket one
+      builds its handler with a new test-only
+      `FemtoSocketHandler::with_clock` and asserts
+      `pending_drops_for_test() == 1`; the claim test bounds its callback waits
+      at one second and releases a late callback by dropping its sender; the
+      two duplicated clock-panic tests became one `#[rstest]` with two cases;
+      and the shard test releases its blocking handler before panicking on a
+      failed admission.
+- [x] (2026-11-18) Strengthened the assertions the review called weak. The
+      cumulative-cause test now uses three different causes, so a warning
+      naming a pending drop's cause cannot pass. The "nothing left to report"
+      checks count occurrences of the exact report instead of requiring an
+      empty process-wide buffer, and the worker tests use distinctive counts
+      (two for flush, three for drain) with a post-scope duplicate check. The
+      HTTP stall helper re-applies its 50 ms poll interval after
+      `read_http_request` installs a five-second timeout. Both worker tests drop
+      their acknowledgement receiver before asserting, so a failed assertion
+      cannot leave the scoped join blocked. The parking clock and its handshake
+      moved to `rust_extension/src/test_utils/drop_race.rs`, shared by the
+      socket and HTTP race tests, which keeps both files well under the cap.
+- [x] (2026-11-18) Closed the two out-of-budget drop reports by documenting the
+      exclusion rather than by weakening conservation. `FemtoSocketHandler`'s
+      closed-handler `Drop` branch now reports through
+      `Python::try_attach(|py| py.detach(...))`, keeping the direct Rust-only
+      call as the no-interpreter fallback, so a slow sink no longer runs with
+      the GIL held. `flush()` and `close()` on both handlers now say in their
+      doc comments, and in `docs/rust-extension.md` and the users guide, that
+      the pending-drop report runs before the timeout budget starts and is not
+      covered by it. Bounding it would need either discarding the count, which
+      breaks the conservation guarantee this work exists for, or a reporting
+      thread outliving the handler; both were rejected. The HTTP flush doc now
+      also says a retry in backoff delays the queued flush and that an
+      acknowledgement is not a delivery guarantee.
+- [x] (2026-11-18) Completed the user-facing documentation. "Flushing records"
+      names both logger texts with a marked example; "FemtoStreamHandler"
+      states that `flush()`, `close()` and destruction report a pending count,
+      including the shutdown `take_shutdown()` path, and names
+      `FemtoStreamHandler: {count} log records dropped since the last report`;
+      both network handler sections state that `flush()`, `close()` and `Drop`
+      report pending counts and name the cause-neutral and `triggering cause`
+      wordings; "drop warning" is now the single term in the counter bullet,
+      the flushing section and both handler sections. The developer guide
+      documents `RateLimitedWarner::pending_drops()` and
+      `FemtoLogger::set_drain_hook_for_test`, and its fork-accounting paragraph
+      now says a batch already swapped out is not duplicated in the child.
+      `docs/v0-2-0-migration-guide.md` gains "Dropped-record warning messages
+      are cumulative", with an "Error message changes" table listing every
+      replaced text, matching the v0-1-0 convention.
+- [x] (2026-11-18) Reconciled the reviewer's "Obtain a clean CodeRabbit review"
+      item: the review of `42c3abe1` is the review this round answers, every
+      one of its 26 findings now has a disposition, and a fresh review is
+      requested on the repaired head. CodeScene Code Health reports success on
+      `42c3abe1`; its result for the repaired head is still to come.
+- [x] (2026-11-18) Re-ran the deterministic gates on the repaired tree, one at
+      a time, on a host whose four-slot compile pool was fully held by other
+      agents' work for the whole run. `check-fmt`, `markdownlint` (0 issues in
+      68 files), `nixie`, `lint-python`, `lint-lanes-test` and `lint-env-policy`
+      returned 0; `lint-env-policy` is the lane that had failed with
+      `clippy::missing_docs_in_private_items` before the `build` doc comment,
+      so its pass is the proof that the repair works. `lint-rust-clippy` (all
+      seven feature lanes), `lint-rust-test-docs` and
+      `lint-rust-private-docs-policy-test` returned 0, and so did the Whitaker
+      step, so `make lint` is green in full.
+- [x] (2026-11-19) Finished the test gates that can complete on this host. Each
+      `cargo test` lane was split into three invocations so a 590 s window
+      could finish a part: the non-doctest targets, the doctests, and the
+      trybuild UI suite on its own. All four lanes' non-doctest targets and
+      doctests returned 0 - `none`, `python` and `log-compat` each 1018 passed
+      with 5 ignored, `tracing-compat` 1071 passed with 6 ignored, and every
+      lane 30 doctests passed with 59 ignored. pytest was split around
+      `tests/test_maturin_build.py`, whose wheel build does not fit a window
+      even when the rest of the suite does: 1228 passed, 5 skipped and 66
+      snapshots without it, 6 passed in it, so 1234 passed and 5 skipped in
+      total, which matches the count the earlier full run reported.
+- [ ] (2026-11-19) The four trybuild UI suites did not complete on this host.
+      Each window restarts the eleven-case suite, and the trybuild project
+      rebuild plus admission queueing admitted only two or three cases per
+      window; after twelve windows the best coverage was
+      `test-nodefault-ui` cases 1-3 green with case 4 reached once, and no
+      window for the other three lanes reached the end. This is recorded as
+      unexecuted locally, not as passed. The `no-default-features` and
+      `log-compat` UI suites run in the required `ci.yml` test steps, so they
+      are covered by hosted checks on this candidate before any merge; the
+      `python` and `tracing-compat` UI suites have no hosted lane of their
+      own, though the same case files compile under `lint-rust-clippy` and
+      Whitaker in those feature sets, which type-checks them without running
+      their assertions.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to

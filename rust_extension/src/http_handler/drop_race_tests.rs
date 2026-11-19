@@ -8,6 +8,10 @@
 //! `warn_drops_naming_cause`, so this pins the helper the handler actually uses
 //! rather than a closure retyped beside it.
 //!
+//! The clock and the handshake that parks the loser are shared with the socket
+//! handler's version in `test_utils::drop_race`; only this handler's causes and
+//! assertions live here.
+//!
 //! The test logger is process-global, and the rest of this binary runs in
 //! parallel, so warnings from other tests land in the same buffer while the
 //! losing caller is parked for up to five seconds. Each cause this test reports
@@ -17,50 +21,15 @@
 //!
 //! Included with `#[path]` from `tests.rs`, like `drop_reporting_tests.rs`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::thread;
 use std::time::Duration;
 
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::http_handler::queue::{flush_drops_naming_cause, warn_drops_naming_cause};
-use crate::rate_limited_warner::{Clock, RateLimitedWarner};
+use crate::rate_limited_warner::RateLimitedWarner;
+use crate::test_utils::drop_race::SupersededRace;
 
 /// The cause the winning racer reports.
 const WINNER_CAUSE: &str = "worker disconnected (superseded winner)";
-
-/// A clock that parks one chosen sample until the test releases it.
-///
-/// The parked caller has claimed the warning interval but has not published a
-/// report time, which is exactly the window in which a real caller would be
-/// delayed.
-struct ParkingClock {
-    /// Current test-controlled timestamp in milliseconds.
-    now_ms: AtomicU64,
-    /// Samples taken so far across all callers.
-    samples: AtomicU64,
-    /// Index of the sample that parks, or `u64::MAX` while disarmed.
-    park_at: AtomicU64,
-    /// Signals that the parked caller has reached its sample.
-    parked: mpsc::Sender<()>,
-    /// Released by the test once the competing caller has reported.
-    resume: Mutex<mpsc::Receiver<()>>,
-}
-
-impl Clock for ParkingClock {
-    fn now_millis(&self) -> u64 {
-        let sample = self.samples.fetch_add(1, Ordering::Relaxed);
-        if sample == self.park_at.load(Ordering::Relaxed) {
-            self.parked.send(()).expect("parked caller receiver");
-            self.resume
-                .lock()
-                .expect("resume lock")
-                .recv_timeout(Duration::from_secs(5))
-                .expect("the test releases the parked caller");
-        }
-        self.now_ms.load(Ordering::Relaxed)
-    }
-}
 
 /// Render the warning naming `cause`, for comparison against captured messages.
 fn drop_warning(count: u64, cause: &str) -> String {
@@ -104,41 +73,6 @@ fn open_interval_with_suppressed_drops(warner: &RateLimitedWarner) {
         1,
         "only the first report should escape the interval: {opening:?}"
     );
-}
-
-/// Park a loser after its claim, let a later caller report, then release it.
-///
-/// The parked caller samples the clock once for its due pre-check and once for
-/// its claim, so its report-time sample is two indices after the caller starts.
-fn run_superseded_race(
-    warner: &RateLimitedWarner,
-    clock: &ParkingClock,
-    parked_rx: mpsc::Receiver<()>,
-    resume_tx: mpsc::Sender<()>,
-) {
-    clock
-        .park_at
-        .store(clock.samples.load(Ordering::Relaxed) + 2, Ordering::Relaxed);
-    thread::scope(|scope| {
-        scope.spawn(|| warn_drops_naming_cause(warner, "queue full (superseded loser)"));
-        if parked_rx.recv_timeout(Duration::from_secs(5)).is_err() {
-            let _ = resume_tx.send(());
-            panic!("the first caller must park after claiming the interval");
-        }
-
-        // The parked caller's batch is out of the counter, so these two drops
-        // are all that is pending; at the unchanged clock they stay suppressed.
-        warn_drops_naming_cause(warner, "permanent error (superseded race)");
-        warn_drops_naming_cause(warner, "permanent error (superseded race)");
-
-        // A whole interval after the parked caller's claim, the next report is
-        // due: it claims the interval and supersedes the parked caller.
-        clock.now_ms.store(2000, Ordering::Relaxed);
-        warn_drops_naming_cause(warner, WINNER_CAUSE);
-        resume_tx
-            .send(())
-            .expect("the parked caller receives its release");
-    });
 }
 
 /// Assert only the winner's own count and cause escaped.
@@ -188,20 +122,27 @@ fn assert_flush_reports_the_superseded_batch(warner: &RateLimitedWarner) {
 #[serial_test::serial]
 fn a_superseded_report_does_not_relabel_the_winners_cause() {
     install_test_logger();
-    let (parked_tx, parked_rx) = mpsc::channel();
-    let (resume_tx, resume_rx) = mpsc::channel();
-    let clock = Arc::new(ParkingClock {
-        now_ms: AtomicU64::new(0),
-        samples: AtomicU64::new(0),
-        park_at: AtomicU64::new(u64::MAX),
-        parked: parked_tx,
-        resume: Mutex::new(resume_rx),
-    });
+    let race = SupersededRace::new();
+    let clock = race.clock();
     let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone());
 
     open_interval_with_suppressed_drops(&warner);
-    clock.now_ms.store(1000, Ordering::Relaxed);
-    run_superseded_race(&warner, &clock, parked_rx, resume_tx);
+    clock.set_now_millis(1000);
+    race.run(
+        || warn_drops_naming_cause(&warner, "queue full (superseded loser)"),
+        || {
+            // The parked caller's batch is out of the counter, so these two
+            // drops are all that is pending; at the unchanged clock they stay
+            // suppressed.
+            warn_drops_naming_cause(&warner, "permanent error (superseded race)");
+            warn_drops_naming_cause(&warner, "permanent error (superseded race)");
+
+            // A whole interval after the parked caller's claim, the next report
+            // is due: it claims the interval and supersedes the parked caller.
+            clock.set_now_millis(2000);
+            warn_drops_naming_cause(&warner, WINNER_CAUSE);
+        },
+    );
 
     let messages = captured();
     assert_only_the_winner_reported(&warner, &messages);

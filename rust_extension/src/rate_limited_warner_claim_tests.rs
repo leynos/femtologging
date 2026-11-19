@@ -6,6 +6,7 @@
 //! they reach the warner's private state through the same module boundary the
 //! production code uses.
 
+use super::tests::FakeClock;
 use super::*;
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicU64;
@@ -245,52 +246,60 @@ fn flush_does_not_wait_for_a_paused_warning_callback() {
     let warner = Arc::new(RateLimitedWarner::new(Duration::from_secs(3600)));
     warner.record_drop();
 
-    let callback_entered = Arc::new(Barrier::new(2));
-    let callback_resume = Arc::new(Barrier::new(2));
+    let (callback_entered_tx, callback_entered_rx) = mpsc::channel();
+    let (callback_resume_tx, callback_resume_rx) = mpsc::channel::<()>();
     let second_attempt_started = Arc::new(Barrier::new(2));
     let warning_counts = Arc::new(Mutex::new(Vec::new()));
     let (second_done_tx, second_done_rx) = mpsc::channel();
 
-    let second_attempt_finished_while_callback_paused = thread::scope(|scope| {
-        let first_warner = Arc::clone(&warner);
-        let first_callback_entered = Arc::clone(&callback_entered);
-        let first_callback_resume = Arc::clone(&callback_resume);
-        let first_counts = Arc::clone(&warning_counts);
-        scope.spawn(move || {
-            first_warner.warn_if_due(|count| {
-                first_counts
-                    .lock()
-                    .expect("warning counts lock")
-                    .push(count);
-                first_callback_entered.wait();
-                first_callback_resume.wait();
+    let (callback_entered, second_attempt_finished_while_callback_paused) =
+        thread::scope(|scope| {
+            let first_warner = Arc::clone(&warner);
+            let first_counts = Arc::clone(&warning_counts);
+            scope.spawn(move || {
+                first_warner.warn_if_due(|count| {
+                    first_counts
+                        .lock()
+                        .expect("warning counts lock")
+                        .push(count);
+                    let _ = callback_entered_tx.send(());
+                    // Exit when the test drops its sender, so a callback that
+                    // enters after the entry timeout cannot hang the join.
+                    let _ = callback_resume_rx.recv();
+                });
             });
-        });
-        callback_entered.wait();
+            let callback_entered = callback_entered_rx
+                .recv_timeout(Duration::from_secs(1))
+                .is_ok();
 
-        let second_warner = Arc::clone(&warner);
-        let worker_attempt_started = Arc::clone(&second_attempt_started);
-        let second_counts = Arc::clone(&warning_counts);
-        scope.spawn(move || {
-            second_warner.record_drop();
-            worker_attempt_started.wait();
-            // Flush rather than warn: the interval is open, so `warn_if_due`
-            // would return at the suppression pre-check without ever testing
-            // whether a paused callback still holds the warner.
-            second_warner.flush(|count| {
-                second_counts
-                    .lock()
-                    .expect("warning counts lock")
-                    .push(count);
+            let second_warner = Arc::clone(&warner);
+            let worker_attempt_started = Arc::clone(&second_attempt_started);
+            let second_counts = Arc::clone(&warning_counts);
+            scope.spawn(move || {
+                second_warner.record_drop();
+                worker_attempt_started.wait();
+                // Flush rather than warn: the interval is open, so
+                // `warn_if_due` would return at the suppression pre-check
+                // without ever testing whether a paused callback still holds
+                // the warner.
+                second_warner.flush(|count| {
+                    second_counts
+                        .lock()
+                        .expect("warning counts lock")
+                        .push(count);
+                });
+                second_done_tx.send(()).expect("second attempt receiver");
             });
-            second_done_tx.send(()).expect("second attempt receiver");
+            second_attempt_started.wait();
+            let finished_early = second_done_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+            drop(callback_resume_tx);
+            (callback_entered, finished_early)
         });
-        second_attempt_started.wait();
-        let finished_early = second_done_rx.recv_timeout(Duration::from_secs(1)).is_ok();
-        callback_resume.wait();
-        finished_early
-    });
 
+    assert!(
+        callback_entered,
+        "the first warning must invoke its callback within the timeout"
+    );
     assert!(
         second_attempt_finished_while_callback_paused,
         "a flush must not wait for a paused warning callback"
@@ -299,6 +308,74 @@ fn flush_does_not_wait_for_a_paused_warning_callback() {
         *warning_counts.lock().expect("warning counts lock"),
         vec![1, 1],
         "the paused warning and the flush each report their own drop"
+    );
+    assert_eq!(warner.pending_drops(), 0);
+}
+
+/// Scenario: a caller publishes its report at t=0 and is then delayed, while a
+/// second caller publishes and reports a whole interval later.
+///
+/// Invariant: the interval bounds report *publication*, not callback spacing.
+/// The first report still belongs to its own interval, so it reports its batch
+/// even though its callback finishes after the later report's callback.
+#[test]
+fn a_caller_paused_after_publication_still_reports_its_own_interval() {
+    let clock = Arc::new(FakeClock::default());
+    let warner = Arc::new(RateLimitedWarner::with_clock(
+        Duration::from_secs(1),
+        Arc::clone(&clock) as Arc<dyn Clock>,
+    ));
+    warner.record_drop();
+
+    let (first_entered_tx, first_entered_rx) = mpsc::channel();
+    let (first_release_tx, first_release_rx) = mpsc::channel::<()>();
+    let first_counts = Arc::new(Mutex::new(Vec::new()));
+    let mut later_counts = Vec::new();
+
+    let first_entered = thread::scope(|scope| {
+        let first_warner = Arc::clone(&warner);
+        let first_counts = Arc::clone(&first_counts);
+        scope.spawn(move || {
+            // Entering the callback happens after publication, so pausing here
+            // holds the report past the moment another caller may publish.
+            first_warner.warn_if_due(|count| {
+                first_counts.lock().expect("first counts lock").push(count);
+                let _ = first_entered_tx.send(());
+                // Exit when the test drops its sender, so a callback that
+                // enters late cannot hang the scoped join.
+                let _ = first_release_rx.recv();
+            });
+        });
+        let entered = first_entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .is_ok();
+
+        clock.advance(1000);
+        warner.record_drop();
+        warner.warn_if_due(|count| later_counts.push(count));
+
+        drop(first_release_tx);
+        entered
+    });
+
+    assert!(
+        first_entered,
+        "the first caller must publish and invoke its callback"
+    );
+    assert_eq!(
+        *first_counts.lock().expect("first counts lock"),
+        vec![1],
+        "the paused report still carries the batch of its own interval"
+    );
+    assert_eq!(
+        later_counts,
+        vec![1],
+        "the later interval reports its own drop"
+    );
+    assert_eq!(
+        warner.last_warn.load(Ordering::Relaxed),
+        1000,
+        "the later report's publication owns the current interval"
     );
     assert_eq!(warner.pending_drops(), 0);
 }

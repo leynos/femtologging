@@ -79,11 +79,15 @@ fn occurrences(messages: &[String], expected: &str) -> usize {
 
 /// A due warning that carries two causes names only the one that triggered it.
 ///
-/// Scenario: the first drop warns and opens the interval, a second drop from a
-/// different cause is suppressed and stays pending, and the next interval
-/// reports both. Invariant: the message reports the cumulative count and names
-/// only the cause whose refusal asked for the report, rather than claiming the
-/// whole count happened for that cause.
+/// Scenario: a queue-full drop warns and opens the interval, a serialization
+/// failure is suppressed and stays pending, and the next interval's permanent
+/// error reports both. Invariant: the message reports the cumulative count and
+/// names only the cause whose refusal asked for the report, rather than
+/// claiming the whole count happened for that cause.
+///
+/// The suppressed cause deliberately differs from the triggering cause. If it
+/// did not, a warning that named a pending drop's cause instead of the
+/// triggering one would produce the same message and pass unnoticed.
 #[test]
 #[serial_test::serial]
 fn a_cumulative_warning_names_only_the_triggering_cause() {
@@ -91,8 +95,8 @@ fn a_cumulative_warning_names_only_the_triggering_cause() {
     let clock = Arc::new(ManualClock::default());
     let warner = RateLimitedWarner::with_clock(Duration::from_secs(1), clock.clone());
 
+    warn_drops_naming_cause(&warner, "queue full");
     warn_drops_naming_cause(&warner, "serialization failure");
-    warn_drops_naming_cause(&warner, "permanent error");
     clock.elapse_interval();
     warn_drops_naming_cause(&warner, "permanent error");
 
@@ -114,8 +118,14 @@ fn a_cumulative_warning_names_only_the_triggering_cause() {
     );
     assert!(
         !cumulative[0].message.contains("serialization failure"),
-        "the warning must not attribute the earlier serialization drop to the \
+        "the warning must not attribute the suppressed drop's cause to the \
          triggering cause: {:?}",
+        cumulative[0].message
+    );
+    assert!(
+        !cumulative[0].message.contains("queue full"),
+        "the warning must not name the cause that opened the earlier interval: \
+         {:?}",
         cumulative[0].message
     );
 }
@@ -236,22 +246,45 @@ fn a_flush_reports_the_cumulative_count_without_a_cause() {
     );
 }
 
-/// Close a handler and discard the messages its shutdown produced.
-fn closed_handler() -> FemtoHTTPHandler {
-    let mut handler = FemtoHTTPHandler::with_config(HTTPHandlerConfig::default());
-    handler.close();
-    let _ = take_logged_messages();
-    handler
+/// Render the cause-neutral report for `count` pending drops.
+fn neutral_drop_report(count: u64) -> String {
+    format!("FemtoHTTPHandler dropped {count} records since the last report")
 }
 
 /// A closed handler holding one drop the warning interval suppressed.
 ///
 /// The first refused record warns and opens the interval; the second is held
 /// back, so whatever reports next must cover that one drop.
+///
+/// The interval is pinned far beyond the test's lifetime rather than left to
+/// the wall clock. With the real interval, a second refusal that landed more
+/// than one interval after the first would warn on its own, leaving the later
+/// flush, close or destruction with nothing to report - a failure that says
+/// nothing about the code under test.
 fn closed_handler_holding_one_drop() -> FemtoHTTPHandler {
-    let handler = closed_handler();
+    let config = HTTPHandlerConfig {
+        warn_interval: Duration::from_secs(3600),
+        ..HTTPHandlerConfig::default()
+    };
+    let mut handler = FemtoHTTPHandler::with_config(config);
+    handler.close();
+    let _ = take_logged_messages();
     assert!(handler.handle(record("first refusal")).is_err());
     assert!(handler.handle(record("held back")).is_err());
+
+    // Each refusal reports a count of one if it warns at all, so a second
+    // occurrence would mean the interval had already elapsed and the second
+    // drop had been consumed. A single opening warning therefore proves
+    // exactly one drop is still pending for the later lifecycle call.
+    let messages: Vec<_> = take_logged_messages()
+        .into_iter()
+        .map(|entry| entry.message)
+        .collect();
+    assert_eq!(
+        occurrences(&messages, &drop_warning(1, "handler closed")),
+        1,
+        "the first refusal should be the interval's only warning: {messages:?}"
+    );
     handler
 }
 
@@ -259,7 +292,7 @@ fn closed_handler_holding_one_drop() -> FemtoHTTPHandler {
 fn assert_held_back_drop_reported(context: &str) {
     let reported: Vec<_> = take_logged_messages()
         .into_iter()
-        .filter(|entry| entry.message == "FemtoHTTPHandler dropped 1 records since the last report")
+        .filter(|entry| entry.message == neutral_drop_report(1))
         .collect();
     assert_eq!(reported.len(), 1, "{context}");
 }
@@ -275,15 +308,6 @@ fn assert_held_back_drop_reported(context: &str) {
 fn flush_reports_drops_refused_after_close() {
     install_test_logger();
     let handler = closed_handler_holding_one_drop();
-    let warned: Vec<_> = take_logged_messages()
-        .into_iter()
-        .filter(|entry| entry.message.contains("triggering cause: handler closed"))
-        .collect();
-    assert_eq!(
-        warned.len(),
-        1,
-        "the first refusal should warn once inside the interval"
-    );
 
     assert!(!handler.flush(), "a closed handler's flush reports false");
     assert_held_back_drop_reported(
@@ -291,9 +315,17 @@ fn flush_reports_drops_refused_after_close() {
     );
 
     assert!(!handler.flush());
-    assert!(
-        take_logged_messages().is_empty(),
-        "a second flush has nothing left to report"
+    // A detached worker from an earlier test can still log after this test
+    // cleared the buffer, so only a second matching report proves the flush
+    // had nothing to say; an empty global buffer would not.
+    let messages: Vec<_> = take_logged_messages()
+        .into_iter()
+        .map(|entry| entry.message)
+        .collect();
+    assert_eq!(
+        occurrences(&messages, &neutral_drop_report(1)),
+        0,
+        "a second flush has nothing left to report: {messages:?}"
     );
 }
 

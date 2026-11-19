@@ -1010,6 +1010,17 @@ only while a detached wait is in flight and reports whether it counted,
 `python` builds omit every one of these hooks, and
 `femtologging/_femtologging_rs.pyi` declares them for type checkers.
 
+The drop-reporting work adds two Rust-side seams beside those hooks.
+`RateLimitedWarner::pending_drops()` returns the count a warner still holds,
+and is compiled under `test` or the `test-util` feature; the handler
+drop-report tests assert conservation on it. `FemtoLogger`'s internal
+`set_drain_hook_for_test` (`pub(super)`) runs a closure on the flushing thread
+once the in-flight check has passed and before the drain wait begins, which is
+how `producer_rejection_tests` proves that a drop recorded during the drain is
+reported by the same flush rather than left pending. Both are internal or
+feature-gated test seams: normal builds omit them, and neither is part of the
+Python API.
+
 Dropping a logger follows the same per-logger in-flight check. The pool itself
 lives for the process lifetime. If the operating system refuses to start a
 worker, construction returns `DispatcherError` in Rust or `RuntimeError`
@@ -1558,13 +1569,17 @@ handler — the enqueue path and the worker — must report the same count, and
 they can only do that through one pair per module.
 
 The drop counter is a plain atomic, so `fork` copies it rather than leaving a
-lock word behind. A count the parent recorded before forking then exists twice:
-parent and child each own a copy and each may report it, and a child can
-therefore repeat a report the parent has already made. That duplication is
-accepted — avoiding it would need shared memory and a cross-process lock for a
-diagnostic counter — so the conservation guarantee is per process. Within one
-process no drop is lost or reported twice; neither process can report a drop
-the other recorded after the fork.
+lock word behind. A count still in the counter when the parent forks then
+exists twice: parent and child each own a copy and each may report it, and a
+child can therefore repeat a report the parent has already made. A batch a
+warning or flush has already swapped out is the exception: the child copies a
+zero counter and does not own the draining thread's in-flight batch, so only
+the parent can report that count. Not every pre-fork count is therefore
+duplicated. The duplication that does happen is accepted — avoiding it would
+need shared memory and a cross-process lock for a diagnostic counter — so the
+conservation guarantee is per process. Within one process no drop is lost or
+reported twice; neither process can report a drop the other recorded after the
+fork.
 
 The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
 (carry-forward, flush inside the window, empty calls),

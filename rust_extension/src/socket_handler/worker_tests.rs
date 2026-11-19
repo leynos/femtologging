@@ -184,18 +184,22 @@ fn the_flush_command_reports_drops_before_acknowledging() {
         let worker = &mut worker;
         scope.spawn(move || worker.handle_flush_command(ack_tx));
         let messages = crate::handlers::file::test_support::wait_for_message(
-            "dropped 1 records since the last report",
+            "FemtoSocketHandler dropped 1 records since the last report",
             Duration::from_secs(5),
         );
         // Release the worker before asserting: an assertion that fails while
         // the sender is still blocked in a rendezvous send would leave
         // `thread::scope` joining a thread this test can no longer release.
         let acknowledged = ack_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        // Closing the channel is what unblocks a worker still waiting to send;
+        // without it a failed assertion would hand the scope a join that can
+        // never finish.
+        drop(ack_rx);
         assert!(acknowledged, "the flush command must be acknowledged");
         assert!(
-            messages
-                .iter()
-                .any(|entry| entry.message.contains("dropped 1 records")),
+            messages.iter().any(|entry| entry
+                .message
+                .contains("FemtoSocketHandler dropped 1 records")),
             "the flush must report the held-back count before acknowledging: {messages:?}"
         );
     });
@@ -258,7 +262,7 @@ fn a_drain_reports_drops_before_acknowledging(#[case] pending: PendingAck) {
         let worker = &mut worker;
         scope.spawn(move || worker.drain_pending(&command_rx, None));
         let messages = wait_for_message(
-            "dropped 1 records since the last report",
+            "FemtoSocketHandler dropped 1 records since the last report",
             Duration::from_secs(5),
         );
         // Release the worker before asserting: an assertion that fails while
@@ -266,14 +270,18 @@ fn a_drain_reports_drops_before_acknowledging(#[case] pending: PendingAck) {
         // leave `thread::scope` joining a thread this test can no longer
         // release.
         let acknowledged = ack_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        // Closing the channel is what unblocks a worker still waiting to send;
+        // without it a failed assertion would hand the scope a join that can
+        // never finish.
+        drop(ack_rx);
         assert!(
             acknowledged,
             "the queued drain command must be acknowledged"
         );
         assert!(
-            messages
-                .iter()
-                .any(|entry| entry.message.contains("dropped 1 records")),
+            messages.iter().any(|entry| entry
+                .message
+                .contains("FemtoSocketHandler dropped 1 records")),
             "the drain must report the held-back count before acknowledging: \
              {messages:?}"
         );

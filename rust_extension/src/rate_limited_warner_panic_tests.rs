@@ -6,6 +6,7 @@
 //! the sample unwinds instead of returning.
 
 use super::*;
+use rstest::rstest;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::AtomicU64;
 
@@ -57,51 +58,30 @@ fn warning_with_panicking_clock(panic_on: u64) -> (RateLimitedWarner, u64, u64) 
     (warner, reported.into_inner(), published)
 }
 
-/// Scenario: the clock panics while the claim samples it.
+/// Scenario: a clock sample panics while the due call holds the drained batch.
 ///
-/// Invariant: the drained batch is restored, so a panicking clock cannot lose
-/// drops that no callback was given, and no interval is published.
-#[test]
-fn a_panicking_claim_sample_leaves_the_batch_pending() {
-    let (warner, reported, published) = warning_with_panicking_clock(1);
+/// Invariant: the batch is restored, so a panicking clock cannot lose drops
+/// that no callback was given. A panic on the claim sample publishes no
+/// interval; a panic on the report-time sample happens after the claim was won,
+/// so that interval stays published and only the count is returned.
+#[rstest]
+#[case::claim_sample(1, u64::MAX)]
+#[case::report_time_sample(2, 1000)]
+fn a_panicking_sample_leaves_the_batch_pending(
+    #[case] panic_on: u64,
+    #[case] expected_published: u64,
+) {
+    let (warner, reported, published) = warning_with_panicking_clock(panic_on);
 
     assert_eq!(reported, 0, "an unwound call hands nothing to its callback");
     assert_eq!(
         warner.pending_drops(),
         1,
-        "a panic before the claim must leave the batch pending"
+        "a panicking sample must leave the batch pending"
     );
     assert_eq!(
-        published,
-        u64::MAX,
-        "a claim that panicked must not publish an interval"
-    );
-
-    let mut warnings = Vec::new();
-    warner.flush(|count| warnings.push(count));
-    assert_eq!(warnings, vec![1], "the restored batch is still reportable");
-}
-
-/// Scenario: the clock panics while the report time is sampled, after the claim
-/// has already been won.
-///
-/// Invariant: the batch is restored. The claim itself cannot be withdrawn -
-/// this sample is the only thing that would move it forward - so the caller
-/// that panicked keeps the interval closed, but it must not also keep the
-/// count.
-#[test]
-fn a_panicking_report_time_sample_leaves_the_batch_pending() {
-    let (warner, reported, published) = warning_with_panicking_clock(2);
-
-    assert_eq!(reported, 0, "an unwound call hands nothing to its callback");
-    assert_eq!(
-        warner.pending_drops(),
-        1,
-        "a panic after the claim must still leave the batch pending"
-    );
-    assert_eq!(
-        published, 1000,
-        "the won claim stays published; only the batch is restored"
+        published, expected_published,
+        "only a claim that completed may publish its interval"
     );
 
     let mut warnings = Vec::new();

@@ -1,8 +1,8 @@
 //! Rate-limited warning system for dropped log records.
 //!
 //! This module provides [`RateLimitedWarner`], which tracks dropped log records
-//! and emits warnings at configurable intervals to avoid spamming logs while
-//! still alerting users to potential issues.
+//! and publishes at most one warning report per interval to avoid spamming logs
+//! while still alerting users to potential issues.
 //!
 //! The counter is conserved: a warning attempt that falls inside the interval
 //! does **not** discard the drops it found. Those drops stay pending and are
@@ -48,7 +48,7 @@ impl Clock for SystemClock {
     }
 }
 
-/// How often to emit warnings about dropped log records by default.
+/// Default minimum interval between published warnings about dropped records.
 pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Helper that rate limits dropped-record warnings.
@@ -77,9 +77,11 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 /// therefore receive disjoint batches.
 ///
 /// Neither the clock nor the callbacks run under any lock, because the warner
-/// takes none. The clock is a caller-supplied seam, so a clock that re-enters
-/// the warner is safe, and callbacks are **not** serialized against one another
-/// and may re-enter the warner.
+/// takes none, so callbacks are **not** serialized against one another and may
+/// re-enter the warner. A re-entrant clock must not re-enter a path that
+/// samples it again: nothing guards that recursion, so it would recurse until
+/// the stack overflows. Re-entering through [`flush`] is safe, because a flush
+/// samples no clock.
 ///
 /// A drained batch is restored if the report is abandoned before the callback
 /// runs, including when a clock sample panics. A callback that panics has
@@ -92,7 +94,10 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 /// also the ownership check: if a caller delayed between its claim and its
 /// publication sample lets another caller publish a later interval, the first
 /// caller's compare-exchange fails and it does not report. Otherwise both would
-/// warn back to back, each nominally inside its own interval.
+/// publish reports back to back, each nominally inside its own interval. The
+/// bound is on publication, not callback spacing: a caller delayed after
+/// publishing still invokes its callback, so two callbacks may run back to back
+/// while each report belongs to its own interval.
 ///
 /// The counter and timestamp use [`Ordering::Relaxed`], which is sound because
 /// they publish only their own values and carry no data other than the count.
@@ -107,7 +112,7 @@ pub struct RateLimitedWarner {
     last_warn: AtomicU64,
     /// Number of dropped records waiting for the next warning emission.
     dropped: AtomicU64,
-    /// Minimum interval between warning callbacks, stored in milliseconds.
+    /// Minimum interval between report publications, stored in milliseconds.
     interval_ms: u64,
     /// Shared clock seam used by production code and deterministic tests.
     clock: Arc<dyn Clock>,
@@ -159,11 +164,13 @@ impl RateLimitedWarner {
     /// restores the batch, so the drops stay pending for the next due call. The
     /// same applies to a call that wins a claim but is then delayed until
     /// another caller has published a later interval: it is superseded, and
-    /// restoring rather than reporting avoids two warnings back to back. At
-    /// most one caller emits per interval, and nothing is held while the
-    /// callback runs, so a slow or re-entrant callback does not hold up another
-    /// caller or a flush, and a re-entrant clock cannot wait for the claim it
-    /// is timing.
+    /// restoring rather than reporting avoids publishing two reports back to
+    /// back. At most one report is published per interval; callback invocation
+    /// is not spaced, so a caller delayed after publication may invoke its
+    /// callback after a later report's. Nothing is held while the callback runs,
+    /// so a slow or re-entrant callback does not hold up another caller or a
+    /// flush. The clock may re-enter the warner without waiting for a lock, but
+    /// must not re-enter a path that samples the clock again.
     ///
     /// A call whose interval is still open returns after one clock read and one
     /// atomic load, without touching the counter. The refusal paths call this
@@ -273,8 +280,8 @@ impl RateLimitedWarner {
     /// The same exchange is the liveness check for the claim. It fails when
     /// another caller has already published a later interval - possible only
     /// while this caller was delayed between its claim and this sample - and
-    /// that caller's report supersedes this one. Emitting here would place two
-    /// warnings back to back even though each is inside its own interval, so a
+    /// that caller's report supersedes this one. Publishing here would place two
+    /// reports back to back even though each is inside its own interval, so a
     /// false result means the caller must not report.
     fn publish_report_time(&self, claimed_at: u64) -> bool {
         let reported_at = self.clock.now_millis().max(claimed_at);

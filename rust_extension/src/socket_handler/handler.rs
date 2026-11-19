@@ -71,8 +71,18 @@ impl FemtoSocketHandler {
 
     /// Construct the handler from a configuration object.
     pub fn with_config(config: SocketHandlerConfig) -> Self {
-        let flush_timeout = config.write_timeout;
         let warner = RateLimitedWarner::new(config.warn_interval);
+        Self::build(config, warner)
+    }
+
+    /// Construct a handler around `warner`, which its callers supply.
+    ///
+    /// The public constructor gives it a warner that reads the system clock.
+    /// The test-only `with_clock` gives it one that reads a controlled clock,
+    /// so a test can decide when a suppression window closes. Everything else
+    /// about construction is common to both, which is why it lives here.
+    fn build(config: SocketHandlerConfig, warner: RateLimitedWarner) -> Self {
+        let flush_timeout = config.write_timeout;
         let signal = Arc::new(ShutdownSignal::new());
         let (tx, handle) = spawn_worker(config, Arc::clone(&signal));
         Self {
@@ -86,7 +96,15 @@ impl FemtoSocketHandler {
         }
     }
 
-    /// Flush any pending log records.
+    /// Flush any pending log records, waiting at most `flush_timeout` for the
+    /// worker to answer.
+    ///
+    /// Pending drop warnings are reported first, before that budget starts.
+    /// The report goes through the process-wide `log` adapter, whose sink the
+    /// embedding process supplies and may block indefinitely. Bounding it would
+    /// mean either discarding the count or letting a reporting thread outlive
+    /// the handler, so the timeout covers the queue flush and not the report in
+    /// front of it.
     pub fn flush(&self) -> bool {
         <Self as FemtoHandlerTrait>::flush(self)
     }
@@ -109,7 +127,13 @@ impl FemtoSocketHandler {
     /// whatever is still queued at the deadline is discarded with a warning
     /// rather than written.
     ///
-    /// Pending handler-side drop warnings are reported before shutdown.
+    /// Pending handler-side drop warnings are reported before shutdown, ahead
+    /// of the deadline that covers the rest of the call. That report is not
+    /// covered by the budget: it runs through the process-wide `log` adapter,
+    /// whose sink the embedding process supplies. The only ways to bound a
+    /// blocking sink are to discard the count or to leave a reporting thread
+    /// running after the handler is gone, so the deadline starts after the
+    /// report returns.
     pub fn close(&mut self) {
         flush_drops(&self.warner);
         match self.request_shutdown() {
@@ -321,10 +345,12 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
 
 /// Drop the handler, closing it with the GIL released.
 ///
-/// A handler whose worker has already gone has nothing to close, so the check
-/// keeps that case out of the GIL's way entirely. When Python can be attached,
-/// the close runs detached; during interpreter shutdown, the Rust-only close
-/// runs without attaching and remains bounded by the same budget.
+/// A handler whose worker has already gone has nothing to close, but it may
+/// still hold drops refused after an earlier close. When Python can be
+/// attached, both that report and the close run detached, so a slow warning
+/// sink cannot block other interpreter threads. During interpreter shutdown the
+/// Rust-only path runs without attaching, so nothing here can initialize an
+/// interpreter that is being torn down.
 ///
 /// Under `--cfg loom` there is no interpreter to attach to: no model builds one
 /// of these handlers, and attaching would initialize Python on a Loom
@@ -336,7 +362,9 @@ impl Drop for FemtoSocketHandler {
         // refused after an earlier close, and no later warning comes. While a
         // worker is still present, `close()` reports them itself.
         if self.handle.lock().is_none() {
-            flush_drops(&self.warner);
+            if Python::try_attach(|py| py.detach(|| flush_drops(&self.warner))).is_none() {
+                flush_drops(&self.warner);
+            }
             return;
         }
         if Python::try_attach(|py| py.detach(|| self.close())).is_none() {

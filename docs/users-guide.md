@@ -63,26 +63,35 @@ your process exits.
   completion. See
   [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
 - When any queue is full under the default policy, the record is dropped. Each
-  component emits rate-limited warnings and maintains drop counters
-  (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
-  monitor pressure. A warning reports the number of records dropped *since the
-  previous report*, not the number caused by the current event: a suppressed
-  interval carries its drops into the next report, so the reported counts add
-  up to the records actually lost. HTTP and socket warnings also name the cause
-  whose refusal triggered the report:
+  component emits rate-limited drop warnings and maintains drop counters
+  (`FemtoLogger.get_dropped()` and handler-specific drop warnings) so you can
+  monitor pressure. A drop warning reports the number of records dropped *since
+  the previous report*, not the number caused by the current event: a
+  suppressed interval carries its drops into the next report, so the reported
+  counts add up to the records actually lost. "Previous report" means the
+  previous report from the same counter. An HTTP or socket handler keeps one
+  counter for its enqueue side and another for its worker, so a worker drop
+  warning measures against the worker's previous report, not necessarily the
+  previous drop warning from that handler. HTTP and socket drop warnings also
+  name the cause whose refusal triggered the report:
 
-  ```text
-  FemtoHTTPHandler dropped 3 records since the last report; triggering cause: permanent error
-  ```
+<!-- tested-example: http-socket-warning-report -->
+```text
+FemtoHTTPHandler dropped 3 records since the last report; triggering cause: permanent error
+```
 
-  The earlier drops in that count may have had another cause, and a drop
-  recorded concurrently may be more recent than the one named. `flush()` and
-  `close()` report any count still pending rather than waiting for the next
-  interval, a worker reports what it is still holding before it acknowledges
-  shutdown and exits, and destroying a handler that has already been closed
-  reports the records it refused after that close. A file handler whose policy
-  is `"block"` waits for room instead of dropping; with `"timeout:N"` it waits
-  for room only until its deadline, then drops the record.
+The earlier drops in that count may have had another cause, and a drop recorded
+concurrently may be more recent than the one named. `flush()` and `close()`
+report any handler-side count still pending before they return, a worker
+reports what it is still holding before it acknowledges shutdown and exits, and
+destroying a handler that has already been closed reports the records it
+refused after that close. That handler-side report is immediate; the
+worker-side report is not guaranteed before the call returns, because an HTTP
+or socket worker blocked in network I/O may time out its wait and report only
+when it next runs. A file handler whose policy is `"block"` waits for room
+instead of dropping; with `"timeout:N"` it waits for room only until its
+deadline, then drops the record.
+
 - Record metadata tracks the logger name, level, message text, timestamps,
   thread identity, optional structured exception (`exc_info`) and call stack
   (`stack_info`) payloads, and validated inline structured fields (`extra`).
@@ -215,12 +224,20 @@ returns `False` if the marker cannot be enqueued or acknowledged in time, or
 any handler flush fails. A failing handler does not stop the remaining handlers
 from being flushed.
 
-`logger.flush_handlers()` also reports the drop counts that rate-limited
+`logger.flush_handlers()` also reports the drop counts that rate-limited drop
 warnings are still holding back. It does so after the dispatch queue drains and
 the handlers flush, so a count recorded while the flush was waiting is included
 in the same report rather than left pending. Both counters are covered: the
 dispatch-admission drop counter reported by `get_dropped()`, and the
 context-capture failure counter reported by `get_context_capture_failures()`.
+Each counter has its own wording:
+
+<!-- tested-example: logger-flush-drop-reports -->
+```text
+FemtoLogger: dropped 3 records; reported by flush
+FemtoLogger: dropped 2 records after context capture failed
+```
+
 Destroying a logger reports any count still pending in the same way, because a
 logger that is going away has no later moment at which to warn.
 
@@ -399,6 +416,15 @@ fields with safe defaults does not require a version bump.
   not guarantee delivery, because a worker panic still signals completion with
   records queued, and write errors are logged rather than reported to the
   caller.
+- `handler.flush()`, `handler.close()`, and handler destruction report any
+  dropped-record count the rate limit is still holding back, using the wording
+  `FemtoStreamHandler: {count} log records dropped since the last report`. The
+  count is handler-side, and the shutdown `close()` drives reports it through
+  the Rust-side `take_shutdown()` path that Python `close()` uses, so it is
+  reported even though the Python object stays alive after `close()` and is
+  never destroyed. A `flush()` or `close()` that spends its whole timeout still
+  reports that count before the budget starts, so a timed-out wait cannot hide
+  it.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
@@ -604,23 +630,38 @@ socket_handler = (
   length prefix.
 - The worker reconnects automatically using exponential backoff. Payloads that
   exceed the configured `max_frame_size` are dropped.
+- A drop warning uses one of two wordings. The cause-neutral warning reads
+  `FemtoSocketHandler dropped {count} records since the last report`. When a
+  refusal triggers the report, the same text is followed by
+  `; triggering cause: <cause>`, for example `; triggering cause: queue full`.
+  The named cause is the one whose refusal triggered the report, so the count
+  can include earlier drops from other causes. `handler.flush()`,
+  `handler.close()`, and dropping the handler report any count still pending on
+  the handler side; the worker reports its own count when it acknowledges a
+  flush or shuts down.
 - `handler.flush()` forces the worker to flush the active socket, and returns
   `True` only when the worker acknowledges. One deadline of the handler's flush
   timeout covers both the wait for queue space and the acknowledgement, so a
   flush returns `False` once that single budget is spent rather than waiting a
   second full timeout for the worker to answer. It returns `False` when the
-  handler is closed, the worker channel is gone, or the budget expires. Python
-  `flush()` releases the GIL while it waits, so other Python threads keep
-  running during a flush that blocks on a full queue or a slow collector.
+  handler is closed, the worker channel is gone, or the budget expires. Before
+  that budget begins, the handler reports any pending dropped-record count
+  itself; this report is not bounded by the flush timeout, so it can block the
+  caller if the installed log sink blocks. Python `flush()` releases the GIL
+  while it waits, so other Python threads keep running during a flush that
+  blocks on a full queue or a slow collector.
 - `handler.close()` waits for the worker for at most the handler's write
-  timeout. During that window, each pending record gets at most one best-effort
-  attempt, without retries. A worker that acknowledges the shutdown in time is
-  joined. One that does not, typically because it is blocked writing to a
-  collector that has stopped reading, is detached with a warning rather than
-  joined past the deadline. Records still queued when the deadline passes are
-  discarded, and the count is warned about. The same bound applies when the
-  handler is dropped without an explicit `close()`, and the wait runs with the
-  GIL released.
+  timeout. Before that budget begins, the handler reports any pending
+  dropped-record count itself; this report is not bounded by the flush timeout,
+  so it can block the caller if the installed log sink blocks. During the
+  bounded window, each pending record gets at most one best-effort attempt,
+  without retries. A worker that acknowledges the shutdown in time is joined.
+  One that does not, typically because it is blocked writing to a collector
+  that has stopped reading, is detached with a warning rather than joined past
+  the deadline. Records still queued when the deadline passes are discarded,
+  and the count is warned about. The same bound applies when the handler is
+  dropped without an explicit `close()`, and the wait runs with the GIL
+  released.
 - One record is written in steps, and the remaining budget is recomputed
   between them. A frame larger than the socket send buffer therefore stops at
   the deadline with a warning that reports how many bytes were written, instead
@@ -699,6 +740,15 @@ socket_handler = (
   no marker, and socket handlers do not suppress marked records. Those paths
   remain the caller's responsibility when they could loop back into the same
   HTTP endpoint.
+- A drop warning uses one of two wordings. The cause-neutral warning reads
+  `FemtoHTTPHandler dropped {count} records since the last report`. When a
+  refusal triggers the report, the same text is followed by
+  `; triggering cause: <cause>`, for example
+  `; triggering cause: permanent error`. The named cause is the one whose
+  refusal triggered the report, so the count can include earlier drops from
+  other causes. `handler.flush()`, `handler.close()`, and dropping the handler
+  report any count still pending on the handler side; the worker reports its
+  own count when it acknowledges a flush or shuts down.
 
 ### Custom Python handlers
 

@@ -301,17 +301,17 @@ impl Worker {
         flush_drops_naming_cause(&self.warner, "abandoned retry during shutdown");
     }
 
-    /// Handles a flush command by immediately acknowledging completion.
+    /// Handles a flush command by reporting held-back drops, then acknowledging.
     ///
     /// Unlike file or socket handlers, HTTP has no persistent connection or
     /// internal buffer to flush. Each request is sent synchronously in
     /// `send_request`, so there is no buffered data awaiting transmission.
     ///
-    /// **Important**: This does not wait for in-flight retry attempts. If a
-    /// record is currently in a backoff/retry loop, `flush()` returns
-    /// immediately without blocking until those retries complete. Callers
-    /// should not rely on `flush()` to guarantee delivery of records that
-    /// encountered transient failures.
+    /// The acknowledgement is not a delivery guarantee. A record already in a
+    /// backoff/retry loop stays in the worker until that attempt finishes, so
+    /// the queued flush waits behind it: `flush()` blocks until the worker
+    /// acknowledges or returns `false` at its deadline, and a record that
+    /// exhausted its retries is reported as a drop rather than as delivered.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
         flush_drops(&self.warner);
         // Ignore send error: if the receiver has dropped, there's nothing to do.

@@ -109,6 +109,10 @@ impl FemtoHTTPHandler {
     ///
     /// Any pending handler-side drop warning is reported before shutdown.
     ///
+    /// That report is not covered by `flush_timeout`: the process-wide `log`
+    /// sink's synchronous write cannot be bounded here without discarding the
+    /// count, so a blocking sink can delay `close` beyond the budget above.
+    ///
     /// [`FemtoStreamHandler::close`]: crate::FemtoStreamHandler::close
     pub fn close(&mut self) {
         flush_drops(&self.warner);

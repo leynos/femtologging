@@ -7,8 +7,19 @@
 
 use serial_test::serial;
 
+use crate::rate_limited_warner::{Clock, DEFAULT_WARN_INTERVAL, RateLimitedWarner};
+
 use super::logger_tests_helpers::{CollectingHandler, collected_messages};
 use super::*;
+
+/// A clock that never advances, so warning attempts cannot cross an interval.
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now_millis(&self) -> u64 {
+        0
+    }
+}
 
 #[test]
 fn drop_delivers_records_queued_before_it() {
@@ -161,8 +172,15 @@ fn drop_reports_the_pending_drop_count() {
     use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 
     install_test_logger();
-    let logger =
+    let mut logger =
         FemtoLogger::new("drop-report".to_string()).expect("test logger should be constructible");
+    // A fixed clock keeps the second attempt inside the interval. With the
+    // real clock, a pause longer than the interval would let it report the drop
+    // this test needs the drop itself to report.
+    logger.drop_warner = RateLimitedWarner::with_clock(
+        DEFAULT_WARN_INTERVAL,
+        Arc::new(FixedClock) as Arc<dyn Clock>,
+    );
     // The first drop claims the interval; the second is suppressed and stays
     // pending, which is the state the drop has to report. The callback is a
     // no-op because what the first warning says is another test's subject.

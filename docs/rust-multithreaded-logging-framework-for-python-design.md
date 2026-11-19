@@ -221,8 +221,11 @@ The logging process will follow these steps:
    Nothing is held across a thread boundary, which is what makes `fork` safe:
    `multiprocessing` children inherit plain counters rather than a lock word
    some parent thread held, so a child has nothing to reclaim and cannot block
-   on it. A count recorded before the fork exists twice afterwards and both
-   processes may report it, so conservation is per process.
+   on it. A count still in the counter when the parent forks exists twice
+   afterwards and both processes may report it, so conservation is per process.
+   A batch a warning or flush has already drained is the exception: the child
+   copies a zero counter and does not own the draining thread's in-flight
+   batch, so only the parent can report that count.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.

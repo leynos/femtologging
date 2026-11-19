@@ -14,6 +14,8 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use rstest::{fixture, rstest};
+
 use crate::handler::FemtoHandlerTrait;
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::level::FemtoLevel;
@@ -240,22 +242,27 @@ fn a_flush_reports_the_cumulative_count_without_a_cause() {
     );
 }
 
-/// Close a handler and discard the messages its shutdown produced.
-fn closed_handler() -> FemtoSocketHandler {
-    let mut handler = FemtoSocketHandler::with_config(SocketHandlerConfig::default());
-    handler.close();
-    let _ = take_logged_messages();
-    handler
-}
-
 /// A closed handler holding one drop the warning interval suppressed.
 ///
 /// The first refused record warns and opens the interval; the second is held
-/// back, so whatever reports next must cover that one drop.
+/// back, so whatever reports next must cover that one drop. The clock never
+/// advances, which is what makes the suppression a property of this fixture
+/// rather than a race against the real interval: wall-clock time elapsing
+/// between the two refusals would let the second one warn too.
+#[fixture]
 fn closed_handler_holding_one_drop() -> FemtoSocketHandler {
-    let handler = closed_handler();
+    install_test_logger();
+    let clock = Arc::new(ManualClock::default());
+    let mut handler = FemtoSocketHandler::with_clock(SocketHandlerConfig::default(), clock);
+    handler.close();
+    let _ = take_logged_messages();
     assert!(handler.handle(record("first refusal")).is_err());
     assert!(handler.handle(record("held back")).is_err());
+    assert_eq!(
+        handler.pending_drops_for_test(),
+        1,
+        "the second refusal must stay pending inside the interval"
+    );
     handler
 }
 
@@ -276,11 +283,10 @@ fn assert_held_back_drop_reported(context: &str) {
 /// record warns and opens the interval; the second is held back. `flush()` must
 /// report that held-back count even though it returns `false` for a closed
 /// handler, and a second flush must have nothing left to say.
-#[test]
+#[rstest]
 #[serial_test::serial]
-fn flush_reports_drops_refused_after_close() {
-    install_test_logger();
-    let handler = closed_handler_holding_one_drop();
+fn flush_reports_drops_refused_after_close(closed_handler_holding_one_drop: FemtoSocketHandler) {
+    let handler = closed_handler_holding_one_drop;
     let warned: Vec<_> = take_logged_messages()
         .into_iter()
         .filter(|entry| entry.message.contains("triggering cause: handler closed"))
@@ -297,18 +303,34 @@ fn flush_reports_drops_refused_after_close() {
     );
 
     assert!(!handler.flush());
+    // The buffer is shared with every other test in this binary, so a single
+    // neighbour's warning says nothing about this flush. A second copy of
+    // *this* report is the only thing that would prove the first flush left the
+    // batch behind.
+    let repeated: Vec<_> = take_logged_messages()
+        .into_iter()
+        .filter(|entry| {
+            entry.message == "FemtoSocketHandler dropped 1 records since the last report"
+        })
+        .collect();
     assert!(
-        take_logged_messages().is_empty(),
-        "a second flush has nothing left to report"
+        repeated.is_empty(),
+        "a second flush must not repeat the report: {repeated:?}"
+    );
+    assert_eq!(
+        handler.pending_drops_for_test(),
+        0,
+        "the first flush must swap the pending count out, not merely read it"
     );
 }
 
 /// A close that finds the worker already gone still reports pending drops.
-#[test]
+#[rstest]
 #[serial_test::serial]
-fn close_reports_drops_refused_after_an_earlier_close() {
-    install_test_logger();
-    let mut handler = closed_handler_holding_one_drop();
+fn close_reports_drops_refused_after_an_earlier_close(
+    closed_handler_holding_one_drop: FemtoSocketHandler,
+) {
+    let mut handler = closed_handler_holding_one_drop;
     let _ = take_logged_messages();
 
     handler.close();
@@ -320,11 +342,12 @@ fn close_reports_drops_refused_after_an_earlier_close() {
 ///
 /// The drop path used to return as soon as the worker handle was gone, which
 /// left a suppressed count on a warner nobody would ever read again.
-#[test]
+#[rstest]
 #[serial_test::serial]
-fn dropping_a_closed_handler_reports_drops_refused_after_close() {
-    install_test_logger();
-    let handler = closed_handler_holding_one_drop();
+fn dropping_a_closed_handler_reports_drops_refused_after_close(
+    closed_handler_holding_one_drop: FemtoSocketHandler,
+) {
+    let handler = closed_handler_holding_one_drop;
     let _ = take_logged_messages();
 
     drop(handler);

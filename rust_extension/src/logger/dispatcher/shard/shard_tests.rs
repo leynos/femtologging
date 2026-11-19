@@ -203,6 +203,10 @@ fn a_record_is_in_flight_until_its_handlers_are_released() {
         release: parking_lot::Mutex::new(release_rx),
     });
     if shard.admit(queued_record(&handler), &budget).is_err() {
+        // Unwinding drops `handler` before `release_tx`, and the handler's
+        // destructor waits for that sender: release it first so the panic
+        // cannot deadlock the test thread in its own handler.
+        drop(release_tx);
         panic!("a fresh test shard should accept its first record");
     }
     // The job now holds the only reference, so the shard's worker is what

@@ -14,9 +14,42 @@ use std::sync::Arc;
 use std::thread;
 
 use super::FemtoSocketHandler;
+use crate::rate_limited_warner::{Clock, RateLimitedWarner};
 use crate::shutdown_signal::ShutdownSignal;
+use crate::socket_handler::config::SocketHandlerConfig;
 
 impl FemtoSocketHandler {
+    /// Construct a handler whose drop warner reads `clock`.
+    ///
+    /// A test that asserts a suppression window has to decide when that window
+    /// closes; the production constructor always samples the system clock.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let clock = Arc::new(ManualClock::default());
+    /// let handler = FemtoSocketHandler::with_clock(SocketHandlerConfig::default(), clock);
+    /// ```
+    pub(crate) fn with_clock(config: SocketHandlerConfig, clock: Arc<dyn Clock>) -> Self {
+        let warner = RateLimitedWarner::with_clock(config.warn_interval, clock);
+        Self::build(config, warner)
+    }
+
+    /// Report the drops the handler's warner is still holding.
+    ///
+    /// The drop-reporting fixtures must prove that a suppression window left
+    /// exactly the intended batch pending rather than infer it from whichever
+    /// warnings happen to be in the process-wide buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(handler.pending_drops_for_test(), 1);
+    /// ```
+    pub(crate) fn pending_drops_for_test(&self) -> u64 {
+        self.warner.pending_drops()
+    }
+
     /// Ask to be told when the worker next begins a backoff delay.
     ///
     /// A test that asserts a close is observed *during* a retry delay has to

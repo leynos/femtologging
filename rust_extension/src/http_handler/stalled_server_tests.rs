@@ -106,6 +106,11 @@ fn stall_connection(
     if super::super::read_http_request(&mut stream).is_err() {
         return true;
     }
+    // `read_http_request` installs a five-second read timeout on this socket
+    // for the request phase. Re-apply the poll interval for the hold phase, or
+    // the stop flag is only rechecked once every five seconds and `Drop` waits
+    // that long to join.
+    let _ = stream.set_read_timeout(Some(STALL_POLL));
     let _ = request_tx.send(());
     hold_connection(&mut stream, stop)
 }
