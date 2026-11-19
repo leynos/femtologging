@@ -140,16 +140,6 @@ impl RateLimitedWarner {
         self.dropped.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Number of drops awaiting the next warning emission.
-    ///
-    /// Exists so a test can prove that a path which deliberately does not
-    /// count a loss leaves this figure untouched, rather than inferring it
-    /// from the absence of a warning.
-    #[cfg(test)]
-    pub(crate) fn pending_drops(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
-    }
-
     /// Emit a warning if the rate limit interval has elapsed.
     ///
     /// The callback receives the number of drops accumulated since the last
