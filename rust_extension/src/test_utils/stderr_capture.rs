@@ -11,7 +11,51 @@
 //! such a message through a formatting helper instead, as the refused-target
 //! diagnostics do.
 
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+
+/// Attach the failed step to a Python error.
+///
+/// The caller's `?` then keeps one failure path per operation, while the
+/// message still names the import or call that went wrong.
+fn with_step<T>(step: &str, result: PyResult<T>) -> PyResult<T> {
+    result.map_err(|err| PyRuntimeError::new_err(format!("{step}: {err}")))
+}
+
+/// Run `body` between entering and leaving `sys.stderr` redirection.
+///
+/// Kept separate from [`with_captured_stderr`] so the fallible Python calls
+/// stay on one `?` path each; the wrapper decides how a failure is reported.
+fn capture_body<T>(py: Python<'_>, body: impl FnOnce() -> T) -> PyResult<(T, String)> {
+    let contextlib = with_step("contextlib is importable", py.import("contextlib"))?;
+    let io = with_step("io is importable", py.import("io"))?;
+    let buffer = with_step(
+        "io.StringIO constructs",
+        io.getattr("StringIO").and_then(|factory| factory.call0()),
+    )?;
+    let redirect = with_step(
+        "contextlib.redirect_stderr constructs",
+        contextlib
+            .getattr("redirect_stderr")
+            .and_then(|factory| factory.call1((&buffer,))),
+    )?;
+    with_step(
+        "the redirect context enters",
+        redirect.call_method0("__enter__"),
+    )?;
+
+    let result = body();
+
+    // `__exit__` always receives the exception triple; `None` reports that the
+    // body raised nothing, which is the only case this helper supports.
+    with_step(
+        "the redirect context exits",
+        redirect.call_method1("__exit__", (py.None(), py.None(), py.None())),
+    )?;
+    let captured = with_step("the buffer is readable", buffer.call_method0("getvalue"))?;
+    let text = with_step("the buffer holds text", captured.extract::<String>())?;
+    Ok((result, text))
+}
 
 /// Run `body` with Python's `sys.stderr` replaced by a buffer.
 ///
@@ -31,46 +75,11 @@ use pyo3::prelude::*;
 /// });
 /// ```
 pub(crate) fn with_captured_stderr<T>(py: Python<'_>, body: impl FnOnce() -> T) -> (T, String) {
-    // Each failure names the step and the Python error, so a broken redirect
-    // is diagnosed from the message alone. `unwrap_or_else(|err| panic!(..))`
-    // would read as a panicking closure to Whitaker's `no_unwrap_or_else_panic`,
-    // which is why the formatted detail lives in a `match` arm instead.
-    let contextlib = match py.import("contextlib") {
-        Ok(module) => module,
-        Err(err) => panic!("contextlib is importable: {err}"),
-    };
-    let io = match py.import("io") {
-        Ok(module) => module,
-        Err(err) => panic!("io is importable: {err}"),
-    };
-    let buffer = match io.getattr("StringIO").and_then(|factory| factory.call0()) {
-        Ok(buffer) => buffer,
-        Err(err) => panic!("io.StringIO constructs: {err}"),
-    };
-    let redirect = match contextlib
-        .getattr("redirect_stderr")
-        .and_then(|factory| factory.call1((&buffer,)))
-    {
-        Ok(redirect) => redirect,
-        Err(err) => panic!("contextlib.redirect_stderr constructs: {err}"),
-    };
-    if let Err(err) = redirect.call_method0("__enter__") {
-        panic!("the redirect context enters: {err}");
+    // `unwrap_or_else(|err| panic!(..))` would read as a panicking closure to
+    // Whitaker's `no_unwrap_or_else_panic`, so the formatted detail lives in a
+    // `match` arm instead.
+    match capture_body(py, body) {
+        Ok(captured) => captured,
+        Err(err) => panic!("stderr capture failed: {err}"),
     }
-
-    let result = body();
-
-    // `__exit__` always receives the exception triple; `None` reports that the
-    // body raised nothing, which is the only case this helper supports.
-    if let Err(err) = redirect.call_method1("__exit__", (py.None(), py.None(), py.None())) {
-        panic!("the redirect context exits: {err}");
-    }
-    let captured = match buffer.call_method0("getvalue") {
-        Ok(value) => match value.extract::<String>() {
-            Ok(text) => text,
-            Err(err) => panic!("the buffer holds text: {err}"),
-        },
-        Err(err) => panic!("the buffer is readable: {err}"),
-    };
-    (result, captured)
 }
