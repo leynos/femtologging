@@ -1572,14 +1572,16 @@ The drop counter is a plain atomic, so `fork` copies it rather than leaving a
 lock word behind. A count still in the counter when the parent forks then
 exists twice: parent and child each own a copy and each may report it, and a
 child can therefore repeat a report the parent has already made. A batch a
-warning or flush has already swapped out is the exception: the child copies a
-zero counter and does not own the draining thread's in-flight batch, so only
-the parent can report that count. Not every pre-fork count is therefore
-duplicated. The duplication that does happen is accepted — avoiding it would
-need shared memory and a cross-process lock for a diagnostic counter — so the
-conservation guarantee is per process. Within one process no drop is lost or
-reported twice; neither process can report a drop the other recorded after the
-fork.
+warning or flush has already swapped out is the exception: it is not in the
+child's counter, and the child does not own the draining thread's in-flight
+batch, so only the parent can report that count. The copied counter is not
+necessarily zero at that point, though: another thread may record drops between
+the swap and the fork, and those are copied like any other count. Not every
+pre-fork count is therefore duplicated. The duplication that does happen is
+accepted — avoiding it would need shared memory and a cross-process lock for a
+diagnostic counter — so the conservation guarantee is per process. Within one
+process no drop is lost or reported twice; neither process can report a drop
+the other recorded after the fork.
 
 The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
 (carry-forward, flush inside the window, empty calls),

@@ -257,10 +257,12 @@ fn neutral_drop_report(count: u64) -> String {
 /// back, so whatever reports next must cover that one drop.
 ///
 /// The interval is pinned far beyond the test's lifetime rather than left to
-/// the wall clock. With the real interval, a second refusal that landed more
-/// than one interval after the first would warn on its own, leaving the later
-/// flush, close or destruction with nothing to report - a failure that says
-/// nothing about the code under test.
+/// the wall clock. `FemtoHTTPHandler::with_config` reads the system clock, so
+/// the fixture still assumes the two refusals are less than an hour apart: a
+/// run delayed past that would let the second refusal warn on its own, leaving
+/// the later flush, close or destruction with nothing to report - a failure
+/// that says nothing about the code under test. An hour is what the pinned
+/// interval buys, and two adjacent calls do not approach it.
 fn closed_handler_holding_one_drop() -> FemtoHTTPHandler {
     let config = HTTPHandlerConfig {
         warn_interval: Duration::from_secs(3600),
