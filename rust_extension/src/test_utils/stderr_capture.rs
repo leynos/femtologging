@@ -1,18 +1,26 @@
 //! Capture Python's `sys.stderr` while a Rust test body runs.
 //!
-//! Two suites need the same thing: run some production code that writes a
-//! diagnostic to `sys.stderr`, then read the text back without letting it
+//! Two suites need the same thing: run some production code that may write
+//! through Python's `sys.stderr`, then read the text back without letting it
 //! reach the test log. Each kept its own copy of the redirect dance, so the
 //! copies could drift apart. One helper keeps them identical.
+//!
+//! This only sees writes made *through the interpreter*, such as
+//! [`PyErr::print`](pyo3::PyErr::print). A `writeln!` to `std::io::stderr()`
+//! reaches the process's descriptor 2 directly and is not captured; assert
+//! such a message through a formatting helper instead, as the refused-target
+//! diagnostics do.
 
 use pyo3::prelude::*;
 
 /// Run `body` with Python's `sys.stderr` replaced by a buffer.
 ///
-/// Returns the body's value and everything written to `sys.stderr` while it
-/// ran. The body must not raise: a raised exception would skip the context
-/// manager's `__exit__` and leave `sys.stderr` redirected for later tests, so
-/// a panicking body is reported here rather than propagated.
+/// Returns the body's value and everything the body wrote through Python's
+/// `sys.stderr` while it ran. Writes to the process's stderr descriptor are
+/// outside this helper's reach (see the module documentation). The body must
+/// not raise: a raised exception would skip the context manager's `__exit__`
+/// and leave `sys.stderr` redirected for later tests, so a panicking body is
+/// reported here rather than propagated.
 ///
 /// # Examples
 ///
