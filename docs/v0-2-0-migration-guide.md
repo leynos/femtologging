@@ -464,7 +464,7 @@ For the complete parameter and error contract, see
 [the users guide section on frame filtering][user-filtering].
 
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
-[user-flushing]: users-guide.md#flushing-logger-handlers
+[user-flushing]: users-guide.md#managing-handlers-and-custom-sinks
 
 ______________________________________________________________________
 
@@ -508,8 +508,8 @@ rather than a cumulative series. The keys are stable and contain no logger
 names, paths, messages or payloads. Values are a best-effort snapshot read from
 relaxed atomics, so concurrent updates may appear at different instants.
 Exporting them through a shared metrics adapter remains the application's
-responsibility. See [flushing logger handlers][user-flushing] for the counter
-contract.
+responsibility. See [the `get_flush_diagnostics()` counters][user-flushing] for
+the counter contract.
 
 See the [user guide](users-guide.md#flushing-logger-handlers), the
 [developer guide](developers-guide.md#logger-handler-flush-barrier), and the

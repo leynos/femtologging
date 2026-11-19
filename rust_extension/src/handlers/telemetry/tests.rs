@@ -2,11 +2,15 @@
 //!
 //! `WaitDiagnostics`, in the sibling `diagnostics` module, owns a fixed table of
 //! wait outcomes and the gauge that counts waits in flight. The tests pin that
-//! every `WaitOutcome` has its own key, that the exposed map keeps a stable key
-//! set, that recording moves only the named counter, and that durations
-//! accumulate while tracking the longest wait. The gauge is checked from the
-//! guard's side, and the timer is checked to record exactly one wait.
-//! `record_with` admits one sample without repeating the setup.
+//! every `WaitOutcome` has its own key, that the exposed map has the fixed
+//! number of entries and carries a key for each current outcome, that recording
+//! moves only the named counter, and that durations accumulate while tracking
+//! the longest wait. The key set is checked by cardinality and by naming each
+//! outcome's own key, so it catches a dropped or duplicated entry; it does not
+//! pin the published spelling of those keys, which a rename would change
+//! without failing it. The gauge is checked from the guard's side, and the
+//! timer is checked to record exactly one wait. `record_with` admits one sample
+//! without repeating the setup.
 
 use super::diagnostics::WaitDiagnostics;
 use super::outcome::{OUTCOME_COUNT, WaitOutcome};

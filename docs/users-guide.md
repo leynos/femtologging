@@ -362,8 +362,10 @@ are reflected in this barrier; a handler removed afterwards remains alive in
 the snapshot until the worker releases it, and later additions participate in
 the next barrier. One two-second deadline covers dispatch resolution, marker
 insertion, handler-list locking, worker acknowledgement and every handler
-flush. Built-in handlers keep their shorter configured timeouts. The Python
-method releases the GIL while waiting so Python handlers can run.
+flush. Built-in handlers keep their own shorter flush limits, whether fixed or
+configurable: the file handlers stop waiting after a fixed second, while the
+stream handler has a configurable `flush_timeout`. The Python method releases
+the GIL while waiting so Python handlers can run.
 
 The method returns `False` when a stage is not confirmed by the deadline, the
 worker has exited, or a handler reports failure or lacks deadline support. A

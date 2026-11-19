@@ -1,12 +1,15 @@
 //! Integration tests for the HTTP handler.
 //!
-//! Each scenario binds a loopback listener, builds a `FemtoHTTPHandler` through
-//! `build_http_handler`, and inspects the request the worker actually sends:
-//! method, headers, body, JSON formatting and authentication. `spawn_mock_server`,
-//! `read_http_request` and `read_headers` are the shared arrangement, while
-//! `send_info_record` admits one record. The sibling `close`, `retry`, `drain`,
-//! `channel_property` and `response_classification` submodules carry the
-//! shutdown, retry, channel and classification contracts.
+//! Each scenario binds a loopback listener and inspects the request the worker
+//! actually sends: method, headers, body, JSON formatting and authentication.
+//! `spawn_mock_server`, `read_http_request` and `read_headers` are the shared
+//! arrangement, while `send_info_record` admits one record. The construction
+//! path differs by scenario: most tests build through `build_http_handler`,
+//! `sends_json_format` calls `FemtoHTTPHandler::with_config` directly, and the
+//! authentication tests go through `HTTPHandlerBuilder` in `test_auth_header`.
+//! The sibling `close`, `retry`, `drain`, `channel_property` and
+//! `response_classification` submodules carry the shutdown, retry, channel and
+//! classification contracts.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};

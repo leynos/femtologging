@@ -229,8 +229,10 @@ stateDiagram-v2
     ResolveDispatchState --> Failed: worker unavailable or deadline expired
     CheckHandlers --> EnqueueMarker: handler attached
     CheckHandlers --> WaitForShardDrain: no handlers, work in flight
-    CheckHandlers --> Succeeded: no handlers and no in-flight work
-    WaitForShardDrain --> Succeeded: shard drain marker acknowledged
+    CheckHandlers --> ReacquireInterpreter: no handlers, no in-flight work, Python caller
+    CheckHandlers --> Succeeded: no handlers and no in-flight work, Rust caller
+    WaitForShardDrain --> ReacquireInterpreter: drain acknowledged, Python caller
+    WaitForShardDrain --> Succeeded: shard drain marker acknowledged, Rust caller
     WaitForShardDrain --> Failed: drain deadline expires
     EnqueueMarker --> SnapshotHandlers: marker admitted
     EnqueueMarker --> Failed: queue full until deadline or worker exited
@@ -240,7 +242,8 @@ stateDiagram-v2
     DrainEarlierRecords --> Failed: worker does not reach marker in time
     FlushHandlers --> AwaitAcknowledgement: every opted-in handler confirms
     FlushHandlers --> Failed: unsupported, failed, or late handler flush
-    AwaitAcknowledgement --> ReacquireInterpreter: worker confirms in time
+    AwaitAcknowledgement --> ReacquireInterpreter: worker confirms in time, Python caller
+    AwaitAcknowledgement --> Succeeded: worker confirms in time, Rust caller
     AwaitAcknowledgement --> Failed: acknowledgement deadline expires
     ReacquireInterpreter --> Succeeded: interpreter reacquired by deadline
     ReacquireInterpreter --> Failed: interpreter reacquired after deadline
@@ -262,12 +265,14 @@ shard-wide drain marker instead; because that marker is ordered behind every
 job already on the shard, another logger's queued work delays it and can make
 the flush time out. Otherwise, the handler marker is enqueued before the
 handler list is cloned under a deadline-bounded read lock, so queue
-backpressure never holds the registry lock or an unqueued handler snapshot. A
-start gate ensures the worker releases the lock before callbacks run. Handler
-changes completed before the snapshot are reflected in this barrier; a removal
-after the snapshot does not cancel it. The marker keeps the handler alive until
-the worker releases it. A late handler destructor runs on the worker, not on
-the flush caller. Additions after the snapshot participate in the next barrier.
+backpressure never holds the registry lock or an unqueued handler snapshot. The
+caller that clones the snapshot owns that read lock and drops it before it
+signals a start gate, which the worker waits on, so the worker cannot begin
+callbacks while the registry lock is still held. Handler changes completed
+before the snapshot are reflected in this barrier; a removal after the snapshot
+does not cancel it. The marker keeps the handler alive until the worker
+releases it. A late handler destructor runs on the worker, not on the flush
+caller. Additions after the snapshot participate in the next barrier.
 Concurrent calls each use their own deadline and bounded queue marker; the
 logger creates no helper threads or unbounded task queue. Once the worker
 exits, marker insertion fails and the barrier returns `false`.

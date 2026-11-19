@@ -1,11 +1,13 @@
 //! Unit tests for worker response classification.
 //!
-//! The HTTP worker decides whether a response means the record was accepted,
-//! the peer refused it, or the connection is unusable, and the retry logic in
-//! the parent `http_handler` module depends on that decision. The
-//! `status_classification` cases drive the whole decision table, one status per
-//! case, and assert the `ResponseClass` each maps to. This is the unit boundary
-//! beneath the integration tests in `http_handler::tests`.
+//! These are the HTTP worker's status-code rules. The worker decides whether a
+//! response means the record was accepted or the peer refused it, and the retry
+//! logic in the parent `http_handler` module depends on that decision. The
+//! `status_classification` cases drive the decision table, one status per case,
+//! and assert the `ResponseClass` each maps to. A connection failure never
+//! reaches this table: it takes the worker's separate transport-error path, so
+//! these tests cover status codes only. This is the unit boundary beneath the
+//! integration tests in `http_handler::tests`.
 
 use rstest::rstest;
 
