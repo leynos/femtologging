@@ -977,15 +977,17 @@ have passed the full deterministic and ignored-heavy gate suites.
 The warner holds no lock at all. The due path takes its batch with one swap and
 its interval with one compare-exchange, and the publication exchange is also
 the ownership check: a caller superseded while it was publishing restores its
-batch instead of warning, so two reports cannot land back to back. The drained
-batch travels in a guard that restores it if a clock sample panics, and is
-disarmed only immediately before the callback, so a panicking clock costs a
-retry while a panicking callback still cannot report its count twice.
-Suppressed calls return on a relaxed read of the last-warning timestamp and one
-clock read, without touching the counter. The drain lock an earlier review
-round added was removed once the ordering argument showed it was unnecessary
-and itself a fork hazard; the decision log records that migration, and fork
-safety now follows from having no lock state to inherit.
+batch instead of warning, so no two callers publish reports for the same
+interval. Publication is spaced; callback invocation is not, so a caller
+delayed after publishing still runs its callback and two callbacks can land
+back to back. The drained batch travels in a guard that restores it if a clock
+sample panics, and is disarmed only immediately before the callback, so a
+panicking clock costs a retry while a panicking callback still cannot report
+its count twice. Suppressed calls return on a relaxed read of the last-warning
+timestamp and one clock read, without touching the counter. The drain lock an
+earlier review round added was removed once the ordering argument showed it was
+unnecessary and itself a fork hazard; the decision log records that migration,
+and fork safety now follows from having no lock state to inherit.
 
 The first formal review round found the reporting contract was still incomplete
 at the consumer boundary, in two ways. First, each HTTP and socket warner
@@ -1785,3 +1787,21 @@ touch `docs/users-guide.md`, `docs/rust-extension.md`,
 `docs/developers-guide.md` and
 `docs/rust-multithreaded-logging-framework-for-python-design.md`. `make fmt`,
 `check-fmt`, `markdownlint` and `nixie` pass on the corrected tree.
+
+2026-11-19: CodeRabbit's review of `e01d6c51` raised four further documentation
+findings, all verified against the implementation and all corrected. (1) This
+document's outcome paragraph still claimed two reports cannot land back to
+back; it now says publication is spaced while callback invocation is not, which
+is what `claim_due_batch` and `warn_if_due` actually do. (2) The HTTP shutdown
+contract now lists the `abandon_worker` warning, a synchronous process-wide
+`log` write after the budget expires, as the second piece of `close()` work
+outside `flush_timeout`; both `abandon_worker` implementations log that way.
+(3) The `fork` exception now distinguishes a batch another thread drained,
+which only the parent can report, from one the forking thread itself holds,
+which the child keeps and can report, because a custom `Clock` samples between
+the swap and the callback; the same correction is in the developers guide. (4)
+The migration guide no longer calls a report a running total: a caller delayed
+after publishing emits its own batch late, so lines can appear out of recording
+order. The developers guide's carry-forward sentence now says "every drop the
+warner had not yet reported" for the same reason. `make fmt`, `check-fmt`,
+`markdownlint` and `nixie` pass on the corrected tree.

@@ -719,13 +719,15 @@ socket_handler = (
   be delivered inside the timeout costs those records rather than extending the
   close. The bound is on the worker wait, not on the detached worker's exit: a
   request already in flight when the deadline falls may outlive it, and TCP
-  hostname resolution has no interruptible timeout. One part of `close()` runs
-  outside the bound: before the wait begins, it reports the drops the handler
-  itself refused through the process-wide `log` sink. A blocking sink can delay
-  the close past the write timeout, because bounding that report would mean
-  discarding the count. The same bound, and the same report before it, apply
-  when the handler is dropped without an explicit `close()`, and the wait runs
-  with the GIL released.
+  hostname resolution has no interruptible timeout. Two writes run outside the
+  bound, both through the process-wide `log` sink. Before the wait begins,
+  `close()` reports the drops the handler itself refused; after a wait that
+  times out, it warns that the worker was abandoned. A blocking sink can delay
+  the close past the write timeout in either case: the drop count cannot be
+  bounded without discarding it, and the abandonment warning is written once
+  the budget has already run out. The same bound, and the same drop report
+  before it, apply when the handler is dropped without an explicit `close()`,
+  and the wait runs with the GIL released.
 - `handler.flush()` forces the worker to flush what it has queued, and returns
   `True` only when the worker acknowledges within the handler's flush timeout.
   Python `flush()` releases the GIL while it waits, so other Python threads

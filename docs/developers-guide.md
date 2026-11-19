@@ -1461,11 +1461,11 @@ Every drop counted by a handler or a logger goes through `RateLimitedWarner`
 drops not yet reported. `record_drop()` increments it. `warn_if_due()` swaps
 the counter to zero and hands the count to a reporting closure only when the
 warning interval has elapsed; a suppressed call puts back the count it took, so
-the next warning reports every drop since the previous report rather than only
-those the current call saw. That carry-forward is the conservation invariant:
-no drop is discarded and none is handed to a callback twice. A call with
-nothing pending does not start an interval, so an idle poller cannot delay the
-next real warning.
+the next report carries every drop the warner had not yet reported, rather than
+only those the current call recorded. That carry-forward is the conservation
+invariant: no drop is discarded and none is handed to a callback twice. A call
+with nothing pending does not start an interval, so an idle poller cannot delay
+the next real warning.
 
 The counter is per warner, and one HTTP or socket handler has two of them. The
 handler owns one that its enqueue path counts into (queue full, worker
@@ -1577,14 +1577,18 @@ exists twice: parent and child each own a copy and each may report it, and a
 child can therefore repeat a report the parent has already made. A batch a
 warning or flush has already swapped out is the exception: it is not in the
 child's counter, and the child does not own the draining thread's in-flight
-batch, so only the parent can report that count. The copied counter is not
-necessarily zero at that point, though: another thread may record drops between
-the swap and the fork, and those are copied like any other count. Not every
-pre-fork count is therefore duplicated. The duplication that does happen is
-accepted — avoiding it would need shared memory and a cross-process lock for a
-diagnostic counter — so the conservation guarantee is per process. Within one
-process no drop is lost or reported twice; neither process can report a drop
-the other recorded after the fork.
+batch, so only the parent can report that count. That exception holds only when
+the fork happens on another thread. If the draining thread itself forks before
+the report is written, the child resumes that same call and can report the same
+batch, so both processes may report it. A custom `Clock` that forks from
+`now_millis` does exactly that, because the sample runs between the swap and
+the callback. The copied counter is not necessarily zero at that point, though:
+another thread may record drops between the swap and the fork, and those are
+copied like any other count. Not every pre-fork count is therefore duplicated.
+The duplication that does happen is accepted — avoiding it would need shared
+memory and a cross-process lock for a diagnostic counter — so the conservation
+guarantee is per process. Within one process no drop is lost or reported twice;
+neither process can report a drop the other recorded after the fork.
 
 The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
 (carry-forward, flush inside the window, empty calls),
