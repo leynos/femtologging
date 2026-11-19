@@ -8,7 +8,9 @@ Makefile's `?=` default, `MAKEFLAGS=-i` would swallow a rejected lane's status,
 and an inherited `FAKE_CARGO_REJECT` would fail a lane the test expects to
 accept. Each failure would read as a wiring defect rather than as leaked
 environment. Every test here injects the environment it means to test, so no
-shared process state changes.
+shared process state changes. One test also pins how the helper reads a
+relative `PATH` entry, because the search path it hands to `shutil.which` has
+to agree with the directory the child actually runs in.
 
 See [ADR-0006](../docs/adrs/adr-0006-environment-seam-taxonomy.md) on inherited
 variables that could change a child's outcome, and the
@@ -22,11 +24,13 @@ from __future__ import annotations
 
 import os
 import typing as typ
+from pathlib import Path
 
 import pytest
 
 from tests.env_policy_lane_support import (
     CONTRACT_TIMEOUT_SECONDS,
+    _search_path_of,
     captured_output,
     lane_diagnostics,
     run_policy_target,
@@ -37,7 +41,7 @@ from tests.fake_cargo import (
     recorded_child_environments,
     recorded_invocations,
 )
-from tests.make_contract_helpers import variable_tokens
+from tests.make_contract_helpers import repo_root, variable_tokens
 
 #: The lane the inherited value names. It is the first lane the target runs, so
 #: a value that survived into the child would fail the target immediately.
@@ -178,4 +182,40 @@ def test_inherited_makeflags_cannot_silence_a_rejected_lane(
     verdicts = lane_diagnostics(failed_lane, FAILING_LANES)
     assert verdicts == {"none": 1, REJECTED_LANE: 1, "all": 0}, (
         f"the driver must stop after the rejected lane\n{captured_output(failed_lane)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("environment", "entries"),
+    [
+        pytest.param(
+            {"PATH": f"tools/bin:/usr/bin{os.pathsep}"},
+            ("tools/bin", "/usr/bin", ""),
+            id="relative-and-empty-entries",
+        ),
+        pytest.param({}, ("",), id="no-path-at-all"),
+    ],
+)
+def test_search_path_resolves_entries_from_the_child_directory(
+    environment: dict[str, str],
+    entries: tuple[str, ...],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario: pytest was started outside the repository.
+
+    Invariant: a relative `PATH` entry means the directory the child runs in,
+    not the directory pytest was started from. Looking up `make` must therefore
+    find the executable Make would run, not a different one from the caller's
+    directory. An empty entry, and a missing `PATH`, mean that same directory.
+    """
+    monkeypatch.chdir(tmp_path)
+    root = repo_root()
+    expected = [
+        entry if Path(entry).is_absolute() else str(root / entry) for entry in entries
+    ]
+    resolved = _search_path_of(environment).split(os.pathsep)
+    assert resolved == expected, (
+        "relative and empty PATH entries must resolve against the child's "
+        f"working directory\nresolved: {resolved!r}\nexpected: {expected!r}"
     )
