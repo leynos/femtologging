@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 use std::thread::ThreadId;
 
-use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
+use serde::ser::{SerializeMap, Serializer};
 
 use crate::exception_schema::{ExceptionPayload, StackTracePayload};
 use crate::log_context::is_reserved_structured_key;
