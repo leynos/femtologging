@@ -43,7 +43,7 @@ fn file_over_writer(
     capacity: usize,
 ) -> Py<PyAny> {
     Py::new(py, handler_with_capacity(writer, policy, capacity))
-        .unwrap_or_else(|err| panic!("the handler must be a valid pyclass: {err}"))
+        .expect("the handler must be a valid pyclass")
         .into_any()
 }
 
