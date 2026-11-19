@@ -1,11 +1,20 @@
-"""Contracts for the split between pull-request coverage and main publication.
+"""Contracts for the publisher's topology and its baseline publication.
 
-CV-005 keeps coverage generation, and its ratchet, in the pull-request lane,
-and moves both persistent outputs to one default-branch publisher. These tests
-read the workflows as documents and hold that split: one publisher on a push
-to ``main``, one protected environment used by that publisher alone, a token
-that travels only as the uploader's input, an upload guarded by both token
-presence and branch, and two lanes that measure the same population.
+CV-005 keeps coverage generation, and its ratchet, in the pull-request lane and
+moves both persistent outputs to one default-branch publisher. These contracts
+hold the publisher's place in the workflow graph: one workflow pushes to
+``main``, measures and publishes a baseline; it is unreachable from a pull
+request; its single remote call stays the recorded one; and the pull-request
+lane measures the same population without publishing anything.
+
+The publisher also owns one baseline job per runner provider, because a cache
+entry written on one provider is not read by the other and a fork or
+Dependabot pull request falls back to the hosted pool. The publication
+mechanics are held here too: both providers advance from one hand-over, a
+failed lane withdraws only its own publication, and the upload reads the
+measured commit. The upload guard and the environment readers have contracts
+of their own in :mod:`tests.test_coverage_upload_guard_contract` and
+:mod:`tests.test_coverage_environment_contract`.
 """
 
 from __future__ import annotations
@@ -16,14 +25,16 @@ import pytest
 
 from tests.coverage_contract_helpers import (
     BASELINE_MARKER,
+    CI_WORKFLOW,
     GENERATE_MARKER,
-    TOKEN_COMMAND,
-    TOKEN_STEP_NAME,
-    UPLOAD_CONDITION,
+    LANE_HANDOVER_CONDITION,
+    LANE_PROBE_CONDITION,
+    PARTIAL_FAILURE_CONDITION,
+    PUBLISHER_WORKFLOW,
     UPLOAD_MARKER,
     coverage_inputs,
     jobs_named,
-    pushes_to,
+    matrix_versions,
     repository_documents,
     steps_using,
     triggers,
@@ -32,13 +43,11 @@ from tests.coverage_environment_helpers import (
     CODESCENE_ENVIRONMENT,
     TOKEN_NAME,
     environment_name,
-    secret_in_env,
 )
+from tests.coverage_push_filter_helpers import pushes_to
 from tests.coverage_reach_helpers import pull_request_reach
 from tests.runner_placement_judgement import selected_runner
 
-CI_WORKFLOW: typ.Final[str] = "ci.yml"
-PUBLISHER: typ.Final[str] = "coverage-main.yml"
 #: The one reusable workflow a pull-request event reaches that lives in
 #: another repository. It was read at the pinned commit named in its
 #: reference: no job there declares an environment. A new remote call, or a
@@ -51,98 +60,6 @@ KNOWN_REMOTE_CALLS: typ.Final[frozenset[str]] = frozenset({
 })
 
 
-def _token_steps(document: dict[str, typ.Any]) -> list[tuple[str, dict[str, typ.Any]]]:
-    """Return the token-presence steps of `document` with their job ids."""
-    return [
-        (job_id, step)
-        for _, job_id, job in jobs_named({PUBLISHER: document})
-        for step in job.get("steps") or []
-        if step.get("name") == TOKEN_STEP_NAME
-    ]
-
-
-def _token_guard_problems(
-    document: dict[str, typ.Any],
-    uploads: list[tuple[str, str, dict[str, typ.Any]]],
-) -> list[str]:
-    """Return one complaint per way the token-presence step could be weakened."""
-    tokens = _token_steps(document)
-    if len(tokens) != 1:
-        return [f"expected one token-presence step, found {len(tokens)}"]
-    job_id, token_step = tokens[0]
-    problems: list[str] = []
-    if token_step.get("id") != "codescene-token":
-        problems.append("the token step must expose the `codescene-token` id")
-    if token_step.get("run") != TOKEN_COMMAND:
-        problems.append("the token step must run the canonical command alone")
-    if not any(upload_job == job_id for _, upload_job, _ in uploads):
-        problems.append("the upload must run beside the token-presence step")
-    return problems
-
-
-def _upload_guard_problems(
-    uploads: list[tuple[str, str, dict[str, typ.Any]]],
-) -> list[str]:
-    """Return one complaint per way the upload step could be weakened."""
-    if len(uploads) != 1:
-        return [f"expected one upload step, found {len(uploads)}"]
-    upload = uploads[0][2]
-    problems: list[str] = []
-    if upload.get("if") != UPLOAD_CONDITION:
-        problems.append("the upload must require the token and the trunk")
-    shared = upload.get("with") or {}
-    if shared.get("access-token") != "${{ secrets.CS_ACCESS_TOKEN }}":
-        problems.append("the token must travel as the uploader's input")
-    return problems
-
-
-def _guard_problems(document: dict[str, typ.Any]) -> list[str]:
-    """Return one complaint per way the upload guard could be weakened."""
-    uploads = steps_using({PUBLISHER: document}, UPLOAD_MARKER)
-    problems = _token_guard_problems(document, uploads)
-    problems.extend(_upload_guard_problems(uploads))
-    problems.extend(
-        f"the token is in {location}" for location in secret_in_env(document)
-    )
-    return problems
-
-
-def _publisher_document(
-    *,
-    token_run: str = TOKEN_COMMAND,
-    upload_if: str = UPLOAD_CONDITION,
-    job_env: dict[str, str] | None = None,
-) -> dict[str, typ.Any]:
-    """Return a synthetic publisher document carrying `token_run` and `upload_if`."""
-    upload_job: dict[str, typ.Any] = {
-        "runs-on": "ubuntu-latest",
-        "environment": CODESCENE_ENVIRONMENT,
-        "steps": [
-            {"name": TOKEN_STEP_NAME, "id": "codescene-token", "run": token_run},
-            {
-                "name": "Upload coverage data to CodeScene",
-                "if": upload_if,
-                "uses": f"example/{UPLOAD_MARKER}@sha",
-                "with": {"access-token": "${{ secrets.CS_ACCESS_TOKEN }}"},
-            },
-        ],
-    }
-    if job_env is not None:
-        upload_job["env"] = job_env
-    return {
-        "name": "Coverage (main)",
-        "on": {"push": {"branches": ["main"]}},
-        "jobs": {
-            "coverage-upload": upload_job,
-            "coverage-baseline": {
-                "needs": "coverage-upload",
-                "runs-on": "ubicloud-standard-2",
-                "steps": [{"uses": f"example/{BASELINE_MARKER}@sha"}],
-            },
-        },
-    }
-
-
 def test_one_publisher_owns_the_default_branch_upload() -> None:
     """Exactly one workflow pushes to main, measures, and publishes a baseline."""
     documents = repository_documents()
@@ -153,7 +70,7 @@ def test_one_publisher_owns_the_default_branch_upload() -> None:
         and steps_using({file_name: document}, GENERATE_MARKER)
         and steps_using({file_name: document}, BASELINE_MARKER)
     )
-    assert publishers == [PUBLISHER], publishers
+    assert publishers == [PUBLISHER_WORKFLOW], publishers
 
 
 def test_the_publisher_runs_only_on_a_push_to_the_trunk() -> None:
@@ -163,7 +80,7 @@ def test_the_publisher_runs_only_on_a_push_to_the_trunk() -> None:
     filter still satisfies. The exact mapping is asserted here so an added
     trigger, or a `feature/*` branch, fails the contract.
     """
-    document = repository_documents()[PUBLISHER]
+    document = repository_documents()[PUBLISHER_WORKFLOW]
     assert triggers(document) == {"push": {"branches": ["main"]}}, document.get("on")
 
 
@@ -177,53 +94,14 @@ def test_the_only_codescene_upload_is_the_publishers() -> None:
         (file_name, job_id)
         for file_name, job_id, _ in steps_using(repository_documents(), UPLOAD_MARKER)
     ]
-    assert [file_name for file_name, _ in uploaders] == [PUBLISHER], uploaders
-
-
-def test_an_environment_name_is_matched_case_insensitively() -> None:
-    """GitHub folds environment names, so the reader must fold them too.
-
-    Returning the declaration verbatim would report no protected environment
-    for a job that declares one in another case.
-    """
-    scalar = environment_name({"environment": "CodeScene"})
-    mapping = {"name": "CODESCENE", "url": "${{ github.ref }}"}
-    mapped = environment_name({"environment": mapping})
-    assert scalar == CODESCENE_ENVIRONMENT, scalar
-    assert mapped == CODESCENE_ENVIRONMENT, mapped
-
-
-@pytest.mark.parametrize(
-    ("declaration", "refusal"),
-    [
-        ("${{ inputs.environment }}", "an environment expression is not verifiable"),
-        (
-            {"name": "${{ inputs.environment }}"},
-            "an environment expression is not verifiable",
-        ),
-        ({"url": "${{ x }}"}, "an environment mapping must declare a name"),
-        (7, "an environment must be a name or a mapping"),
-    ],
-    ids=[
-        "scalar-expression",
-        "mapping-expression",
-        "mapping-without-name",
-        "scalar-int",
-    ],
-)
-def test_an_unprovable_environment_declaration_is_refused(
-    declaration: object, refusal: str
-) -> None:
-    """A name this repository cannot resolve, or cannot read, is not guessed."""
-    with pytest.raises(AssertionError, match=refusal):
-        environment_name({"environment": declaration})
+    assert [file_name for file_name, _ in uploaders] == [PUBLISHER_WORKFLOW], uploaders
 
 
 def test_the_publisher_is_not_reachable_from_a_pull_request() -> None:
     """A pull request can reach neither the publisher nor its environment."""
     documents = repository_documents()
     reached, _ = pull_request_reach(documents)
-    assert PUBLISHER not in reached, reached
+    assert PUBLISHER_WORKFLOW not in reached, reached
     offenders = [
         (file_name, job_id)
         for file_name in reached
@@ -231,20 +109,6 @@ def test_the_publisher_is_not_reachable_from_a_pull_request() -> None:
         if environment_name(job) == CODESCENE_ENVIRONMENT
     ]
     assert not offenders, offenders
-
-
-def test_the_protected_environment_is_declared_by_the_upload_job_alone() -> None:
-    """The publisher declares the environment once, on the job that uploads."""
-    document = repository_documents()[PUBLISHER]
-    holders = [
-        job_id
-        for _, job_id, job in jobs_named({PUBLISHER: document})
-        if environment_name(job) == CODESCENE_ENVIRONMENT
-    ]
-    uploads = steps_using({PUBLISHER: document}, UPLOAD_MARKER)
-    assert len(holders) == 1, holders
-    assert uploads, uploads
-    assert all(job_id == holders[0] for _, job_id, _ in uploads), uploads
 
 
 def test_the_only_remote_pull_request_call_is_the_recorded_one() -> None:
@@ -255,68 +119,12 @@ def test_the_only_remote_pull_request_call_is_the_recorded_one() -> None:
 
 def test_the_publisher_never_cancels_and_keys_on_the_ref() -> None:
     """A cancelled publisher abandons its upload and its baseline write."""
-    concurrency = repository_documents()[PUBLISHER].get("concurrency")
+    concurrency = repository_documents()[PUBLISHER_WORKFLOW].get("concurrency")
     assert isinstance(concurrency, dict), concurrency
     assert concurrency.get("group") == "${{ github.workflow }}-${{ github.ref }}", (
         concurrency
     )
     assert concurrency.get("cancel-in-progress") is False, concurrency
-
-
-def test_the_upload_is_guarded_by_token_presence_and_the_trunk() -> None:
-    """The real publisher states the canonical guard and binds no secret."""
-    problems = _guard_problems(repository_documents()[PUBLISHER])
-    assert not problems, problems
-
-
-@pytest.mark.parametrize(
-    ("token_run", "upload_if", "job_env"),
-    [
-        (TOKEN_COMMAND, UPLOAD_CONDITION, None),
-        ("true", UPLOAD_CONDITION, None),
-        (f"{TOKEN_COMMAND}\ntrue", UPLOAD_CONDITION, None),
-        (TOKEN_COMMAND, "github.ref == 'refs/heads/main'", None),
-        (TOKEN_COMMAND, "steps.codescene-token.outputs.available == 'true'", None),
-        (TOKEN_COMMAND, "always()", None),
-        (
-            TOKEN_COMMAND,
-            UPLOAD_CONDITION,
-            {"CS_ACCESS_TOKEN": "${{ secrets.CS_ACCESS_TOKEN }}"},
-        ),
-    ],
-    ids=[
-        "canonical",
-        "missing-step-output",
-        "extra-command",
-        "token-conjunct-dropped",
-        "ref-conjunct-dropped",
-        "always",
-        "token-in-job-env",
-    ],
-)
-def test_the_guard_reader_notices_each_way_the_upload_can_be_exposed(
-    token_run: str, upload_if: str, job_env: dict[str, str] | None
-) -> None:
-    """Every weakening of the guard is reported, so the real one can pass."""
-    problems = _guard_problems(
-        _publisher_document(token_run=token_run, upload_if=upload_if, job_env=job_env)
-    )
-    canonical = (token_run, upload_if, job_env) == (
-        TOKEN_COMMAND,
-        UPLOAD_CONDITION,
-        None,
-    )
-    assert bool(problems) is not canonical, problems
-
-
-def test_no_workflow_puts_the_token_in_an_environment() -> None:
-    """The uploader is composite and would hand a step env to its nested steps."""
-    offenders = [
-        (file_name, location)
-        for file_name, document in repository_documents().items()
-        for location in secret_in_env(document)
-    ]
-    assert not offenders, offenders
 
 
 def test_pull_requests_measure_and_ratchet_without_publishing() -> None:
@@ -339,7 +147,9 @@ def test_both_lanes_measure_the_same_population() -> None:
     """Every input that defines the measured population is identical."""
     documents = repository_documents()
     pull_request = steps_using({CI_WORKFLOW: documents[CI_WORKFLOW]}, GENERATE_MARKER)
-    publisher = steps_using({PUBLISHER: documents[PUBLISHER]}, GENERATE_MARKER)
+    publisher = steps_using(
+        {PUBLISHER_WORKFLOW: documents[PUBLISHER_WORKFLOW]}, GENERATE_MARKER
+    )
     assert len(pull_request) == 1, pull_request
     assert len(publisher) == 1, publisher
     assert coverage_inputs(pull_request[0][2]) == coverage_inputs(publisher[0][2]), (
@@ -350,9 +160,9 @@ def test_both_lanes_measure_the_same_population() -> None:
 
 def test_the_baseline_is_published_from_the_runner_the_pull_requests_use() -> None:
     """The hand-over keeps the measurement off the cache store it cannot share."""
-    document = repository_documents()[PUBLISHER]
-    measures = steps_using({PUBLISHER: document}, GENERATE_MARKER)[0]
-    publishes = steps_using({PUBLISHER: document}, BASELINE_MARKER)[0]
+    document = repository_documents()[PUBLISHER_WORKFLOW]
+    measures = steps_using({PUBLISHER_WORKFLOW: document}, GENERATE_MARKER)[0]
+    publishes = steps_using({PUBLISHER_WORKFLOW: document}, BASELINE_MARKER)[0]
     shared = measures[2].get("with") or {}
     assert shared.get("with-ratchet") == "true", shared
     assert shared.get("publish-baseline") == "never", shared
@@ -369,3 +179,150 @@ def test_the_baseline_is_published_from_the_runner_the_pull_requests_use() -> No
     ), baseline_job
     handover = publishes[2].get("with") or {}
     assert handover.get("artefact-name") == artefact, handover
+
+
+def _publisher_jobs(
+    document: dict[str, typ.Any],
+) -> list[tuple[str, dict[str, typ.Any]]]:
+    """Return the jobs that publish a baseline, in document order."""
+    return [
+        (job_id, job)
+        for _, job_id, job in jobs_named({PUBLISHER_WORKFLOW: document})
+        if any(
+            BASELINE_MARKER in str(step.get("uses", ""))
+            for step in typ.cast("list[dict[str, typ.Any]]", job.get("steps") or [])
+        )
+    ]
+
+
+def _runner_label(job: dict[str, typ.Any]) -> str:
+    """Return the runner label a push selects, reading the raw value if needed."""
+    runs_on = job.get("runs-on")
+    return selected_runner(runs_on, "push") or str(runs_on)
+
+
+def test_both_runner_providers_receive_a_baseline() -> None:
+    """Each provider's cache store gets its own publisher.
+
+    A fork or Dependabot pull request runs on the hosted pool, and a cache
+    entry written on Ubicloud is not visible there. Without a hosted
+    publisher, that lane would restore nothing, start its baseline at zero and
+    so never fail its ratchet.
+    """
+    jobs = _publisher_jobs(repository_documents()[PUBLISHER_WORKFLOW])
+    assert len(jobs) >= 1, jobs
+    labels = {_runner_label(job) for _, job in jobs}
+    assert labels == {"ubicloud-standard-2", "ubuntu-latest"}, labels
+
+
+@pytest.mark.parametrize("job_id", ["coverage-baseline", "coverage-baseline-hosted"])
+def test_each_publisher_survives_a_failed_sibling_and_publishes_its_own_lane(
+    job_id: str,
+) -> None:
+    """A failed lane withdraws its own baseline and no sibling's.
+
+    Measurement keeps running its other lanes, but a failed dependency would
+    still skip every publisher. Each publisher therefore runs on
+    `!cancelled()`, probes its own hand-over only when the matrix failed, and
+    publishes only when that hand-over or the whole matrix succeeded.
+    """
+    document = repository_documents()[PUBLISHER_WORKFLOW]
+    job = typ.cast("dict[str, typ.Any]", document["jobs"][job_id])
+    assert job.get("needs") == "coverage-measure", job.get("needs")
+    assert job.get("if") == PARTIAL_FAILURE_CONDITION, job.get("if")
+    steps = {
+        str(step.get("name")): step
+        for step in typ.cast("list[dict[str, typ.Any]]", job.get("steps") or [])
+    }
+    probe = steps.get("Check for this lane's hand-over")
+    assert probe is not None, sorted(steps)
+    assert probe.get("if") == LANE_PROBE_CONDITION, probe.get("if")
+    assert probe.get("continue-on-error") is True, probe
+    publish = steps.get("Publish the ratchet baseline")
+    assert publish is not None, sorted(steps)
+    assert publish.get("if") == LANE_HANDOVER_CONDITION, publish.get("if")
+    shared = publish.get("with") or {}
+    assert shared.get("artefact-name") == (
+        "coverage-baseline-handover-${{ matrix.python-version }}"
+    ), shared
+
+
+def test_both_publishers_read_the_same_hand_over() -> None:
+    """The two stores advance from one figure, not two measurements."""
+    document = repository_documents()[PUBLISHER_WORKFLOW]
+    measures = steps_using({PUBLISHER_WORKFLOW: document}, GENERATE_MARKER)[0]
+    handed_over = (measures[2].get("with") or {}).get("baseline-artefact-name")
+    published = [
+        (step.get("with") or {}).get("artefact-name")
+        for _, _, step in steps_using({PUBLISHER_WORKFLOW: document}, BASELINE_MARKER)
+    ]
+    assert published == [handed_over, handed_over], published
+
+
+def test_each_hand_over_is_keyed_by_the_interpreter_that_measured_it() -> None:
+    """A lane's artefact and its measurement name the same interpreter.
+
+    The baseline cache key carries the interpreter's major.minor, so an
+    artefact named after one lane while the action measured another would
+    publish a figure under the wrong key. Both sides are bound to
+    `matrix.python-version`, and every publisher measures the same lane list as
+    the measurement matrix.
+    """
+    document = repository_documents()[PUBLISHER_WORKFLOW]
+    measure_job = typ.cast("dict[str, typ.Any]", document["jobs"]["coverage-measure"])
+    measures = steps_using({PUBLISHER_WORKFLOW: document}, GENERATE_MARKER)[0]
+    shared = measures[2].get("with") or {}
+    bound = "${{ matrix.python-version }}"
+    assert shared.get("python-version") == bound, shared
+    assert shared.get("baseline-artefact-name") == (
+        f"coverage-baseline-handover-{bound}"
+    ), shared
+    env = typ.cast("dict[str, typ.Any]", measure_job.get("env") or {})
+    assert env.get("UV_PYTHON") == bound, env
+    lanes = matrix_versions(measure_job, "python-version")
+    assert lanes == ["3.12", "3.13", "3.14"], lanes
+    for job_id, job in _publisher_jobs(document):
+        assert matrix_versions(job, "python-version") == lanes, job_id
+
+
+def test_a_failed_sibling_lane_does_not_withdraw_the_upload() -> None:
+    """Only the 3.14 lane's report is needed, so its failure is the only bar.
+
+    The job runs after a failed dependency, and its report fetch stays
+    unguarded: a missing 3.14 report then fails the job instead of being read
+    as "nothing to upload", so the workflow cannot report success without
+    publishing.
+    """
+    document = repository_documents()[PUBLISHER_WORKFLOW]
+    uploads = steps_using({PUBLISHER_WORKFLOW: document}, UPLOAD_MARKER)
+    assert len(uploads) == 1, uploads
+    job = typ.cast("dict[str, typ.Any]", document["jobs"][uploads[0][1]])
+    assert job.get("if") == PARTIAL_FAILURE_CONDITION, job.get("if")
+    steps = {
+        str(step.get("name")): step
+        for step in typ.cast("list[dict[str, typ.Any]]", job.get("steps") or [])
+    }
+    fetch = steps.get("Fetch the measured report")
+    assert fetch is not None, sorted(steps)
+    assert "continue-on-error" not in fetch, fetch
+
+
+def test_the_upload_reads_the_measured_commit() -> None:
+    """The uploader attributes the report from a clone, so it holds one.
+
+    A fresh workspace holds no repository metadata, and the report alone does
+    not say which branch and commit it describes. The job therefore checks out
+    the measured revision, with the token left unpersisted.
+    """
+    document = repository_documents()[PUBLISHER_WORKFLOW]
+    uploads = steps_using({PUBLISHER_WORKFLOW: document}, UPLOAD_MARKER)
+    job = typ.cast("dict[str, typ.Any]", document["jobs"][uploads[0][1]])
+    assert job.get("permissions") == {"contents": "read"}, job.get("permissions")
+    steps = typ.cast("list[dict[str, typ.Any]]", job.get("steps") or [])
+    checkouts = [
+        step for step in steps if "actions/checkout@" in str(step.get("uses", ""))
+    ]
+    assert len(checkouts) == 1, checkouts
+    shared = checkouts[0].get("with") or {}
+    assert shared.get("ref") == "${{ github.sha }}", shared
+    assert shared.get("persist-credentials") is False, shared

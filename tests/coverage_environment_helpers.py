@@ -120,6 +120,34 @@ def env_blocks(
                 yield from env_blocks(item, f"{path}/{at}")
 
 
+def _names_token(value: str) -> bool:
+    """Report whether `value` names the CodeScene secret, folded for case.
+
+    GitHub resolves secret references without case sensitivity, so
+    ``secrets.cs_access_token`` reads the same secret as the uppercase
+    spelling. A case-sensitive scan would pass that ``env`` entry as safe and
+    miss the prohibited placement it is looking for.
+
+    Parameters
+    ----------
+    value
+        One string nested in an ``env`` mapping.
+
+    Returns
+    -------
+    bool
+        Whether the string names the secret in any case.
+
+    Examples
+    --------
+    >>> _names_token("${{ secrets.cs_access_token }}")
+    True
+    >>> _names_token("${{ secrets.GITHUB_TOKEN }}")
+    False
+    """
+    return TOKEN_NAME.casefold() in value.casefold()
+
+
 def secret_in_env(document: dict[str, typ.Any]) -> list[str]:
     """Return the locations whose ``env`` names the CodeScene token.
 
@@ -138,5 +166,5 @@ def secret_in_env(document: dict[str, typ.Any]) -> list[str]:
     return [
         location
         for location, mapping in env_blocks(document)
-        if any(TOKEN_NAME in value for value in _strings(mapping))
+        if any(_names_token(value) for value in _strings(mapping))
     ]
