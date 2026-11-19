@@ -16,7 +16,8 @@ use std::{
 };
 
 use chrono::Duration;
-use tempfile::tempdir;
+use rstest::{fixture, rstest};
+use tempfile::{TempDir, tempdir};
 
 use super::{
     backup_retention::BackupRetention,
@@ -46,16 +47,53 @@ fn backup(directory: &Path, base: &str) -> PathBuf {
     directory.join(format!("app.log.{base}"))
 }
 
+/// A rotation strategy that is due on its second write.
+///
+/// Every failure test needs the same three things — a log path nothing else on
+/// the host can see, a seconds schedule, and a clock that reports one interval
+/// between the initial write and the write that triggers rotation — so the
+/// fixture owns them and gives each test a fresh copy. What a test arranges on
+/// top is its own: the records already on disk, the writer it holds, and which
+/// store step is refused.
+struct DueRotation {
+    /// Keeps the temporary directory alive for the test that owns the fixture.
+    _directory: TempDir,
+    /// Active log path inside the temporary directory.
+    path: PathBuf,
+    /// Cadence that makes every valid suffix a rotation this handler produces.
+    schedule: TimedRotationSchedule,
+    /// Clock reporting the setup instant and then one interval later.
+    clock: SequenceClock,
+}
+
+#[fixture]
+fn due_rotation() -> DueRotation {
+    let directory = tempdir().expect("tempdir must create a temporary directory");
+    let path = directory.path().join("timed.log");
+    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
+        .expect("seconds schedule must validate");
+    let start = utc_datetime!("2026-03-12T00:00:00Z");
+    let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
+    DueRotation {
+        _directory: directory,
+        path,
+        schedule,
+        clock,
+    }
+}
+
 #[test]
 fn retention_prunes_through_the_injected_store() {
     let directory = tempdir().expect("tempdir must create a temporary directory");
+    // The listing is deliberately not in chronological order, so a prune that
+    // stops sorting would remove the newest backups instead of the oldest.
     let store = ScriptedFileStore::with_listing(&[
         "app.log",
-        "app.log.2026-03-12_00-00-00",
-        "app.log.2026-03-12_00-00-01",
         "app.log.2026-03-12_00-00-02",
         "app.log.notes",
+        "app.log.2026-03-12_00-00-00",
         "other.log.2026-03-12_00-00-00",
+        "app.log.2026-03-12_00-00-01",
     ]);
     let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
         .expect("seconds schedule must validate");
@@ -75,15 +113,15 @@ fn retention_prunes_through_the_injected_store() {
     );
 }
 
-#[test]
-fn a_refused_rename_leaves_the_original_writer_in_place() {
-    let directory = tempdir().expect("tempdir must create a temporary directory");
-    let path = directory.path().join("timed.log");
+#[rstest]
+fn a_refused_rename_leaves_the_original_writer_in_place(due_rotation: DueRotation) {
+    let DueRotation {
+        _directory,
+        path,
+        schedule,
+        clock,
+    } = due_rotation;
     let store = ScriptedFileStore::with_listing(&[]).failing_at(StoreStep::Rename);
-    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
-        .expect("seconds schedule must validate");
-    let start = utc_datetime!("2026-03-12T00:00:00Z");
-    let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
     let mut strategy = TimedFileRotationStrategy::with_seams(
         path.clone(),
         schedule,
@@ -98,8 +136,12 @@ fn a_refused_rename_leaves_the_original_writer_in_place() {
             .expect("log file must open"),
     );
 
-    RotationStrategy::before_write(&mut strategy, &mut writer, "second")
+    let error = RotationStrategy::before_write(&mut strategy, &mut writer, "second")
         .expect_err("a refused rename must surface as a rotation error");
+    assert!(
+        error.to_string().contains("scripted Rename failure"),
+        "the error must name the refused step rather than an earlier one: {error}"
+    );
 
     assert!(
         store.renames().is_empty(),
@@ -116,15 +158,15 @@ fn a_refused_rename_leaves_the_original_writer_in_place() {
     );
 }
 
-#[test]
-fn a_refused_fresh_open_restores_the_writer_then_rolls_back_the_rename() {
-    let directory = tempdir().expect("tempdir must create a temporary directory");
-    let path = directory.path().join("timed.log");
+#[rstest]
+fn a_refused_fresh_open_restores_the_writer_then_rolls_back_the_rename(due_rotation: DueRotation) {
+    let DueRotation {
+        _directory,
+        path,
+        schedule,
+        clock,
+    } = due_rotation;
     let store = ScriptedFileStore::with_listing(&[]).failing_at(StoreStep::Open);
-    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
-        .expect("seconds schedule must validate");
-    let start = utc_datetime!("2026-03-12T00:00:00Z");
-    let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
     let mut strategy = TimedFileRotationStrategy::with_seams(
         path.clone(),
         schedule,
@@ -178,18 +220,18 @@ fn a_refused_fresh_open_restores_the_writer_then_rolls_back_the_rename() {
 /// renames. A retry that begins by staging therefore deletes the records. The
 /// strategy must instead restore the active path first, leaving the records
 /// readable after the retried rotation.
-#[test]
-fn a_failed_rollback_is_recovered_before_the_next_rotation_stages() {
-    let directory = tempdir().expect("tempdir must create a temporary directory");
-    let path = directory.path().join("timed.log");
+#[rstest]
+fn a_failed_rollback_is_recovered_before_the_next_rotation_stages(due_rotation: DueRotation) {
+    let DueRotation {
+        _directory,
+        path,
+        schedule,
+        clock,
+    } = due_rotation;
     fs::write(&path, "prior records\n").expect("the active log must be writable");
     let store = ScriptedFileStore::with_listing(&[])
         .failing_at(StoreStep::Open)
         .failing_rename_onto(&path);
-    let schedule = TimedRotationSchedule::new(TimedRotationWhen::Seconds, 1, true, None)
-        .expect("seconds schedule must validate");
-    let start = utc_datetime!("2026-03-12T00:00:00Z");
-    let clock = SequenceClock::new([start, start + Duration::seconds(2)]);
     let mut strategy = TimedFileRotationStrategy::with_seams(
         path.clone(),
         schedule,
@@ -220,6 +262,21 @@ fn a_failed_rollback_is_recovered_before_the_next_rotation_stages() {
         "the timestamped file must hold the only copy of the records"
     );
 
+    // The worker still writes the triggering record when `before_write`
+    // returns an error, so the retried rotation has to carry it as well as the
+    // records that were already buffered. Without this write, a retry that
+    // left the writer pointing at a stale file could still satisfy the checks
+    // below.
+    writer
+        .write_all(b"triggering record\n")
+        .expect("the writer must still accept the triggering record");
+    writer.flush().expect("the writer must flush");
+    assert_eq!(
+        fs::read_to_string(&rotated).expect("the timestamped log must be readable"),
+        "prior records\ntriggering record\n",
+        "the failed rollback must leave the triggering record in the timestamped file"
+    );
+
     RotationStrategy::before_write(&mut strategy, &mut writer, "third")
         .expect("a retry must restore the active path and rotate");
 
@@ -236,7 +293,7 @@ fn a_failed_rollback_is_recovered_before_the_next_rotation_stages() {
     );
     assert_eq!(
         fs::read_to_string(&rotated).expect("the rotated log must be readable"),
-        "prior records\n",
-        "the retried rotation must not delete the only copy of the records"
+        "prior records\ntriggering record\n",
+        "the retried rotation must not lose the records the retry followed"
     );
 }
