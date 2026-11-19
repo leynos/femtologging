@@ -296,11 +296,15 @@ message, and it contains the 3-second `cargo metadata` control that preceded
 each lane as well as whatever `uv` and the driver took to start Cargo. The run
 did not timestamp those two parts separately, so the split between the control
 and `uv` start-up is not measured, and this plan attributes no duration to `uv`
-alone. Elapsed time minus the wait is that same interval plus whatever the lane
-did after the holder released; the uncontended control finished the same lane
-in 13 seconds in total. Every run began and ended with `build-limits-status`
-reading `capacity 4, held 4, healthy, caching through sccache`, so the waits
-are not an artefact of a stalled cache server or refused admission.
+alone. Elapsed time is the lane's own clock, and it started after the holder
+had acquired the lock, so subtracting the wait leaves only the lane's work
+outside the block: its start-up before the first blocking message and whatever
+it did after release, which came to one to three seconds across the four
+contended runs. It does not contain the gap, which lies before the lane
+started; the uncontended control finished the same lane in 13 seconds in total.
+Every run began and ended with `build-limits-status` reading
+`capacity 4, held 4, healthy, caching through sccache`, so the waits are not an
+artefact of a stalled cache server or refused admission.
 
 Runs 4 and 5 passed `--lib --offline` and still blocked for the whole hold,
 which is the evidence behind rejecting `--offline` below: it changes network
