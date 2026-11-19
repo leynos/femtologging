@@ -45,11 +45,59 @@ _UNTRACKED_MARKDOWN_FILES: Tokens = (
     "-r",
 )
 
-#: The two commands `spelling` must run, in order: the builder gate, then the
-#: same pinned release's Typos binary over the Markdown the gate cannot see.
+#: The three commands `spelling` must run, in order: the builder gate, the
+#: same pinned release's Typos binary over the Markdown the gate cannot see,
+#: and the gate's phrase check over the same files through a throwaway index.
+#: The phrase check reads an index, and Typos cannot express the shared phrase
+#: corrections, so an intent-to-add entry is the only way to show it a file
+#: that is not staged without disturbing the real index.
 _SPELLING_COMMANDS: tuple[Tokens, ...] = (
     ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
-    (*_UNTRACKED_MARKDOWN_FILES, "env", "$(UV_ENV)", "$(TYPOS)", "--"),
+    (
+        *_UNTRACKED_MARKDOWN_FILES,
+        "env",
+        "$(UV_ENV)",
+        "$(TYPOS)",
+        "--config",
+        "typos.toml",
+        "--force-exclude",
+        "--",
+    ),
+    (
+        "@spelling_index=$$(mktemp)",
+        "&&",
+        "trap",
+        'rm -f "$$spelling_index"',
+        "EXIT;",
+        "GIT_INDEX_FILE=$$spelling_index",
+        "git",
+        "read-tree",
+        "--empty",
+        "&&",
+        "{",
+        "git",
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        "*.md",
+        "|",
+        "xargs",
+        "-0",
+        "-r",
+        "env",
+        "GIT_INDEX_FILE=$$spelling_index",
+        "git",
+        "add",
+        "--intent-to-add",
+        "--",
+        ";",
+        "}",
+        "&&",
+        "$(UV_ENV)",
+        "GIT_INDEX_FILE=$$spelling_index",
+        "$(SPELLING_PHRASE_SCAN)",
+    ),
 )
 
 #: The two commands `spelling-integration-test` must run, in order.
@@ -161,7 +209,7 @@ def test_markdownlint_recipe_requires_spelling_and_scans_repository_markdown() -
 
 
 def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
-    """`spelling` must delegate generation and checking to the builder gate."""
+    """`spelling` must gate the index, then check unstaged files and phrases."""
     assert variable_tokens("TYPOS_CONFIG_BUILDER") == (
         "uvx",
         "--python",
@@ -186,12 +234,20 @@ def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
         "the unstaged-file stage must run the Typos binary the builder pins, "
         "from the same release, so both stages apply identical spelling rules"
     )
+    assert variable_tokens("SPELLING_PHRASE_SCAN") == (
+        "$(TYPOS_CONFIG_BUILDER)",
+        "check-phrases",
+    ), (
+        "the phrase stage must ask the builder's own check, so the forbidden "
+        "phrases and their corrections come from the same shared table"
+    )
     assert not _prerequisites("spelling"), (
         "the gate owns dictionary refresh, generation and checking"
     )
     assert _commands("spelling") == _SPELLING_COMMANDS, (
-        "spelling must run the builder gate in write mode and then check the "
-        "Markdown the gate cannot see: new files that are not yet staged"
+        "spelling must run the builder gate, then check the Markdown the gate "
+        "cannot see: new files that are not yet staged, with their file policy "
+        "still in force, and finally the phrase check over those files"
     )
 
 
