@@ -9,8 +9,7 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoLogger
-
-from .conftest import normalize_traceback_output
+from tests.steps.traceback_normalization import normalize_traceback_output
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
