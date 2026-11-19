@@ -77,3 +77,86 @@ pub(super) fn run_stream_worker<W, F>(
         flush_with_warning(&mut writer);
     });
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests that the worker's completion signal follows its destructors.
+
+    use std::time::Duration;
+
+    use super::*;
+    use crate::formatter::DefaultFormatter;
+    use crate::shutdown::ShutdownCompletion;
+    use crate::sync::{Receiver, Sender, bounded};
+
+    /// Writer that holds the worker inside its own destructor until released.
+    struct BlockingDropWriter {
+        /// Signals the test that the destructor has started.
+        entered_drop: Sender<()>,
+        /// Keeps the destructor running until the test says otherwise.
+        release_drop: Receiver<()>,
+    }
+
+    impl Write for BlockingDropWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Drop for BlockingDropWriter {
+        fn drop(&mut self) {
+            let _ = self.entered_drop.send(());
+            let _ = self.release_drop.recv();
+        }
+    }
+
+    /// The completion signal must not arrive while the writer is still alive.
+    ///
+    /// A caller that acts on the signal is entitled to assume the worker has
+    /// released everything it owned, so a `Drop` that runs after the send leaks
+    /// an observable ordering the caller cannot rely on.
+    #[test]
+    fn completion_signal_follows_the_worker_destructors() {
+        let (cmd_tx, cmd_rx) = bounded(1);
+        let (drop_started_tx, drop_started_rx) = bounded(1);
+        let (release_drop_tx, release_drop_rx) = bounded(1);
+        let completion = ShutdownCompletion::new();
+        let waiter = completion.register();
+
+        let worker_completion = Arc::clone(&completion);
+        let worker = std::thread::spawn(move || {
+            run_stream_worker(
+                cmd_rx,
+                BlockingDropWriter {
+                    entered_drop: drop_started_tx,
+                    release_drop: release_drop_rx,
+                },
+                DefaultFormatter,
+                worker_completion,
+            );
+        });
+        drop(cmd_tx);
+
+        drop_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the worker should reach its writer's destructor");
+        let completed_early = waiter.try_recv().is_ok();
+        release_drop_tx
+            .send(())
+            .expect("the worker should still be in its writer's destructor");
+        worker.join().expect("the worker thread should not panic");
+
+        assert!(
+            !completed_early,
+            "the completion signal arrived before the writer was dropped",
+        );
+        assert!(
+            completion.wait(Duration::from_secs(5)),
+            "the worker should signal completion once its writer is released",
+        );
+    }
+}

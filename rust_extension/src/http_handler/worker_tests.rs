@@ -13,7 +13,29 @@ use std::{
     time::Duration,
 };
 
+use rstest::rstest;
+
 use crate::{level::FemtoLevel, shutdown_signal::ShutdownSignal};
+
+/// The cause-neutral report a flush or drain emits for `count` held-back drops.
+fn neutral_drop_report(count: u64) -> String {
+    format!("FemtoHTTPHandler dropped {count} records since the last report")
+}
+
+/// Count captured messages equal to `expected`.
+///
+/// The test logger is process-wide and the rest of this binary runs in
+/// parallel, so counting exact matches isolates this test's report from a
+/// neighbouring one.
+fn report_count(
+    messages: &[crate::handlers::file::test_support::CapturedLog],
+    expected: &str,
+) -> usize {
+    messages
+        .iter()
+        .filter(|entry| entry.message == expected)
+        .count()
+}
 
 #[test]
 #[serial_test::serial]
@@ -93,7 +115,7 @@ fn aborted_request_counts_the_current_record_as_a_shutdown_drop() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoHTTPHandler dropped 1 records during shutdown")
+            .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
 }
 
@@ -114,6 +136,180 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoHTTPHandler dropped 1 records during shutdown")
+            .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
+}
+
+/// A flush command reports worker drops before it acknowledges.
+///
+/// The worker's warner is shared across causes, so a drop arriving inside the
+/// interval is only counted, not reported. Without this flush the count would
+/// wait for the next elapse - or never be seen, once the worker is gone. The
+/// handler treats the acknowledgement as "reporting finished", so the warning
+/// must be emitted before it: the acknowledgement channel here has no buffer,
+/// so its send cannot complete until this test receives, and capturing the
+/// warning before that receive proves the order rather than assuming it.
+///
+/// The suppressed count is two rather than one so the expected message belongs
+/// to this worker alone: a detached worker from another test can leave a
+/// one-record report in the process-wide capture, and `wait_for_message` cannot
+/// tell that apart from the report under test.
+#[test]
+#[serial_test::serial]
+fn the_flush_command_reports_drops_before_acknowledging() {
+    crate::handlers::file::test_support::install_test_logger();
+    let mut worker = Worker::new(
+        HTTPHandlerConfig::default(),
+        Arc::new(ShutdownSignal::new()),
+    );
+    // Open the interval with a reported drop, then record the two drops it
+    // suppresses.
+    worker.warner.record_drop();
+    worker.warner.warn_if_due(|_| {});
+    worker.warner.record_drop();
+    worker.warner.record_drop();
+    assert_eq!(worker.warner.pending_drops(), 2);
+
+    let expected = neutral_drop_report(2);
+    let (ack_tx, ack_rx) = bounded(0);
+    thread::scope(|scope| {
+        let worker = &mut worker;
+        // Moving the receiver into this scope is what lets `drop` below
+        // release it while the worker is still in the scope.
+        let ack_receiver = ack_rx;
+        scope.spawn(move || worker.handle_flush_command(ack_tx));
+        let messages = crate::handlers::file::test_support::wait_for_message(
+            &expected,
+            Duration::from_secs(5),
+        );
+        // Release the worker before asserting: an assertion that fails while
+        // the sender is still blocked in a rendezvous send would leave
+        // `thread::scope` joining a thread this test can no longer release.
+        let acknowledged = ack_receiver.recv_timeout(Duration::from_secs(5)).is_ok();
+        // The receiver goes before the assertion for the same reason: a worker
+        // that reaches its acknowledgement after a failed assertion finds the
+        // channel disconnected and returns instead of blocking the join.
+        drop(ack_receiver);
+        assert!(acknowledged, "the flush command must be acknowledged");
+        assert_eq!(
+            report_count(&messages, &expected),
+            1,
+            "the flush must report the held-back count before acknowledging: {messages:?}"
+        );
+    });
+    assert_eq!(
+        worker.warner.pending_drops(),
+        0,
+        "the flush must swap the count out, not merely read it"
+    );
+    let lingering: Vec<_> = crate::handlers::file::test_support::take_logged_messages()
+        .into_iter()
+        .map(|entry| entry.message)
+        .filter(|message| *message == expected)
+        .collect();
+    assert!(
+        lingering.is_empty(),
+        "the flush must report the held-back count once, not again after the \
+         acknowledgement: {lingering:?}"
+    );
+}
+
+/// Which command a drain is left to acknowledge.
+#[derive(Clone, Copy)]
+enum PendingAck {
+    /// The normal path: a shutdown command queued before the deadline.
+    Shutdown,
+    /// The aborted path: the deadline has passed with a flush still queued.
+    FlushAfterAbort,
+}
+
+/// A drain reports the drops the interval held back before it acknowledges.
+///
+/// Scenario: a worker-side drop is recorded inside the warning interval, then
+/// the worker drains a queue holding one command whose acknowledgement the
+/// caller waits on. Invariant: the count is reported before that
+/// acknowledgement, and nothing is left pending, on the normal path and on the
+/// aborted path alike. The aborted path is the one that can regress:
+/// `discard_rest` acknowledges a queued flush itself, so a report emitted
+/// after it reaches a caller that has already returned.
+///
+/// The acknowledgement channel is a rendezvous, so capturing the warning before
+/// the test receives proves the order rather than assuming it.
+///
+/// The suppressed count is three rather than one for the same reason as the
+/// flush test: a one-record report from a detached worker would be
+/// indistinguishable from this drain's report in the process-wide capture.
+#[rstest]
+#[case::shutdown(PendingAck::Shutdown)]
+#[case::flush_after_abort(PendingAck::FlushAfterAbort)]
+#[serial_test::serial]
+fn a_drain_reports_drops_before_acknowledging(#[case] pending: PendingAck) {
+    use crate::handlers::file::test_support::{install_test_logger, wait_for_message};
+
+    install_test_logger();
+    let signal = Arc::new(ShutdownSignal::new());
+    if matches!(pending, PendingAck::FlushAfterAbort) {
+        signal.abort();
+    }
+    let mut worker = Worker::new(HTTPHandlerConfig::default(), Arc::clone(&signal));
+    // Open the interval with a reported drop, then record the three it
+    // suppresses.
+    worker.warner.record_drop();
+    worker.warner.warn_if_due(|_| {});
+    worker.warner.record_drop();
+    worker.warner.record_drop();
+    worker.warner.record_drop();
+    assert_eq!(worker.warner.pending_drops(), 3);
+
+    let expected = neutral_drop_report(3);
+    let (command_tx, command_rx) = bounded(1);
+    let (ack_tx, ack_rx) = bounded(0);
+    let command = match pending {
+        PendingAck::Shutdown => HTTPCommand::Shutdown(ack_tx),
+        PendingAck::FlushAfterAbort => HTTPCommand::Flush(ack_tx),
+    };
+    command_tx.send(command).expect("queue the drain command");
+
+    thread::scope(|scope| {
+        let worker = &mut worker;
+        // Moving the receiver into this scope is what lets `drop` below
+        // release it while the worker is still in the scope.
+        let ack_receiver = ack_rx;
+        scope.spawn(move || worker.drain_pending(&command_rx, None));
+        let messages = wait_for_message(&expected, Duration::from_secs(5));
+        // Release the worker before asserting: an assertion that fails while
+        // the worker is blocked in a rendezvous acknowledgement send would
+        // leave `thread::scope` joining a thread this test can no longer
+        // release.
+        let acknowledged = ack_receiver.recv_timeout(Duration::from_secs(5)).is_ok();
+        // The receiver goes before the assertion for the same reason: a late
+        // acknowledgement then sees a disconnected channel instead of blocking
+        // the scoped join.
+        drop(ack_receiver);
+        assert!(
+            acknowledged,
+            "the queued drain command must be acknowledged"
+        );
+        assert_eq!(
+            report_count(&messages, &expected),
+            1,
+            "the drain must report the held-back count before acknowledging: \
+             {messages:?}"
+        );
+    });
+    assert_eq!(
+        worker.warner.pending_drops(),
+        0,
+        "the drain must leave nothing pending"
+    );
+    let lingering: Vec<_> = crate::handlers::file::test_support::take_logged_messages()
+        .into_iter()
+        .map(|entry| entry.message)
+        .filter(|message| *message == expected)
+        .collect();
+    assert!(
+        lingering.is_empty(),
+        "the drain must report the held-back count once, not again after the \
+         acknowledgement: {lingering:?}"
+    );
 }

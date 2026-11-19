@@ -14,6 +14,8 @@ mod shutdown;
 
 mod waiter;
 
+mod warning;
+
 mod worker;
 
 use std::{
@@ -23,7 +25,7 @@ use std::{
     time::Duration,
 };
 
-use log::{trace, warn};
+use log::trace;
 use pyo3::prelude::*;
 
 use crate::handler::{FemtoHandlerTrait, HandlerError};
@@ -44,6 +46,7 @@ use shutdown::StreamShutdown;
 use waiter::WaitGuard;
 #[cfg(feature = "test-util")]
 pub use waiter::waiting_count;
+use warning::warn_dropped;
 use worker::run_stream_worker;
 
 /// Commands the worker thread takes from the queue, in order.
@@ -268,7 +271,12 @@ impl FemtoStreamHandler {
 
     /// Marks the handler closed and transfers worker state to a shutdown
     /// operation that can wait after the Python object borrow is released.
+    ///
+    /// Pending drops are reported here rather than in [`Self::close`], because
+    /// the Python `close()` path calls this directly and the object stays alive
+    /// afterwards, so `Drop` never runs to report them.
     fn take_shutdown(&self) -> StreamShutdown {
+        self.warner.flush(warn_dropped);
         let tx = self.tx.lock().take();
         drop(tx);
         let handle = self.handle.lock().take();
@@ -283,9 +291,7 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         // must not hold the lock that close needs to take the sender.
         let Some(tx) = self.tx.lock().clone() else {
             self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-            });
+            self.warner.warn_if_due(warn_dropped);
             return Err(HandlerError::Closed);
         };
         match tx.try_send(StreamCommand::Record(record)) {
@@ -295,31 +301,28 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
                 // no caller payload.
                 trace!("FemtoStreamHandler: queue full; record dropped");
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::QueueFull)
             }
             Err(TrySendError::Disconnected(_)) => {
                 trace!("FemtoStreamHandler: queue disconnected; record dropped");
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::Closed)
             }
         }
     }
 
     fn flush(&self) -> bool {
+        // Reported before the closed check, so a handler that has already been
+        // closed still says what it dropped. Records refused after close are
+        // recorded by the handler, and nothing else will report them.
+        self.warner.flush(warn_dropped);
         // Bind first: a guard held in the match scrutinee lives through the send.
         let Some(tx) = self.tx.lock().clone() else {
             trace!("FemtoStreamHandler: flush on a closed handler");
             return false;
         };
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
         let (ack_tx, ack_rx) = bounded(1);
         // One deadline covers both waits. The channel send can block when the
         // queue is full and the acknowledgement can take a further interval,

@@ -45,6 +45,57 @@ pub(crate) fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
     warner.warn_if_due(log);
 }
 
+/// Report worker-owned drops without waiting for the warning interval.
+///
+/// Drops the worker discovers — serialization failures, retry exhaustion,
+/// permanent errors — are recorded by the worker rather than by the handler, so
+/// only the worker can report them. A suppressed interval would otherwise keep
+/// the count until the next due warning, which on a worker that is exiting
+/// never comes.
+pub(crate) fn flush_drops(warner: &RateLimitedWarner) {
+    warner.flush(|count| {
+        log::warn!("FemtoHTTPHandler dropped {count} records since the last report");
+    });
+}
+
+/// Record a drop and report the cumulative count, naming this drop's cause as
+/// the one that triggered the report.
+///
+/// One warner counts drops from several causes — the handler's sees queue-full,
+/// disconnection and closed refusals, the worker's sees serialization,
+/// connection and write failures — so a due warning can carry drops from
+/// several causes. Saying the count happened for this call's reason would
+/// misattribute the earlier ones, and nothing here can know which of them was
+/// most recent: another thread may record a drop between this one and the
+/// report. The wording therefore names only the cause whose refusal asked for
+/// the warning.
+pub(crate) fn warn_drops_naming_cause(warner: &RateLimitedWarner, cause: &str) {
+    warn_drops(warner, |count| warn_cumulative_drops(count, cause));
+}
+
+/// Report the pending cumulative count now, naming the triggering cause.
+///
+/// The flush equivalent of [`warn_drops_naming_cause`], for paths that cannot
+/// wait for the interval and whose count may still hold drops from earlier
+/// causes.
+pub(crate) fn flush_drops_naming_cause(warner: &RateLimitedWarner, cause: &str) {
+    warner.flush(|count| warn_cumulative_drops(count, cause));
+}
+
+/// Render the one cumulative drop warning the naming helpers emit.
+///
+/// Visible to the handler's tests so a controlled race between two causes can
+/// assert on the message the production helper would produce for its winner.
+pub(crate) fn warn_cumulative_drops(count: u64, cause: &str) {
+    warn!(
+        concat!(
+            "FemtoHTTPHandler dropped {} records since the last report; ",
+            "triggering cause: {}"
+        ),
+        count, cause
+    );
+}
+
 /// Throw away everything left in the queue, without touching the network.
 ///
 /// Returns how many records were discarded. Flush senders receive their
@@ -99,15 +150,11 @@ pub fn enqueue_record(
     match tx.try_send(HTTPCommand::Record(record)) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
-            warn_drops(warner, |count| {
-                warn!("FemtoHTTPHandler queue full; dropped {count} records");
-            });
+            warn_drops_naming_cause(warner, "queue full");
             Err(HandlerError::QueueFull)
         }
         Err(TrySendError::Disconnected(_)) => {
-            warn_drops(warner, |count| {
-                warn!("FemtoHTTPHandler disconnected; dropped {count} records");
-            });
+            warn_drops_naming_cause(warner, "worker disconnected");
             Err(HandlerError::Closed)
         }
     }

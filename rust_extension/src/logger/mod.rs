@@ -122,6 +122,10 @@ pub struct FemtoLogger {
     #[cfg(not(loom))]
     /// Inline process-specific shard state, refreshed after a fork.
     dispatch: worker::DispatchState,
+    /// Test-only hook run where an explicit flush starts waiting for its shard
+    /// to drain, so a test can act on the exact boundary without sleeping.
+    #[cfg(all(test, not(loom)))]
+    drain_hook: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(loom)]
     /// A Loom model's shard is owned by the logger and shut down on drop.
     shard: Arc<Shard>,
@@ -272,6 +276,10 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
+        // Report losses before the logger goes quiet for good: after this point
+        // nothing is left to warn on the logger's behalf, so a suppressed
+        // interval would take its final count with it.
+        self.flush_drop_warners();
         // A model's shard is the logger's own, so the drop is what ends the
         // model thread and, by joining it, what guarantees the queued records
         // were handled.

@@ -301,6 +301,17 @@ fn spawn_retry_server(
 #[path = "close_tests.rs"]
 mod close;
 
+// What the handler reports when it drops records, including the drops it
+// refuses after close.
+#[path = "drop_reporting_tests.rs"]
+mod drop_reporting;
+
+// A deterministic version of the mixed-cause race: the losing reporter is
+// parked inside its publication sample, so the winner is not left to the
+// scheduler.
+#[path = "drop_race_tests.rs"]
+mod drop_race;
+
 #[path = "retry_tests.rs"]
 mod retry;
 // Contracts for what the worker does with the shutdown signal, as opposed to

@@ -188,6 +188,51 @@ The logging process will follow these steps:
    The logger tracks how many records are dropped when the queue is full. The
    running count is available via `FemtoLogger.get_dropped()` for tests and
    dashboards, and a rate-limited warning surfaces the total periodically.
+   Suppression inside the interval only defers the report: the pending count is
+   carried forward and included in the next warning, so the counts an operator
+   reads account for every lost record rather than only those recorded since
+   the most recent suppressed attempt. An explicit flush reports the pending
+   count immediately, whatever the interval says, so no count pending when it
+   runs is lost. A batch an in-flight warning has already drained is outside
+   that count: a flush that has returned does not cover it, and if the warning
+   is refused its claim it restores the batch for the next due warning or
+   flush. A handler's enqueue path and its worker each own a warner and count
+   into that one; they share the warning helpers but not the counter. Within
+   one warner the count is cumulative across causes, so a report names only the
+   cause whose refusal triggered it rather than attributing the whole count to
+   that cause.
+
+   Warning emission and draining take no lock at all. A due warning first swaps
+   the pending count to zero and then claims the interval with a single
+   compare-exchange, restoring the batch if the claim is refused; a flush swaps
+   and reports without touching the interval. Ordering the swap before the
+   claim means a flush cannot empty a batch a warning already covers, and a
+   refused claim cannot leave an interval claimed with nothing reported. The
+   claiming sample is taken immediately before the exchange and the winner
+   republishes a later sample, so a delayed caller starts the interval when it
+   was about to report: the sample precedes the callback rather than timing it,
+   so a caller paused between the exchange and its callback starts the interval
+   early and the next report is correspondingly sooner. That second exchange is
+   also the ownership check: a caller overtaken between its claim and its
+   report finds a later interval published, restores its batch and stays
+   silent, so no two callers publish reports for the same interval. Publication
+   is spaced rather than callback invocation: a caller delayed after publishing
+   still runs its callback, so two callbacks can still arrive back to back. A
+   panicking clock sample restores the batch through a guard, while a panicking
+   callback has already been handed the count and abandons it rather than
+   risking a second report. Nothing is held across a thread boundary, which is
+   what makes `fork` safe: `multiprocessing` children inherit plain counters
+   rather than a lock word some parent thread held, so a child has nothing to
+   reclaim and cannot block on it. A count still in the counter when the parent
+   forks exists twice afterwards and both processes may report it, so
+   conservation is per process. A batch that another thread has already drained
+   is the exception: it is not in the child's counter, and the child does not
+   own that thread's in-flight batch, so only the parent can report that count.
+   If the draining thread itself forks before it reports, the child keeps that
+   call and can report the same batch, so both processes may report it. The
+   copied counter is not necessarily zero, though: another thread may record
+   drops between the swap and the fork, and those newer counts are duplicated
+   like any other.
 
 6. **Consumer Receive:** Each handler's dedicated consumer thread blocks on its
    MPSC channel waiting for `FemtoLogRecord`s.

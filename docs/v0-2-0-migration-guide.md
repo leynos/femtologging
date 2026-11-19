@@ -663,6 +663,71 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
 
 ______________________________________________________________________
 
+## Dropped-record warning messages are cumulative
+
+Dropped-record warnings now report every drop the warner had not yet reported,
+rather than only the drops recorded during the window that triggered them. A
+suppression window carries its count into the next report, so the texts say
+"since the last report" rather than "in the last interval"; one report can
+cover several intervals. A report's count is the batch its own caller took, and
+the reports together cover every drop once. The lines can nevertheless appear
+out of recording order: a caller delayed after it publishes still emits its own
+batch, so an earlier batch can be reported after a later one.
+
+`flush()`, `close()`, and handler destruction now report any count still
+pending, unconditionally, instead of leaving it for a later interval that may
+never arrive. The HTTP and socket handlers no longer emit a separate sentence
+for each failure cause. Each due or flushed warning reports the cumulative
+count and names only the cause whose refusal triggered the report, labelled
+`triggering cause`. A flush report is cause-neutral because a flush may not be
+triggered by a refusal at all.
+
+A logger flush and logger destruction report pending drops as
+`FemtoLogger: dropped N records; reported by flush`, and pending
+context-capture drops as
+`FemtoLogger: dropped N records after context capture failed`. No method
+signature changed; the difference is the wording and when a pending count is
+reported.
+
+The exact strings changed as follows. `N` is the cumulative count and `<error>`
+stands for the transport error text.
+
+_Table 2: Dropped-record warning message changes in v0.2.0._
+
+| Old message                                                          | New message                                                                                                     |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `FemtoStreamHandler: N log records dropped in the last interval`     | `FemtoStreamHandler: N log records dropped since the last report`                                               |
+| `FemtoHTTPHandler queue full; dropped N records`                     | `FemtoHTTPHandler dropped N records since the last report; triggering cause: queue full`                        |
+| `FemtoHTTPHandler disconnected; dropped N records`                   | `FemtoHTTPHandler dropped N records since the last report; triggering cause: worker disconnected`               |
+| `FemtoHTTPHandler dropped N records after shutdown`                  | `FemtoHTTPHandler dropped N records since the last report; triggering cause: handler closed`                    |
+| `FemtoHTTPHandler dropped N records in the last interval`            | `FemtoHTTPHandler dropped N records since the last report`                                                      |
+| `FemtoHTTPHandler dropped N records after exhausting retry deadline` | `FemtoHTTPHandler dropped N records since the last report; triggering cause: retry deadline exhaustion`         |
+| `FemtoHTTPHandler dropped N records due to serialization failures`   | `FemtoHTTPHandler dropped N records since the last report; triggering cause: serialization failure`             |
+| `FemtoHTTPHandler dropped N records due to permanent errors`         | `FemtoHTTPHandler dropped N records since the last report; triggering cause: permanent error`                   |
+| `FemtoHTTPHandler dropped N records during shutdown`                 | `FemtoHTTPHandler dropped N records since the last report; triggering cause: abandoned retry during shutdown`   |
+| `FemtoSocketHandler queue full; dropped N records`                   | `FemtoSocketHandler dropped N records since the last report; triggering cause: queue full`                      |
+| `FemtoSocketHandler disconnected; dropped N records`                 | `FemtoSocketHandler dropped N records since the last report; triggering cause: worker disconnected`             |
+| `FemtoSocketHandler dropped N records after shutdown`                | `FemtoSocketHandler dropped N records since the last report; triggering cause: handler closed`                  |
+| `FemtoSocketHandler dropped N records in the last interval`          | `FemtoSocketHandler dropped N records since the last report`                                                    |
+| `FemtoSocketHandler dropped N records due to serialization failures` | `FemtoSocketHandler dropped N records since the last report; triggering cause: serialization failure`           |
+| `FemtoSocketHandler failed to connect: <error>; dropped N records`   | `FemtoSocketHandler dropped N records since the last report; triggering cause: connect failure: <error>`        |
+| `FemtoSocketHandler dropped N records due to write errors`           | `FemtoSocketHandler dropped N records since the last report; triggering cause: write error`                     |
+| `FemtoSocketHandler dropped N records during shutdown`               | `FemtoSocketHandler dropped N records since the last report; triggering cause: abandoned retry during shutdown` |
+
+Code that matches these strings, such as in `pytest.raises(match=...)` or an
+assertion over captured log records, must be updated. Operators reading these
+warnings should treat a count as everything the reporting path had not yet
+reported when it took its batch, which may span more than one warning interval.
+The lines can appear out of recording order, so the newest count is not a
+running total of everything since the previous line; sum the counts between two
+points in the log instead.
+
+The maintainers treat these texts and the new unconditional reporting on flush,
+close, and handler destruction as user-visible changes to v0.2.0. They are
+recorded here so the next release documents them.
+
+______________________________________________________________________
+
 ## What does not need to change
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,
@@ -721,4 +786,4 @@ ______________________________________________________________________
 | `AttributeError: 'BasicConfig' object has no attribute 'filename_backup'` | Use one of the five declared fields, or keep the value in the caller's own structure.                 |
 | `RuntimeError: Python-backed handlers must provide contextual dispatch`   | Give the handler contextual-dispatch support, or register it through `ConfigBuilder` or `dictConfig`. |
 
-_Table 2: Diagnostics introduced in v0.2.0 and their remedies._
+_Table 3: Diagnostics introduced in v0.2.0 and their remedies._

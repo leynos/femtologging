@@ -1,7 +1,20 @@
-//! Tests for rejecting handler filters on the logger producer path.
+//! Contracts for rejecting records on the logger's producer path.
+//!
+//! A logger decides what each shard receives before any handler runs. These
+//! tests pin the two ways that decision loses a record: a handler filter that
+//! declines it must not enqueue an empty job for the worker, and a shard that
+//! refuses admission must count the record as dropped and report it through the
+//! logger's warner.
+//!
+//! The rest of the file covers the reporting half of that contract. Drops the
+//! warning interval holds back must still be reported by a flush - both for a
+//! count that is already pending when the flush starts, and for drops recorded
+//! while the queue drains - because a logger being shut down may have no due
+//! moment left.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
@@ -163,4 +176,216 @@ fn refused_shard_admission_counts_and_warns_about_the_drop() {
         logger.flush_handlers(),
         "the accepted record should drain after the handler is released",
     );
+}
+
+/// A flush reports drops that the warning interval is holding back.
+///
+/// The first refusal warns immediately and starts the interval, so the second
+/// refusal is suppressed and stays pending. A flush must say that pending
+/// count now: on a logger being shut down there may be no due moment left.
+#[test]
+#[serial]
+fn flush_reports_drops_held_back_by_the_warning_interval() {
+    install_test_logger();
+    let shard: &'static Shard = Box::leak(Box::new(
+        Shard::start(0, 1).expect("a one-record test shard should start"),
+    ));
+    let logger = FemtoLogger::assembled_for_test("producer-flush".to_string(), shard);
+    let (started_tx, started_rx) = bounded(1);
+    let (release_tx, release_rx) = bounded(1);
+    logger
+        .add_handler(Arc::new(BlockingHandler {
+            started: started_tx,
+            release: release_rx,
+        }))
+        .expect("native held handler should register");
+
+    assert!(
+        logger
+            .log(FemtoLevel::Info, "occupies the only permit")
+            .is_some(),
+        "the first record should be accepted for dispatch",
+    );
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the worker should start handling the first record");
+
+    assert!(logger.log(FemtoLevel::Info, "first refusal").is_some());
+    assert!(logger.log(FemtoLevel::Info, "second refusal").is_some());
+    let warnings = take_logged_messages();
+    let suppression_warnings = warnings
+        .iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 1 records; dispatch capacity exhausted"
+        })
+        .count();
+    assert_eq!(
+        suppression_warnings, 1,
+        "only the first refusal should warn inside the interval: {warnings:?}",
+    );
+    assert_eq!(
+        logger.drop_warner.pending_drops(),
+        1,
+        "the suppressed refusal must stay pending rather than be discarded",
+    );
+
+    release_tx
+        .send(())
+        .expect("the worker should still be waiting for its first record");
+    assert!(
+        logger.flush_handlers(),
+        "the accepted record should drain after the handler is released",
+    );
+    assert_eq!(
+        logger.drop_warner.pending_drops(),
+        0,
+        "the flush must drain the pending count",
+    );
+    let flush_warnings = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 1 records; reported by flush"
+        })
+        .count();
+    assert_eq!(
+        flush_warnings, 1,
+        "the flush should report the suppressed drop exactly once",
+    );
+}
+
+/// The channel ends a mid-drain flush test must release.
+///
+/// Held as one value so the scope owns them: an assertion failure drops them
+/// while unwinding, which disconnects the hook and the blocked handler instead
+/// of leaving `thread::scope` waiting on threads only the failed test could
+/// feed.
+struct FlushRelease {
+    /// Releases the handler holding the only dispatch permit.
+    release_handler: Sender<()>,
+    /// Signalled by the test-only hook once the flush is parked.
+    at_drain: Receiver<()>,
+    /// Released when the test is ready for the flush to continue.
+    resume_flush: Sender<()>,
+}
+
+/// Build a logger whose next flush parks at the drain wait.
+///
+/// The queue is full, one record is in flight behind a blocked handler, and
+/// one drop is pending from a suppressed refusal, so the flush that follows is
+/// provably mid-drain when the hook fires.
+fn prepare_parked_flush() -> (FemtoLogger, FlushRelease) {
+    let shard: &'static Shard = Box::leak(Box::new(
+        Shard::start(0, 1).expect("a one-record test shard should start"),
+    ));
+    let logger = FemtoLogger::assembled_for_test("producer-drain-flush".to_string(), shard);
+    let (started_tx, started_rx) = bounded(1);
+    let (release_handler, release_rx) = bounded(1);
+    logger
+        .add_handler(Arc::new(BlockingHandler {
+            started: started_tx,
+            release: release_rx,
+        }))
+        .expect("native held handler should register");
+
+    assert!(
+        logger
+            .log(FemtoLevel::Info, "occupies the only permit")
+            .is_some(),
+        "the first record should be accepted for dispatch",
+    );
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the worker should start handling the first record");
+
+    // The first refusal warns and starts the interval; the second is
+    // suppressed, so one drop is pending when the flush begins.
+    assert!(logger.log(FemtoLevel::Info, "first refusal").is_some());
+    assert!(logger.log(FemtoLevel::Info, "second refusal").is_some());
+    let _ = take_logged_messages();
+    assert_eq!(logger.drop_warner.pending_drops(), 1);
+
+    // The hook parks the flushing thread exactly where the drain wait begins,
+    // so the refusal below is provably mid-drain. Sleeping here instead would
+    // be slow when it works and flaky when the flush thread is descheduled.
+    let (at_drain_tx, at_drain) = bounded(1);
+    let (resume_flush, resume_flush_rx) = bounded(1);
+    logger.set_drain_hook_for_test(move || {
+        let _ = at_drain_tx.send(());
+        // Bounded, so a hook left waiting by an already-failed test returns
+        // instead of parking the flush thread where `thread::scope` joins it.
+        let _ = resume_flush_rx.recv_timeout(Duration::from_secs(5));
+    });
+
+    (
+        logger,
+        FlushRelease {
+            release_handler,
+            at_drain,
+            resume_flush,
+        },
+    )
+}
+
+/// Assert one flush reported both the suppressed and the mid-drain drop.
+fn assert_flush_reported_the_drain(logger: &FemtoLogger) {
+    assert_eq!(
+        logger.drop_warner.pending_drops(),
+        0,
+        "the flush must report the drop recorded while the queue drained",
+    );
+    let flush_warnings: Vec<_> = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 2 records; reported by flush"
+        })
+        .collect();
+    assert_eq!(
+        flush_warnings.len(),
+        1,
+        "one flush warning should carry both pending drops",
+    );
+}
+
+/// A drop recorded while the dispatch queue is draining is still reported by
+/// the same explicit flush.
+///
+/// `flush_handlers_blocking` reports drop warnings only after the drain. A
+/// producer refused during the wait records its drop after any earlier call to
+/// the warners, and `RateLimitedWarner::flush` reports the counts present when
+/// it runs, so flushing first would return with that drop still pending.
+#[test]
+#[serial]
+fn flush_reports_drops_recorded_while_the_queue_drains() {
+    install_test_logger();
+    let (logger, release) = prepare_parked_flush();
+    let logger_ref = &logger;
+    thread::scope(move |scope| {
+        let flush = scope.spawn(move || logger_ref.flush_handlers());
+        release
+            .at_drain
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the flush should reach its drain wait");
+        assert!(
+            logger_ref
+                .log(FemtoLevel::Info, "refusal during the drain")
+                .is_some(),
+            "the full queue should refuse the record during the drain",
+        );
+        release
+            .release_handler
+            .send(())
+            .expect("the worker should still be waiting for its first record");
+        release
+            .resume_flush
+            .send(())
+            .expect("the flush should still be waiting to be released");
+        assert!(
+            flush.join().expect("the flush thread should not panic"),
+            "the accepted record should drain after the handler is released",
+        );
+        assert_flush_reported_the_drain(logger_ref);
+    });
 }

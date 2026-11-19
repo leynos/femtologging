@@ -5,6 +5,8 @@
 //! below the repository line-length limit.
 
 pub mod collecting_handler;
+/// A controlled publication race shared by the socket and HTTP drop tests.
+pub(crate) mod drop_race;
 /// Assertions for extracted traceback frame fields and local variables.
 #[cfg(feature = "python")]
 pub mod frame_assertion_helpers;

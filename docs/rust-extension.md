@@ -400,9 +400,17 @@ retains responsibility for importing arbitrary user-defined factories.
 ## HTTP handler shutdown contract
 
 `FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs` is
-bounded by `flush_timeout`, which the handler takes from `write_timeout`.
-`Drop` calls `close`, so the same bound applies to a handler that is simply
-dropped.
+bounded by `flush_timeout`, which the handler takes from `write_timeout`, apart
+from two process-wide `log` writes that are not covered by it: the drop-warning
+report described below, which runs first, and the abandonment warning described
+under `ShutdownOutcome::TimedOut`, which runs once the budget is spent. `Drop`
+calls `close`, so the same bound, and the same two uncovered writes, apply to a
+handler that is simply dropped.
+
+`close` first reports any pending handler-side dropped-record count through the
+process-wide `log` adapter. That report runs before the bounded shutdown
+sequence and is not covered by `flush_timeout`, because the sink is
+caller-supplied and may block.
 
 `request_shutdown` returns a `ShutdownOutcome` rather than discarding the
 result, and one deadline, computed once from `flush_timeout`, covers both of
@@ -417,13 +425,16 @@ next reads a command, which a worker stuck mid-request does not do.
   because it is what reports a worker panic.
 - `ShutdownOutcome::TimedOut` covers a send or a receive that ran out of
   budget. `abandon_worker` logs a warning naming the budget and takes the join
-  handle, so neither `close` nor a later `Drop` waits on it. It also aborts the
-  signal first: the detached thread is the only other holder, so a signal left
-  in `Draining` would keep telling it that budget remained past the deadline it
-  had already reached. The detached worker finishes only the request already in
-  flight, and then discards everything still queued instead of sending it: an
-  aborted signal makes `clamp` return `None`, so no further connect or write
-  begins. It exits on its own with nothing left to join it.
+  handle, so neither `close` nor a later `Drop` waits on it. That warning is a
+  synchronous write to the process-wide `log` sink, and it runs after the
+  budget has expired, so a blocking sink can delay `close` past `flush_timeout`
+  in the same way the drop report can. It also aborts the signal first: the
+  detached thread is the only other holder, so a signal left in `Draining`
+  would keep telling it that budget remained past the deadline it had already
+  reached. The detached worker finishes only the request already in flight, and
+  then discards everything still queued instead of sending it: an aborted
+  signal makes `clamp` return `None`, so no further connect or write begins. It
+  exits on its own with nothing left to join it.
 
 This is the contract `FemtoStreamHandler::close` already follows: acknowledge
 or be abandoned, with the timeout warned about rather than swallowed.

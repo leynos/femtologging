@@ -14,6 +14,8 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use log::warn;
+
 use crate::handler::FemtoHandlerTrait;
 use crate::monotonic_clock::MonotonicClock;
 
@@ -79,16 +81,37 @@ impl FemtoLogger {
         outcome.is_success()
     }
 
+    /// Report any drops this logger has recorded but not yet warned about.
+    ///
+    /// The warners are rate limited, so a flush that is suppressed by an active
+    /// interval would otherwise leave the counts pending until the next due
+    /// moment — possibly never, on a logger being shut down. Reporting here
+    /// makes an explicit flush mean "say now what has been lost", which is what
+    /// a caller inspecting a quiet system needs.
+    pub(super) fn flush_drop_warners(&self) {
+        self.drop_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records; reported by flush");
+        });
+        #[cfg(feature = "python")]
+        self.context_capture_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records after context capture failed");
+        });
+    }
+
     /// Classify one flush attempt by its terminal outcome.
+    ///
+    /// The drop warners are reported last, so a record refused while the queue
+    /// drained is included in the same flush. Reported first, it would have
+    /// been recorded after the report and left pending on a flush that is
+    /// documented to say what has been lost.
     fn flush_handlers_inner(&self) -> FlushOutcome {
-        if let Some(failure) = FlushOutcome::from_drain(self.wait_for_dispatch_to_drain()) {
-            return failure;
-        }
-        if self.flush_configured_handlers() {
-            FlushOutcome::Success
-        } else {
-            FlushOutcome::HandlerFailure
-        }
+        let outcome = match FlushOutcome::from_drain(self.wait_for_dispatch_to_drain()) {
+            Some(failure) => failure,
+            None if self.flush_configured_handlers() => FlushOutcome::Success,
+            None => FlushOutcome::HandlerFailure,
+        };
+        self.flush_drop_warners();
+        outcome
     }
 
     /// Wait for the logger's shard to finish the records queued ahead.
@@ -126,6 +149,13 @@ impl FemtoLogger {
         #[cfg(not(loom))]
         if budget.in_flight() == 0 {
             return DrainOutcome::Drained;
+        }
+        // The flush has passed every point where the drop warners used to be
+        // reported and is about to wait; a test hook here can record a refusal
+        // that is provably mid-drain rather than one that merely races the wait.
+        #[cfg(all(test, not(loom)))]
+        if let Some(hook) = self.drain_hook.get() {
+            hook();
         }
         #[cfg(not(loom))]
         if let Some(drained) =

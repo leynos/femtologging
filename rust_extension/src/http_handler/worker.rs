@@ -41,7 +41,10 @@ use crate::{
 
 use super::{
     config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
-    queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
+    queue::{
+        HTTPCommand, discard_rest, flush_drops, flush_drops_naming_cause, warn_discarded,
+        warn_drops_naming_cause,
+    },
     request_auth::{apply_auth, apply_headers},
     response::{ResponseClass, classify_status},
     serialize::{serialize_json, serialize_url_encoded},
@@ -270,9 +273,7 @@ impl Worker {
             return false;
         }
         let Some(delay) = self.backoff.next_sleep(now) else {
-            warn_drops(&self.warner, |count| {
-                warn!("FemtoHTTPHandler dropped {count} records after exhausting retry deadline");
-            });
+            warn_drops_naming_cause(&self.warner, "retry deadline exhaustion");
             return false;
         };
         match self.signal.wait(delay) {
@@ -286,38 +287,33 @@ impl Worker {
 
     /// Count a serialization drop; invalid input increments the drop count.
     fn warn_serialization_drops(&self) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
-        });
+        warn_drops_naming_cause(&self.warner, "serialization failure");
     }
 
     /// Count a permanent failure; a non-retryable 4xx increments the drop count.
     fn warn_permanent_drops(&self) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
-        });
+        warn_drops_naming_cause(&self.warner, "permanent error");
     }
 
     /// Count an abandoned retry; close increments the shutdown drop count.
     fn warn_shutdown_drops(&self) {
         self.warner.record_drop();
-        self.warner.flush(|count| {
-            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
-        });
+        flush_drops_naming_cause(&self.warner, "abandoned retry during shutdown");
     }
 
-    /// Handles a flush command by immediately acknowledging completion.
+    /// Handles a flush command by reporting held-back drops, then acknowledging.
     ///
     /// Unlike file or socket handlers, HTTP has no persistent connection or
     /// internal buffer to flush. Each request is sent synchronously in
     /// `send_request`, so there is no buffered data awaiting transmission.
     ///
-    /// **Important**: This does not wait for in-flight retry attempts. If a
-    /// record is currently in a backoff/retry loop, `flush()` returns
-    /// immediately without blocking until those retries complete. Callers
-    /// should not rely on `flush()` to guarantee delivery of records that
-    /// encountered transient failures.
+    /// The acknowledgement is not a delivery guarantee. A record already in a
+    /// backoff/retry loop stays in the worker until that attempt finishes, so
+    /// the queued flush waits behind it: `flush()` blocks until the worker
+    /// acknowledges or returns `false` at its deadline, and a record that
+    /// exhausted its retries is reported as a drop rather than as delivered.
     fn handle_flush_command(&mut self, ack: Sender<()>) {
+        flush_drops(&self.warner);
         // Ignore send error: if the receiver has dropped, there's nothing to do.
         let _ = ack.send(());
     }
@@ -335,6 +331,10 @@ impl Worker {
         let mut shutdown_acks = Vec::new();
         loop {
             if self.signal.is_aborted() {
+                // Report before `discard_rest` acknowledges pending flushes: a
+                // caller waiting on `flush()` must not return ahead of the
+                // report the normal path guarantees it.
+                flush_drops(&self.warner);
                 discarded += discard_rest(rx, &mut shutdown_acks);
                 break;
             }
@@ -346,9 +346,7 @@ impl Worker {
             }
         }
         warn_discarded(discarded);
-        self.warner.flush(|count| {
-            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
-        });
+        flush_drops(&self.warner);
         acknowledge_shutdowns(shutdown_acks, shutdown_ack);
     }
 

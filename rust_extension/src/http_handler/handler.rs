@@ -1,4 +1,12 @@
-//! Public handler type exported by the crate.
+//! The public HTTP handler and the worker lifecycle it owns.
+//!
+//! [`FemtoHTTPHandler`] is the caller-facing half of the HTTP backend. It
+//! validates and enqueues records through the command channel in `queue.rs`,
+//! and owns the shutdown signal, deadline and join policy for the worker
+//! thread spawned from `worker.rs`. A record the handler cannot enqueue is
+//! counted on its [`RateLimitedWarner`] and reported through the same
+//! `warn_drops`/`flush_drops` helpers the worker uses, so drops stay visible
+//! whether they were refused at the queue or abandoned in flight.
 
 use std::{
     sync::Arc,
@@ -8,10 +16,6 @@ use std::{
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
-// The interpreter is reachable in every lane that is not modelling it, so the
-// drop guard attaches under the same condition `FemtoLogger`'s join does.
-#[cfg(not(loom))]
-use pyo3::Python;
 
 use parking_lot::Mutex;
 
@@ -23,8 +27,9 @@ use crate::{
 };
 
 use super::{
+    ShutdownOutcome,
     config::HTTPHandlerConfig,
-    queue::{HTTPCommand, enqueue_record, flush_queue},
+    queue::{HTTPCommand, enqueue_record, flush_drops, flush_queue, warn_drops_naming_cause},
     worker::spawn_worker,
 };
 
@@ -98,8 +103,15 @@ impl FemtoHTTPHandler {
     /// about rather than swallowed. Two handlers with the same lifecycle
     /// should not answer the same question differently.
     ///
+    /// Any pending handler-side drop warning is reported before shutdown.
+    ///
+    /// That report is not covered by `flush_timeout`: the process-wide `log`
+    /// sink's synchronous write cannot be bounded here without discarding the
+    /// count, so a blocking sink can delay `close` beyond the budget above.
+    ///
     /// [`FemtoStreamHandler::close`]: crate::FemtoStreamHandler::close
     pub fn close(&mut self) {
+        flush_drops(&self.warner);
         match self.request_shutdown() {
             ShutdownOutcome::Finished => self.join_worker(),
             ShutdownOutcome::TimedOut => self.abandon_worker(),
@@ -260,18 +272,6 @@ impl FemtoHTTPHandler {
     }
 }
 
-/// What asking the worker to stop established about joining it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShutdownOutcome {
-    /// The worker acknowledged, or had already left its loop. The join is
-    /// bounded and worth doing, because it is also what surfaces a panic.
-    Finished,
-    /// The command could not be queued, or no acknowledgement arrived, within
-    /// `flush_timeout`. The worker is busy on something whose length
-    /// `flush_timeout` does not describe.
-    TimedOut,
-}
-
 #[cfg(feature = "python")]
 #[pymethods]
 impl FemtoHTTPHandler {
@@ -332,10 +332,7 @@ impl FemtoHTTPHandler {
 impl FemtoHandlerTrait for FemtoHTTPHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                log::warn!("FemtoHTTPHandler dropped {count} records after shutdown");
-            });
+            warn_drops_naming_cause(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         // Intentional suppression, not a drop: queueing one of our own
@@ -348,12 +345,13 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
     }
 
     fn flush(&self) -> bool {
+        // Reported before the closed check: records refused after close are
+        // recorded by the handler, so a flush that returned early would leave
+        // their count pending on a handler that is never going to warn again.
+        flush_drops(&self.warner);
         let Some(tx) = self.sender() else {
             return false;
         };
-        self.warner.flush(|count| {
-            log::warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-        });
         flush_queue(&tx, self.flush_timeout)
     }
 
@@ -362,39 +360,5 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
     }
 }
 
-/// Drop the handler, closing it with the GIL released.
-///
-/// A handler whose worker has already gone has nothing to close, so the check
-/// keeps that case out of the GIL's way entirely. When Python can be attached,
-/// the close runs detached; during interpreter shutdown, the Rust-only close
-/// runs without attaching and remains bounded by the same budget.
-///
-/// Under `--cfg loom` there is no interpreter to attach to: no model builds one
-/// of these handlers, and attaching would initialize Python on a Loom
-/// coroutine's small stack.
-#[cfg(not(loom))]
-impl Drop for FemtoHTTPHandler {
-    fn drop(&mut self) {
-        if self.handle.lock().is_none() {
-            return;
-        }
-        if Python::try_attach(|py| py.detach(|| self.close())).is_none() {
-            self.close();
-        }
-    }
-}
-
-#[cfg(loom)]
-impl Drop for FemtoHTTPHandler {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
-
-impl std::fmt::Debug for FemtoHTTPHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FemtoHTTPHandler")
-            .field("flush_timeout", &self.flush_timeout)
-            .finish()
-    }
-}
+#[path = "handler_drop.rs"]
+mod handler_drop;

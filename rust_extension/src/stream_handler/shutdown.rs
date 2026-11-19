@@ -12,10 +12,14 @@ use pyo3::Python;
 
 use super::FemtoStreamHandler;
 use super::waiter::WaitGuard;
+use super::warning::warn_dropped;
 use crate::{shutdown::ShutdownCompletion, sync::JoinHandle};
 
 impl Drop for FemtoStreamHandler {
     fn drop(&mut self) {
+        // Report drops refused after an earlier close before releasing the
+        // warner: no worker is left to flush them and no later warning comes.
+        self.warner.flush(warn_dropped);
         if self.handle.lock().is_none() {
             return;
         }
@@ -86,5 +90,48 @@ impl StreamShutdown {
             );
         }
         drop(self.handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the destructor's share of drop reporting.
+
+    use crate::formatter::DefaultFormatter;
+    use crate::handler::FemtoHandlerTrait;
+    use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
+    use crate::level::FemtoLevel;
+    use crate::log_record::FemtoLogRecord;
+    use crate::stream_handler::FemtoStreamHandler;
+
+    /// Scenario: a handler is closed, then refuses two more records, then is
+    /// dropped without a further `flush` or `close` call.
+    ///
+    /// Invariant: the destructor reports the refusal the warning interval was
+    /// holding back. The first refusal warns and opens the interval, the second
+    /// is only counted, and no worker remains to report it later. Without the
+    /// flush at the top of `Drop`, that count is lost.
+    #[test]
+    #[serial_test::serial]
+    fn drop_reports_drops_refused_after_close() {
+        install_test_logger();
+        let handler = FemtoStreamHandler::new(std::io::sink(), DefaultFormatter);
+        handler.close();
+        let _ = take_logged_messages();
+
+        let record = |message: &str| FemtoLogRecord::new("test.logger", FemtoLevel::Info, message);
+        assert!(handler.handle(record("first refusal")).is_err());
+        assert!(handler.handle(record("held back")).is_err());
+        let _ = take_logged_messages();
+
+        drop(handler);
+
+        let messages = take_logged_messages();
+        assert!(
+            messages.iter().any(|entry| {
+                entry.message == "FemtoStreamHandler: 1 log records dropped since the last report"
+            }),
+            "destruction must not discard drops refused after close: {messages:?}"
+        );
     }
 }

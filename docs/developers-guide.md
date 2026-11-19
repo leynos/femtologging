@@ -511,10 +511,12 @@ no such promise.
 
 `discard_rest` in each worker's module is the record of what that bound costs.
 Records still queued at the deadline are dropped and counted rather than sent,
-and `warn_discarded` emits one rate-limited warning naming the count. The same
-accounting covers the write path, where a frame that runs out of budget
-mid-write reports how many of its bytes were sent, so a collector that is slow
-can be told apart from one that has stopped reading.
+and `warn_discarded` emits one unconditional warning naming the count. It is
+not routed through the warning interval: the worker is exiting, so a suppressed
+report would never have a later chance to be made. The same accounting covers
+the write path, where a frame that runs out of budget mid-write reports how
+many of its bytes were sent, so a collector that is slow can be told apart from
+one that has stopped reading.
 
 Detaching is not draining to completion. `abandon_worker`
 (`rust_extension/src/http_handler/handler.rs`, and the socket handler's
@@ -1053,6 +1055,18 @@ only while a detached wait is in flight and reports whether it counted,
 `python` builds omit every one of these hooks, and
 `femtologging/_femtologging_rs.pyi` declares them for type checkers.
 
+The drop-reporting work adds two Rust-side seams beside those hooks.
+`RateLimitedWarner::pending_drops()` returns the count a warner still holds,
+and is compiled under `test` or the `test-util` feature; the handler
+drop-report tests assert conservation on it. `FemtoLogger`'s internal
+`set_drain_hook_for_test` (`pub(super)`, compiled under
+`#[cfg(all(test, not(loom)))]`) runs a closure on the flushing thread once the
+in-flight check has passed and before the drain wait begins, which is how
+`producer_rejection_tests` proves that a drop recorded during the drain is
+reported by the same flush rather than left pending. Both are internal or
+feature-gated test seams: normal builds omit them, and neither is part of the
+Python API.
+
 Dropping a logger follows the same per-logger in-flight check. The pool itself
 lives for the process lifetime. If the operating system refuses to start a
 worker, construction returns `DispatcherError` in Rust or `RuntimeError`
@@ -1484,6 +1498,158 @@ The counters are diagnostic signals, not error rates:
 `wait_outcomes.rs` owns the classification these counters rely on, so adding a
 new outcome is a single match arm plus one key, and the fixed-key test fails
 until the Python surface and its stub agree.
+
+## Drop reporting and the warning interval
+
+Every drop counted by a handler or a logger goes through `RateLimitedWarner`
+(`rust_extension/src/rate_limited_warner.rs`). The warner holds one counter of
+drops not yet reported. `record_drop()` increments it. `warn_if_due()` swaps
+the counter to zero and hands the count to a reporting closure only when the
+warning interval has elapsed; a suppressed call puts back the count it took, so
+the next report carries every drop the warner had not yet reported, rather than
+only those the current call recorded. That carry-forward is the conservation
+invariant: no drop is discarded and none is handed to a callback twice. A call
+with nothing pending does not start an interval, so an idle poller cannot delay
+the next real warning.
+
+The counter is per warner, and one HTTP or socket handler has two of them. The
+handler owns one that its enqueue path counts into (queue full, worker
+disconnected, handler closed); its worker owns another, with its own interval,
+that delivery failures count into (serialization, connect, write, retry
+exhaustion). Each half flushes the warner it owns: `close()`, `take_shutdown()`,
+`Drop` and the handler's explicit `flush()` report the handler-side count, and
+the worker's flush command and exit path report the worker-side one. Within one
+warner the count is still not per cause, so a warning raised by one cause can
+carry drops from another. Those messages report the cumulative count and name
+only the cause whose refusal asked for the report:
+
+```text
+FemtoHTTPHandler dropped 3 records since the last report; triggering cause: permanent error
+```
+
+"Triggering cause", not "latest cause": another thread may record a drop
+between the refusal that triggered the report and the report itself, and
+nothing in the warner tracks causes, so the trigger is the only cause the
+message can honestly name. The matching `flush()` wording is cause-neutral
+because a flush may be raised by a path that names no cause at all.
+
+The stream handler and the logger report the same count without a cause:
+`FemtoStreamHandler: 3 log records dropped since the last report`. The phrase
+is "since the last report", not "in the last interval", because a suppressed
+interval carries its drops forward and one report can cover several intervals.
+
+`flush()` is unconditional. It swaps whatever is pending to zero and reports it
+without consulting the interval, and it neither consumes nor restarts one. No
+lock is held while a callback runs, so a reporting closure can safely call back
+into the warner.
+
+A flush reports only the count that is pending when it swaps. A batch that
+another caller has already drained for a warning is not part of that count: a
+warning refused its interval claim restores its batch afterwards, so a flush
+that has already returned does not cover it, and the next due warning or flush
+reports it. Every path that might otherwise leave a pending count unreported
+uses the flush:
+
+- an explicit `flush()` on a handler or logger;
+- `close()` and `take_shutdown()`, which report the handler-side count before
+  shutting the worker down, so a count suppressed inside the interval is not
+  left waiting for a warning that never comes;
+- the worker's flush command, which reports worker-side drops before sending
+  the acknowledgement the handler waits on;
+- the worker's exit drain, which reports whatever is still pending before the
+  worker acknowledges its shutdown and disappears;
+- `Drop`, which reports records refused after an earlier `close()` even though
+  no worker handle is left to report them.
+
+Each consumer owns the warners and flush points its own shape requires. The
+stream handler shares one warner across its writer path and reports through
+`warn_dropped`; its `Drop` reports whatever the interval is still holding. The
+logger keeps a warner per logger for records dropped on the logging path, and
+`flush_handlers()` walks them through `flush_drop_warners`, so a shutdown or an
+explicit flush does not depend on a warning interval that may never elapse. A
+failed context capture is counted in its own logger-side warner and reported as
+`FemtoLogger: dropped 3 records after context capture failed`, which
+`flush_handlers()` also drains. The HTTP and socket handlers each keep the
+handler-side and worker-side warners described above, with the handler
+reporting through `warn_drops_naming_cause` and `flush_drops_naming_cause` and
+the worker reporting through the same pair; each half flushes only the warner
+it owns.
+
+The warner takes no lock at all. A due call swaps its batch out of the counter
+and only then claims the interval with a compare-exchange, returning the batch
+if the claim is refused. A flush that wins the swap race leaves the due call
+nothing to report, so it claims nothing; a due call that has already taken its
+batch keeps it, so a flush cannot claim an interval that no report covers. The
+claim samples the clock immediately before the compare-exchange and then
+republishes a later sample once the claim is won, so a caller delayed between
+the two starts the interval when it actually reported rather than in the past.
+
+That second exchange is also the ownership check. A caller can be delayed
+between winning its claim and publishing its report time; if another caller
+claims and reports in that window, the first caller's exchange fails because a
+later interval is already published. It then restores its batch and reports
+nothing, so the interval belongs to the caller that actually emitted the
+warning and no two callers publish reports for the same interval. Publication
+is spaced, callback invocation is not: a caller delayed after publishing still
+runs its callback, so two callbacks can land back to back even though each
+report belongs to its own interval. The batch travels in a guard that adds it
+back on unwind, and the guard is disarmed only immediately before the callback:
+a `Clock` that panics therefore costs a retry rather than the count, while a
+callback that panics has already been handed the count and so abandons it,
+which keeps the "handed off once" guarantee. A panic in the publication sample
+can leave its interval claimed, because that sample is the only thing that
+would move it forward; the count, which is what must survive, is restored.
+
+The helpers live beside the modules that own the wording, not on the warner.
+HTTP keeps `warn_drops`, `flush_drops`, `warn_drops_naming_cause`,
+`flush_drops_naming_cause` and the renderer `warn_cumulative_drops` in
+`rust_extension/src/http_handler/queue.rs`, which is a private module of
+`http_handler` that its handler and worker reach as
+`crate::http_handler::queue::…`. The socket handler keeps the same set in
+`rust_extension/src/socket_handler/warning.rs`, declared as a private module of
+`socket_handler` and reached by both halves as
+`crate::socket_handler::warning::…`; its helpers are `pub(super)`, the HTTP ones
+`pub(crate)`. The stream handler needs only one renderer, `warn_dropped` in
+`rust_extension/src/stream_handler/warning.rs`, which every stream refusal path
+and explicit report passes to the warner. Each handler module therefore owns
+its own pair rather than sharing one across transports: the two halves of one
+handler — the enqueue path and the worker — must report the same count, and
+they can only do that through one pair per module.
+
+The drop counter is a plain atomic, so `fork` copies it rather than leaving a
+lock word behind. A count still in the counter when the parent forks then
+exists twice: parent and child each own a copy and each may report it, and a
+child can therefore repeat a report the parent has already made. A batch a
+warning or flush has already swapped out is the exception: it is not in the
+child's counter, and the child does not own the draining thread's in-flight
+batch, so only the parent can report that count. That exception holds only when
+the fork happens on another thread. If the draining thread itself forks before
+the report is written, the child resumes that same call and can report the same
+batch, so both processes may report it. A custom `Clock` that forks from
+`now_millis` does exactly that, because the sample runs between the swap and
+the callback. The copied counter is not necessarily zero at that point, though:
+another thread may record drops between the swap and the fork, and those are
+copied like any other count. Not every pre-fork count is therefore duplicated.
+The duplication that does happen is accepted — avoiding it would need shared
+memory and a cross-process lock for a diagnostic counter — so the conservation
+guarantee is per process. Within one process no drop is lost or reported twice;
+neither process can report a drop the other recorded after the fork.
+
+The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
+(carry-forward, flush inside the window, empty calls),
+`rust_extension/src/rate_limited_warner_claim_tests.rs` (scripted and stealing
+clocks: a delayed publication sample, a refused claim returning its batch, a
+superseded claim restoring its batch without warning, a paused callback not
+blocking a flush), `rust_extension/src/rate_limited_warner_panic_tests.rs` (a
+clock that panics at either sampling point) and
+`rust_extension/src/rate_limited_warner_concurrency_tests.rs` (racing callers
+conserve every drop, a flush cannot take a drained batch, re-entrant clocks).
+Each handler's `drop_reporting_tests.rs` drives a manual clock through a
+suppression window, and `drop_race_tests.rs` in the HTTP and socket modules
+parks the losing caller inside its report-time sample so the winner of a
+mixed-cause race is chosen by the test; both handler modules also cover their
+worker exit, close and destruction paths in their worker tests and
+`close_tests.rs`.
 
 ## Configuration transaction
 
