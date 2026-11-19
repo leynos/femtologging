@@ -297,6 +297,8 @@ markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spellin
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(MDLINT) --
 
+SPELLING_PHRASE_SCAN ?= $(TYPOS_CONFIG_BUILDER) check-phrases
+
 spelling: ## Enforce en-GB-oxendict spelling and shared phrase corrections
 	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) gate
 	# The gate enumerates the Git index, so a new Markdown file would pass here
@@ -306,6 +308,21 @@ spelling: ## Enforce en-GB-oxendict spelling and shared phrase corrections
 	# would otherwise read them as the command to run.
 	git ls-files -z --others --exclude-standard '*.md' | \
 		xargs -0 -r env $(UV_ENV) $(TYPOS) --
+	# Typos tokenizes on punctuation, so it never sees a hyphenated prohibited
+	# phrase; the shared phrase corrections are the gate's other check, and that
+	# check also enumerates the index. The same configuration is therefore used
+	# to run it over the untracked Markdown as well, by adding those files to a
+	# throwaway index: the gate has already phrase-checked the tracked text, so
+	# an empty index is enough, and an intent-to-add entry is read from the
+	# worktree. The trap removes the index file without disturbing the exit
+	# statuses, so a finding still fails the target and an empty untracked list
+	# still runs the phrase check.
+	@spelling_index=$$(mktemp) && trap 'rm -f "$$spelling_index"' EXIT; \
+		GIT_INDEX_FILE="$$spelling_index" git read-tree --empty && \
+		{ git ls-files -z --others --exclude-standard '*.md' | \
+			xargs -0 -r env GIT_INDEX_FILE="$$spelling_index" \
+				git add --intent-to-add -- ; } && \
+		$(UV_ENV) GIT_INDEX_FILE="$$spelling_index" $(SPELLING_PHRASE_SCAN)
 
 SPELLING_INTEGRATION_ENV ?= FEMTOLOGGING_SPELLING_INTEGRATION=1
 
