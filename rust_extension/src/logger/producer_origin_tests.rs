@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use rstest::rstest;
 
-use super::FemtoLogger;
+use super::{FemtoLogger, HandlerAttachment};
+use crate::filters::{FilterBuilderTrait, LevelFilterBuilder};
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
@@ -64,5 +65,51 @@ fn a_prebuilt_record_keeps_the_origin_its_caller_attached() {
         collected[0].origin(),
         RecordOrigin::SelfDiagnostic,
         "the producer path must not rewrite the origin it was given"
+    );
+}
+
+/// The handler-filter snapshot keeps the transport marker on the record.
+///
+/// A filtered attachment makes the producer capture a one-shot clone of the
+/// record for its worker. That clone is what the HTTP handler eventually sees,
+/// so it must keep the marker even though the filter may enrich it.
+#[rstest]
+fn handler_filter_snapshot_preserves_the_transport_origin() {
+    let collector = Arc::new(CollectingHandler::default());
+    let filter = LevelFilterBuilder::new()
+        .with_max_level(FemtoLevel::Critical)
+        .build()
+        .expect("the accepting level filter should build");
+    let attachment = HandlerAttachment {
+        handler: Arc::clone(&collector) as Arc<dyn FemtoHandlerTrait>,
+        filters: vec![filter],
+    };
+    let mut record = FemtoLogRecord::new(
+        "origin.filter.snapshot",
+        FemtoLevel::Info,
+        "delivery diagnostic",
+    )
+    .with_origin(RecordOrigin::SelfDiagnostic);
+
+    let selected = FemtoLogger::filter_handlers_for_test(&mut record, vec![attachment]);
+    assert_eq!(
+        selected.len(),
+        1,
+        "the accepting handler should be selected"
+    );
+
+    // The selected attachment is the snapshot wrapper. Its `handle` consumes
+    // the saved clone instead of the unmarked fallback passed here.
+    let fallback = FemtoLogRecord::new("origin.filter.fallback", FemtoLevel::Info, "fallback");
+    selected[0]
+        .handle(fallback)
+        .expect("snapshot handler should accept the record");
+
+    let collected = collector.collected();
+    assert_eq!(collected.len(), 1);
+    assert_eq!(
+        collected[0].origin(),
+        RecordOrigin::SelfDiagnostic,
+        "the snapshot clone must keep the transport marker"
     );
 }

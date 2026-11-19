@@ -12,8 +12,7 @@ use super::logger_tests_helpers::{SignallingCollectingHandler, wait_for_record_s
 use super::*;
 use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::FemtoHandlerTrait;
-use crate::log_record::{RecordMetadata, RecordOrigin};
-use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::log_record::RecordMetadata;
 
 /// Filter with test-selected decisions, enrichment, and call counting.
 struct TestFilter {
@@ -42,53 +41,6 @@ impl FemtoFilter for TestFilter {
 
 fn enrichment_pair(key: &str, value: &str) -> BTreeMap<String, String> {
     BTreeMap::from([(key.to_owned(), value.to_owned())])
-}
-
-/// The handler-filter snapshot keeps the transport marker on the record.
-///
-/// A filtered attachment makes the producer capture a one-shot clone of the
-/// record for its worker. That clone is what the HTTP handler eventually sees,
-/// so it must keep the marker even though the filter may enrich it.
-#[rstest]
-fn handler_filter_snapshot_preserves_the_transport_origin() {
-    let handler = Arc::new(CollectingHandler::default());
-    let filter = Arc::new(TestFilter {
-        accepted: true,
-        enrichment: BTreeMap::new(),
-        calls: Arc::new(AtomicUsize::new(0)),
-    });
-    let attachment = HandlerAttachment {
-        handler: handler.clone() as Arc<dyn FemtoHandlerTrait>,
-        filters: vec![filter as Arc<dyn FemtoFilter>],
-    };
-    let mut record = FemtoLogRecord::new(
-        "origin.filter.snapshot",
-        FemtoLevel::Info,
-        "delivery diagnostic",
-    )
-    .with_origin(RecordOrigin::SelfDiagnostic);
-
-    let selected = FemtoLogger::filter_handlers_for_test(&mut record, vec![attachment]);
-    assert_eq!(
-        selected.len(),
-        1,
-        "the accepting handler should be selected"
-    );
-
-    // The selected attachment is the snapshot wrapper. Its `handle` consumes
-    // the saved clone instead of the unmarked fallback passed here.
-    let fallback = FemtoLogRecord::new("origin.filter.fallback", FemtoLevel::Info, "fallback");
-    selected[0]
-        .handle(fallback)
-        .expect("snapshot handler should accept the record");
-
-    let collected = handler.collected();
-    assert_eq!(collected.len(), 1);
-    assert_eq!(
-        collected[0].origin(),
-        RecordOrigin::SelfDiagnostic,
-        "the snapshot clone must keep the transport marker"
-    );
 }
 
 #[rstest]

@@ -118,16 +118,16 @@ impl FemtoLogger {
         }
         // Context admission runs before the level gate so a reserved or
         // over-limit field is counted even when the record's level is disabled.
-        let merged_key_values = match log_context::merge_context_values(&record.metadata().key_values)
-        {
-            Ok(merged_key_values) => merged_key_values,
-            Err(err) => {
-                self.context_dropped_records
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
-                return None;
-            }
-        };
+        let merged_key_values =
+            match log_context::merge_context_values(&record.metadata().key_values) {
+                Ok(merged_key_values) => merged_key_values,
+                Err(err) => {
+                    self.context_dropped_records
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                    return None;
+                }
+            };
         if !self.is_enabled_for(record.level()) {
             return None;
         }
