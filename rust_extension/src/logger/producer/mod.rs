@@ -161,7 +161,8 @@ impl FemtoLogger {
                     // take down the logging path, so its result is discarded.
                     drop(writeln!(
                         std::io::stderr(),
-                        "FemtoLogger: dropping record due to invalid context payload: {err}"
+                        "{}",
+                        context_drop_diagnostic(&err)
                     ));
                     return None;
                 }
@@ -387,4 +388,23 @@ impl FemtoLogger {
             self.handle_parent_propagation(pr);
         }
     }
+}
+
+/// The diagnostic a record dropped for an invalid context writes to stderr.
+///
+/// The write itself targets the process's stderr descriptor, which a test
+/// cannot observe without permanently redirecting it for every thread in the
+/// binary. Splitting the wording out lets a test pin the exact text the drop
+/// path emits, as the refused-target diagnostics do, while the counter
+/// assertion proves the drop path ran.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let err = log_context::merge_context_values(&oversize_map)
+///     .expect_err("an oversize value is refused");
+/// assert!(context_drop_diagnostic(&err).contains("invalid context payload"));
+/// ```
+pub(crate) fn context_drop_diagnostic(error: &log_context::LogContextError) -> String {
+    format!("FemtoLogger: dropping record due to invalid context payload: {error}")
 }
