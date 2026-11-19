@@ -44,13 +44,13 @@ struct Observation {
 pub(super) fn public_count(handler: &Bound<'_, PyAny>, key: &str) -> u64 {
     let snapshot: BTreeMap<String, u64> = handler
         .call_method0("wait_diagnostics")
-        .unwrap_or_else(|err| panic!("wait_diagnostics must not raise: {err}"))
+        .expect("wait_diagnostics must not raise")
         .extract()
-        .unwrap_or_else(|err| panic!("wait_diagnostics must return a counter map: {err}"));
-    snapshot
-        .get(key)
-        .copied()
-        .unwrap_or_else(|| panic!("wait_diagnostics must expose {key}"))
+        .expect("wait_diagnostics must return a counter map");
+    match snapshot.get(key).copied() {
+        Some(count) => count,
+        None => panic!("wait_diagnostics must expose {key}"),
+    }
 }
 
 /// Build a handler over `make_writer`'s writer and run `act` under a collector.
@@ -71,8 +71,7 @@ fn observe(
     let subscriber = tracing_subscriber::registry().with(collector.clone());
     let (recorded, py_handler) = tracing::subscriber::with_default(subscriber, || {
         Python::attach(|py| {
-            let py_handler = Py::new(py, handler)
-                .unwrap_or_else(|err| panic!("the handler must be a valid pyclass: {err}"));
+            let py_handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
             act(py, &py_handler, &entered_rx);
             let recorded = public_count(py_handler.bind(py), counter);
             (recorded, py_handler)
@@ -92,7 +91,7 @@ pub(super) fn call_handle(handler: &Py<PyAny>, message: &str) {
     Python::attach(|py| {
         handler
             .call_method1(py, "handle", ("core", "INFO", message))
-            .unwrap_or_else(|err| panic!("the record must be accepted: {err}"));
+            .expect("the record must be accepted");
     });
 }
 
@@ -124,9 +123,9 @@ pub(super) fn call_flush(handler: &Py<PyAny>) -> bool {
     Python::attach(|py| {
         handler
             .call_method0(py, "flush")
-            .unwrap_or_else(|err| panic!("flush must not raise: {err}"))
+            .expect("flush must not raise")
             .extract(py)
-            .unwrap_or_else(|err| panic!("flush must return a bool: {err}"))
+            .expect("flush must return a bool")
     })
 }
 
@@ -135,7 +134,7 @@ pub(super) fn call_close(handler: &Py<PyAny>) {
     Python::attach(|py| {
         handler
             .call_method0(py, "close")
-            .unwrap_or_else(|err| panic!("close must not raise: {err}"));
+            .expect("close must not raise");
     });
 }
 
@@ -143,9 +142,9 @@ pub(super) fn call_close(handler: &Py<PyAny>) {
 pub(super) fn flush_fails(handler: &Bound<'_, PyAny>) {
     let acknowledged: bool = handler
         .call_method0("flush")
-        .unwrap_or_else(|err| panic!("flush must not raise: {err}"))
+        .expect("flush must not raise")
         .extract()
-        .unwrap_or_else(|err| panic!("flush must return a bool: {err}"));
+        .expect("flush must return a bool");
     let reason = "a flush that cannot be confirmed must return False";
     assert!(!acknowledged, "{reason}");
 }
@@ -163,12 +162,12 @@ pub(super) fn fill_queue(
 ) {
     handler
         .call_method1("handle", ("core", "INFO", "first"))
-        .unwrap_or_else(|err| panic!("the first record must be accepted: {err}"));
+        .expect("the first record must be accepted");
     expect_stage(entered, Stage::Write);
     for index in 0..capacity {
         handler
             .call_method1("handle", ("core", "INFO", format!("queued {index}")))
-            .unwrap_or_else(|err| panic!("a record must fit in the free slot: {err}"));
+            .expect("a record must fit in the free slot");
     }
 }
 
@@ -242,7 +241,7 @@ fn shut_down(observation: &Observation) {
         observation
             .handler
             .call_method0(py, "close")
-            .unwrap_or_else(|err| panic!("close must not raise: {err}"));
+            .expect("close must not raise");
     });
 }
 
