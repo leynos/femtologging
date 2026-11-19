@@ -6,11 +6,13 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 be kept up to date as work proceeds.
 
 Status: IN PROGRESS — ready PR #613 carries the implementation and the repairs
-for every finding from CodeRabbit's review of `42c3abe1`. Every deterministic
-gate that can complete on this host has passed on the repaired tree; the four
-trybuild UI suites are recorded as unexecuted locally because the saturated
-compile pool admitted only a few of their eleven cases per 590 s window. The
-review follow-up and merge now wait on the hosted checks for that candidate.
+for every finding from CodeRabbit's review of `42c3abe1`, plus `d6dab01e`,
+which fixes a self-deadlocking shard test that timed out the hosted
+`build-test (3.14)` job. Every deterministic gate that can complete on this
+host has passed on the repaired tree; the four trybuild UI suites are recorded
+as unexecuted locally because the saturated compile pool admitted only a few of
+their eleven cases per 590 s window. All required hosted checks pass on
+`d6dab01e`; the merge now waits on CodeRabbit's review of that head.
 
 ## Purpose / big picture
 
@@ -657,6 +659,36 @@ suite that fails if any drop is discarded or handed off more than once.
       own, though the same case files compile under `lint-rust-clippy` and
       Whitaker in those feature sets, which type-checks them without running
       their assertions.
+- [x] (2026-11-19) Fixed the shard test that hung the hosted `build-test
+      (3.14)` job on `44a8782b`. That job ran the `no-default-features` lane
+      normally for 25 seconds and then printed nothing for 32 minutes until the
+      40-minute job timeout cancelled it, orphaning the `_femtologging_rs` test
+      binary. The last test to report was
+      `logger::dispatcher::shard::tests::a_queue_without_a_receiver_reports_a_closed_channel`,
+      so the next in test order,
+      `a_record_is_in_flight_until_its_handlers_are_released`, was the one
+      stuck. It was a race in the test, not in the shard: the test dropped its
+      own handler reference assuming the worker still held the job's, and when
+      the worker had already released it the test thread ran the blocking
+      destructor itself and waited for a release signal only that same thread
+      could send. `d6dab01e` gives the handler a second gate: it holds the
+      worker in `handle` until the test has dropped its reference, so the
+      destructor is guaranteed to run on the worker, and only then releases
+      it. The in-flight assertion is unchanged. The fixed test passed 60
+      consecutive targeted runs, and the four hosted `build-test` lanes then
+      all passed on `d6dab01e`, `3.14` in 21m21s, with the wheel builds, the
+      wheel-install verification, CodeScene's code-health review and the Gecko
+      security review green as well.
+- [x] (2026-11-19) Re-ran the deterministic gates on `d6dab01e`'s tree through
+      the single gate runner. `check-fmt`, `markdownlint`, `nixie`,
+      `lint-python`, every `lint-rust` sub-target including Whitaker,
+      `typecheck`, `makeutil`, `loom-runner-test`, `cargo fetch --locked` and
+      `cargo fmt --check` returned 0; all four lanes' library and integration
+      targets passed (1018 passed in `none`, `python` and `log-compat`, 1071 in
+      `tracing-compat`) as did their doctests (30 passed, 59 ignored), and
+      pytest reported 1232 passed with 7 skipped. The four trybuild UI suites
+      again did not complete inside their windows and remain unexecuted
+      locally.
 
 Historical blocker (2026-10-16): a machine-wide build-limits outage, not merely
 a busy pool. The supervisor process is alive and logging, but every attempt to
