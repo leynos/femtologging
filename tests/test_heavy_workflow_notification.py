@@ -10,6 +10,7 @@ and nothing is written to GitHub.
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests execute the checked-in workflow script
 import sys
@@ -110,7 +111,7 @@ def _notification_environment(tmp_path: Path, *, issue: str) -> dict[str, str]:
     dict[str, str]
         The child environment, including the stub's log, issue and run date.
     """
-    return {
+    environment = {
         "PATH": str(tmp_path / "bin"),
         "HOME": str(tmp_path),
         "GH_TOKEN": "stub-token",
@@ -123,6 +124,15 @@ def _notification_environment(tmp_path: Path, *, issue: str) -> dict[str, str]:
         "GH_STUB_ISSUE": issue,
         "GH_STUB_RUN_DATE": _RUN_DATE,
     }
+    # The stub reaches the interpreter through a link to ``sys.executable``. An
+    # interpreter whose shared library sits outside the loader's default search
+    # path needs the variable the test process inherited, so forward it rather
+    # than replace the whole environment.
+    for loader_variable in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        inherited = os.environ.get(loader_variable)
+        if inherited:
+            environment[loader_variable] = inherited
+    return environment
 
 
 def run_notification(tmp_path: Path, *, issue: str) -> list[list[str]]:
@@ -165,6 +175,25 @@ def _matching(recorded: list[list[str]], command: tuple[str, str]) -> list[list[
 def _argument(arguments: list[str], name: str) -> str:
     """Return the value that follows ``name`` in an argument list."""
     return arguments[arguments.index(name) + 1]
+
+
+class TestNotificationEnvironment:
+    """Pin the child environment the stub needs to start."""
+
+    @staticmethod
+    def test_an_inherited_library_search_path_reaches_the_stub(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Forward the loader variable without widening the stub-only PATH."""
+        monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/python/lib")
+        environment = _notification_environment(tmp_path, issue="")
+        assert environment["LD_LIBRARY_PATH"] == "/opt/python/lib", (
+            "an inherited library search path must reach the child"
+        )
+        assert environment["PATH"] == str(tmp_path / "bin"), (
+            "forwarding a loader variable must not widen the stub-only PATH"
+        )
 
 
 class TestNotificationBranches:
