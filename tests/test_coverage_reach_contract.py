@@ -18,7 +18,8 @@ import typing as typ
 
 import pytest
 
-from tests.coverage_contract_helpers import triggers
+from tests.coverage_contract_helpers import WorkflowDocument, triggers
+from tests.coverage_push_filter_helpers import pushes_to
 from tests.coverage_reach_helpers import pull_request_reach
 
 
@@ -33,10 +34,15 @@ from tests.coverage_reach_helpers import pull_request_reach
     ids=["scalar", "sequence", "mapping", "resolved-boolean-key"],
 )
 def test_the_trigger_reader_accepts_each_declared_shape(
-    document: dict[object, object], expected: dict[str, object]
+    document: WorkflowDocument, expected: dict[str, object]
 ) -> None:
-    """Scalar, sequence, mapping and PyYAML's boolean `on` are all read."""
-    assert triggers(typ.cast("dict[str, typ.Any]", document)) == expected, document
+    """Scalar, sequence, mapping and PyYAML's boolean `on` are all read.
+
+    The fixtures are typed to admit the boolean key the YAML parser produces,
+    so the reader's contract is checked without casting the document to a
+    string-keyed shape it does not have.
+    """
+    assert triggers(document) == expected, document
 
 
 @pytest.mark.parametrize(
@@ -50,7 +56,7 @@ def test_the_trigger_reader_accepts_each_declared_shape(
     ids=["both-spellings", "no-trigger", "non-string-name", "not-a-trigger"],
 )
 def test_the_trigger_reader_refuses_an_ambiguous_document(
-    document: dict[object, object], refusal: str
+    document: WorkflowDocument, refusal: str
 ) -> None:
     """Two spellings, no trigger, or an unreadable shape fails loudly.
 
@@ -58,7 +64,117 @@ def test_the_trigger_reader_refuses_an_ambiguous_document(
     cannot stand in for the one under test.
     """
     with pytest.raises(AssertionError, match=refusal):
-        triggers(typ.cast("dict[str, typ.Any]", document))
+        triggers(document)
+
+
+@pytest.mark.parametrize(
+    ("settings", "branch", "expected"),
+    [
+        (None, "main", True),
+        ({}, "main", True),
+        ({"branches": ["main"]}, "main", True),
+        ({"branches": ["main"]}, "feature/x", False),
+        ({"branches": ["release/**"]}, "release/1.2/hotfix", True),
+        ({"branches": ["release/*"]}, "release/1.2/hotfix", False),
+        ({"branches": ["main", "!main"]}, "main", False),
+        ({"branches": ["!main"]}, "main", False),
+        ({"branches": ["!m*", "main"]}, "main", True),
+        ({"branches-ignore": ["main"]}, "main", False),
+        ({"branches-ignore": ["main"]}, "feature/x", True),
+        ({"branches": ["v?"]}, "v", True),
+        ({"branches": ["v?"]}, "v12", False),
+        ({"branches": ["v+"]}, "vvv", True),
+        ({"branches": ["ab+"]}, "a", False),
+        ({"tags": ["v*"]}, "main", False),
+        ({"tags-ignore": ["v*"]}, "main", False),
+        ({"branches": ["main"], "tags": ["v*"]}, "main", True),
+    ],
+    ids=[
+        "unfiltered",
+        "empty-settings",
+        "literal",
+        "literal-miss",
+        "double-star",
+        "single-star-does-not-span",
+        "exclude-after-include",
+        "exclude-only",
+        "include-after-exclude",
+        "ignore-miss",
+        "ignore-hit",
+        "question-marks-zero",
+        "question-marks-one",
+        "plus-repeats",
+        "plus-needs-one",
+        "tags-only",
+        "tags-ignore-only",
+        "branches-and-tags",
+    ],
+)
+def test_pushes_to_reads_each_branch_filter_shape(
+    settings: dict[str, object] | None, branch: str, *, expected: bool
+) -> None:
+    """Unfiltered, literal, wildcard, excluded and ignored pushes are decided.
+
+    A branch filter is a pattern list, not a set of literal names, and an
+    absent `branches` key does not mean "every branch" when the trigger is
+    filtered some other way.
+    """
+    assert pushes_to({"push": settings}, branch) is expected, (settings, branch)
+
+
+@pytest.mark.parametrize(
+    ("settings", "refusal"),
+    [
+        (
+            {"branches": ["main"], "branches-ignore": ["main"]},
+            "cannot name both branches and branches-ignore",
+        ),
+        (
+            {"tags": ["v*"], "tags-ignore": ["v1"]},
+            "cannot name both tags and tags-ignore",
+        ),
+        ({"branches": []}, "must name at least one pattern"),
+        ({"branches": [""]}, "must not name an empty pattern"),
+        ({"branches": ["[ab]"]}, "character class is not supported"),
+        ({"branches": ["+"]}, "must repeat a literal character"),
+        ({"branches": "main"}, "must be a sequence"),
+    ],
+    ids=[
+        "both-branch-filters",
+        "both-tag-filters",
+        "empty-list",
+        "empty-pattern",
+        "character-class",
+        "leading-plus",
+        "not-a-sequence",
+    ],
+)
+def test_pushes_to_refuses_a_filter_it_cannot_read(
+    settings: dict[str, object], refusal: str
+) -> None:
+    """An unreadable or contradictory filter is refused, never guessed at."""
+    with pytest.raises(AssertionError, match=refusal):
+        pushes_to({"push": settings}, "main")
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["pull_request_review", "pull_request_review_comment", "issue_comment"],
+    ids=["review", "review-comment", "issue-comment"],
+)
+def test_a_review_or_comment_route_reaches_a_pull_request(event: str) -> None:
+    """A review or a comment on a pull request reaches the same content.
+
+    These routes start a workflow just as a `pull_request` event does, so a
+    workflow declaring one is reachable from pull-request content and must be
+    inspected for the protected environment like any other.
+    """
+    documents: dict[str, dict[str, typ.Any]] = {
+        "listener.yml": {"name": "Listener", "on": event, "jobs": {}},
+    }
+    reached, remote = pull_request_reach(documents)
+    assert reached == {"listener.yml"}, reached
+    assert remote == set(), remote
 
 
 def _fail_closed_graphs() -> list[tuple[dict[str, dict[str, typ.Any]], str]]:
