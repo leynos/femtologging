@@ -11,9 +11,16 @@ word is part of that word, so `echo '<<EOF'` opens nothing. Neither is a `<<`
 inside an arithmetic expression, where it is a shift: `(( n << shift ))` names
 an operand, not a delimiter. The operators are therefore found with the
 quoting scan the line reader already uses, with arithmetic nesting tracked
-alongside it, and the skip then consumes only real bodies. One approximation
-remains: the scan does not look inside a command substitution that is itself
-quoted, so a here-document opened there is not seen.
+alongside it, and the skip then consumes only real bodies.
+
+An unquoted body is expanded, and expansion removes each backslash-newline
+pair, so a delimiter split across such a pair still ends the document. The
+skip joins those pairs before comparing an unquoted delimiter; a quoted
+delimiter suppresses expansion, and its body stays literal.
+
+One approximation remains: the scan does not look inside a command
+substitution that is itself quoted, so a here-document opened there is not
+seen.
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ class HereDocument(typ.NamedTuple):
 
     delimiter: str
     strips_leading_tabs: bool
+    delimiter_is_quoted: bool
 
 
 def _operator_offsets(command: str) -> cabc.Iterator[int]:
@@ -96,12 +104,16 @@ def here_document_at(command: str, at: int) -> HereDocument | None:
         follows. A delimiter must be shaped like a plain shell word, so a
         shift by a literal such as `2` opens nothing here; a shift whose
         operand is an identifier is excluded by `_operator_offsets`, which
-        never offers an operator from inside arithmetic.
+        never offers an operator from inside arithmetic. The result also
+        records whether the delimiter was quoted, because the shell expands
+        an unquoted body and leaves a quoted one literal.
 
     Examples
     --------
     >>> here_document_at("cat <<'EOF'", 4)
-    HereDocument(delimiter='EOF', strips_leading_tabs=False)
+    HereDocument(delimiter='EOF', strips_leading_tabs=False, delimiter_is_quoted=True)
+    >>> here_document_at("cat <<EOF", 4)
+    HereDocument(delimiter='EOF', strips_leading_tabs=False, delimiter_is_quoted=False)
     >>> here_document_at("(( n << 2 ))", 6) is None
     True
     """
@@ -111,6 +123,7 @@ def here_document_at(command: str, at: int) -> HereDocument | None:
     return HereDocument(
         delimiter=next(part for part in match.groups()[1:] if part is not None),
         strips_leading_tabs=match.group(1) == "-",
+        delimiter_is_quoted=match.group(4) is None,
     )
 
 
@@ -130,10 +143,10 @@ def here_documents(command: str) -> list[HereDocument]:
 
     Examples
     --------
-    >>> here_documents("cat <<'EOF' && echo '<<EOF'")
-    [HereDocument(delimiter='EOF', strips_leading_tabs=False)]
-    >>> here_documents("cat <<EOF-END; (( n << shift ))")
-    [HereDocument(delimiter='EOF-END', strips_leading_tabs=False)]
+    >>> [document.delimiter_is_quoted for document in here_documents("cat <<'EOF'")]
+    [True]
+    >>> here_documents("cat <<EOF-END; (( n << shift ))")[0].delimiter
+    'EOF-END'
     >>> here_documents("(( n << shift ))")
     []
     """
@@ -145,8 +158,101 @@ def here_documents(command: str) -> list[HereDocument]:
     ]
 
 
+def _ends_with_continuation(line: str) -> bool:
+    r"""Report whether `line` ends in a backslash the shell reads as a join.
+
+    Two backslashes spell a literal one, so only an odd run of trailing
+    backslashes continues the line.
+
+    Parameters
+    ----------
+    line
+        One physical line of a here-document body, without its newline.
+
+    Returns
+    -------
+    bool
+        Whether the shell joins the next physical line onto this one.
+
+    Examples
+    --------
+    >>> _ends_with_continuation("E\\")
+    True
+    >>> _ends_with_continuation("E\\\\")
+    False
+    """
+    trailing = len(line) - len(line.rstrip("\\"))
+    return trailing % 2 == 1
+
+
+def _unquoted_body_line(
+    lines: list[str], start: int, *, strip_tabs: bool
+) -> tuple[str, int]:
+    r"""Return the expanded body line at `start` and the index after it.
+
+    An unquoted here-document body is expanded, and expansion removes each
+    backslash-newline pair. The shell therefore sees ``E\`` followed by
+    ``OF`` as the single line ``EOF``, which ends a document opened with
+    `<<EOF`; comparing physical lines would miss that terminator and read the
+    commands below as body.
+
+    Parameters
+    ----------
+    lines
+        Every physical line of the step's ``run`` body.
+    start
+        Index of the first physical line of this body line.
+    strip_tabs
+        Whether `<<-` makes the shell strip leading tabs from each line.
+
+    Returns
+    -------
+    tuple[str, int]
+        The expanded text of the body line, and the index of the next
+        physical line.
+    """
+    pieces: list[str] = []
+    index = start
+    while index < len(lines):
+        piece = lines[index]
+        index += 1
+        if strip_tabs:
+            piece = piece.lstrip("\t")
+        continues = _ends_with_continuation(piece)
+        pieces.append(piece[:-1] if continues else piece)
+        if not continues:
+            break
+    return "".join(pieces), index
+
+
+def _quoted_body_line(
+    lines: list[str], index: int, *, strip_tabs: bool
+) -> tuple[str, int]:
+    """Return the literal body line at `index` and the index after it.
+
+    A quoted delimiter suppresses expansion, so its body keeps every backslash
+    exactly as written and no continuation joins two physical lines.
+
+    Parameters
+    ----------
+    lines
+        Every physical line of the step's ``run`` body.
+    index
+        Index of the physical line to read.
+    strip_tabs
+        Whether `<<-` makes the shell strip leading tabs from the line.
+
+    Returns
+    -------
+    tuple[str, int]
+        The literal body line, and the index of the next physical line.
+    """
+    line = lines[index]
+    return (line.lstrip("\t") if strip_tabs else line), index + 1
+
+
 def skip_here_documents(lines: list[str], start: int, command: str) -> int:
-    """Return the index of the first line after `command`'s here-documents.
+    r"""Return the index of the first line after `command`'s here-documents.
 
     A here-document whose delimiter never appears is malformed shell, and the
     shell takes every remaining line as data. The same skip applies here.
@@ -171,14 +277,20 @@ def skip_here_documents(lines: list[str], start: int, command: str) -> int:
     ...     ["cat <<'EOF'", "Don't", "EOF", "cargo test"], 0, "cat <<'EOF'"
     ... )
     3
+    >>> skip_here_documents(
+    ...     ["cat <<EOF", "payload", "E\\", "OF", "cargo test"], 0, "cat <<EOF"
+    ... )
+    4
     """
     index = start
     for document in here_documents(command):
+        read_line = (
+            _quoted_body_line if document.delimiter_is_quoted else _unquoted_body_line
+        )
         while index < len(lines):
-            candidate = lines[index]
-            index += 1
-            if document.strips_leading_tabs:
-                candidate = candidate.lstrip("\t")
-            if candidate == document.delimiter:
+            line, index = read_line(
+                lines, index, strip_tabs=document.strips_leading_tabs
+            )
+            if line == document.delimiter:
                 break
     return index
