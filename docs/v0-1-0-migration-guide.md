@@ -272,10 +272,13 @@ ______________________________________________________________________
 Read this if you rely on multiline message text appearing verbatim in default
 formatter output, or if you count physical lines in a log file. The default
 formatter now escapes the line separators that Python's `str.splitlines()`
-recognizes inside the message field, so message content cannot add a line that
-looks like another logger's record. The escaped set is LF, CR, VT, FF, U+001C,
-U+001D, U+001E, NEL, U+2028, and U+2029; each becomes its `char::escape_debug`
-form, such as `\n` or `\u{2028}`.
+recognizes inside the message field, so text in that field cannot add a line
+that looks like another logger's record. The escaped set is LF, CR, VT, FF,
+U+001C, U+001D, U+001E, NEL, U+2028, and U+2029; each becomes its
+`char::escape_debug` form, such as `\n` or `\u{2028}`. Only the message field
+changes: an exception message inside the diagnostics is written unescaped, and
+a logger string passed directly to `FemtoFileHandler.handle` is neither
+validated nor escaped.
 
 ### Impact at a glance
 
@@ -345,9 +348,12 @@ means.
 - Structured `handle_record` handlers and the stdlib handler adapter receive
   the raw message and are unaffected.
 - Stack and exception diagnostics keep their own multiline structure; only the
-  message field is escaped.
-- Logger names already reject control characters and Unicode separators with
-  `ValueError`, so their framing is unchanged.
+  message field is escaped. An exception message is part of the diagnostics, so
+  a separator inside it is still written unescaped.
+- Logger names passed to `get_logger`/`getLogger` already reject control
+  characters and Unicode separators with `ValueError`. A logger string passed
+  directly to `FemtoFileHandler.handle` is not validated, so its framing is
+  unchanged by this release and still needs a caller-supplied safe name.
 - Existing logging calls, handler constructors, and builder methods keep their
   signatures.
 
