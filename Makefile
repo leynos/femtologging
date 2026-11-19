@@ -317,10 +317,14 @@ spelling: ## Enforce en-GB-oxendict spelling and shared phrase corrections
 	# The gate enumerates the Git index, so a new Markdown file would pass here
 	# and fail once it is committed. The gate has just regenerated `typos.toml`,
 	# so the same pinned Typos binary checks the remaining files with the same
-	# configuration. `env` passes the uv cache settings through `xargs`, which
-	# would otherwise read them as the command to run.
+	# configuration. `--force-exclude` keeps that configuration's exclusions in
+	# force: Typos checks an explicitly named path even when the policy excludes
+	# it, so an untracked file under `node_modules` would otherwise fail the
+	# target although the gate ignores it. `env` passes the uv cache settings
+	# through `xargs`, which would otherwise read them as the command to run.
 	git ls-files -z --others --exclude-standard '*.md' | \
-		xargs -0 -r env $(UV_ENV) $(TYPOS) --
+		xargs -0 -r env $(UV_ENV) $(TYPOS) \
+			--config typos.toml --force-exclude --
 	# Typos tokenizes on punctuation, so it never sees a hyphenated prohibited
 	# phrase; the shared phrase corrections are the gate's other check, and that
 	# check also enumerates the index. The same configuration is therefore used

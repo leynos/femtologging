@@ -18,6 +18,7 @@ on a cold cache.
 
 from __future__ import annotations
 
+import dataclasses as dc
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argv
 import typing as typ
 
@@ -37,6 +38,105 @@ from tests.spelling_gate_support import (
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
+#: The arguments the recipe hands the Typos binary for an unstaged document.
+#: `--force-exclude` keeps the configuration's file policy in force, because an
+#: explicit path would otherwise override the exclusions.
+_TYPOS_INVOCATION = [
+    "--config",
+    "typos.toml",
+    "--force-exclude",
+    "--",
+    "new-notes.md",
+]
+
+
+@dc.dataclass(frozen=True, slots=True)
+class GateOptions:
+    """Stub outcomes and document placement for one gate run.
+
+    Attributes
+    ----------
+    untracked
+        Whether to write `new-notes.md` as an unstaged document.
+    staged
+        Whether to stage that document before running Make.
+    builder_status
+        Exit status the builder stub reports.
+    typos_status
+        Exit status the Typos stub reports.
+    phrase_status
+        Exit status the phrase-scan stub reports.
+    phrase_assignment
+        A ready-made `SPELLING_PHRASE_SCAN` assignment, used instead of
+        `phrase_status` when a test needs a scanning probe rather than a stub.
+    """
+
+    untracked: bool = False
+    staged: bool = False
+    builder_status: int = 0
+    typos_status: int = 0
+    phrase_status: int = 0
+    phrase_assignment: str | None = None
+
+
+@dc.dataclass(frozen=True, slots=True)
+class GateRun:
+    """The outcome of one `make spelling` invocation against stubs.
+
+    Attributes
+    ----------
+    repository
+        Scratch repository Make ran in.
+    result
+        The finished Make process with its captured output.
+    invocations
+        The arguments of each stage's invocation, in the order they ran.
+    """
+
+    repository: Path
+    result: subprocess.CompletedProcess[str]
+    invocations: list[list[str]]
+
+
+def _run_gate(
+    tmp_path: Path,
+    options: GateOptions | None = None,
+) -> GateRun:
+    """Run `make spelling` against a scratch repository wired to stubs.
+
+    Parameters
+    ----------
+    tmp_path
+        Per-test scratch directory receiving the repository and the stubs.
+    options
+        Document placement and stub outcomes; a clean run when omitted.
+
+    Returns
+    -------
+    GateRun
+        The repository, Make's result and the recorded invocations.
+    """
+    options = options or GateOptions()
+    repository = scratch_repository(tmp_path)
+    if options.untracked:
+        (repository / "new-notes.md").write_text("# Notes\n", encoding="utf-8")
+    if options.staged:
+        stage(repository, "new-notes.md")
+    builder = recording_stub(tmp_path, "stub-builder", options.builder_status)
+    typos = recording_stub(tmp_path, "stub-typos", options.typos_status)
+    phrase = options.phrase_assignment or phrase_scan(tmp_path, options.phrase_status)
+    result = make_spelling(
+        repository,
+        quoted("TYPOS_CONFIG_BUILDER", builder),
+        quoted("TYPOS", typos),
+        phrase,
+    )
+    return GateRun(
+        repository=repository,
+        result=result,
+        invocations=recorded_invocations(tmp_path),
+    )
+
 
 def _untracked(repository: Path) -> list[str]:
     """Return the repository's untracked paths, as Git reports them."""
@@ -55,147 +155,76 @@ def test_the_target_runs_the_gate_and_then_the_phrase_check(
     tmp_path: Path,
 ) -> None:
     """The recipe runs the builder's gate, then its phrase check, once each."""
-    repository = scratch_repository(tmp_path)
-    builder = recording_stub(tmp_path, "stub-builder", 0)
-    typos = recording_stub(tmp_path, "stub-typos", 0)
+    run = _run_gate(tmp_path)
 
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_scan(tmp_path),
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert recorded_invocations(tmp_path) == [["gate"], ["check-phrases"]], (
+    assert run.result.returncode == 0, run.result.stdout + run.result.stderr
+    assert run.invocations == [["gate"], ["check-phrases"]], (
         "the target must pass the gate operation and the phrase check, once each"
     )
 
 
 def test_a_failing_builder_gate_fails_the_target(tmp_path: Path) -> None:
     """A builder that reports a finding fails `make spelling`."""
-    repository = scratch_repository(tmp_path)
-    builder = recording_stub(tmp_path, "stub-builder", 2)
-    typos = recording_stub(tmp_path, "stub-typos", 0)
+    run = _run_gate(tmp_path, GateOptions(builder_status=2))
 
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_scan(tmp_path),
-    )
-
-    assert result.returncode != 0, "a non-zero builder exit must fail the target"
-    assert recorded_invocations(tmp_path) == [["gate"]], (
+    assert run.result.returncode != 0, "a non-zero builder exit must fail the target"
+    assert run.invocations == [["gate"]], (
         "the failing run must stop before the later stages"
     )
 
 
 def test_an_unstaged_document_reaches_the_second_stage(tmp_path: Path) -> None:
     """New Markdown the gate cannot see is checked by the pinned Typos binary."""
-    repository = scratch_repository(tmp_path)
-    (repository / "new-notes.md").write_text("# Notes\n", encoding="utf-8")
-    builder = recording_stub(tmp_path, "stub-builder", 0)
-    typos = recording_stub(tmp_path, "stub-typos", 0)
+    run = _run_gate(tmp_path, GateOptions(untracked=True))
 
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_scan(tmp_path),
+    assert run.result.returncode == 0, run.result.stdout + run.result.stderr
+    assert run.invocations == [["gate"], _TYPOS_INVOCATION, ["check-phrases"]], (
+        "the unstaged document must be checked after the gate regenerates the config"
     )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert recorded_invocations(tmp_path) == [
-        ["gate"],
-        ["--", "new-notes.md"],
-        ["check-phrases"],
-    ], "the unstaged document must be checked after the gate regenerates the config"
 
 
 def test_a_staged_document_is_left_to_the_gate(tmp_path: Path) -> None:
     """Staging a document moves it into the gate's own scan."""
-    repository = scratch_repository(tmp_path)
-    (repository / "new-notes.md").write_text("# Notes\n", encoding="utf-8")
-    stage(repository, "new-notes.md")
-    builder = recording_stub(tmp_path, "stub-builder", 0)
-    typos = recording_stub(tmp_path, "stub-typos", 0)
+    run = _run_gate(tmp_path, GateOptions(untracked=True, staged=True))
 
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_scan(tmp_path),
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert recorded_invocations(tmp_path) == [["gate"], ["check-phrases"]], (
+    assert run.result.returncode == 0, run.result.stdout + run.result.stderr
+    assert run.invocations == [["gate"], ["check-phrases"]], (
         "a staged document must be left to the gate rather than checked twice"
     )
 
 
 def test_a_failing_unstaged_check_fails_the_target(tmp_path: Path) -> None:
     """A finding in the second stage fails `make spelling`."""
-    repository = scratch_repository(tmp_path)
-    (repository / "new-notes.md").write_text("# Notes\n", encoding="utf-8")
-    builder = recording_stub(tmp_path, "stub-builder", 0)
-    typos = recording_stub(tmp_path, "stub-typos", 2)
+    run = _run_gate(tmp_path, GateOptions(untracked=True, typos_status=2))
 
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_scan(tmp_path),
+    assert run.result.returncode != 0, "a failing unstaged check must fail the target"
+    assert run.invocations == [["gate"], _TYPOS_INVOCATION], (
+        "a failing Typos stage must stop the target before the phrase check"
     )
-
-    assert result.returncode != 0, "a failing unstaged check must fail the target"
-    assert recorded_invocations(tmp_path) == [
-        ["gate"],
-        ["--", "new-notes.md"],
-    ], "a failing Typos stage must stop the target before the phrase check"
 
 
 def test_a_phrase_finding_in_an_unstaged_document_fails_the_target(
     tmp_path: Path,
 ) -> None:
     """A phrase the second stage cannot see still fails the target."""
-    repository = scratch_repository(tmp_path)
-    (repository / "new-notes.md").write_text("# Notes\n", encoding="utf-8")
-    builder = recording_stub(tmp_path, "stub-builder", 0)
-    typos = recording_stub(tmp_path, "stub-typos", 0)
+    run = _run_gate(tmp_path, GateOptions(untracked=True, phrase_status=2))
 
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_scan(tmp_path, status=2),
+    assert run.result.returncode != 0, "a phrase finding must fail the target"
+    assert run.invocations == [["gate"], _TYPOS_INVOCATION, ["check-phrases"]], (
+        "the phrase stage must run after the Typos stage and report its finding"
     )
-
-    assert result.returncode != 0, "a phrase finding must fail the target"
-    assert recorded_invocations(tmp_path) == [
-        ["gate"],
-        ["--", "new-notes.md"],
-        ["check-phrases"],
-    ], "the phrase stage must run after the Typos stage and report its finding"
 
 
 def test_the_phrase_stage_reads_the_untracked_document_from_a_temporary_index(
     tmp_path: Path,
 ) -> None:
     """The phrase check sees the new document and the real index is untouched."""
-    repository = scratch_repository(tmp_path)
-    (repository / "new-notes.md").write_text("# Notes\n", encoding="utf-8")
-    builder = recording_stub(tmp_path, "stub-builder", 0)
-    typos = recording_stub(tmp_path, "stub-typos", 0)
-
-    result = make_spelling(
-        repository,
-        quoted("TYPOS_CONFIG_BUILDER", builder),
-        quoted("TYPOS", typos),
-        phrase_index_probe(tmp_path),
+    run = _run_gate(
+        tmp_path,
+        GateOptions(untracked=True, phrase_assignment=phrase_index_probe(tmp_path)),
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert _untracked(repository) == ["?? new-notes.md"], (
+    assert run.result.returncode == 0, run.result.stdout + run.result.stderr
+    assert _untracked(run.repository) == ["?? new-notes.md"], (
         "the temporary index must not stage the document in the real one"
     )
