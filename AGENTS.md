@@ -281,6 +281,12 @@ pin the lint tier order through the pinned `makeutil` Makefile parser.
 
 <!-- typos-config-builder:agents-md:end -->
 
+The block between those markers is copied verbatim from the release the
+repository pins, so its wording is not ours to edit. That includes its
+second-person phrasing, which is exempt from the pronoun rule in
+[docs/documentation-style-guide.md](docs/documentation-style-guide.md); the
+rest of this file is not.
+
 ## Key Takeaway
 
 These practices help maintain a high-quality codebase and facilitate
