@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: '0'
+      # Mirror the Makefile's uv configuration so any project build uv performs
+      # carries the `test-util` feature that `FEMTOLOGGING_EXPECT_TEST_UTIL`
+      # requires. Without it, a re-sync during `uv run` would install an
+      # extension built without the feature and the test step would fail.
+      UV_CONFIG_FILE: ${{ github.workspace }}/.github/uv-test-util.toml
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -50,22 +55,16 @@ jobs:
           test "$(makeutil --version)" = "makeutil ${INSTALLED_VERSION}"
           makeutil parse Makefile | python3 -c \
             'import json, sys; assert json.load(sys.stdin)["parse"]["status"] == "complete"'
-      - name: Set up virtualenv
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          python -m pip install --upgrade pip
-
-          # Cache wheels to avoid repeated downloads
-          pip install \
-            --cache-dir "${{ runner.tool_cache }}" \
-            "maturin==1.13.3" pytest==9.1.1 pytest-bdd==8.1.0 \
-            pytest-timeout pytest-xdist syrupy \
-            "hypothesis>=6.135,<7" "pyyaml>=6.0.3,<7"
+      - name: Sync locked dependencies
+        # Build the test environment from the committed `uv.lock` on the
+        # `setup-python` interpreter, so a manifest change that was not locked
+        # fails here instead of resolving fresh versions.
+        env:
+          UV_PYTHON: '3.12'
+        run: uv sync --locked --group dev
       - name: Build editable extension
         run: |
-          source .venv/bin/activate
-          maturin develop --manifest-path rust_extension/Cargo.toml \
+          uv run --locked maturin develop --manifest-path rust_extension/Cargo.toml \
             --features python,test-util
       # The Loom build lives in its own target directory and cache, apart from
       # the ordinary build's: `--cfg loom` changes every crate's fingerprint,
@@ -94,7 +93,6 @@ jobs:
         env:
           FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
         run: |
-          source .venv/bin/activate
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
           make lint-rust-clippy
           RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy --manifest-path rust_extension/Cargo.toml \
@@ -109,7 +107,7 @@ jobs:
                 --no-default-features --features "$feature_set" -- --ignored
             fi
           done
-          pytest -q
+          uv run --locked pytest -q
       # Executing the models is separate from compiling them, and the split is
       # the point: a green compile step says the models type-check and nothing
       # about the behaviour they describe. `--include-ignored` rather than
