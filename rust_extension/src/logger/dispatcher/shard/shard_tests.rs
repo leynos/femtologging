@@ -72,8 +72,20 @@ impl FemtoHandlerTrait for IdleHandler {
     }
 }
 
-/// Handler whose destruction blocks until the test releases it.
-struct BlockingDropHandler {
+/// Handler that holds the worker in `handle`, then blocks in its destructor.
+///
+/// The two gates make the ordering observable rather than hopeful. While the
+/// worker is still inside `handle` it owns the job's handler reference, so the
+/// test can drop its own and know the destructor will run on the worker. A
+/// single gate would leave that open: if the worker finished `handle` first it
+/// would release its reference, the test's own drop would run the destructor on
+/// the test thread, and that destructor would then wait for a release signal
+/// the same thread could not send.
+struct HeldDropHandler {
+    /// Notifies the test that the worker entered `handle`.
+    entered: std::sync::mpsc::Sender<()>,
+    /// Keeps `handle` blocked until the test lets the worker continue.
+    proceed: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
     /// Notifies the test that the shard has released its last reference.
     dropping: std::sync::mpsc::Sender<()>,
     /// Keeps the destructor blocked until the test lets it finish.
@@ -83,8 +95,10 @@ struct BlockingDropHandler {
     release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
-impl FemtoHandlerTrait for BlockingDropHandler {
+impl FemtoHandlerTrait for HeldDropHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
+        let _ = self.entered.send(());
+        let _ = self.proceed.lock().recv();
         Ok(())
     }
 
@@ -93,7 +107,7 @@ impl FemtoHandlerTrait for BlockingDropHandler {
     }
 }
 
-impl Drop for BlockingDropHandler {
+impl Drop for HeldDropHandler {
     fn drop(&mut self) {
         let _ = self.dropping.send(());
         let _ = self.release.lock().recv();
@@ -190,29 +204,42 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
 /// shard still held its handler references, that `Drop` could return before a
 /// handler's destructor ran. A stream handler's destructor is what waits for
 /// its worker's last write, so a test that then read the handler's output
-/// could race the write — the failure this pins down. The destructor blocks
-/// here, so the ordering is observed rather than hoped for.
+/// could race the write — the failure this pins down. The handler holds the
+/// worker in `handle` until the test has dropped its own reference, so the
+/// destructor is guaranteed to run on the worker, and it then blocks there so
+/// the ordering is observed rather than hoped for.
 #[test]
 fn a_record_is_in_flight_until_its_handlers_are_released() {
     let shard = Shard::start(0, 2).expect("test shard should start");
     let budget = shard.budget();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (proceed_tx, proceed_rx) = std::sync::mpsc::channel();
     let (dropping_tx, dropping_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(BlockingDropHandler {
+    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(HeldDropHandler {
+        entered: entered_tx,
+        proceed: parking_lot::Mutex::new(proceed_rx),
         dropping: dropping_tx,
         release: parking_lot::Mutex::new(release_rx),
     });
     if shard.admit(queued_record(&handler), &budget).is_err() {
-        // Unwinding drops `handler` before `release_tx`, and the handler's
-        // destructor waits for that sender: release it first so the panic
-        // cannot deadlock the test thread in its own handler.
+        // Unwinding drops `handler` before the release senders, and both of
+        // its gates wait for one: release them first so the panic cannot
+        // deadlock the test thread in its own handler.
+        drop(proceed_tx);
         drop(release_tx);
         panic!("a fresh test shard should accept its first record");
     }
-    // The job now holds the only reference, so the shard's worker is what
-    // destroys the handler — exactly as it does for a logger dropped after its
-    // last record.
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the worker should enter the blocking handler");
+    // Still inside `handle`, the worker owns the job's reference, so this drop
+    // cannot run the destructor on the test thread. Releasing the worker then
+    // leaves the job holding the only reference, and the shard's worker is
+    // what destroys the handler — exactly as it does for a logger dropped
+    // after its last record.
     drop(handler);
+    let _ = proceed_tx.send(());
 
     dropping_rx
         .recv_timeout(Duration::from_secs(1))
