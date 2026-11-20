@@ -656,17 +656,21 @@ socket_handler = (
   while it waits, so other Python threads keep running during a flush that
   blocks on a full queue or a slow collector.
 - `handler.close()` waits for the worker for at most the handler's write
-  timeout. Before that budget begins, the handler reports any pending
-  dropped-record count itself; this report is not bounded by the flush timeout,
-  so it can block the caller if the installed log sink blocks. During the
-  bounded window, each pending record gets at most one best-effort attempt,
-  without retries. A worker that acknowledges the shutdown in time is joined.
-  One that does not, typically because it is blocked writing to a collector
-  that has stopped reading, is detached with a warning rather than joined past
-  the deadline. Records still queued when the deadline passes are discarded,
-  and the count is warned about. The same bound applies when the handler is
-  dropped without an explicit `close()`, and the wait runs with the GIL
-  released.
+  timeout. That bound covers the shutdown request and the wait for the
+  acknowledgement, not the rest of `close()`. Before it begins, the handler
+  reports any pending dropped-record count itself; this report is not bounded
+  by the flush timeout, so it can block the caller if the installed log sink
+  blocks. During the bounded window, each pending record gets at most one
+  best-effort attempt, without retries. A worker that acknowledges the shutdown
+  in time is joined, and the join has no deadline: thread-local destructors
+  that block keep `close()` waiting, and a worker that panicked is reported
+  through the process-wide log sink. One that does not acknowledge, typically
+  because it is blocked writing to a collector that has stopped reading, is
+  detached with a warning rather than joined past the deadline; that warning is
+  another unbounded write to the same sink. Records still queued when the
+  deadline passes are discarded, and the count is warned about. The same bound
+  and the same unbounded work apply when the handler is dropped without an
+  explicit `close()`, and the wait runs with the GIL released.
 - One record is written in steps, and the remaining budget is recomputed
   between them. A frame larger than the socket send buffer therefore stops at
   the deadline with a warning that reports how many bytes were written, instead
@@ -680,9 +684,11 @@ socket_handler = (
   timed or non-blocking constructor for it; the deadline is checked before the
   attempt, so no connect begins once it has passed, but an attempt already
   blocked is not interrupted. Hostname resolution for a TCP transport has the
-  same limitation for the same reason. In both cases `close()` still returns
-  inside its budget, and the detached worker leaves as soon as its blocking
-  call returns or fails.
+  same limitation for the same reason. In both cases the blocked call does not
+  extend the deadline: `close()` detaches the worker and returns once its own
+  budget expires, rather than waiting for the worker, which leaves as soon as
+  its blocking call returns or fails. The drop report before the wait and the
+  abandoned-worker warning are still unbounded writes to the log sink.
 
 ### FemtoHTTPHandler
 
@@ -717,17 +723,19 @@ socket_handler = (
   rather than joined past the deadline. Records still queued when the deadline
   passes are discarded, and the count is warned about, so a queue that cannot
   be delivered inside the timeout costs those records rather than extending the
-  close. The bound is on the worker wait, not on the detached worker's exit: a
-  request already in flight when the deadline falls may outlive it, and TCP
-  hostname resolution has no interruptible timeout. Two writes run outside the
-  bound, both through the process-wide `log` sink. Before the wait begins,
-  `close()` reports the drops the handler itself refused; after a wait that
-  times out, it warns that the worker was abandoned. A blocking sink can delay
-  the close past the write timeout in either case: the drop count cannot be
-  bounded without discarding it, and the abandonment warning is written once
-  the budget has already run out. The same bound, and the same drop report
-  before it, apply when the handler is dropped without an explicit `close()`,
-  and the wait runs with the GIL released.
+  close. The bound covers the shutdown request and the wait for the
+  acknowledgement, not the rest of `close()`. A worker that acknowledges is
+  joined without a deadline, so thread-local destructors that block keep
+  `close()` waiting past the write timeout, and a worker that panicked is
+  reported through the process-wide `log` sink. That sink also carries the drop
+  report made before the wait begins and the abandonment warning made after a
+  wait that times out, so a blocking sink can delay the close past the write
+  timeout as well: the drop count cannot be bounded without discarding it, and
+  no budget applies to the other two writes or to the join. A request already
+  in flight when the deadline falls may outlive a detached worker, and TCP
+  hostname resolution has no interruptible timeout. The same bound, and the
+  same drop report before it, apply when the handler is dropped without an
+  explicit `close()`, and the wait runs with the GIL released.
 - `handler.flush()` forces the worker to flush what it has queued, and returns
   `True` only when the worker acknowledges within the handler's flush timeout.
   Python `flush()` releases the GIL while it waits, so other Python threads

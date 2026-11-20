@@ -468,9 +468,12 @@ aborted, and nothing started after a drain began outlasts the budget's
 remainder. Worker termination is therefore bounded only loosely: by the budget
 plus one call already in flight when the deadline fell, and not at all for the
 two calls with no interruptible timeout, an already-started Unix-domain connect
-and TCP hostname resolution. `close()` stays bounded regardless because it
-detaches a worker that misses the deadline; worker termination itself carries
-no such promise.
+and TCP hostname resolution. `close()` does not wait on those past the
+deadline, because it detaches a worker that misses it, but the bound covers
+only the shutdown request and the acknowledgement wait: the join of a worker
+that acknowledges has no deadline, and the drop report, panic warning and
+abandonment warning are unbounded writes to the process-wide `log` sink. Worker
+termination itself carries no promise at all.
 
 `discard_rest` in each worker's module is the record of what that bound costs.
 Records still queued at the deadline are dropped and counted rather than sent,
@@ -1461,11 +1464,12 @@ Every drop counted by a handler or a logger goes through `RateLimitedWarner`
 drops not yet reported. `record_drop()` increments it. `warn_if_due()` swaps
 the counter to zero and hands the count to a reporting closure only when the
 warning interval has elapsed; a suppressed call puts back the count it took, so
-the next report carries every drop the warner had not yet reported, rather than
-only those the current call recorded. That carry-forward is the conservation
-invariant: no drop is discarded and none is handed to a callback twice. A call
-with nothing pending does not start an interval, so an idle poller cannot delay
-the next real warning.
+the next report carries every drop still in the counter when its caller drained
+it, rather than only those the current call recorded. A batch another caller
+has already drained is not included, even if that caller has not reported it
+yet. That carry-forward is the conservation invariant: no drop is discarded and
+none is handed to a callback twice. A call with nothing pending does not start
+an interval, so an idle poller cannot delay the next real warning.
 
 The counter is per warner, and one HTTP or socket handler has two of them. The
 handler owns one that its enqueue path counts into (queue full, worker
@@ -1587,8 +1591,11 @@ another thread may record drops between the swap and the fork, and those are
 copied like any other count. Not every pre-fork count is therefore duplicated.
 The duplication that does happen is accepted — avoiding it would need shared
 memory and a cross-process lock for a diagnostic counter — so the conservation
-guarantee is per process. Within one process no drop is lost or reported twice;
-neither process can report a drop the other recorded after the fork.
+guarantee is per process. Within one process each count is handed to at most
+one callback, so no drop is reported twice; a callback that panics before it
+writes its warning abandons its count, so successful reporting is not
+guaranteed. A drop is never restored to the counter after the callback has
+taken it. Neither process can report a drop the other recorded after the fork.
 
 The contracts are covered by `rust_extension/src/rate_limited_warner_tests.rs`
 (carry-forward, flush inside the window, empty calls),

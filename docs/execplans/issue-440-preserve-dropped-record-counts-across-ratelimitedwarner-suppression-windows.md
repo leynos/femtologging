@@ -1805,3 +1805,19 @@ after publishing emits its own batch late, so lines can appear out of recording
 order. The developers guide's carry-forward sentence now says "every drop the
 warner had not yet reported" for the same reason. `make fmt`, `check-fmt`,
 `markdownlint` and `nixie` pass on the corrected tree.
+
+2026-11-20: the review of `d2b68778` found that two of those corrections were
+themselves imprecise. "Every drop the warner had not yet reported" counts drops
+another caller has already drained but not yet reported, which the next drain
+does not see; the developers guide and migration guide now say "still in the
+counter when its caller drained it". "No drop is lost" ignored a callback that
+panics before writing: the count is handed off once and then abandoned, so the
+text now says each count reaches at most one callback and records that
+exception. The close contract was also incomplete in the other direction:
+`flush_timeout` bounds only the shutdown request and the acknowledgement wait,
+while the join of a worker that acknowledged has no deadline and the panic
+warning is a third unbounded write to the process-wide `log` sink, so the HTTP
+and socket paragraphs in the users guide, the HTTP shutdown contract and the
+developers guide now list those paths instead of claiming the whole of
+`close()` is bounded. `make fmt`, `check-fmt`, `markdownlint` and `nixie` pass
+on the corrected tree.

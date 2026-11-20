@@ -399,13 +399,18 @@ retains responsibility for importing arbitrary user-defined factories.
 
 ## HTTP handler shutdown contract
 
-`FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs` is
-bounded by `flush_timeout`, which the handler takes from `write_timeout`, apart
-from two process-wide `log` writes that are not covered by it: the drop-warning
-report described below, which runs first, and the abandonment warning described
-under `ShutdownOutcome::TimedOut`, which runs once the budget is spent. `Drop`
-calls `close`, so the same bound, and the same two uncovered writes, apply to a
-handler that is simply dropped.
+`FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs`
+bounds two steps by `flush_timeout`, which the handler takes from
+`write_timeout`: sending the shutdown request and waiting for the
+acknowledgement. Three other pieces of work are not covered by it, and the
+first two are the reasons `close` can outlast its budget even when the worker
+answers. Before the wait, `close` reports pending handler-side drops through
+the process-wide `log` sink. After an acknowledgement it joins the worker with
+no deadline, so thread-local destructors that block hold `close` past the
+budget, and a worker panic is then reported through the same sink. After a
+timeout it warns through that sink that the worker was abandoned. `Drop` calls
+`close`, so the same bound and the same uncovered work apply to a handler that
+is simply dropped.
 
 `close` first reports any pending handler-side dropped-record count through the
 process-wide `log` adapter. That report runs before the bounded shutdown
@@ -422,7 +427,10 @@ next reads a command, which a worker stuck mid-request does not do.
 - `ShutdownOutcome::Finished` covers an acknowledgement, a disconnected
   command channel, and a dropped acknowledgement channel. Each means the worker
   has left its loop or is leaving it, so `close` joins it. The join is kept
-  because it is what reports a worker panic.
+  because it is what reports a worker panic. It has no deadline: a worker that
+  has acknowledged but whose thread-local destructors block keeps `close`
+  waiting past `flush_timeout`, and the panic warning is a synchronous write to
+  the process-wide `log` sink, so a blocking sink delays `close` as well.
 - `ShutdownOutcome::TimedOut` covers a send or a receive that ran out of
   budget. `abandon_worker` logs a warning naming the budget and takes the join
   handle, so neither `close` nor a later `Drop` waits on it. That warning is a

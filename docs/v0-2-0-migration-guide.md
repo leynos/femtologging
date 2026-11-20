@@ -665,14 +665,17 @@ ______________________________________________________________________
 
 ## Dropped-record warning messages are cumulative
 
-Dropped-record warnings now report every drop the warner had not yet reported,
-rather than only the drops recorded during the window that triggered them. A
-suppression window carries its count into the next report, so the texts say
-"since the last report" rather than "in the last interval"; one report can
-cover several intervals. A report's count is the batch its own caller took, and
-the reports together cover every drop once. The lines can nevertheless appear
-out of recording order: a caller delayed after it publishes still emits its own
-batch, so an earlier batch can be reported after a later one.
+Dropped-record warnings now report every drop still in the counter when the
+reporting path drained it, rather than only the drops recorded during the
+window that triggered them. A suppression window carries its count into the
+next report, so the texts say "since the last report" rather than "in the last
+interval"; one report can cover several intervals. A report's count is the
+batch its own caller took: a batch another caller has already drained is not
+included, even if that caller has not reported it yet, and between them the
+reports account for every drop once unless a callback panicked before it wrote
+its warning. The lines can nevertheless appear out of recording order: a caller
+delayed after it publishes still emits its own batch, so an earlier batch can
+be reported after a later one.
 
 `flush()`, `close()`, and handler destruction now report any count still
 pending, unconditionally, instead of leaving it for a later interval that may
@@ -716,8 +719,8 @@ _Table 2: Dropped-record warning message changes in v0.2.0._
 
 Code that matches these strings, such as in `pytest.raises(match=...)` or an
 assertion over captured log records, must be updated. Operators reading these
-warnings should treat a count as everything the reporting path had not yet
-reported when it took its batch, which may span more than one warning interval.
+warnings should treat a count as everything still in the counter when the
+reporting path took its batch, which may span more than one warning interval.
 The lines can appear out of recording order, so the newest count is not a
 running total of everything since the previous line; sum the counts between two
 points in the log instead.
