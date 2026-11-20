@@ -69,10 +69,8 @@ fn build_rejects_missing_root() {
 
 #[rstest]
 #[serial]
-fn build_accepts_default_version(
-    _gil_and_clean_manager: (),
-    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-) {
+fn build_accepts_default_version(base_logger_builder: (ConfigBuilder, LoggerConfigBuilder)) {
+    gil_and_clean_manager();
     let (_, root) = base_logger_builder;
     let builder = ConfigBuilder::new().with_root_logger(root);
     assert!(builder.build_and_init().is_ok());
@@ -80,24 +78,28 @@ fn build_accepts_default_version(
 
 #[rstest]
 #[serial]
-fn shared_handler_attached_once(
-    _gil_and_clean_manager: (),
-    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-) {
+fn shared_handler_attached_once(base_logger_builder: (ConfigBuilder, LoggerConfigBuilder)) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["h"]);
         let (builder, _root) = base_logger_builder;
-        let builder = builder
+        let configured = builder
             .with_logger("first", logger_cfg.clone())
             .with_logger("second", logger_cfg);
-        builder.build_and_init().expect("build should succeed");
+        configured.build_and_init().expect("build should succeed");
         let first = manager::get_logger(py, "first").expect("get_logger('first') should succeed");
         let second =
             manager::get_logger(py, "second").expect("get_logger('second') should succeed");
         let h1 = first.borrow(py).handlers_for_test();
         let h2 = second.borrow(py).handlers_for_test();
+        let first_handler = h1
+            .first()
+            .expect("the first logger should expose its handler");
+        let second_handler = h2
+            .first()
+            .expect("the second logger should expose its handler");
         assert!(
-            Arc::ptr_eq(&h1[0], &h2[0]),
+            Arc::ptr_eq(first_handler, second_handler),
             "handler Arc pointers should be shared"
         );
     });
@@ -132,10 +134,10 @@ fn shared_handler_attached_once(
 })]
 #[serial]
 fn unknown_ids_rejected(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     #[case] case: UnknownIdCase,
 ) {
+    gil_and_clean_manager();
     let (_, root) = base_logger_builder;
     let builder = (case.add_resource)(
         ConfigBuilder::new()
@@ -149,7 +151,7 @@ fn unknown_ids_rejected(
             ids,
             case.expected_ids
                 .iter()
-                .map(|id| (*id).to_string())
+                .map(|id| (*id).to_owned())
                 .collect::<Vec<_>>()
         );
     } else {
@@ -160,9 +162,9 @@ fn unknown_ids_rejected(
 #[rstest]
 #[serial]
 fn reconfig_with_unknown_filter_preserves_existing_filters(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (_, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
@@ -193,7 +195,8 @@ fn reconfig_with_unknown_filter_preserves_existing_filters(
 // through the supported API surface.
 #[rstest]
 #[serial]
-fn failed_reconfiguration_preserves_unmentioned_loggers(_gil_and_clean_manager: ()) {
+fn failed_reconfiguration_preserves_unmentioned_loggers() {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let initial = builder_with_root(LoggerConfigBuilder::new())
             .with_logger("stale", LoggerConfigBuilder::new().with_handlers(["h"]));
@@ -220,7 +223,7 @@ fn failed_reconfiguration_preserves_unmentioned_loggers(_gil_and_clean_manager: 
             .expect("failed replacement must preserve stale attachment metadata");
         assert_eq!(
             stale.handler_ids(),
-            &["h".to_string()],
+            &["h".to_owned()],
             "failed replacement must not replace runtime attachment metadata",
         );
         assert_handler_count!(
@@ -234,7 +237,8 @@ fn failed_reconfiguration_preserves_unmentioned_loggers(_gil_and_clean_manager: 
 
 #[rstest]
 #[serial]
-fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) {
+fn default_level_configures_root_when_missing_level() {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let builder = ConfigBuilder::new()
             .with_handler("stderr", StreamHandlerBuilder::stderr())
@@ -260,7 +264,8 @@ fn default_level_configures_root_when_missing_level(_gil_and_clean_manager: ()) 
 
 #[rstest]
 #[serial]
-fn default_level_applies_to_child_loggers(_gil_and_clean_manager: ()) {
+fn default_level_applies_to_child_loggers() {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let child_cfg = LoggerConfigBuilder::new().with_handlers(["console"]);
         let builder = ConfigBuilder::new()

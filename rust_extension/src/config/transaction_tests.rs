@@ -65,7 +65,7 @@ fn snapshot_runtime_attachments() -> RuntimeAttachmentSnapshot {
         handlers: runtime
             .handler_registry
             .iter()
-            .map(|(id, handler)| (id.clone(), Arc::as_ptr(handler) as *const () as usize))
+            .map(|(id, handler)| (id.clone(), Arc::as_ptr(handler).cast::<()>() as usize))
             .collect(),
         handler_filter_ids: runtime
             .handler_filter_ids
@@ -75,7 +75,7 @@ fn snapshot_runtime_attachments() -> RuntimeAttachmentSnapshot {
         filters: runtime
             .filter_registry
             .iter()
-            .map(|(id, filter)| (id.clone(), Arc::as_ptr(filter) as *const () as usize))
+            .map(|(id, filter)| (id.clone(), Arc::as_ptr(filter).cast::<()>() as usize))
             .collect(),
         logger_states: runtime
             .logger_states
@@ -176,18 +176,23 @@ fn prepare_rejection_baseline(
         .with_logger("keep", keep_logger_builder())
         .with_logger("stale", LoggerConfigBuilder::new().with_handlers(["h"]))
         .build_and_init()
-        .expect("stage one should succeed");
+        .map_err(|err| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("stage one should succeed: {err}"))
+        })?;
     transactional_builder(root.clone())
         .with_logger("keep", keep_logger_builder())
         .with_disable_existing_loggers(true)
         .build_and_init()
-        .expect("stage two should succeed");
+        .map_err(|err| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("stage two should succeed: {err}"))
+        })?;
 
-    let stale = manager::lookup_existing_logger(py, "stale").expect("stale exists");
-    assert!(
-        stale.borrow(py).is_disabled(),
-        "the baseline must include a logger a previous configuration disabled",
-    );
+    let stale = manager::lookup_existing_logger(py, "stale")?;
+    if !stale.borrow(py).is_disabled() {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "the baseline must include a logger a previous configuration disabled",
+        ));
+    }
 
     capture_transaction_state(py)
 }
@@ -208,9 +213,10 @@ fn assert_rejected_configuration_changes_nothing(
     let before = prepare_rejection_baseline(py, &root).expect("baseline logger exists");
 
     let invalid = mutate(transactional_builder(root).with_disable_existing_loggers(true));
-    invalid
-        .build_and_init()
-        .expect_err("the invalid configuration must be rejected");
+    assert!(
+        invalid.build_and_init().is_err(),
+        "the invalid configuration must be rejected",
+    );
 
     let after = capture_transaction_state(py).expect("logger survives a rejection");
     assert_eq!(
@@ -233,10 +239,10 @@ fn assert_rejected_configuration_changes_nothing(
 #[case::invalid_logger_name(InvalidLoggerConfiguration::InvalidLoggerName)]
 #[serial]
 fn invalid_logger_configuration_rolls_back_every_logger(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     #[case] invalid_configuration: InvalidLoggerConfiguration,
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (_, root) = base_logger_builder;
         assert_rejected_configuration_changes_nothing(py, root, |builder| {
@@ -248,9 +254,9 @@ fn invalid_logger_configuration_rolls_back_every_logger(
 #[rstest]
 #[serial]
 fn omitted_logger_that_was_already_disabled_is_not_disturbed(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         builder
@@ -289,9 +295,9 @@ fn omitted_logger_that_was_already_disabled_is_not_disturbed(
 #[rstest]
 #[serial]
 fn accepted_configuration_registers_missing_ancestors(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|_py| {
         let (builder, _root) = base_logger_builder;
         builder

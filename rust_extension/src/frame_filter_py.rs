@@ -98,6 +98,10 @@ fn optional_frame_fields(dict: &Bound<'_, PyDict>) -> PyResult<OptionalFrameFiel
     })
 }
 
+#[cfg(test)]
+#[path = "frame_filter_py_required_field_tests.rs"]
+mod required_field_tests;
+
 /// Extract a StackFrame from a Python dict.
 fn dict_to_stack_frame(dict: &Bound<'_, PyDict>) -> PyResult<StackFrame> {
     let filename: String = required_field(dict, "filename")?;

@@ -372,3 +372,7 @@ pub fn formatter_from_py(obj: &Bound<'_, PyAny>) -> PyResult<SharedFormatter> {
             context
         })
 }
+
+#[cfg(test)]
+#[path = "python_tests.rs"]
+mod tests;

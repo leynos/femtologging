@@ -83,11 +83,11 @@ fn apply_mutation_to_logger(
         mutation.filters.apply(existing.filter_ids()),
     );
     resolve_attachment_ids(&next, known)?;
-    logger_states.insert(name.to_string(), next);
+    logger_states.insert(name.to_owned(), next);
     Ok(())
 }
 /// Reports whether a non-empty append or remove operation needs existing metadata.
-fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
+const fn requires_existing_baseline(mutation: &CollectionMutation) -> bool {
     matches!(
         mutation,
         CollectionMutation::Append(ids) | CollectionMutation::Remove(ids) if !ids.is_empty()

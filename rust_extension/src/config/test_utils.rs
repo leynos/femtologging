@@ -53,9 +53,13 @@ pub mod prune_test_support {
         configured_baseline()
     }
 
-    /// Build the stderr-handler baseline, leaving the manager reset first.
+    /// Reset the manager, then build the stderr-handler baseline.
+    ///
+    /// The reset is part of the fixture rather than something a caller
+    /// remembers, so the name says so.
     #[fixture]
-    pub fn configured_core_logger(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
+    pub fn configured_core_logger_after_reset() -> Result<(), ConfigError> {
+        gil_and_clean_manager();
         configured_baseline()
     }
 

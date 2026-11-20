@@ -10,7 +10,9 @@ use super::{
     ConfigBuilder, ConfigError, LoggerConfigBuilder, LoggerMutationBuilder, RuntimeConfigBuilder,
     test_utils::{
         gil_and_clean_manager,
-        prune_test_support::{configured_core_logger, published_filters, published_handlers},
+        prune_test_support::{
+            configured_core_logger_after_reset, published_filters, published_handlers,
+        },
     },
 };
 use crate::{
@@ -23,8 +25,10 @@ use serial_test::serial;
 
 #[rstest]
 #[serial]
-fn unused_definition_rejected_before_build(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn unused_definition_rejected_before_build(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
     let dir = tempfile::tempdir().expect("tempdir must create a temporary directory");
     let path = dir.path().join("orphan.log");
 
@@ -55,8 +59,10 @@ fn unused_definition_rejected_before_build(configured_core_logger: Result<(), Co
 
 #[rstest]
 #[serial]
-fn unused_filter_definition_rejected_before_build(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn unused_filter_definition_rejected_before_build(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     let err = RuntimeConfigBuilder::new()
         .with_filter(
@@ -72,7 +78,7 @@ fn unused_filter_definition_rejected_before_build(configured_core_logger: Result
         "the rejection must name the unreferenced filter, got {err}",
     );
     assert_eq!(
-        (1, vec!["lvl".to_string()]),
+        (1, vec!["lvl".to_owned()]),
         published_filters(),
         "a rejected mutation must not change the published filter registry",
     );
@@ -80,8 +86,10 @@ fn unused_filter_definition_rejected_before_build(configured_core_logger: Result
 
 #[rstest]
 #[serial]
-fn empty_mutation_leaves_registries_unchanged(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn empty_mutation_leaves_registries_unchanged(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         let before_handlers = published_handlers();
@@ -107,9 +115,9 @@ fn empty_mutation_leaves_registries_unchanged(configured_core_logger: Result<(),
 #[rstest]
 #[serial]
 fn define_and_attach_in_one_transaction_publishes_definition(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         RuntimeConfigBuilder::new()
@@ -122,7 +130,7 @@ fn define_and_attach_in_one_transaction_publishes_definition(
             .expect("attaching the definition in the same transaction must succeed");
 
         assert_eq!(
-            (2, vec!["stderr".to_string(), "stdout".to_string()]),
+            (2, vec!["stderr".to_owned(), "stdout".to_owned()]),
             published_handlers(),
             "the attached definition must be published alongside the existing one",
         );
@@ -132,9 +140,9 @@ fn define_and_attach_in_one_transaction_publishes_definition(
 #[rstest]
 #[serial]
 fn removing_last_handler_reference_prunes_definition(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         RuntimeConfigBuilder::new()
@@ -155,7 +163,8 @@ fn removing_last_handler_reference_prunes_definition(
 
 #[rstest]
 #[serial]
-fn removing_one_of_two_references_keeps_definition(_gil_and_clean_manager: ()) {
+fn removing_one_of_two_references_keeps_definition() {
+    gil_and_clean_manager();
     Python::attach(|_py| {
         let logger_cfg = LoggerConfigBuilder::new().with_handlers(["shared"]);
         ConfigBuilder::new()
@@ -175,7 +184,7 @@ fn removing_one_of_two_references_keeps_definition(_gil_and_clean_manager: ()) {
             .expect("removing one of two references must succeed");
 
         assert_eq!(
-            (1, vec!["shared".to_string()]),
+            (1, vec!["shared".to_owned()]),
             published_handlers(),
             "a definition another logger still references must survive pruning",
         );
@@ -184,8 +193,10 @@ fn removing_one_of_two_references_keeps_definition(_gil_and_clean_manager: ()) {
 
 #[rstest]
 #[serial]
-fn detaching_and_redefining_same_id_is_rejected(configured_core_logger: Result<(), ConfigError>) {
-    configured_core_logger.expect("initial build should succeed");
+fn detaching_and_redefining_same_id_is_rejected(
+    configured_core_logger_after_reset: Result<(), ConfigError>,
+) {
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         let err = RuntimeConfigBuilder::new()
@@ -200,7 +211,7 @@ fn detaching_and_redefining_same_id_is_rejected(configured_core_logger: Result<(
             "the rejection must name the detached identifier, got {err}",
         );
         assert_eq!(
-            (1, vec!["stderr".to_string()]),
+            (1, vec!["stderr".to_owned()]),
             published_handlers(),
             "a rejected replacement must leave the registry untouched",
         );
@@ -209,7 +220,8 @@ fn detaching_and_redefining_same_id_is_rejected(configured_core_logger: Result<(
 
 #[rstest]
 #[serial]
-fn bootstrap_prunes_definition_no_logger_references(_gil_and_clean_manager: ()) {
+fn bootstrap_prunes_definition_no_logger_references() {
+    gil_and_clean_manager();
     Python::attach(|_py| {
         ConfigBuilder::new()
             .with_handler("attached", StreamHandlerBuilder::stderr())
@@ -227,12 +239,12 @@ fn bootstrap_prunes_definition_no_logger_references(_gil_and_clean_manager: ()) 
             .expect("bootstrap must still build every declared definition");
 
         assert_eq!(
-            (1, vec!["attached".to_string()]),
+            (1, vec!["attached".to_owned()]),
             published_handlers(),
             "bootstrap must publish only reachable handler definitions",
         );
         assert_eq!(
-            (1, vec!["filter".to_string()]),
+            (1, vec!["filter".to_owned()]),
             published_filters(),
             "bootstrap must publish only reachable filter definitions",
         );
@@ -241,9 +253,8 @@ fn bootstrap_prunes_definition_no_logger_references(_gil_and_clean_manager: ()) 
 
 #[rstest]
 #[serial]
-fn handler_filter_definition_survives_only_while_its_handler_is_attached(
-    _gil_and_clean_manager: (),
-) {
+fn handler_filter_definition_survives_only_while_its_handler_is_attached() {
+    gil_and_clean_manager();
     ConfigBuilder::new()
         .with_handler(
             "filtered",
@@ -258,7 +269,7 @@ fn handler_filter_definition_survives_only_while_its_handler_is_attached(
         .expect("bootstrap must retain filters referenced by an attached handler");
 
     assert_eq!(
-        (1, vec!["handler-filter".to_string()]),
+        (1, vec!["handler-filter".to_owned()]),
         published_filters(),
         "a handler-level filter is reachable through its attached handler",
     );
@@ -278,9 +289,9 @@ fn handler_filter_definition_survives_only_while_its_handler_is_attached(
 #[rstest]
 #[serial]
 fn unknown_definition_id_takes_precedence_over_unreachable_rejection(
-    configured_core_logger: Result<(), ConfigError>,
+    configured_core_logger_after_reset: Result<(), ConfigError>,
 ) {
-    configured_core_logger.expect("initial build should succeed");
+    configured_core_logger_after_reset.expect("initial build should succeed");
 
     Python::attach(|_py| {
         let err = RuntimeConfigBuilder::new()
@@ -293,7 +304,7 @@ fn unknown_definition_id_takes_precedence_over_unreachable_rejection(
             .expect_err("an unknown attachment id must be rejected");
 
         assert!(
-            matches!(err, ConfigError::UnknownIds(ref ids) if ids == &["missing".to_string()]),
+            matches!(err, ConfigError::UnknownIds(ref ids) if ids == &["missing".to_owned()]),
             "UnknownIds must take precedence over the unreferenced-definition rejection, got {err}",
         );
     });
