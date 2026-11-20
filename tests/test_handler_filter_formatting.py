@@ -32,6 +32,13 @@ def _format_key_values(record: cabc.Mapping[str, object]) -> str:
     return repr(metadata["key_values"])
 
 
+def _message_only(record: cabc.Mapping[str, object]) -> str:
+    """Return the raw record message, preserving its line separators."""
+    message = record["message"]
+    assert isinstance(message, str), "formatter record message must be text"
+    return message
+
+
 def test_invalid_handler_filter_ids_do_not_create_file(
     tmp_path: Path,
 ) -> None:
@@ -292,6 +299,44 @@ def test_formatter_builder_defaults_to_message_format(tmp_path: Path) -> None:
 
     assert path.read_text().strip() == "default formatter output", (
         "a FormatterBuilder without an explicit format should render the message"
+    )
+
+
+@pytest.mark.parametrize(
+    "formatter_source",
+    [
+        pytest.param("percent", id="percent-message-field"),
+        pytest.param("callable", id="python-callable"),
+    ],
+)
+def test_configured_formatters_receive_raw_multiline_message(
+    tmp_path: Path, formatter_source: typ.Literal["percent", "callable"]
+) -> None:
+    """Configured formatters keep the raw message; only the default escapes it."""
+    path = tmp_path / f"raw-{formatter_source}.log"
+    handler = FileHandlerBuilder(str(path)).with_flush_after_records(1)
+    if formatter_source == "percent":
+        handler = handler.with_formatter(FormatterBuilder().with_format("%(message)s"))
+    else:
+        handler = handler.with_formatter(_message_only)
+    config = (
+        ConfigBuilder()
+        .with_version(1)
+        .with_handler("output", handler)
+        .with_root_logger(
+            LoggerConfigBuilder().with_level("INFO").with_handlers(["output"])
+        )
+    )
+
+    try:
+        config.build_and_init()
+        get_logger("app").info("first\nsecond")
+        assert get_logger("root").flush_handlers(), "root handler delivery should flush"
+    finally:
+        reset_manager()
+
+    assert path.read_bytes() == b"first\nsecond\n", (
+        "a configured formatter must receive and preserve the raw message"
     )
 
 
