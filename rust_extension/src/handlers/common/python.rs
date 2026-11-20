@@ -224,7 +224,37 @@ mod tests {
 
     use std::time::Duration;
 
+    use proptest::prelude::*;
+
     use super::*;
+
+    // The written millisecond count must be the duration truncated to
+    // milliseconds, saturating at `u64::MAX` rather than wrapping. `nanos`
+    // stays below one second so `Duration::new` cannot carry into `secs` and
+    // overflow for a `secs` near `u64::MAX`.
+    proptest! {
+        #[test]
+        fn timeout_ms_is_the_truncated_millisecond_count(
+            secs in any::<u64>(),
+            nanos in 0_u32..1_000_000_000,
+        ) {
+            let duration = Duration::new(secs, nanos);
+            let policy = OverflowPolicy::Timeout(duration);
+            let expected = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+
+            let written = Python::attach(|py| -> PyResult<u64> {
+                let fields = PyDict::new(py);
+                write_overflow_policy_fields(&fields, &policy)?;
+                fields
+                    .get_item("timeout_ms")?
+                    .expect("timeout_ms must be present")
+                    .extract::<u64>()
+            })
+            .expect("writing the timeout fields must succeed");
+
+            prop_assert_eq!(written, expected);
+        }
+    }
 
     #[test]
     fn overflowing_timeout_saturates_instead_of_failing() {
