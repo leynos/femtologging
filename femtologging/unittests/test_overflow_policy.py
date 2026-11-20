@@ -24,9 +24,28 @@ except ImportError:  # pragma: no cover - only on interpreters lacking Hypothesi
     _TIMEOUT_ROUND_TRIP_PROPERTY = pytest.mark.skip(
         reason="the timeout round-trip property needs Hypothesis"
     )
+    _TIMEOUT_PAIR_PROPERTY = pytest.mark.skip(
+        reason="the timeout equality property needs Hypothesis"
+    )
+    _UNRELATED_OBJECT_PROPERTY = pytest.mark.skip(
+        reason="the equality complementarity property needs Hypothesis"
+    )
 else:
-    _TIMEOUT_ROUND_TRIP_PROPERTY = given(
-        timeout_ms=st.integers(min_value=1, max_value=_U64_MAX)
+    _TIMEOUT_MS_STRATEGY = st.integers(min_value=1, max_value=_U64_MAX)
+    _TIMEOUT_ROUND_TRIP_PROPERTY = given(timeout_ms=_TIMEOUT_MS_STRATEGY)
+    _TIMEOUT_PAIR_PROPERTY = given(
+        first_ms=_TIMEOUT_MS_STRATEGY,
+        second_ms=_TIMEOUT_MS_STRATEGY,
+    )
+    _UNRELATED_OBJECT_PROPERTY = given(
+        other=st.one_of(
+            st.none(),
+            st.booleans(),
+            st.integers(),
+            st.text(max_size=8),
+            st.floats(allow_nan=False, allow_infinity=False),
+            st.lists(st.integers(), max_size=3),
+        )
     )
 
 
@@ -104,6 +123,39 @@ def test_policy_differs_from_an_unrelated_object() -> None:
     assert OverflowPolicy.drop() != object(), (
         "a policy must not equal an unrelated object"
     )
+    assert (OverflowPolicy.drop() == object()) is False, (
+        "the equality path must agree with the inequality path"
+    )
+
+
+@_TIMEOUT_PAIR_PROPERTY
+def test_timeout_equality_and_hash_track_the_duration(
+    first_ms: int, second_ms: int
+) -> None:
+    """Timeout policies compare and hash by their millisecond duration."""
+    first = OverflowPolicy.timeout(first_ms)
+    second = OverflowPolicy.timeout(second_ms)
+
+    assert (first == second) is (first_ms == second_ms), (
+        "timeout policies must compare equal exactly when their durations match"
+    )
+    assert (first != second) is (first_ms != second_ms), (
+        "inequality must stay the complement of equality"
+    )
+    assert hash(first) == hash(OverflowPolicy.timeout(first_ms)), (
+        "equal timeout policies must hash alike so they work as dictionary keys"
+    )
+
+
+@_UNRELATED_OBJECT_PROPERTY
+def test_equality_with_unrelated_objects_is_complementary(other: object) -> None:
+    """``==`` and ``!=`` are exact complements for a non-policy operand."""
+    policy = OverflowPolicy.timeout(250)
+
+    assert (policy == other) is False, (
+        "a policy must not equal an object that is not a policy"
+    )
+    assert (policy != other) is True, "inequality must stay the complement of equality"
 
 
 def test_hash_consistency() -> None:
