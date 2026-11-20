@@ -12,7 +12,6 @@
 mod max_level;
 
 use std::borrow::Cow;
-use std::io::Write;
 use std::sync::{Arc, OnceLock, atomic::AtomicU8};
 
 use log::{Metadata, Record};
@@ -25,7 +24,9 @@ use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::manager;
 
 mod diagnostics;
-use diagnostics::{mirror_ignored_warning, resolve_logger, should_ignore_target};
+use diagnostics::{
+    mirror_ignored_warning, report_diagnostic, resolve_logger, should_ignore_target,
+};
 
 /// Adapter implementing the Rust `log::Log` trait.
 ///
@@ -169,11 +170,9 @@ impl log::Log for FemtoLogAdapter {
             return;
         }
         if should_ignore_target(record.target()) {
-            // A failed diagnostic write must not take down the logging path, so
-            // the write result is discarded rather than propagated.
-            mirror_ignored_warning(record, |message| {
-                drop(writeln!(std::io::stderr(), "{message}"));
-            });
+            // The warning mirrors out of band, and a failed write stops at the
+            // boundary documented by `report_diagnostic`.
+            mirror_ignored_warning(record, |message| report_diagnostic(*message));
             return;
         }
 
