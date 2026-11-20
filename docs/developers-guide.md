@@ -375,12 +375,12 @@ export.
 
 An HTTP handler delivers on a dedicated worker thread, and `ureq` reports its
 own progress through the `log` and `tracing` facades as DEBUG records under
-`ureq.unit`, `ureq.stream`, and `ureq.pool`. With either bridge installed those
-records are ordinary records that a target route can send back to the handler
-that produced them, so each successful delivery would manufacture the next one.
-`rust_extension/src/http_handler/transport_origin.rs` is the guard that stops
-the loop. It lives under the HTTP adapter, because the worker is its only
-producer.
+`ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver`. With either bridge
+installed those records are ordinary records that a target route can send back
+to the handler that produced them, so each successful delivery would
+manufacture the next one. `rust_extension/src/http_handler/transport_origin.rs`
+is the guard that stops the loop. It lives under the HTTP adapter, because the
+worker is its only producer.
 
 The module holds a thread-local `Cell<bool>` rather than process-wide state:
 two HTTP handlers on different threads must not hide each other's ordinary
@@ -429,11 +429,11 @@ still receive the record, which keeps independent diagnostics available.
 
 Suppression is silent and has no counter or summary of its own. Most of the
 records it discards are the transport library's own DEBUG output, so a
-maintainer who needs to see them raises the `ureq` targets (`ureq.unit`,
-`ureq.stream`, `ureq.pool`) to DEBUG and watches a non-HTTP sink. A record that
-appears there and never arrives at the endpoint is evidence of suppression
-rather than an exact count, because a filter or a failed delivery can also
-account for an absence; comparing the two sinks is the route
+maintainer who needs to see them raises the `ureq` targets (`ureq.run`,
+`ureq.pool`, `ureq.unversioned.resolver`) to DEBUG and watches a non-HTTP sink.
+A record that appears there and never arrives at the endpoint is evidence of
+suppression rather than an exact count, because a filter or a failed delivery
+can also account for an absence; comparing the two sinks is the route
 `tests/http_transport_feedback_tests.rs` takes. A counter would need a
 diagnostics surface this handler does not have. Its only existing signal is the
 drop warner, and a suppressed record is deliberately not a drop; bounded
@@ -442,8 +442,8 @@ handler telemetry is tracked separately by #551.
 The behavioural regression is `tests/http_transport_feedback_tests.rs`. Each
 variant runs in a fresh child process under a watchdog against a local TCP
 collector, enables real `ureq` DEBUG diagnostics, and requires delivery to stop
-after the initiating records: two application requests arrive, the `ureq.unit`
-diagnostic reaches a non-HTTP file sink, and a quiet window then passes with no
+after the initiating records: two application requests arrive, the `ureq.run`
+diagnostics reach a non-HTTP file sink, and a quiet window then passes with no
 further request and no overflow. The child, its assertions, and the process
 supervisor live in `tests/http_transport_feedback/`, where Cargo treats them as
 modules rather than as separate test crates.
@@ -452,6 +452,63 @@ The marker is deliberately narrow. A record that Python code rebuilds from a
 marked record is a new application record, records passed directly to the
 three-argument `handle` method carry no marker, and socket handlers do not
 suppress marked records.
+
+### HTTP transport module boundaries
+
+`rust_extension/src/http_handler/transport.rs` owns one HTTP attempt. The
+worker in `http_handler/worker.rs` builds its agent through
+`transport::build_agent` and delegates each request to `transport::execute`,
+which resolves the headers, builds the first request, sends it, follows what
+the redirect chain permits, and classifies the response. Keep the retry
+deadline and the shutdown budget in `worker.rs`; they are not transport
+decisions. `transport::validate_request_headers` is the builder-facing
+validation seam. `HTTPHandlerBuilder::build_config` calls it before it applies
+the backoff overrides, so a header name, value, or credential the client cannot
+send is reported as a configuration error instead of failing on every attempt.
+
+Two decisions are deliberately not ureq's.
+
+- `http_handler/redirect.rs` decides whether a 3xx response is followed, using
+  ureq 2's rules. ureq 3 follows every 3xx with a `Location` and raises an
+  error for a redirect it will not replay, so the agent runs with
+  `max_redirects(0)` and `max_redirects_will_error(false)` and the chain is
+  walked here. The decision is a pure function of the current URL, method,
+  status, `Location` header and the number of responses already seen, which is
+  why its unit tests need no listener.
+- Each request target is parsed with `url::Url` immediately before it is sent,
+  rather than with ureq 3's `http::Uri`. ureq 2 parsed every request that way,
+  so this keeps a percent-encoded path and a GET payload's position in the
+  query identical to what the handler sent before. The builder validates the
+  configured endpoint with the same parser, in
+  `handlers/http_builder/validation.rs`, and stores it as configured.
+
+The agent also pins the settings whose ureq 3 defaults differ from the ureq 2
+behaviour the handler had: Rustls with the bundled WebPKI roots, no proxy
+discovery, status codes left to the classifier, and
+`RedirectAuthHeaders::Never` as the statement of the credential policy the
+chain applies. Each has a contract test in `request_shape_tests.rs`,
+`redirect_tests.rs` or `tls_tests.rs` that fails when the setting is dropped,
+not merely when the module stops compiling.
+
+The dependencies follow that split. `ureq` is version 3.4 with its default
+`rustls` and `gzip` features, which replace ureq 2's `native-tls` option;
+`native-tls` remains a dev-dependency, used only by the TLS fixture server.
+`ureq-proto` is no longer a direct dependency: the chain is walked in-crate, so
+no ureq protocol error variant has to be named. `rcgen` is a dev-dependency
+that only the TLS fixture uses to mint its throwaway certificate.
+
+The TLS tests are gated with `#[cfg(all(test, not(target_os = "windows")))]`
+because the fixture's rcgen ECDSA PKCS#8 identity cannot be loaded by
+native-tls's Schannel backend. The limit applies to the fixture only. The
+production client uses Rustls with the bundled roots on every platform, which
+is what `the_production_agent_trusts_the_bundled_webpki_roots` asserts.
+
+`scripts/release_wheel_probe.py` proves the installed wheel can deliver a
+record, because the location and test-hook checks cannot.
+`http_behaviour_errors` runs only after those checks pass. It starts a loopback
+collector, builds a handler through the installed extension, sends one record,
+and waits up to ten seconds. A failure means no request arrived, the request
+used the wrong path, or its body did not contain the probe message.
 
 ### Handler shutdown signal, clock and condition-variable seams
 

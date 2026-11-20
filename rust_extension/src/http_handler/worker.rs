@@ -25,11 +25,15 @@
 //! handler callback reached during dispatch emits an ordinary record instead
 //! of inheriting the marker.
 
-use std::{io, sync::Arc, time::Instant};
+use std::{
+    io,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
-use ureq::{Agent, AgentBuilder};
+use ureq::Agent;
 
 use crate::{
     log_record::FemtoLogRecord,
@@ -40,11 +44,11 @@ use crate::{
 };
 
 use super::{
-    config::{HTTPHandlerConfig, HTTPMethod, SerializationFormat},
+    config::{HTTPHandlerConfig, SerializationFormat},
     queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
-    request_auth::{apply_auth, apply_headers},
-    response::{ResponseClass, classify_status},
+    response::ResponseClass,
     serialize::{serialize_json, serialize_url_encoded},
+    transport::{build_agent, execute},
     transport_origin::enter_http_transport,
 };
 
@@ -86,6 +90,18 @@ fn worker_loop(rx: Receiver<HTTPCommand>, config: HTTPHandlerConfig, signal: Arc
     Worker::new(config, signal).run(rx);
 }
 
+/// The transport and the time budget for one attempt.
+///
+/// The two are decided together so the deadline the transport enforces is the
+/// one the agent was built for; reading the shutdown budget twice could hand a
+/// chain a budget the agent never bounded.
+struct Attempt {
+    /// Agent the attempt is sent with, pooled outside a drain.
+    agent: Agent,
+    /// Deadline for the whole attempt, redirects included.
+    budget: Duration,
+}
+
 /// Owns HTTP request state and retry policy for one worker thread.
 struct Worker {
     /// Request settings used to encode and send each record.
@@ -103,10 +119,7 @@ struct Worker {
 impl Worker {
     /// Create a worker; it starts with the configured HTTP timeouts.
     fn new(config: HTTPHandlerConfig, signal: Arc<ShutdownSignal>) -> Self {
-        let agent = AgentBuilder::new()
-            .timeout_connect(config.connect_timeout)
-            .timeout(config.write_timeout)
-            .build();
+        let agent = build_agent(config.connect_timeout, config.write_timeout);
         let backoff = BackoffState::new(config.backoff.clone());
         let warner = RateLimitedWarner::new(config.warn_interval);
         Self {
@@ -147,12 +160,12 @@ impl Worker {
                 self.warn_shutdown_drops();
                 return;
             }
-            let Some(agent) = self.agent_for_attempt() else {
+            let Some(attempt) = self.agent_for_attempt() else {
                 self.warn_shutdown_drops();
                 return;
             };
             let now = Instant::now();
-            let result = self.execute_request(payload, &agent);
+            let result = self.execute_request(payload, &attempt);
             match result {
                 Ok(ResponseClass::Success) => {
                     self.backoff.record_success(now);
@@ -177,79 +190,34 @@ impl Worker {
         }
     }
 
-    /// The agent to send the next attempt with, or `None` if there is no time
+    /// The agent and budget for the next attempt, or `None` if there is no time
     /// left to send one.
     ///
-    /// While the signal is running this is the pooled agent, so ordinary
-    /// traffic keeps its connection reuse. Once a drain begins, a fresh agent
-    /// is built around the remaining budget instead, because ureq's
-    /// `timeout_connect` takes precedence over the per-request deadline when
-    /// both are set: a pooled agent carrying the configured connect timeout
-    /// would let one attempt run that timeout past the deadline the handler is
-    /// waiting on, however short the request timeout it was handed.
-    fn agent_for_attempt(&self) -> Option<Agent> {
+    /// While the signal is running this is the pooled agent and the configured
+    /// write timeout, so ordinary traffic keeps its connection reuse. Once a
+    /// drain begins, a fresh agent is built around the remaining budget
+    /// instead, so no attempt can outlive the deadline the handler is waiting
+    /// on. ureq 3 checks its global timeout in every phase, connection
+    /// establishment included, so passing the budget as the global timeout
+    /// bounds the connect as well as everything after it. The same budget is
+    /// handed to the chain, so a redirect cannot restart it either.
+    fn agent_for_attempt(&self) -> Option<Attempt> {
         if !self.signal.is_shutting_down() {
-            return Some(self.agent.clone());
+            return Some(Attempt {
+                agent: self.agent.clone(),
+                budget: self.config.write_timeout,
+            });
         }
         let budget = self.signal.remaining()?;
-        Some(
-            AgentBuilder::new()
-                .timeout_connect(budget.min(self.config.connect_timeout))
-                .timeout(budget)
-                .build(),
-        )
+        Some(Attempt {
+            agent: build_agent(self.config.connect_timeout, budget),
+            budget,
+        })
     }
 
     /// Execute one request; HTTP 503 is classified as retryable.
-    fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
-        // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
-        let request = match self.config.method {
-            HTTPMethod::GET => self.build_get_request(payload, agent),
-            HTTPMethod::POST => self.build_post_request(payload, agent),
-        };
-
-        match request {
-            Ok(response) => Ok(classify_status(response.status())),
-            Err(err) => match *err {
-                ureq::Error::Status(code, _) => Ok(classify_status(code)),
-                ureq::Error::Transport(transport_err) => Err(transport_err.to_string()),
-            },
-        }
-    }
-
-    /// Build a GET request; the payload follows any existing query data.
-    fn build_get_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let url = if self.config.url.contains('?') {
-            format!("{}&{}", self.config.url, payload)
-        } else {
-            format!("{}?{}", self.config.url, payload)
-        };
-        let mut req = agent.get(&url);
-        req = apply_auth(&self.config, req);
-        req = apply_headers(&self.config, req);
-        req.call().map_err(Box::new)
-    }
-
-    /// Build a POST request; JSON format sends an `application/json` body.
-    fn build_post_request(
-        &self,
-        payload: &str,
-        agent: &Agent,
-    ) -> Result<ureq::Response, Box<ureq::Error>> {
-        let mut req = agent.post(&self.config.url);
-        req = apply_auth(&self.config, req);
-        req = apply_headers(&self.config, req);
-
-        let content_type = match self.config.format {
-            SerializationFormat::UrlEncoded => "application/x-www-form-urlencoded",
-            SerializationFormat::Json => "application/json",
-        };
-        req = req.set("Content-Type", content_type);
-        req.send_string(payload).map_err(Box::new)
+    fn execute_request(&self, payload: &str, attempt: &Attempt) -> Result<ResponseClass, String> {
+        execute(&self.config, &attempt.agent, payload, attempt.budget)
     }
 
     /// Logs a retryable failure, then says whether this record gets another

@@ -391,15 +391,17 @@ balances the three drivers listed above.
 
 <!-- markdownlint-disable MD056 -->
 
-| Question                           | Decision                                                        | Rationale                                                                                                                                                                                                         |
-| ---------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Serialization format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                      |
-| **HTTP client library**            | `ureq` 2.x with `native-tls` feature                            | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency.                                                                                                      |
-| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                  |
-| **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                               |
-| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms. |
-| **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.         |
-| **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults match `ureq` library defaults when not specified.                                                                 |
+| Question                           | Decision                                                        | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Serialization format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                                                                                                                                                                                                                                                  |
+| **HTTP client library**            | `ureq` 3.4 with its default `rustls` and `gzip` features        | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency. Rustls with bundled WebPKI roots is what the handler already used under ureq 2.                                                                                                                                                                                                                                                  |
+| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                                                                                                                                                                                                                                              |
+| **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                                                                                                                                                                                                                                                           |
+| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms.                                                                                                                                                                                                                             |
+| **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.                                                                                                                                                                                                                                     |
+| **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults are 5 seconds to connect and 30 seconds per attempt, set by the handler. ureq 3 checks its global timeout in every phase, so connection establishment is bounded by `write_timeout` as well: a `connect_timeout` larger than `write_timeout` fails sooner than under ureq 2, and the verdict is unchanged.                                    |
+| **Redirect handling**              | `max_redirects(0)` with an in-crate chain                       | ureq 3's follower reads the redirect body before it decides, which turned a stalled 307/308 body into a retryable transport error. The transport walks the chain itself, applying the ureq 2 rules: four redirects are followed, the fifth is a transport failure, and no response body is ever read. Each hop gets only the time left in the attempt's timeout, so a chain cannot multiply it, and the pooled agent is reused for every hop. |
+| **Endpoint handling**              | Stored as configured, parsed per request target                 | `url::Url` parses and percent-encodes the endpoint when each request is built, which is what ureq 2 did. The builder validates the endpoint once, so an unparsable URL fails at build time rather than on every attempt.                                                                                                                                                                                                                      |
 
 <!-- markdownlint-enable MD056 -->
 
@@ -413,6 +415,9 @@ The handler follows this structure:
 - **Backoff and retry**: Reuse `BackoffPolicy` from `FemtoSocketHandler` for
   transient failures (network errors, 5xx responses). Permanent failures (4xx)
   do not trigger retry.
+- **Redirects and bodies**: The agent runs with `max_redirects(0)` and
+  `max_redirects_will_error(false)`; `redirect::next_hop` walks the chain
+  in-crate, and the worker never reads a response body, redirect or final.
 - **TLS/HTTPS**: Support secure connections with optional certificate
   verification bypass for testing, mirroring `FemtoSocketHandler`'s TLS options.
 - **Builder pattern**: `HTTPHandlerBuilder` implementing `HandlerBuilderTrait`,
@@ -1248,21 +1253,21 @@ while maximum refresh reads the index without taking the manager lock.
 **HTTP Transport Origin:**
 
 HTTP handlers deliver on a dedicated worker thread. `ureq` reports DEBUG
-diagnostics under `ureq.unit`, `ureq.stream`, and `ureq.pool`; with the bridge
-installed those records would otherwise route back to an HTTP handler, and
-every delivery would manufacture more requests. The worker therefore marks its
-OS thread as HTTP transport for the whole delivery lifetime. The bridge
-captures that marker once at entry and attaches it to the `FemtoLogRecord`. The
-marker survives filtering, handler-selection snapshots, cloning, and parent
-propagation. Every HTTP handler silently discards a marked record after its
-closed-handler check, so the record is not queued, warned about, or counted as
-a drop, while non-HTTP handlers still receive it. The bridge suspends the
-marker for the rest of its entry call, so filters, formatters, and handler
-callbacks that log during dispatch emit application records instead of
-inheriting the transport origin. The mechanism covers bridge-produced records
-on a marked worker thread; it does not mark records rebuilt in Python, records
-passed directly to the three-argument `handle` method, or records delivered by
-socket handlers.
+diagnostics under `ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver`;
+with the bridge installed those records would otherwise route back to an HTTP
+handler, and every delivery would manufacture more requests. The worker
+therefore marks its OS thread as HTTP transport for the whole delivery
+lifetime. The bridge captures that marker once at entry and attaches it to the
+`FemtoLogRecord`. The marker survives filtering, handler-selection snapshots,
+cloning, and parent propagation. Every HTTP handler silently discards a marked
+record after its closed-handler check, so the record is not queued, warned
+about, or counted as a drop, while non-HTTP handlers still receive it. The
+bridge suspends the marker for the rest of its entry call, so filters,
+formatters, and handler callbacks that log during dispatch emit application
+records instead of inheriting the transport origin. The mechanism covers
+bridge-produced records on a marked worker thread; it does not mark records
+rebuilt in Python, records passed directly to the three-argument `handle`
+method, or records delivered by socket handlers.
 
 **GIL Acquisition and Error Handling:**
 

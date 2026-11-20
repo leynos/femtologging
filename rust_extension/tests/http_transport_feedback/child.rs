@@ -3,7 +3,7 @@
 //! Each ignored test owns the global Rust logger and the manager registry for
 //! its process. A real HTTP handler sends to a local collector while `ureq`'s
 //! DEBUG diagnostics are enabled through the same `log` bridge. The
-//! application record and an independently emitted `ureq.unit` record must
+//! application record and an independently emitted `ureq.run` record must
 //! reach the collector exactly once each; diagnostics produced by the worker
 //! must reach the non-HTTP sink but never the collector endpoint.
 
@@ -62,7 +62,7 @@ fn run_feedback_child(method: HTTPMethod, use_json: bool) {
 
     log::info!(target: "test.application", "{APPLICATION_MARKER} application record");
     log::debug!(
-        target: "ureq::unit",
+        target: "ureq::run",
         "{INDEPENDENT_MARKER} independent bridge record"
     );
 
@@ -133,16 +133,13 @@ fn install_child_configuration(
                 .with_handlers(["http"])
                 .with_level(FemtoLevel::Info),
         )
+        // ureq 3 emits the per-attempt diagnostics from `ureq::run` and the
+        // connection-pool ones from `ureq::pool`; ureq 2's `ureq::unit` and
+        // `ureq::stream` modules no longer exist.
         .with_logger(
-            "ureq.unit",
+            "ureq.run",
             LoggerConfigBuilder::new()
                 .with_handlers(["collector"])
-                .with_level(FemtoLevel::Debug)
-                .with_propagate(true),
-        )
-        .with_logger(
-            "ureq.stream",
-            LoggerConfigBuilder::new()
                 .with_level(FemtoLevel::Debug)
                 .with_propagate(true),
         )
@@ -202,29 +199,31 @@ fn assert_payloads_are_application_records(observed: &[RequestObservation], expe
         );
         let normalized = request.payload().replace('+', " ").to_ascii_lowercase();
         for diagnostic in TRANSPORT_DIAGNOSTICS {
+            // The phrase list keeps its original casing for the sink check, so
+            // it is lowered here: a mixed-case needle would never match the
+            // lowered payload and the assertion could not fail.
+            let lowered = diagnostic.to_ascii_lowercase();
             assert!(
-                !normalized.contains(diagnostic),
+                !normalized.contains(lowered.as_str()),
                 "transport diagnostic {diagnostic:?} was delivered over HTTP: {request:#?}"
             );
         }
     }
 }
 
-/// Phrases `ureq` emits at DEBUG while the worker performs transport work.
-const TRANSPORT_DIAGNOSTICS: [&str; 5] = [
-    "sending request",
-    "response 200",
-    "created stream",
-    "adding stream to pool",
-    "connecting to",
-];
+/// Phrases `ureq` 3 emits at DEBUG from `ureq::run` while the worker sends.
+///
+/// ureq 3 logs the request construction as `Request { method: ... }` and the
+/// received head as `Response { status: ... }`. The ureq 2 phrases this test
+/// started with (`sending request`, `created stream`, and so on) came from
+/// modules that no longer exist.
+const TRANSPORT_DIAGNOSTICS: [&str; 2] = ["Request { method:", "Response { status:"];
 
 /// Flush the root and transport loggers, reporting both outcomes.
 fn flush_loggers() -> (bool, bool) {
     Python::attach(|py| {
         let root = get_logger_for_log_compat(py, "root").expect("root logger exists");
-        let transport =
-            get_logger_for_log_compat(py, "ureq.unit").expect("transport logger exists");
+        let transport = get_logger_for_log_compat(py, "ureq.run").expect("transport logger exists");
         let root = root.borrow(py);
         let transport = transport.borrow(py);
         let root_ref: &FemtoLogger = &root;
@@ -265,7 +264,7 @@ fn assert_collected_non_http_records(path: &std::path::Path) {
         "the independent bridge record must reach the non-HTTP sink:\n{collected}"
     );
     let saw_transport_debug = collected.lines().any(|line| {
-        line.contains("ureq.unit")
+        line.contains("ureq.run")
             && TRANSPORT_DIAGNOSTICS
                 .iter()
                 .any(|diagnostic| line.contains(diagnostic))

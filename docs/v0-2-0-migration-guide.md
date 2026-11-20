@@ -31,6 +31,7 @@ ______________________________________________________________________
 | Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                                                                         |
 | Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger.                                                         |
 | Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                                                                           |
+| Review if enabled  | HTTP handlers                   | Expect `HandlerConfigError` for an invalid endpoint or header, and check the four-redirect limit and credential stripping.                                                                       |
 | Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                                                                                   |
 | Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                                                                                      |
 | Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                                                                         |
@@ -663,6 +664,52 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
 
 ______________________________________________________________________
 
+## HTTP handler endpoint validation and redirects
+
+`HTTPHandlerBuilder` now validates what the HTTP transport will send, and the
+worker applies ureq 2's redirect rules itself instead of delegating them to the
+HTTP client.
+
+### What changes
+
+- An endpoint that is not an absolute `http` or `https` URL, or that the
+  transport cannot express, raises `HandlerConfigError` when the handler is
+  built. It no longer builds and then fails on every record.
+- A header name, header value, or bearer token that cannot be encoded as an
+  HTTP header raises `HandlerConfigError` at build time. The message does not
+  echo the value.
+- A path that needs percent-encoding is still accepted and encoded: a space in
+  the path is sent as `%20`. A GET payload is appended to the configured
+  endpoint before the endpoint is parsed, so an endpoint ending in a space
+  still sends the encoded form followed by the query.
+- At most four redirects are followed. A 300, a 307 or 308 answering a POST, and
+  a redirect with a missing or non-UTF-8 `Location` are permanent outcomes. A
+  fifth redirect is retried as a transport failure, `Authorization` and
+  `Cookie` are removed before the redirect target is requested, and a
+  `Location` with a space is followed to its percent-encoded form.
+- `write_timeout` also bounds connection establishment, so a connection waits
+  for at most the smaller of `connect_timeout` and `write_timeout`.
+- A whole redirect chain shares one `write_timeout` budget. A chain that is
+  still going when the budget expires fails as a transport error instead of
+  spending the timeout again on each hop.
+
+### How to update an HTTP handler
+
+- Fix a rejected endpoint or header before upgrading. The error names the
+  endpoint or the header field, never its value.
+- If a collector answered a 300 or a POST 307/308 in a way the handler treated
+  as delivered, make that route answer 2xx directly, or use a 301, 302 or 303.
+- A connection waits for at most the smaller of `connect_timeout` and
+  `write_timeout`, so `write_timeout` caps connection establishment as well. To
+  allow a connection to establish for a required duration, raise
+  `write_timeout` to at least that duration, and raise `connect_timeout` too if
+  the duration exceeds it.
+
+For the full transport contract, see
+[the Rust extension guide](rust-extension.md#http-transport-and-tls).
+
+______________________________________________________________________
+
 ## What does not need to change
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,
@@ -707,6 +754,9 @@ Each item carries the same obligation label as the matching row in
 - [ ] **Review if enabled:** Call `flush()` before `close()` on socket and HTTP
       handlers, and accept that a stalled worker drops queued records at the
       single shutdown deadline.
+- [ ] **Review if enabled:** Update HTTP handlers for build-time endpoint and
+      header validation, the four-redirect limit, and credential stripping on
+      redirects.
 - [ ] **Optional:** Adopt `extra=` and the exception-payload limits.
 - [ ] **Optional:** Watch `wait_diagnostics()` and, where the crate is built
       with `tracing-compat`, the `femtologging::internal` wait events to

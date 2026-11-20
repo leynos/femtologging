@@ -397,6 +397,96 @@ retains responsibility for importing arbitrary user-defined factories.
   `with_bearer_token` methods remain available so existing code keeps working,
   but the typed stub surface points users at the combined methods first.
 
+## HTTP transport and TLS
+
+The native HTTP worker uses ureq 3.4 with its default `rustls` and `gzip`
+features. The migration from ureq 2 keeps the transport's observable behaviour;
+the contracts below are pinned by
+`rust_extension/src/http_handler/request_shape_tests.rs` (with
+`request_shape_tests/redirects.rs`, `request_shape_tests/redirect_responses.rs`
+and `request_shape_tests/endpoint.rs`), `redirect_tests.rs`, and `tls_tests.rs`.
+
+- **TLS trust.** The agent selects `TlsProvider::Rustls` with
+  `RootCerts::WebPki`, so certificates are validated against the WebPKI roots
+  compiled into the binary. That is what ureq 2 actually did: enabling its
+  `native-tls` feature only made a native-tls connector available for an
+  `AgentBuilder` to select, and the handler never selected one, so the default
+  Rustls connector with `webpki_roots` validated every request. Naming the
+  provider and the roots keeps that policy explicit instead of inheriting it
+  from whatever the current ureq default happens to be.
+- **Timeouts.** `connect_timeout` maps to `timeout_connect`, which ureq 3
+  applies to connection establishment including the TLS handshake.
+  `write_timeout` maps to `timeout_global`, which bounds the whole attempt:
+  request, response headers, and any body read. ureq 3 checks the global
+  timeout during every phase, so it bounds connection establishment too: a
+  connect may run for at most `min(connect_timeout, write_timeout)`, while the
+  attempt as a whole still ends at `write_timeout`. ureq 2 exempted its connect
+  phase from the overall deadline, so a configuration whose connect timeout is
+  larger than its write timeout now fails sooner. The verdict is unchanged - a
+  connection that outlived the attempt budget could never deliver the record,
+  and both versions report a transport error - and only the time to failure
+  differs. The redirect chain is part of the same attempt: the transport gives
+  each hop only the time left in the budget, so a chain cannot restart it, and
+  the pooled agent is reused across hops. A shutdown drain rebuilds the agent
+  around the remaining budget as its global timeout and hands that same budget
+  to the chain, so no attempt can outlive the deadline the handler waits on.
+- **Status handling.** `http_status_as_error(false)` leaves every response with
+  a status to the retry classifier: 2xx succeeds, 429 and 5xx retry, and other
+  4xx responses are permanent. A `StatusCode` error is classified the same way
+  if that setting is ever changed.
+- **Proxy discovery.** `proxy(None)` keeps ureq 3's `Proxy::try_from_env`
+  default switched off, matching ureq 2 without its `proxy-from-env` feature.
+- **Endpoint handling.** `HTTPHandlerBuilder` validates the configured URL with
+  `url::Url`, the parser ureq 2 used for every request, and rejects a scheme
+  other than `http` or `https`, or an endpoint `http::Uri` cannot express. The
+  endpoint itself is stored as configured; the transport parses each request
+  target with `url::Url` at send time, which is when ureq 2 parsed it. A space
+  or other character that must be percent-encoded is therefore encoded once, on
+  the way to the wire: `http://host/log ingest` still reaches the collector as
+  `/log%20ingest`. ureq 3 parses the string as an `http::Uri` and rejects a raw
+  space, so parsing here keeps the accepted endpoints and the bytes sent
+  unchanged. An endpoint that cannot be parsed is rejected when the handler is
+  built rather than failing on every attempt.
+- **Redirects.** The transport follows the chain itself
+  (`http_handler/redirect.rs`) with ureq 2's rules, and gives the agent
+  `max_redirects(0)` with `max_redirects_will_error(false)` so that ureq
+  returns every 3xx response instead of following it. The
+  `RedirectAuthHeaders::Never` setting stays as the statement of the same
+  credential policy, not as the mechanism. ureq 2 followed at most four
+  redirects and then reported the fifth redirect response as a transport error;
+  the original request plus four redirects is the boundary kept here.
+  - A 301, 302 or 303 is re-requested as a GET, and a 307 or 308 only for a GET.
+    Anything else - a 300, 304 or 305, or a 307 or 308 answering a POST whose
+    body cannot be replayed - is returned to the classifier, which makes it
+    permanent. ureq 3 would follow the 300 and then record the collector's
+    `200` as a delivered record.
+  - A redirect with no `Location`, or one whose `Location` is not valid UTF-8,
+    is returned to the classifier as well; ureq 2 read both as a missing header.
+  - The `Location` is resolved with `url::Url::join`, as ureq 2 did, so a
+    relative target works and a value such as `/log ingest` is followed to
+    `/log%20ingest`. ureq 3 would refuse the unencoded space.
+  - `Authorization` and `Cookie` are removed before the target is requested, and
+    no body is sent, matching ureq 2. A custom credential header such as
+    `X-Api-Key` is forwarded, as it was under ureq 2.
+- **Headers.** Authentication, configured headers, and the POST content type
+  are resolved into one case-insensitive map before the request is built,
+  because ureq 3 appends a header per call instead of replacing it. Configured
+  authentication is applied first, a custom header of the same name replaces
+  it, and the serialization format's content type replaces a custom
+  `Content-Type` on a POST. A GET request appends its payload to the existing
+  query with `&`, or starts one with `?`. Because ureq 3 validates what ureq 2
+  wrote to the wire verbatim, a handler built through `HTTPHandlerBuilder`
+  rejects a header name, header value, or credential it cannot encode. The
+  build fails with an invalid-configuration error, and the message never
+  includes a header value.
+- **Response bodies.** The worker classifies the status and never reads a
+  response body, redirect or final, so a body that is declared and never
+  arrives cannot delay an attempt or turn a verdict into a retry.
+- **No internal retries.** ureq 2 retried an idempotent request once when a
+  recycled connection had closed. ureq 3 does not, so a GET that hits a stale
+  pooled connection surfaces as a transport error and is retried by the
+  handler's own backoff policy.
+
 ## HTTP handler shutdown contract
 
 `FemtoHTTPHandler::close` in `rust_extension/src/http_handler/handler.rs` is
@@ -481,14 +571,14 @@ warning from recursively entering the logger that emitted it.
 
 The bridge also records whether a record was produced by HTTP transport work.
 An HTTP handler marks its worker thread for the whole delivery lifetime, which
-covers `ureq`'s DEBUG records under `ureq.unit`, `ureq.stream`, and
-`ureq.pool`. A marked record reaches non-HTTP handlers but every HTTP handler
-silently ignores it after its closed-handler check, so a delivery cannot
-manufacture the next request. The marker is captured at bridge entry and
-suspended for the rest of the call, so a filter, formatter, or handler that
-logs during dispatch produces an ordinary application record. Only bridge
-records created on a marked worker thread are marked. Records rebuilt in Python
-and records passed directly to `FemtoHTTPHandler.handle` are not.
+covers `ureq`'s DEBUG records under `ureq.run`, `ureq.pool`, and
+`ureq.unversioned.resolver`. A marked record reaches non-HTTP handlers but
+every HTTP handler silently ignores it after its closed-handler check, so a
+delivery cannot manufacture the next request. The marker is captured at bridge
+entry and suspended for the rest of the call, so a filter, formatter, or
+handler that logs during dispatch produces an ordinary application record. Only
+bridge records created on a marked worker thread are marked. Records rebuilt in
+Python and records passed directly to `FemtoHTTPHandler.handle` are not.
 
 The bridge's `enabled()` check applies the target logger's current level
 threshold. The `log` crate reaches it only after the process-wide maximum has

@@ -624,8 +624,28 @@ socket_handler = (
   `.with_basic_auth()` and `.with_bearer_token()` setters remain available for
   compatibility.
 - `with_headers(...)`, `with_capacity(...)`, timeout setters, and
-  `.with_json_format()` mirror the socket/file builder style. Validation
-  failures raise `ValueError` before the handler is built.
+  `.with_json_format()` mirror the socket/file builder style.
+  `HTTPHandlerBuilder` rejects an invalid header name, header value, or bearer
+  token at build time with `HandlerConfigError`. The message never echoes a
+  header value.
+- The endpoint must be an absolute `http` or `https` URL. A malformed endpoint,
+  another scheme, or an endpoint the transport cannot send is rejected with
+  `HandlerConfigError` when the handler is built, instead of failing on every
+  record. A path that needs percent-encoding is accepted and encoded on the
+  wire, so `http://host/log ingest` reaches the collector as `/log%20ingest`.
+- Certificates are validated against the WebPKI roots bundled with the
+  extension, not the platform trust store. A private certificate authority is
+  not supported, and there is no setting that weakens verification.
+- `connect_timeout_ms` bounds connection establishment, including the TLS
+  handshake. `write_timeout_ms` bounds the whole attempt, so it also caps the
+  connect phase: a connection may wait for at most the smaller of the two.
+- A redirect chain is followed for at most four redirects. A 301, 302 or 303 is
+  re-requested as a GET, and a 307 or 308 only for a GET. `Authorization` and
+  `Cookie` are never replayed at the redirect target. These redirects fail
+  permanently: a 300 or any other status with no replay rule, a 307 or 308
+  answering a POST, and a redirect whose `Location` is missing or not valid
+  UTF-8. A fifth redirect is a transport failure, so the record follows the
+  normal retry policy.
 - Authoritative fields (`name`, `levelname`, `msg`, `created`, `filename`,
   `lineno`, `module`, `thread`, and the optional `threadName`, `exc_info`, and
   `stack_info`) stay at the top level in both JSON and URL-encoded payloads.
@@ -637,6 +657,9 @@ socket_handler = (
   `.with_record_fields([...])` selects built-in fields by name and projects
   permitted custom fields by their top-level name. A reserved name in that list
   selects only the built-in field, and unknown names are omitted.
+- These builder and transport rules are new in v0.2.0. See
+  [the migration guide](v0-2-0-migration-guide.md#http-handler-endpoint-validation-and-redirects)
+  before upgrading an HTTP handler.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -656,17 +679,18 @@ socket_handler = (
   keep running during a flush that blocks on a full queue or a slow endpoint.
 - A handler's worker marks its thread as HTTP transport while it delivers.
   `ureq` reports its progress at `DEBUG` through the Rust `log` and `tracing`
-  facades, using targets such as `ureq.unit`, `ureq.stream`, and `ureq.pool`.
-  When a Rust bridge is installed, those records carry a transport-origin
-  marker. Every `FemtoHTTPHandler` silently ignores a marked record after its
-  closed-handler check, so a delivery cannot manufacture the next request. The
-  ignored record is not counted as a drop. Non-HTTP handlers still receive it,
-  and records emitted by application code on other threads are unaffected even
-  while a worker is sending. To see what an endpoint suppresses, put a non-HTTP
-  sink in place and raise the worker's targets (`ureq.unit`, `ureq.stream`,
-  `ureq.pool`) to `DEBUG`. A record that reaches that sink and never reaches
-  the endpoint is evidence of suppression, not an exact count: a filter or a
-  failed delivery can also account for an absence.
+  facades, using targets such as `ureq.run`, `ureq.pool`, and
+  `ureq.unversioned.resolver`. When a Rust bridge is installed, those records
+  carry a transport-origin marker. Every `FemtoHTTPHandler` silently ignores a
+  marked record after its closed-handler check, so a delivery cannot
+  manufacture the next request. The ignored record is not counted as a drop.
+  Non-HTTP handlers still receive it, and records emitted by application code
+  on other threads are unaffected even while a worker is sending. To see what
+  an endpoint suppresses, put a non-HTTP sink in place and raise the worker's
+  targets (`ureq.run`, `ureq.pool`, `ureq.unversioned.resolver`) to `DEBUG`. A
+  record that reaches that sink and never reaches the endpoint is evidence of
+  suppression, not an exact count: a filter or a failed delivery can also
+  account for an absence.
 - The marker is narrow on purpose. A record that Python code rebuilds from a
   marked record is a new application record, records passed directly to the
   three-argument `handler.handle(logger, level, message)` Python method carry
@@ -1307,13 +1331,13 @@ create a logger or enter Python while checking the threshold.
 
 The bridge also carries an HTTP transport-origin marker. While an HTTP worker
 is delivering a record, `ureq` diagnostics such as the DEBUG records under
-`ureq.unit`, `ureq.stream`, and `ureq.pool` are bridge records too. The bridge
-marks the records produced during that work, and HTTP handlers silently ignore
-them, so the transport cannot feed itself. The bridge suspends the marker
-before running filters, formatters, or handlers, so a callback that logs during
-dispatch still produces an ordinary record. Records from application threads,
-records rebuilt by Python code, and records passed directly to
-`FemtoHTTPHandler.handle` are not marked. See the
+`ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver` are bridge records
+too. The bridge marks the records produced during that work, and HTTP handlers
+silently ignore them, so the transport cannot feed itself. The bridge suspends
+the marker before running filters, formatters, or handlers, so a callback that
+logs during dispatch still produces an ordinary record. Records from
+application threads, records rebuilt by Python code, and records passed
+directly to `FemtoHTTPHandler.handle` are not marked. See the
 [Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
 behaviour and build-feature details.
 

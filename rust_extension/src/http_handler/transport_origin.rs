@@ -3,7 +3,7 @@
 //! An HTTP handler delivers records on a dedicated worker thread. That worker
 //! uses `ureq`, which reports its own progress through the `log` and `tracing`
 //! facades. When the process-wide bridges are installed, those transport
-//! diagnostics are ordinary records: a diagnostic target such as `ureq.unit`
+//! diagnostics are ordinary records: a diagnostic target such as `ureq.run`
 //! can route them back to the same HTTP handler that produced them, and each
 //! successful delivery then manufactures more records to deliver.
 //!
