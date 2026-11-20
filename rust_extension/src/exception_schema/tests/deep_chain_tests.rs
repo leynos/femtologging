@@ -3,7 +3,7 @@
 //! These tests verify that deeply nested cause and context chains serialize
 //! correctly without stack overflow or performance degradation.
 
-use crate::exception_schema::ExceptionPayload;
+use crate::exception_schema::{ExceptionPayload, SchemaVersioned};
 use rstest::rstest;
 
 /// The kind of link used to build (and traverse) an exception chain.
@@ -11,7 +11,7 @@ use rstest::rstest;
 /// Modelling the chain kind as an enum keeps an invalid chain kind
 /// unrepresentable, so neither helper below needs a fallible catch-all arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChainKind {
+pub(super) enum ChainKind {
     /// Every level is linked through `__cause__`.
     Cause,
     /// Every level is linked through `__context__`.
@@ -29,7 +29,7 @@ enum ChainKind {
 /// # Panics
 ///
 /// Panics if `depth` is zero.
-fn build_exception_chain(kind: ChainKind, depth: usize) -> ExceptionPayload {
+pub(super) fn build_exception_chain(kind: ChainKind, depth: usize) -> ExceptionPayload {
     assert!(depth >= 1, "exception chain depth must be at least one");
 
     let mut current = ExceptionPayload::new("BaseError", "root");
@@ -102,6 +102,9 @@ fn deep_chain_serializes(#[case] kind: ChainKind, #[case] depth: usize) {
     let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
 
     verify_chain_depth(&decoded, kind, depth);
+    decoded
+        .validate_version()
+        .expect("a supported chain should validate after a round trip");
 }
 
 /// Regression guard: 100-level cause chain should serialize in linear time.

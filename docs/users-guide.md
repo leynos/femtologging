@@ -237,12 +237,32 @@ This allows the payload schema to evolve without silent breakage.
 - Forward compatibility is not guaranteed. A payload from a newer producer may
   deserialize, but explicit validation is required before processing.
 
-Rust-side validation returns stable variants from `SchemaVersionError`:
+Validation is recursive. Each `cause`, `context`, and exception-group member is
+an independently versioned payload, so `validate_version()` checks the root
+payload and every payload nested beneath it. The walk is depth-first in
+pre-order: the payload itself, then its `cause`, its `context`, and its
+exception-group members in index order. The first unsupported version reached
+is the one reported.
+
+A mismatch below the root is reported as `SchemaVersionError::Nested`, which
+carries a dot-separated path to the failing payload, such as
+`cause.exceptions[3].context`. The root payload is at depth 0, and each child
+edge adds one. The walk stops at `MAX_EXCEPTION_PAYLOAD_DEPTH` (128, matching
+the default recursion limit of `serde_json`) and at
+`MAX_EXCEPTION_PAYLOAD_NODES` (10,000) nodes. Exceeding either bound reports
+`TreeTooDeep` or `TreeTooLarge`. These limits bound validation work; they are
+not parsing limits.
+
+Rust-side validation returns these variants from `SchemaVersionError`:
 
 - `VersionTooNew { found, max_supported }`
 - `VersionTooOld { found, min_supported }`
+- `Nested { path, source }`
+- `TreeTooDeep { path, max_depth }`
+- `TreeTooLarge { max_nodes }`
 
-Use these variants to choose explicit behaviour when versions mismatch:
+`SchemaVersionError` is `#[non_exhaustive]`, so matching it requires a wildcard
+arm. Use these variants to choose explicit behaviour when versions mismatch:
 
 <!-- tested-example: process-payload-schema-versioning -->
 ```rust
@@ -288,6 +308,28 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
             }
             .into())
         }
+        Err(SchemaVersionError::Nested { path, source }) => {
+            // Reject a nested payload whose own version is unsupported.
+            eprintln!("nested payload at {path} failed validation: {source}");
+            Err(SchemaVersionError::Nested { path, source }.into())
+        }
+        Err(SchemaVersionError::TreeTooDeep { path, max_depth }) => {
+            // Reject payload trees deeper than validation traverses.
+            eprintln!(
+                "payload tree is too deep at {path}; maximum depth is {max_depth}"
+            );
+            Err(SchemaVersionError::TreeTooDeep { path, max_depth }.into())
+        }
+        Err(SchemaVersionError::TreeTooLarge { max_nodes }) => {
+            // Reject payload trees larger than validation traverses.
+            eprintln!("payload tree exceeds {max_nodes} nodes");
+            Err(SchemaVersionError::TreeTooLarge { max_nodes }.into())
+        }
+        Err(other) => {
+            // SchemaVersionError is non-exhaustive; propagate unknown failures.
+            eprintln!("payload schema validation failed: {other}");
+            Err(other.into())
+        }
     }
 }
 ```
@@ -295,10 +337,11 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
 Malformed JSON propagates as `serde_json::Error` inside the boxed error, and
 version validation runs only after a successful parse.
 
-When consuming payloads in Python from external sources, compare
-`payload["schema_version"]` with `femtologging.EXCEPTION_SCHEMA_VERSION` and
-apply the same policy: reject too-old payloads, and explicitly degrade or
-reject too-new payloads.
+When consuming payloads in Python from external sources, each nested `cause`,
+`context`, and exception-group member carries its own `schema_version`. Compare
+every one of them with `femtologging.EXCEPTION_SCHEMA_VERSION`, not only the
+root, and apply the same policy: reject too-old payloads, and explicitly
+degrade or reject too-new payloads.
 
 Increment the schema version only for breaking changes (required field
 additions, removals, renamed fields, or semantic/type changes). Adding optional
