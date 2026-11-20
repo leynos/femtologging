@@ -46,7 +46,7 @@ impl RotatingFileHandlerBuilder {
 
     /// Set the overflow policy for the handler.
     #[must_use]
-    pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
+    pub const fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.common.set_overflow_policy(policy);
         self
     }
@@ -104,7 +104,7 @@ impl RotatingFileHandlerBuilder {
     /// The capacity must be greater than zero; invalid values cause `build` to
     /// error.
     #[must_use]
-    pub fn with_capacity(mut self, capacity: usize) -> Self {
+    pub const fn with_capacity(mut self, capacity: usize) -> Self {
         self.common.set_capacity(capacity);
         self
     }
@@ -121,7 +121,7 @@ impl RotatingFileHandlerBuilder {
     /// `usize::MAX` are clamped silently at build time. Python callers receive
     /// an `OverflowError` instead (validated at the API boundary).
     #[must_use]
-    pub fn with_flush_after_records(mut self, interval: NonZeroU64) -> Self {
+    pub const fn with_flush_after_records(mut self, interval: NonZeroU64) -> Self {
         self.common.set_flush_after_records(interval);
         self
     }

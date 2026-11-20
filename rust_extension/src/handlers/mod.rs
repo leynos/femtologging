@@ -86,11 +86,18 @@ pub trait HandlerBuilderTrait: Send + Sync {
 
     /// Construct the handler from the builder's settings, keeping its concrete type.
     ///
-    /// Returns [`HandlerBuildError`] when the configuration is invalid or an I/O setup step
-    /// fails.
+    /// # Errors
+    ///
+    /// Returns [`HandlerBuildError`] when the configuration is invalid or an I/O
+    /// setup step fails.
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError>;
 
     /// Build the handler instance, returning a boxed trait object.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`HandlerBuilderTrait::build_inner`], propagated
+    /// from the concrete handler construction.
     fn build(&self) -> Result<Box<dyn FemtoHandlerTrait>, HandlerBuildError> {
         let handler = self.build_inner()?;
         Ok(Box::new(handler))

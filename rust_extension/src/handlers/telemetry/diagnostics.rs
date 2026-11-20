@@ -62,14 +62,22 @@ impl WaitDiagnostics {
         // reporting, so a slightly stale snapshot is acceptable and the
         // handler path must not pay for cross-thread ordering.
         let micros = elapsed_micros(elapsed);
-        self.counts[outcome.index()].fetch_add(1, Ordering::Relaxed);
+        // The index is always in bounds because the array is sized to the
+        // closed outcome set; skip rather than panic if that ever changes.
+        if let Some(count) = self.counts.get(outcome.index()) {
+            count.fetch_add(1, Ordering::Relaxed);
+        }
         self.total_wait_micros.fetch_add(micros, Ordering::Relaxed);
         self.max_wait_micros.fetch_max(micros, Ordering::Relaxed);
     }
 
     /// Take a consistent-enough snapshot of every counter.
     pub(crate) fn snapshot(&self) -> WaitSnapshot {
-        let counts = std::array::from_fn(|index| self.counts[index].load(Ordering::Relaxed));
+        let counts = std::array::from_fn(|index| {
+            self.counts
+                .get(index)
+                .map_or(0, |count| count.load(Ordering::Relaxed))
+        });
         WaitSnapshot {
             counts,
             total_wait_micros: self.total_wait_micros.load(Ordering::Relaxed),
@@ -123,21 +131,24 @@ impl WaitSnapshot {
 
     /// Return the count recorded for one outcome.
     pub(crate) fn count(self, outcome: WaitOutcome) -> u64 {
-        self.counts[outcome.index()]
+        self.counts
+            .get(outcome.index())
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Return the summed wait time.
-    pub(crate) fn total_wait_micros(self) -> u64 {
+    pub(crate) const fn total_wait_micros(self) -> u64 {
         self.total_wait_micros
     }
 
     /// Return the longest wait.
-    pub(crate) fn max_wait_micros(self) -> u64 {
+    pub(crate) const fn max_wait_micros(self) -> u64 {
         self.max_wait_micros
     }
 
     /// Return the number of waits that had not yet finished.
-    pub(crate) fn in_flight(self) -> u64 {
+    pub(crate) const fn in_flight(self) -> u64 {
         self.in_flight
     }
 }
