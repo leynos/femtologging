@@ -1078,12 +1078,17 @@ stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
 - `FormatterBuilder` supports percent-style `%(<name>)s`, `%(<name>)d`, and
   `%(<name>)f` fields. Standard fields are `name`, `levelname`, `levelno`,
   `message`, and `asctime`; any other name resolves from `metadata.key_values`.
-  Missing fields render as empty strings. `asctime` uses `datefmt` when set. A
-  direct builder passed to `with_formatter` is compiled immediately; a string
-  ID is resolved from `ConfigBuilder` or `dictConfig`'s `formatters` registry.
-  `levelno` in percent formatting and Python record dictionaries is
-  FemtoLevel's raw numeric value (INFO is 2), not the stdlib logging value
-  (20). Only `StdlibHandlerAdapter` converts it to stdlib `LogRecord.levelno`.
+  Missing fields render as empty strings. `asctime` uses `datefmt` when set.
+  The format string is compiled once when the formatter is built. `%%` renders
+  a literal percent sign. An unsupported directive, such as `%(name)q` or one
+  without a closing parenthesis, is not rejected: its `%` is kept as literal
+  text and scanning resumes after it, so an embedded `%%` or a supported
+  directive that follows is still processed. A direct builder passed to
+  `with_formatter` is compiled immediately; a string ID is resolved from
+  `ConfigBuilder` or `dictConfig`'s `formatters` registry. `levelno` in percent
+  formatting and Python record dictionaries is FemtoLevel's raw numeric value
+  (INFO is 2), not the stdlib logging value (20). Only `StdlibHandlerAdapter`
+  converts it to stdlib `LogRecord.levelno`.
 - Filters are available through both `ConfigBuilder` and `dictConfig`.
   `fileConfig` does not yet support filter declarations. Handler filters use
   the same filter ID registry as logger filters; handler `level` remains
