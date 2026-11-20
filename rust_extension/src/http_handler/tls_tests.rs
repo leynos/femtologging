@@ -20,7 +20,7 @@ use ureq::tls::{Certificate, RootCerts, TlsProvider};
 
 use crate::http_handler::config::HTTPHandlerConfig;
 use crate::http_handler::response::ResponseClass;
-use crate::http_handler::transport::{build_agent, execute, execute_with_roots};
+use crate::http_handler::transport::{build_agent, execute as execute_attempt, execute_with_roots};
 
 /// A throwaway certificate authority and the material a server needs for it.
 struct TestCa {
@@ -175,7 +175,7 @@ fn the_production_agent_refuses_an_unknown_certificate() {
     let config = https_config(port);
     let agent = build_agent(config.connect_timeout, config.write_timeout);
 
-    let err = execute(&config, &agent, "msg=tls")
+    let err = execute_attempt(&config, &agent, "msg=tls", config.write_timeout)
         .expect_err("the production roots must not accept a throwaway certificate");
 
     assert!(

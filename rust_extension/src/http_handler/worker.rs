@@ -25,7 +25,11 @@
 //! handler callback reached during dispatch emits an ordinary record instead
 //! of inheriting the marker.
 
-use std::{io, sync::Arc, time::Instant};
+use std::{
+    io,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
 use log::warn;
@@ -86,6 +90,18 @@ fn worker_loop(rx: Receiver<HTTPCommand>, config: HTTPHandlerConfig, signal: Arc
     Worker::new(config, signal).run(rx);
 }
 
+/// The transport and the time budget for one attempt.
+///
+/// The two are decided together so the deadline the transport enforces is the
+/// one the agent was built for; reading the shutdown budget twice could hand a
+/// chain a budget the agent never bounded.
+struct Attempt {
+    /// Agent the attempt is sent with, pooled outside a drain.
+    agent: Agent,
+    /// Deadline for the whole attempt, redirects included.
+    budget: Duration,
+}
+
 /// Owns HTTP request state and retry policy for one worker thread.
 struct Worker {
     /// Request settings used to encode and send each record.
@@ -144,12 +160,12 @@ impl Worker {
                 self.warn_shutdown_drops();
                 return;
             }
-            let Some(agent) = self.agent_for_attempt() else {
+            let Some(attempt) = self.agent_for_attempt() else {
                 self.warn_shutdown_drops();
                 return;
             };
             let now = Instant::now();
-            let result = self.execute_request(payload, &agent);
+            let result = self.execute_request(payload, &attempt);
             match result {
                 Ok(ResponseClass::Success) => {
                     self.backoff.record_success(now);
@@ -174,26 +190,34 @@ impl Worker {
         }
     }
 
-    /// The agent to send the next attempt with, or `None` if there is no time
+    /// The agent and budget for the next attempt, or `None` if there is no time
     /// left to send one.
     ///
-    /// While the signal is running this is the pooled agent, so ordinary
-    /// traffic keeps its connection reuse. Once a drain begins, a fresh agent
-    /// is built around the remaining budget instead, so no attempt can outlive
-    /// the deadline the handler is waiting on. ureq 3 checks its global timeout
-    /// in every phase, connection establishment included, so passing the budget
-    /// as the global timeout bounds the connect as well as everything after it.
-    fn agent_for_attempt(&self) -> Option<Agent> {
+    /// While the signal is running this is the pooled agent and the configured
+    /// write timeout, so ordinary traffic keeps its connection reuse. Once a
+    /// drain begins, a fresh agent is built around the remaining budget
+    /// instead, so no attempt can outlive the deadline the handler is waiting
+    /// on. ureq 3 checks its global timeout in every phase, connection
+    /// establishment included, so passing the budget as the global timeout
+    /// bounds the connect as well as everything after it. The same budget is
+    /// handed to the chain, so a redirect cannot restart it either.
+    fn agent_for_attempt(&self) -> Option<Attempt> {
         if !self.signal.is_shutting_down() {
-            return Some(self.agent.clone());
+            return Some(Attempt {
+                agent: self.agent.clone(),
+                budget: self.config.write_timeout,
+            });
         }
         let budget = self.signal.remaining()?;
-        Some(build_agent(self.config.connect_timeout, budget))
+        Some(Attempt {
+            agent: build_agent(self.config.connect_timeout, budget),
+            budget,
+        })
     }
 
     /// Execute one request; HTTP 503 is classified as retryable.
-    fn execute_request(&self, payload: &str, agent: &Agent) -> Result<ResponseClass, String> {
-        execute(&self.config, agent, payload)
+    fn execute_request(&self, payload: &str, attempt: &Attempt) -> Result<ResponseClass, String> {
+        execute(&self.config, &attempt.agent, payload, attempt.budget)
     }
 
     /// Logs a retryable failure, then says whether this record gets another

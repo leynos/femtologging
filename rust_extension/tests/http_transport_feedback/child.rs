@@ -199,8 +199,12 @@ fn assert_payloads_are_application_records(observed: &[RequestObservation], expe
         );
         let normalized = request.payload().replace('+', " ").to_ascii_lowercase();
         for diagnostic in TRANSPORT_DIAGNOSTICS {
+            // The phrase list keeps its original casing for the sink check, so
+            // it is lowered here: a mixed-case needle would never match the
+            // lowered payload and the assertion could not fail.
+            let lowered = diagnostic.to_ascii_lowercase();
             assert!(
-                !normalized.contains(diagnostic),
+                !normalized.contains(lowered.as_str()),
                 "transport diagnostic {diagnostic:?} was delivered over HTTP: {request:#?}"
             );
         }

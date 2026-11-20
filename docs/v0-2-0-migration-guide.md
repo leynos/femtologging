@@ -689,6 +689,9 @@ HTTP client.
   `Location` with a space is followed to its percent-encoded form.
 - `write_timeout` also bounds connection establishment, so a connection waits
   for at most the smaller of `connect_timeout` and `write_timeout`.
+- A whole redirect chain shares one `write_timeout` budget. A chain that is
+  still going when the budget expires fails as a transport error instead of
+  spending the timeout again on each hop.
 
 ### How to update an HTTP handler
 
@@ -696,8 +699,9 @@ HTTP client.
   endpoint or the header field, never its value.
 - If a collector answered a 300 or a POST 307/308 in a way the handler treated
   as delivered, make that route answer 2xx directly, or use a 301, 302 or 303.
-- Raise `write_timeout` when a slow connection must be allowed to run longer
-  than `connect_timeout`.
+- Raise both `connect_timeout` and `write_timeout` when a connection must be
+  allowed to establish for longer: the connection waits for the smaller of the
+  two, so raising only `write_timeout` cannot extend it.
 
 For the full transport contract, see
 [the Rust extension guide](rust-extension.md#http-transport-and-tls).

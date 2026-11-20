@@ -12,10 +12,9 @@ use std::time::Duration;
 
 use rstest::rstest;
 
-use super::{spawn_mock_server, test_agent};
+use super::{execute, spawn_mock_server, test_agent};
 use crate::http_handler::config::{HTTPHandlerConfig, HTTPMethod};
 use crate::http_handler::response::ResponseClass;
-use crate::http_handler::transport::execute;
 
 /// Run one attempt against a fresh listener and return the request it received.
 fn exchanged(method: HTTPMethod, url: String) -> (ResponseClass, String) {

@@ -214,18 +214,40 @@ fn a_non_ascii_authorization_header_is_rejected() {
     );
 }
 
+/// Header names the send path reads as text, in spellings `HeaderMap` treats
+/// as the same name.
+///
+/// `Host` and `Authorization` are rare in generated input, so a uniform string
+/// strategy would almost never exercise the two rules that differ from plain
+/// `HeaderValue` parsing.
+fn text_header_name() -> impl Strategy<Value = String> {
+    prop::sample::select(vec![
+        "Authorization",
+        "authorization",
+        "AUTHORIZATION",
+        "Host",
+        "host",
+        "HoSt",
+    ])
+    .prop_map(str::to_owned)
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 64, ..ProptestConfig::default() })]
 
     /// Scenario: any header pair a caller can configure.
     ///
     /// Invariant: validation accepts exactly the pairs the send path accepts: a
-    /// parsable name, a parsable value, and - for `Authorization`, which the
-    /// send path decodes as text - a value with no byte above `0x7e`. The
-    /// generated alphabet includes control characters, DEL, non-ASCII text and
-    /// empty strings.
+    /// parsable name, a parsable value, and - for `Authorization` and `Host`,
+    /// which the send path decodes as text - a value `HeaderValue::to_str`
+    /// still accepts. The fixed names are mixed into the generator so the two
+    /// text rules are exercised on every run, not only when random generation
+    /// happens to produce them.
     #[test]
-    fn header_validation_matches_the_send_path(name in any::<String>(), value in any::<String>()) {
+    fn header_validation_matches_the_send_path(
+        name in prop_oneof![3 => any::<String>(), 1 => text_header_name()],
+        value in any::<String>(),
+    ) {
         let config = config(
             HTTPMethod::POST,
             AuthConfig::None,
@@ -235,17 +257,18 @@ proptest! {
         let accepted = validate_request_headers(&config);
 
         let name_ok = HeaderName::from_bytes(name.as_bytes()).is_ok();
-        let value_ok = HeaderValue::from_str(&value).is_ok();
-        let authorization_ok = !name.eq_ignore_ascii_case("authorization")
-            || value.bytes().all(|byte| byte < 0x7f);
+        let encoded = HeaderValue::from_str(&value).ok();
+        let text_header = name.eq_ignore_ascii_case("authorization")
+            || name.eq_ignore_ascii_case("host");
+        let sendable = encoded.as_ref().is_some_and(|value| value.to_str().is_ok());
         prop_assert_eq!(
             accepted.is_ok(),
-            name_ok && value_ok && authorization_ok,
+            name_ok && encoded.is_some() && (!text_header || sendable),
             "name={:?} value={:?}",
             name,
             value
         );
-        if name_ok && !value_ok {
+        if name_ok && encoded.is_none() {
             let err = accepted.expect_err("an unencodable value is rejected");
             prop_assert!(!err.contains(&value), "the error echoed the value");
         }

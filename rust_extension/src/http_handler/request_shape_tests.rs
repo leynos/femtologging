@@ -23,11 +23,29 @@ use rstest::rstest;
 use super::{CapturedRequest, read_http_request, spawn_mock_server, tcp_listener};
 use crate::http_handler::config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
 use crate::http_handler::response::ResponseClass;
-use crate::http_handler::transport::{build_agent, execute};
+use crate::http_handler::transport::{build_agent, execute as execute_attempt};
 
 /// An agent with timeouts long enough that only the fixture ends an attempt.
 fn test_agent() -> ureq::Agent {
     build_agent(Duration::from_secs(5), Duration::from_secs(5))
+}
+
+/// Run one attempt with the budget its agent was built for.
+///
+/// The production worker passes that budget explicitly, because during a drain
+/// it is the shutdown signal's remaining allowance rather than the configured
+/// timeout; a test that builds its own agent states the budget there instead.
+fn execute(
+    config: &HTTPHandlerConfig,
+    agent: &ureq::Agent,
+    payload: &str,
+) -> Result<ResponseClass, String> {
+    let budget = agent
+        .config()
+        .timeouts()
+        .global
+        .unwrap_or(config.write_timeout);
+    execute_attempt(config, agent, payload, budget)
 }
 
 /// Every value sent for `name`, in wire order.

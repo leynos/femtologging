@@ -2,12 +2,13 @@
 //! redirect chain followed, and its response classified.
 //!
 //! Split out of `worker.rs`, which owns the clock - the retry deadline and the
-//! shutdown budget - rather than the shape of a request. The settings here
-//! preserve the behaviour the handler had on ureq 2, where ureq 3's defaults
-//! differ: the TLS provider and its roots, proxy discovery, redirect rules and
-//! credential stripping, and how status codes are reported.
+//! shutdown budget - rather than the shape of a request. That budget reaches a
+//! chain as one deadline, so following a redirect cannot extend an attempt.
+//! The settings here preserve the behaviour the handler had on ureq 2, where
+//! ureq 3's defaults differ: the TLS provider and its roots, proxy discovery,
+//! redirect rules and credential stripping, and how status codes are reported.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use ureq::{
@@ -98,16 +99,28 @@ struct Hop<'a> {
 /// classified like the matching success response, so a change to ureq's
 /// `http_status_as_error` setting cannot silently turn a server verdict into a
 /// transport failure.
+///
+/// `budget` is the whole attempt's allowance, not one hop's. ureq 3's global
+/// timeout covers the call, redirects included; because the chain is walked
+/// here instead, each hop is given the time that is left rather than a fresh
+/// budget. Five hops would otherwise occupy five times the timeout, which
+/// during shutdown would keep the worker past the deadline the handler is
+/// waiting on.
 pub(super) fn execute(
     config: &HTTPHandlerConfig,
     agent: &Agent,
     payload: &str,
+    budget: Duration,
 ) -> Result<ResponseClass, String> {
     let mut headers = resolve_headers(config)?;
     let mut hop = first_hop(config, payload)?;
     let mut responses_seen = 1;
+    // `None` only if the budget is too large for the platform's clock to
+    // represent, where the agent's own timeout is the only bound available.
+    let deadline = Instant::now().checked_add(budget);
     loop {
-        let response = match send_hop(agent, &hop, &headers) {
+        let remaining = remaining_before_hop(deadline)?;
+        let response = match send_hop(agent, &hop, &headers, remaining) {
             Ok(response) => response,
             Err(err) => return classify_error(*err),
         };
@@ -171,15 +184,46 @@ fn send_hop(
     agent: &Agent,
     hop: &Hop<'_>,
     headers: &HeaderMap,
+    remaining: Option<Duration>,
 ) -> Result<HttpResponse, Box<ureq::Error>> {
     let target = hop.url.as_str();
     match hop.method {
-        HTTPMethod::POST => apply_headers(agent.post(target), headers)
+        HTTPMethod::POST => apply_headers(apply_budget(agent.post(target), remaining), headers)
             .send(hop.body.unwrap_or_default())
             .map_err(Box::new),
-        HTTPMethod::GET => apply_headers(agent.get(target), headers)
+        HTTPMethod::GET => apply_headers(apply_budget(agent.get(target), remaining), headers)
             .call()
             .map_err(Box::new),
+    }
+}
+
+/// The time an attempt has left, or an error once its budget is spent.
+///
+/// The error is a transport failure rather than a verdict, which is how ureq
+/// reported an expired global timeout: the record is retried outside a drain
+/// and counted as a shutdown drop inside one, because the worker refuses to
+/// retry while shutting down.
+fn remaining_before_hop(deadline: Option<Instant>) -> Result<Option<Duration>, String> {
+    let Some(deadline) = deadline else {
+        return Ok(None);
+    };
+    match deadline.checked_duration_since(Instant::now()) {
+        Some(remaining) if !remaining.is_zero() => Ok(Some(remaining)),
+        _ => Err("the attempt ran out of time before the next request could be sent".to_owned()),
+    }
+}
+
+/// Narrow a request's global timeout to the time its attempt has left.
+///
+/// The override is per request, so the pooled agent - and the connections it
+/// holds - is kept for the whole chain.
+fn apply_budget<State>(
+    request: RequestBuilder<State>,
+    remaining: Option<Duration>,
+) -> RequestBuilder<State> {
+    match remaining {
+        Some(remaining) => request.config().timeout_global(Some(remaining)).build(),
+        None => request,
     }
 }
 
@@ -334,7 +378,7 @@ pub(super) fn execute_with_roots(
     payload: &str,
 ) -> Result<ResponseClass, String> {
     let agent = build_agent_with_roots(config.connect_timeout, config.write_timeout, root_certs);
-    execute(config, &agent, payload)
+    execute(config, &agent, payload, config.write_timeout)
 }
 
 #[cfg(test)]

@@ -425,9 +425,11 @@ and `request_shape_tests/endpoint.rs`), `redirect_tests.rs`, and `tls_tests.rs`.
   larger than its write timeout now fails sooner. The verdict is unchanged - a
   connection that outlived the attempt budget could never deliver the record,
   and both versions report a transport error - and only the time to failure
-  differs. A shutdown drain rebuilds the agent around the remaining budget as
-  its global timeout, so no attempt can outlive the deadline the handler waits
-  on.
+  differs. The redirect chain is part of the same attempt: the transport gives
+  each hop only the time left in the budget, so a chain cannot restart it, and
+  the pooled agent is reused across hops. A shutdown drain rebuilds the agent
+  around the remaining budget as its global timeout and hands that same budget
+  to the chain, so no attempt can outlive the deadline the handler waits on.
 - **Status handling.** `http_status_as_error(false)` leaves every response with
   a status to the retry classifier: 2xx succeeds, 429 and 5xx retry, and other
   4xx responses are permanent. A `StatusCode` error is classified the same way
