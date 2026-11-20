@@ -177,3 +177,18 @@ pub(crate) const fn classify_enqueue(result: &Result<(), EnqueueFailure>) -> Wai
         Err(EnqueueFailure::Disconnected) => WaitOutcome::HandleDisconnected,
     }
 }
+
+// Pins `classify_enqueue` as a `const fn`: this initializer is evaluated at
+// compile time, so dropping the qualifier breaks the build. trybuild cannot
+// stand in for the pin because the helper is crate-private, and a UI fixture
+// compiles as an external crate.
+const _: () = {
+    assert!(matches!(
+        classify_enqueue(&Ok(())),
+        WaitOutcome::HandleAccepted
+    ));
+    assert!(matches!(
+        classify_enqueue(&Err(EnqueueFailure::QueueFull)),
+        WaitOutcome::HandleQueueFull
+    ));
+};
