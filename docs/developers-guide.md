@@ -107,15 +107,13 @@ on a race is the shape
 skipped example is inert text, never compiled, so it cannot be trusted the way
 an executed one can.
 
-`--doctest-modules` imports every module it walks, not only `test_*.py`. Two
-settings keep that import working. `pythonpath = ["scripts"]` in
-`[tool.pytest.ini_options]` lets the helper scripts import each other as
-top-level modules, which is what `[tool.ty.environment] extra-paths` already
-records for type checking. `scripts/conftest.py` excludes
-`scripts/lint_rust_lanes.py`, whose dependencies live in its own `uv` script
-block and cannot be resolved from the project environment;
-`make lint-lanes-test` runs that script, and its examples, in the environment
-that can.
+`--doctest-modules` imports every module it walks, not only `test_*.py`.
+`scripts/lint_rust_lanes.py` needs dependencies that live in its own `uv`
+script block and cannot be resolved from the project environment, so
+`scripts/conftest.py` leaves it out of collection unless `LINT_LANES_TEST` is
+set. `make lint-lanes-test` sets that variable and passes `--doctest-modules`
+itself, so the script's examples run in the environment that can supply what
+they import.
 
 ### Documented examples
 
@@ -158,36 +156,89 @@ record it logs reached the file it flushes.
 ## Typos spelling checker
 
 Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)
-so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling.
+so that documentation stays in en-GB-oxendict (Oxford "-ize") spelling. The
+configuration is built by
+[`typos-config-builder`](https://github.com/leynos/typos-config-builder), which
+`TYPOS_CONFIG_BUILDER` in the `Makefile` pins to release `v0.1.3`.
 
-- `typos` is pinned to `1.48.0`. The pin lives in `TYPOS_VERSION` in the
-  `Makefile`, which is the single source of truth; any CI that shells out to the
-  `markdownlint` target reuses it, so the Makefile and CI cannot drift apart.
-- The `make markdownlint` target runs
-  `typos --config typos.toml --force-exclude` across the tracked Markdown files
-  after `markdownlint-cli2`.
-- The target enumerates tracked and new non-ignored Markdown files with
-  `git ls-files --exclude-standard`, so ignored build output (including
-  `target/`) and the local `.venv/` are excluded from both Markdown checks.
+The builder requires Python 3.14 or newer, so `TYPOS_CONFIG_BUILDER` pins
+`--python 3.14` as well. `uvx` otherwise honours `UV_PYTHON`, which the hosted
+matrix exports for each lane it tests, and the 3.12 and 3.13 lanes would hand
+the builder an interpreter it refuses; an explicit `--python` outranks the
+variable. Keep the pin when the matrix changes, and keep it in the standalone
+command below so the two invocations stay identical. The decision, and the
+alternatives that were rejected, are recorded in
+[ADR 0010](adrs/adr-0010-spelling-config-builder.md).
+
+- `make spelling` runs the pinned `typos-config-builder gate`. The gate
+  refreshes the shared en-GB-oxendict dictionary from
+  `leynos/agent-helper-scripts` on its `main` branch, merges the repository
+  overlay, writes `typos.toml`, then checks Markdown spelling and the shared
+  phrase corrections. Both of the gate's own checks always run, so a phrase
+  finding cannot hide a spelling finding.
+- The gate enumerates the Git index, so a document that is new and still
+  unstaged is invisible to it. `make spelling` therefore runs two more checks
+  after the gate, both against the configuration the gate has just written and
+  the dictionary revision it used. First, `git ls-files --others` selects the
+  untracked Markdown and `TYPOS` checks it with the Typos binary from the same
+  pinned release, passing `--force-exclude` so the generated file policy still
+  applies to a path Typos is named explicitly. Second, Typos tokenizes on
+  punctuation, so it cannot see a hyphenated prohibited phrase; the gate's
+  phrase check is therefore run again over a throwaway index that holds only
+  the untracked Markdown, added as intent-to-add entries. The real index is
+  never modified, and a phrase finding in a new document fails the target
+  before it is committed.
+- The builder is release-pinned while the dictionary it fetches stays live:
+  either half can move without repinning the other. The gate caches the
+  dictionary revision in the untracked `.typos-oxendict-base.toml` and
+  `.typos-oxendict-base.json` files. When neither the cache nor the network is
+  available, the builder falls back to the snapshot bundled in the pinned
+  release and reports the refresh as `bootstrap`, so an offline checkout whose
+  tool is already provisioned can still run the gate.
+- The gate runs in write mode, so a live dictionary edit is picked up rather
+  than reported as drift. When `make spelling` changes `typos.toml`, commit the
+  regenerated file with the change that caused it.
+- `make markdownlint` depends on `make spelling`, so Markdown structure and
+  spelling are checked in one pass.
+
+CI runs the same `make spelling` target, so a local pass and a hosted pass
+invoke the same command on the same pin. That does not make their inputs
+identical: a local run may fall back to a cached dictionary when the authority
+is unreachable, while CI may refresh to a newer revision and report a finding
+the local run did not. The gate is never invoked with `--check`: that option
+belongs to standalone configuration generation, where it reports drift, whereas
+`gate` has no drift mode and always regenerates before checking.
+
+`tests/test_spelling_gate.py` drives both recipe stages against stub
+executables, so it needs neither `uvx` nor the network.
+`tests/test_spelling_gate_end_to_end.py` is skipped unless
+`make spelling-integration-test` provisions the pin first; that target then
+runs the real builder and the pinned Typos binary against a fixture repository,
+and CI runs it once the `make spelling` step has warmed the release. It uses
+`--noconftest`, because the suite conftest imports the compiled extension and
+these tests ask for no fixture it defines.
 
 ### Configuration
 
-`typos.toml` is generated, not hand-edited. The generator refreshes the shared
-dictionary from `leynos/agent-helper-scripts` into an untracked local cache
-only when the authoritative copy is newer. It can reuse a valid cache while
-offline, and a clean checkout with an unavailable network retains the reviewed,
-tracked `typos.toml` policy.
+`typos.toml` is generated: never edit it by hand. Put narrow
+repository-specific exceptions in `typos.local.toml`, scoped by pattern rather
+than by accepted word:
 
-Put only repository-specific proper nouns, quoted upstream titles, fixtures,
-stems or exclusions in `typos.local.toml`, then regenerate the merged config:
+- `[patterns] ignore` entries match exact identifiers, quotations or fixture
+  lines;
+- `[oxford] stems` accept the inflections of a proper noun that the shared
+  dictionary spells differently;
+- `[files] exclude` removes generated trees from the scan.
+
+The overlay also supports `[patterns] remove` and `[patterns] markdown_only`
+when a shared pattern is too broad for this repository. Run the gate directly
+to regenerate the file after changing the overlay:
 
 ```shell
-uv run scripts/generate_typos_config.py
+uvx --python 3.14 \
+  --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" \
+  typos-config-builder gate
 ```
-
-When updating the pinned version, change `TYPOS_VERSION` in the `Makefile`,
-update any matching CI install step, and re-run `make markdownlint` to confirm
-the corpus still passes.
 
 ## Rust extension build toolchain
 
@@ -995,15 +1046,14 @@ development dependencies, and installs the editable Rust extension there. The
 target then invokes:
 
 ```shell
-ty check --python ./.venv --extra-search-path scripts
+ty check --python ./.venv
 ```
 
 The `--python` option points `ty` at the project environment containing the
-extension and its dependencies. The `scripts` search path is required because
-the spelling-policy helpers import one another as top-level modules. The same
-paths are recorded in `[tool.ty.environment]` in `pyproject.toml`; the Makefile
-passes them explicitly because the pinned local `ty` version does not reliably
-apply the equivalent project settings.
+extension and its dependencies; the same interpreter is recorded in
+`[tool.ty.environment]` in `pyproject.toml`, and the Makefile names it
+explicitly because the pinned local `ty` version does not reliably apply the
+equivalent project settings.
 
 The long-running Rust integration suite is the Cargo `heavy` test target,
 rooted at `rust_extension/tests/heavy/main.rs`. Its property-based tests are
