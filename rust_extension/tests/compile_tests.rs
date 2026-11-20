@@ -28,6 +28,10 @@ fn compile_time_ui() {
     test_cases.pass("tests/ui/pass/pyo3_pymodule.rs");
     test_cases.pass("tests/ui/pass/pyo3_signature.rs");
     test_cases.pass("tests/ui/pass/pyo3_detach_ungil.rs");
+    // The tracing bridge's public const constructor. The module exists only
+    // where both features are on, so the fixture is gated to match.
+    #[cfg(all(feature = "python", feature = "tracing-compat"))]
+    test_cases.pass("tests/ui/pass/tracing_layer_const.rs");
     test_cases.pass("tests/ui/pass/schema_version_error_wildcard.rs");
     test_cases.compile_fail("tests/ui/fail/*.rs");
 }

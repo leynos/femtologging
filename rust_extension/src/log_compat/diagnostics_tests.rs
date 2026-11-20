@@ -13,7 +13,8 @@ use serial_test::serial;
 
 use super::FemtoLogAdapter;
 use super::diagnostics::{
-    LookupFailureDiagnostic, lookup_failure_message, mirror_ignored_warning, should_ignore_target,
+    LookupFailureDiagnostic, acknowledge_write, lookup_failure_message, mirror_ignored_warning,
+    should_ignore_target, write_diagnostic_to,
 };
 use super::test_support::log_max_level;
 use crate::handler::FemtoHandlerTrait;
@@ -282,4 +283,40 @@ fn the_family_check_requires_a_separator_after_the_root(
             "forwarded"
         },
     );
+}
+
+/// A writer that refuses every write, standing in for a closed stderr.
+struct FailingWriter;
+
+impl std::io::Write for FailingWriter {
+    /// Refuse the write the way a closed pipe does.
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "diagnostic stream closed",
+        ))
+    }
+
+    /// Succeed at flushing; the write itself is the failing step.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A failed diagnostic write is an error at the seam and a no-op at the boundary.
+///
+/// The bridge writes its own diagnostics to stderr, so a closed or full stream
+/// is a real possibility. [`write_diagnostic_to`] must surface that as an
+/// ordinary error a test can see, and [`acknowledge_write`] must be where it
+/// stops: no retry, no second failing write, and no panic. The base revision
+/// used `eprintln!`, which panicked on this same condition.
+#[test]
+fn a_failed_diagnostic_write_is_acknowledged_at_one_boundary() {
+    let failure = write_diagnostic_to(FailingWriter, format_args!("diagnostic"));
+    assert!(
+        matches!(&failure, Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe),
+        "the writer seam must surface the write failure, got {failure:?}",
+    );
+    // The boundary itself: returning normally is the assertion.
+    acknowledge_write(failure);
 }

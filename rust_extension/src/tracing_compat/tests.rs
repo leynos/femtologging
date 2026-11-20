@@ -1,4 +1,10 @@
 //! Unit tests for the tracing compatibility bridge.
+//!
+//! The compile-time guarantees live in the `const _` items below. `layer()` is
+//! public, so `tests/ui/pass/tracing_layer_const.rs` pins it as an external
+//! caller sees it and the pin here repeats the check inside the crate. The
+//! crate-private `map_level` cannot be named by a trybuild fixture, so its
+//! in-crate pin is the only enforcement.
 
 use std::sync::Arc;
 
