@@ -8,7 +8,7 @@ use std::any::Any;
 
 use super::{EnqueueFailure, FemtoFileHandler, FileCommand, OverflowPolicy};
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     log_record::FemtoLogRecord,
     sync::{SendTimeoutError, Sender, TrySendError},
 };
@@ -124,6 +124,10 @@ impl FemtoHandlerTrait for FemtoFileHandler {
 
     fn flush(&self) -> bool {
         FemtoFileHandler::flush(self)
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        FemtoFileHandler::flush_by(self, context)
     }
 
     fn as_any(&self) -> &dyn Any {

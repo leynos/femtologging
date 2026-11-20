@@ -1,4 +1,13 @@
 //! Unit tests for socket frame serialization and retry backoff.
+//!
+//! The production module under test is the `socket_handler` framing and
+//! reconnect layer: a record is length-prefixed before it reaches the
+//! transport, and a retry sleeps for a minimum backoff while still respecting
+//! the caller's deadline. The cases cover the frame limit, the prefix, the
+//! serialize round trip, partial and empty writes, a refused Unix connect once
+//! the budget is spent, and command acknowledgements that must survive their
+//! last sender. None of them needs a live peer, so they stay fast and
+//! deterministic.
 
 use std::time::{Duration, Instant};
 

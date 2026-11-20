@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use rstest::rstest;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use crate::logger::{FemtoLogger, Shard, flush_metrics::FlushMetrics};
@@ -94,7 +94,7 @@ impl MonotonicClock for SteppingClock {
     }
 }
 
-/// Handler whose flush always succeeds.
+/// Handler whose deadline-aware flush always succeeds.
 struct PassingHandler;
 
 impl FemtoHandlerTrait for PassingHandler {
@@ -102,12 +102,16 @@ impl FemtoHandlerTrait for PassingHandler {
         Ok(())
     }
 
+    fn flush_until(&self, _context: &FlushContext) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
-/// Handler whose flush reports failure.
+/// Handler that declines the deadline-aware flush it is offered.
 struct FailingHandler;
 
 impl FemtoHandlerTrait for FailingHandler {
@@ -115,7 +119,7 @@ impl FemtoHandlerTrait for FailingHandler {
         Ok(())
     }
 
-    fn flush(&self) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         false
     }
 

@@ -17,12 +17,12 @@ use chrono::{DateTime, Utc};
 use delegate::delegate;
 
 use super::{
-    core::{TimedFileRotationStrategy, TimedRotationConfig},
+    core::TimedRotationConfig, rotation_strategy::TimedFileRotationStrategy,
     schedule::TimedRotationSchedule,
 };
 use crate::{
     formatter::FemtoFormatter,
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig},
     log_record::FemtoLogRecord,
 };
@@ -134,6 +134,11 @@ impl FemtoHandlerTrait for FemtoTimedRotatingFileHandler {
             fn flush(&self) -> bool;
         }
     }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.inner.flush_by(context)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

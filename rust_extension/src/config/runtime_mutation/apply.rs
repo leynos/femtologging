@@ -1,4 +1,19 @@
 //! Applies runtime configuration mutations to the live logger state.
+//!
+//! `RuntimeConfigBuilder`, declared in the parent `runtime_mutation` module,
+//! collects handler, filter and logger mutations and then applies them in one
+//! pass. Application has a defined order: the mutation is planned first, which
+//! computes the impacted loggers and scalar fields; handler-level filter
+//! identifiers are then validated and unreachable definitions rejected; only
+//! after that is anything published. A rejected mutation therefore does not
+//! publish its planned configuration. What it does not undo
+//! is work already done to get there: a handler or filter built before a later
+//! failure keeps its side effects, such as a created file, and a logger
+//! registered while the commit is assembled stays registered even though the
+//! transaction is rejected. `validate_handler_filter_ids`,
+//! `planned_handler_filter_ids` and `reject_unreachable_definitions` keep each
+//! check separate; `collect_impacted`, `apply_logger_mutations` and
+//! `build_scalar_mutations` do the planning.
 
 use std::collections::{BTreeMap, BTreeSet};
 

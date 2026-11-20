@@ -4,115 +4,16 @@
 //! acknowledgement rather than reusing a stale ack from an earlier timed-out
 //! flush.
 
-use super::test_support::impl_unsupported_seek;
+use super::flush_ack_support::{BlockingFlushWriter, StalledFlushHandler, stalled_handler};
 use super::*;
-use std::io::{self, ErrorKind, Write};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use rstest::*;
+use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// Cloneable writer whose flush calls wait for explicit test release.
-#[derive(Clone)]
-struct BlockingFlushWriter {
-    /// Shared state keeps write and flush observations consistent across clones.
-    state: Arc<BlockingFlushState>,
-}
-
-/// Coordination shared between the writer and the test controlling flushes.
-struct BlockingFlushState {
-    /// Bytes accepted by `write`, protected because worker and test inspect it.
-    buffer: Mutex<Vec<u8>>,
-    /// Number assigned to each flush invocation.
-    flush_calls: Mutex<usize>,
-    /// Highest flush number the test has released.
-    released_flushes: Mutex<usize>,
-    /// Wakes blocked flush calls when the test advances `released_flushes`.
-    release_cvar: Condvar,
-    /// Reports each started flush to the coordinating test.
-    started_tx: mpsc::Sender<usize>,
-}
-
-impl BlockingFlushWriter {
-    /// Build a writer whose flush calls block until the test releases them.
-    fn new(started_tx: mpsc::Sender<usize>) -> Self {
-        Self {
-            state: Arc::new(BlockingFlushState {
-                buffer: Mutex::new(Vec::new()),
-                flush_calls: Mutex::new(0),
-                released_flushes: Mutex::new(0),
-                release_cvar: Condvar::new(),
-                started_tx,
-            }),
-        }
-    }
-
-    /// Release all blocked flushes up to and including `flush_number`.
-    fn release_flushes_through(&self, flush_number: usize) {
-        // Recover from poisoning: the counter is always valid data.
-        let mut released = self
-            .state
-            .released_flushes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *released = flush_number;
-        self.state.release_cvar.notify_all();
-    }
-
-    /// Release every blocked flush call.
-    fn release_all_flushes(&self) {
-        self.release_flushes_through(usize::MAX);
-    }
-}
-
-impl Write for BlockingFlushWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Recover from poisoning: the buffer contents remain valid data.
-        let mut buffer = self
-            .state
-            .buffer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        buffer.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let flush_number = {
-            // Recover from poisoning: the counter is always valid data.
-            let mut flush_calls = self
-                .state
-                .flush_calls
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *flush_calls += 1;
-            *flush_calls
-        };
-        // Surface a disconnected test receiver as an I/O error so the
-        // calling test fails with context instead of panicking here.
-        self.state.started_tx.send(flush_number).map_err(|_| {
-            io::Error::new(
-                ErrorKind::BrokenPipe,
-                "flush start notification receiver disconnected",
-            )
-        })?;
-
-        let mut released = self
-            .state
-            .released_flushes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while *released < flush_number {
-            released = self
-                .state
-                .release_cvar
-                .wait(released)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        Ok(())
-    }
-}
-
-impl_unsupported_seek!(BlockingFlushWriter);
+use crate::handler::FlushContext;
+use crate::monotonic_clock::SharedClock;
+use crate::test_utils::flush_budget::SharedScriptedClock;
 
 /// Ensure each flush waits on its own acknowledgement channel.
 #[test]
@@ -192,4 +93,169 @@ fn flush_waits_for_its_own_acknowledgement() {
         panic!("flush test must release all handler references before shutdown");
     };
     handler.close();
+}
+
+/// The supplied deadline, not the handler's one-second timeout, bounds an
+/// acknowledgement the stalled worker never sends.
+#[rstest]
+fn flush_deadline_bounds_a_stalled_acknowledgement(mut stalled_handler: StalledFlushHandler) {
+    assert_eq!(
+        stalled_handler
+            .started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the stalling flush must reach the writer"),
+        1
+    );
+
+    // Admission has the whole budget; the acknowledgement has none.
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(30);
+    let mut samples = 0_u8;
+    let mut now = || {
+        samples += 1;
+        // The cap and admission checks see the start, so the enqueue gets the
+        // whole budget. Only the acknowledgement sample sees it spent.
+        if samples <= 2 {
+            start
+        } else {
+            start + Duration::from_secs(31)
+        }
+    };
+    let began = Instant::now();
+    let confirmed = stalled_handler.handler().flush_by_at(deadline, &mut now);
+
+    assert!(
+        !confirmed,
+        "a worker blocked inside the writer cannot acknowledge this flush"
+    );
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "the acknowledgement wait must stop at the supplied deadline, not the one-second timeout"
+    );
+    // The acknowledgement wait ends at the supplied deadline, and the shared
+    // helper then samples once more to check the answer it classified did not
+    // arrive late. That fourth read is what turns a receive that took a ready
+    // message with no budget left into a reported timeout.
+    assert_eq!(
+        samples, 4,
+        "the cap, queue admission, acknowledgement and lateness check must each \
+         sample the clock"
+    );
+
+    stalled_handler.writer.release_all_flushes();
+    // The stalling flush has its own one-second budget, so whether the released
+    // write finishes inside it is a scheduling detail. Only its completion
+    // matters here; the assertion above covers the deadline under test.
+    let outcome = stalled_handler.stall_outcome();
+    assert!(
+        outcome.is_some(),
+        "the stalling flush must report its outcome once the writer is released"
+    );
+}
+
+/// A caller deadline shorter than the handler's fixed one-second flush timeout
+/// bounds the wait through the `flush_until` entry point.
+#[rstest]
+fn flush_until_lets_a_shorter_caller_deadline_bound_the_flush(
+    mut stalled_handler: StalledFlushHandler,
+) {
+    assert_eq!(
+        stalled_handler
+            .started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the stalling flush must reach the writer"),
+        1
+    );
+
+    // The caller allows fifty milliseconds; the handler's own budget is one
+    // second. The second sample is already past the caller's deadline, so
+    // neither queue wait may block.
+    let clock = Arc::new(SharedScriptedClock::new(&[0, 100]));
+    let injected: SharedClock = clock.clone();
+    let context = FlushContext::with_clock(
+        clock.started_at(),
+        Some(clock.deadline_within(Duration::from_millis(50))),
+        injected,
+    );
+
+    let began = Instant::now();
+    let confirmed = stalled_handler.handler().flush_until(&context);
+    let elapsed = began.elapsed();
+
+    assert!(
+        !confirmed,
+        "a worker blocked inside the writer cannot acknowledge this flush"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "the caller's 50 ms deadline must bound the wait, not the one-second timeout"
+    );
+    // As above, the helper's lateness check adds the fourth context sample.
+    assert_eq!(
+        clock.samples(),
+        4,
+        "the cap, queue admission, acknowledgement and lateness check must each \
+         sample the context clock"
+    );
+
+    stalled_handler.writer.release_all_flushes();
+    let outcome = stalled_handler.stall_outcome();
+    assert!(
+        outcome.is_some(),
+        "the stalling flush must report its outcome once the writer is released"
+    );
+}
+
+/// A full queue must refuse the marker once the supplied deadline has no
+/// budget left, even though the handler's timeout would still allow a wait.
+#[rstest]
+fn flush_deadline_bounds_a_stalled_queue_admission(
+    #[with(1)] mut stalled_handler: StalledFlushHandler,
+) {
+    assert_eq!(
+        stalled_handler
+            .started
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the stalling flush must reach the writer"),
+        1
+    );
+
+    // The stalled worker cannot drain this record, so it holds the only slot.
+    stalled_handler
+        .handler()
+        .handle(FemtoLogRecord::new(
+            "flush-deadline",
+            FemtoLevel::Info,
+            "occupies the queue",
+        ))
+        .expect("the free slot should accept one record");
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(30);
+    let mut samples = 0_u8;
+    let mut now = || {
+        samples += 1;
+        start + Duration::from_secs(31)
+    };
+    let began = Instant::now();
+    let confirmed = stalled_handler.handler().flush_by_at(deadline, &mut now);
+
+    assert!(!confirmed, "a full queue cannot admit the flush marker");
+    assert!(
+        began.elapsed() < Duration::from_secs(1),
+        "queue admission must stop at the supplied deadline, not wait for room"
+    );
+    assert_eq!(
+        samples, 2,
+        "a refused admission must still sample the cap and the admission budget"
+    );
+
+    stalled_handler.writer.release_all_flushes();
+    // As above: the stalling flush's own one-second budget decides its result,
+    // which is not the deadline this test asserts on.
+    let outcome = stalled_handler.stall_outcome();
+    assert!(
+        outcome.is_some(),
+        "the stalling flush must report its outcome once the writer is released"
+    );
 }

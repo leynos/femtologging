@@ -1,4 +1,14 @@
 //! Contracts for the shutdown signal's phases, budget and interruptible wait.
+//!
+//! `ShutdownSignal`, defined in the production `shutdown_signal` module, lets a
+//! worker wait for either its own deadline or a shutdown or abort raised by
+//! another thread. These tests pin the phase transitions and `Debug` output,
+//! the rule that a wait started after the deadline reports the abort without
+//! sleeping, and the way a spent budget clamps a shorter timeout to nothing.
+//! They also pin that abort supersedes an earlier deadline while a second
+//! shutdown keeps the first, so the earliest deadline stays authoritative.
+//! `draining` arranges a signal already in shutdown; `LONG_DELAY`, `BUDGET` and
+//! `SETTLE` keep the waits short and the assertions deterministic.
 
 use std::sync::Arc;
 use std::thread;

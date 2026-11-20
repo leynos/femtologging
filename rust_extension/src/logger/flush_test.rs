@@ -1,4 +1,15 @@
 //! Test-only synchronization hooks for Python handler flush regression tests.
+//!
+//! The flush tests need to observe the point where the whole barrier waits on
+//! the worker and to keep a handler blocked until they release it. The logger
+//! signals that point: `FemtoLogger::notify_barrier_waiting` runs once the shard
+//! has admitted the marker and started the worker, immediately before the
+//! acknowledgement wait. `FlushTestHooks` carries the handshake, the test waits
+//! for the signal and can cancel a wait that nothing will satisfy. The
+//! `wait_for_flush_entry_for_test`, `drain_flush_signals_for_test` and
+//! `cancel_flush_wait_for_test` helpers wire the hooks to a live `FemtoLogger`
+//! for the Python tests, which reach them through the extension module, and the
+//! `tests` submodule covers the signal bookkeeping itself.
 
 use std::time::Duration;
 

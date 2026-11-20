@@ -1,324 +1,365 @@
-//! Synchronous handler flushing for [`super::FemtoLogger`].
+//! Deadline-aware handler flushing for [`super::FemtoLogger`].
 //!
 //! A flush has two halves: the logger's own queued records must be handled
 //! before the handlers are asked to flush, and the handlers must then be
-//! flushed without holding any lock a handler could need. Both halves are
-//! timed and classified once, so the counters and the tracing span describe
-//! the same attempt.
+//! flushed without holding any lock a handler could need. One absolute
+//! deadline spans dispatch resolution, the shard's flush marker, the handler
+//! snapshot, the worker's acknowledgement, and each handler's own flush, so a
+//! caller is bounded once rather than once per stage. Built-in handlers keep
+//! their shorter per-handler timeouts, and a caller that holds Python access
+//! releases the interpreter for the wait.
 //!
-//! The measurement is a seam of its own. [`measure_flush_attempt`] takes the
-//! clock and the observer as parameters, so orchestration reads no ambient
-//! time source and writes no global; [`FlushMetrics`] and the tracing span are
-//! two production observers selected at the flush boundary.
+//! This module owns the barrier and its outcome. The measurement seam lives in
+//! [`super::flush_measure`], and the handler-snapshot sequence in
+//! [`super::flush_snapshot`]. The barrier keeps a richer outcome of its own —
+//! the stage that failed and the deadline it was charged against — and is
+//! collapsed to the four metric buckets only for the counters.
 
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::handler::FemtoHandlerTrait;
+#[cfg(all(test, not(loom)))]
 use crate::monotonic_clock::MonotonicClock;
+#[cfg(all(test, not(loom)))]
+use crate::monotonic_clock::SharedClock;
+use crate::sync::Sender;
 
-use super::DrainOutcome;
-use super::FemtoLogger;
+use super::flush_clock::FlushDeadline;
+use super::flush_diagnostics::FlushDiagnostics;
+pub(super) use super::flush_diagnostics::FlushFailureStage;
 #[cfg(feature = "tracing-compat")]
-use super::flush_metrics;
-use super::flush_metrics::{FlushMetrics, FlushOutcome};
+use super::flush_diagnostics::trace_flush_caller_result;
+#[cfg(all(test, not(loom)))]
+use super::flush_measure::{FlushObserver, MetricsFlushObserver};
+use super::flush_measure::{MeasuredOutcome, measure_flush_attempt, production_flush_observer};
+use super::flush_metrics::FlushOutcome;
+use super::flush_snapshot::clone_handler_snapshot;
+#[cfg(all(test, not(loom)))]
+pub(super) use super::flush_snapshot::flush_handler_snapshot_at;
+pub(super) use super::flush_snapshot::flush_handler_snapshot_until;
+use super::{FemtoLogger, LOGGER_FLUSH_TIMEOUT_MS};
+
+// The `log` bridge is the only consumer, through the re-export in the parent
+// module, so this follows that feature or `-D unused-imports` fails a lane with
+// the bridge compiled out.
+#[cfg(feature = "log-compat")]
+pub(crate) use super::flush_measure::process_flush_metrics;
+#[cfg(feature = "log-compat")]
+pub(crate) use super::flush_measure::record_bridge_flush_failure;
+
+/// Confirm a successful operation only when the supplied time is within its
+/// absolute deadline.
+pub(super) fn confirm_by_deadline(
+    result: Result<(), FlushFailureStage>,
+    deadline: Instant,
+    now: Instant,
+    late_stage: FlushFailureStage,
+) -> Result<(), FlushFailureStage> {
+    result.and_then(|()| {
+        if now <= deadline {
+            Ok(())
+        } else {
+            Err(late_stage)
+        }
+    })
+}
+
+/// Barrier result that retains its deadline across interpreter reattachment.
+pub(super) struct BarrierOutcome {
+    /// The result of marker insertion, worker acknowledgement, and handler flushes.
+    result: Result<(), FlushFailureStage>,
+    /// The one deadline consumed by every stage of this barrier, if representable.
+    timing: FlushDeadline,
+    /// Time at which Rust-side barrier work returned.
+    barrier_completed_at: Instant,
+}
+
+impl BarrierOutcome {
+    /// Record the final result after any required interpreter handoff.
+    pub(super) fn finish(
+        self,
+        diagnostics: &FlushDiagnostics,
+        late_stage: FlushFailureStage,
+    ) -> bool {
+        let now = self.timing.now();
+        self.finish_at(now, diagnostics, late_stage)
+    }
+
+    /// Record the final result at an explicit time for generated tests.
+    fn finish_at(
+        self,
+        now: Instant,
+        diagnostics: &FlushDiagnostics,
+        late_stage: FlushFailureStage,
+    ) -> bool {
+        let result = match self.timing.instant() {
+            Some(deadline) => confirm_by_deadline(
+                confirm_by_deadline(
+                    self.result,
+                    deadline,
+                    self.barrier_completed_at,
+                    FlushFailureStage::BarrierDeadlineExceeded,
+                ),
+                deadline,
+                now,
+                late_stage,
+            ),
+            None => Err(FlushFailureStage::DeadlineUnrepresentable),
+        };
+        let elapsed = now.saturating_duration_since(self.timing.started_at());
+        // The caller's outcome is traced inside the barrier span so a late
+        // decision, such as a Python return after the deadline, still belongs
+        // to the flush that produced it.
+        #[cfg(feature = "tracing-compat")]
+        {
+            let _entered = self.timing.span().enter();
+            trace_flush_caller_result(result, elapsed);
+        }
+        diagnostics.record(result, elapsed);
+        result.is_ok()
+    }
+}
+
+impl MeasuredOutcome for BarrierOutcome {
+    /// Collapse the barrier's fifteen failure stages onto the four counters.
+    ///
+    /// The metrics vocabulary is deliberately coarse: it answers "did this
+    /// flush work, and if not, was it slow, was the shard gone, or did a
+    /// handler refuse?" The stage itself stays in [`FlushDiagnostics`], which
+    /// is where a specific cause is worth recording.
+    fn metric_outcome(&self) -> FlushOutcome {
+        match self.result {
+            Ok(()) => FlushOutcome::Success,
+            Err(
+                FlushFailureStage::WorkerUnavailable
+                | FlushFailureStage::MarkerEnqueueDisconnected
+                | FlushFailureStage::WorkerStartDisconnected
+                | FlushFailureStage::WorkerExited,
+            ) => FlushOutcome::ChannelClosed,
+            Err(
+                FlushFailureStage::HandlerFlushUnconfirmed
+                | FlushFailureStage::HandlerFlushDeadlineExceeded,
+            ) => FlushOutcome::HandlerFailure,
+            Err(
+                FlushFailureStage::DeadlineUnrepresentable
+                | FlushFailureStage::DispatchStateTimedOut
+                | FlushFailureStage::HandlerSnapshotTimedOut
+                | FlushFailureStage::DeadlineExpiredBeforeMarker
+                | FlushFailureStage::MarkerEnqueueTimedOut
+                | FlushFailureStage::WorkerStartTimedOut
+                | FlushFailureStage::AcknowledgementTimedOut
+                | FlushFailureStage::BarrierDeadlineExceeded
+                | FlushFailureStage::CallerReturnDeadlineExceeded,
+            ) => FlushOutcome::AckTimeout,
+        }
+    }
+}
 
 impl FemtoLogger {
     /// Flush all handlers attached to this logger.
     ///
-    /// This call blocks until the worker acknowledges a flush marker and each
-    /// attached handler has flushed. Enqueueing the flush marker and waiting
-    /// for its acknowledgement share a two-second timeout. Flushing attached
-    /// handlers can take additional time.
+    /// One absolute deadline spans dispatch resolution, the flush marker's
+    /// admission, the handler snapshot, the worker's acknowledgement, and each
+    /// handler's own flush, so the whole call is bounded once rather than once
+    /// per stage. Built-in handlers keep their shorter per-handler timeouts.
+    ///
+    /// A handler that reports failure does not stop the ones after it: the
+    /// sequence continues while budget remains, so one broken handler does not
+    /// leave records buffered in the handlers after it. A failure that uses up
+    /// the last of the budget ends the sequence, and the remaining handlers
+    /// keep whatever they had buffered.
     ///
     /// When Python handlers can be attached, callers that currently hold
     /// Python access must detach before calling this method. Otherwise the
-    /// worker cannot acquire the GIL to run a Python handler.
+    /// worker cannot acquire the GIL to run a Python handler. A custom Rust
+    /// handler must override [`FemtoHandlerTrait::flush_until`] to be
+    /// confirmed, while a user-defined Python handler is confirmed through
+    /// its own callable `flush`.
     ///
     /// # Returns
     ///
-    /// `true` if the worker acknowledges the flush marker within the shared
-    /// timeout and every attached handler flush succeeds. `false` if the
-    /// marker cannot be enqueued or acknowledged in time, or a handler flush
-    /// fails.
+    /// `false` when the deadline expires before the barrier completes, when the
+    /// shard is gone, or when any handler in the snapshot does not confirm its
+    /// flush.
     ///
     /// # Examples
     ///
-    /// A Rust caller holding Python access detaches during the blocking flush:
+    /// A Rust caller flushes the logger's handlers:
     ///
     /// ```
     /// use _femtologging_rs::FemtoLogger;
-    /// use pyo3::Python;
     ///
     /// let logger = FemtoLogger::new(String::from("example"))
     ///     .expect("the shared dispatch pool starts");
-    /// let flushed = Python::attach(|py| py.detach(|| logger.flush_handlers()));
-    /// assert!(flushed);
+    /// assert!(logger.flush_handlers());
     /// ```
+    ///
+    /// A caller that already holds Python access does not call this directly:
+    /// it goes through the Python-facing entry points, which detach the
+    /// interpreter for the whole barrier.
     pub fn flush_handlers(&self) -> bool {
+        self.flush_handlers_blocking().finish(
+            &self.flush_diagnostics,
+            FlushFailureStage::CallerReturnDeadlineExceeded,
+        )
+    }
+
+    /// Run the barrier and measure it once against the production boundary.
+    ///
+    /// The clock and the observer are chosen here, at the boundary: the
+    /// orchestration below names neither the process-wide metrics nor the
+    /// tracing feature. The observer opens its span when it is created, before
+    /// the barrier, so an external subscriber sees the wait as part of the
+    /// operation.
+    pub(super) fn flush_handlers_blocking(&self) -> BarrierOutcome {
+        let observer = production_flush_observer();
+        measure_flush_attempt(&crate::monotonic_clock::SystemClock, &observer, || {
+            self.flush_handlers_with_timing(FlushDeadline::system(Duration::from_millis(
+                LOGGER_FLUSH_TIMEOUT_MS,
+            )))
+        })
+    }
+
+    /// Run the real barrier with a supplied clock for deterministic stage tests.
+    #[cfg(all(test, not(loom)))]
+    pub(super) fn flush_handlers_with_clock(
+        &self,
+        timeout: Duration,
+        clock: SharedClock,
+    ) -> BarrierOutcome {
+        self.flush_handlers_with_timing(FlushDeadline::with_clock(timeout, clock))
+    }
+
+    /// Keep the single timing context alive through barrier and caller return.
+    fn flush_handlers_with_timing(&self, timing: FlushDeadline) -> BarrierOutcome {
+        let result = if timing.instant().is_some() {
+            self.flush_barrier(&timing)
+        } else {
+            Err(FlushFailureStage::DeadlineUnrepresentable)
+        };
+        let barrier_completed_at = timing.now();
+        BarrierOutcome {
+            result,
+            timing,
+            barrier_completed_at,
+        }
+    }
+
+    /// Snapshot handlers and enqueue their flush after accepted dispatch work.
+    fn flush_barrier(&self, timing: &FlushDeadline) -> Result<(), FlushFailureStage> {
+        #[cfg(not(loom))]
+        let (shard, budget) = match self.dispatch_state_until(timing) {
+            Ok(Some(dispatch)) => dispatch,
+            Ok(None) => return Err(FlushFailureStage::DispatchStateTimedOut),
+            Err(_) => return Err(FlushFailureStage::WorkerUnavailable),
+        };
+        #[cfg(loom)]
+        let (shard, budget) = (&*self.shard, &self.budget);
+
+        #[cfg(not(loom))]
+        let handler_guard = match self.handlers.try_read_for(timing.remaining()) {
+            Some(guard) => guard,
+            None => return Err(FlushFailureStage::HandlerSnapshotTimedOut),
+        };
+        #[cfg(loom)]
+        let handler_guard = self.handlers.read();
+
+        let has_handlers = !handler_guard.is_empty();
+        drop(handler_guard);
+
+        if timing.is_expired() {
+            return Err(FlushFailureStage::DeadlineExpiredBeforeMarker);
+        }
+
+        if !has_handlers {
+            return if budget.in_flight() > 0 {
+                shard.wait_for_drain_until(timing)
+            } else {
+                Ok(())
+            };
+        }
+
+        shard.flush_handlers_until(
+            timing,
+            |snapshot_sender| self.send_handler_snapshot_until(snapshot_sender, timing),
+            || self.notify_barrier_waiting(),
+        )
+    }
+
+    /// Announce that the barrier is now waiting on its worker.
+    ///
+    /// A Python regression test releases a blocked handler callback only once
+    /// the flush reaches the point where the whole barrier waits on the
+    /// worker. Announcing at barrier entry instead would let a flush that had
+    /// merely started — still short of the wait, and free to stall on the
+    /// registry or the queue before it — release that callback, so the test's
+    /// in-flight assertion would no longer be about the wait itself. Both
+    /// Python entry points reach the barrier, so the notification lives here
+    /// rather than in `flush_handlers`.
+    fn notify_barrier_waiting(&self) {
         #[cfg(all(feature = "python", feature = "test-util"))]
         self.flush_test_hooks.signal_entered();
-
-        self.flush_handlers_blocking()
     }
 
-    /// Drain this logger's queued records, then flush its configured handlers.
-    ///
-    /// The whole attempt is timed and classified once, so the counters and the
-    /// tracing span describe the same flush. The production clock and observer
-    /// are chosen here, at the boundary: the orchestration below names neither
-    /// the process-wide metrics nor the tracing feature. The observer opens
-    /// its span when it is created, before the drain, so an external
-    /// subscriber sees the wait as part of the operation.
-    pub(super) fn flush_handlers_blocking(&self) -> bool {
-        let observer = production_flush_observer();
-        let outcome =
-            measure_flush_attempt(&crate::monotonic_clock::SystemClock, &observer, || {
-                self.flush_handlers_inner()
-            });
-        outcome.is_success()
-    }
-
-    /// Classify one flush attempt by its terminal outcome.
-    fn flush_handlers_inner(&self) -> FlushOutcome {
-        if let Some(failure) = FlushOutcome::from_drain(self.wait_for_dispatch_to_drain()) {
-            return failure;
-        }
-        if self.flush_configured_handlers() {
-            FlushOutcome::Success
-        } else {
-            FlushOutcome::HandlerFailure
-        }
-    }
-
-    /// Wait for the logger's shard to finish the records queued ahead.
-    ///
-    /// The barrier travels the shard's own queue, so it cannot overtake a
-    /// record this logger logged first, and a shard that is gone or too slow
-    /// reports [`DrainOutcome::QueueClosed`] or [`DrainOutcome::TimedOut`]
-    /// rather than waiting indefinitely.
-    ///
-    /// A logger with nothing in flight has nothing of its own to drain, so it
-    /// answers immediately. The budget releases a record's charge only after
-    /// its handlers have run, so a count of zero means every record this
-    /// logger queued has been handled. Queuing a barrier anyway would cost more
-    /// than the round trip: the `log` bridge's `flush_all_handlers` sweeps
-    /// every registered logger, and a barrier takes a queue slot but no
-    /// permit, so barriers can crowd out the records they were meant to drain
-    /// and make `admit` refuse work the shard had room for. `Drop` already
-    /// skips its wait this way.
-    ///
-    /// The wait is taken with the interpreter detached. `flush_handlers` is a
-    /// Python method, so its caller holds the GIL, and a queued Python handler
-    /// needs that same GIL to finish — holding it here would make the wait time
-    /// out against a handler that could not run. Detaching releases the GIL for
-    /// the duration, and the wait is taken directly when there is no
-    /// interpreter to detach from, which is also when no Python handler can be
-    /// mid-call.
-    fn wait_for_dispatch_to_drain(&self) -> DrainOutcome {
+    /// Snapshot handlers only after marker admission, so a rejected marker has
+    /// no handler owners to destroy on the flush caller.
+    fn send_handler_snapshot_until(
+        &self,
+        snapshot_sender: Sender<Vec<Arc<dyn FemtoHandlerTrait>>>,
+        timing: &FlushDeadline,
+    ) -> Result<(), FlushFailureStage> {
         #[cfg(not(loom))]
-        let (shard, budget) = match self.dispatch_state() {
-            Ok(dispatch) => dispatch,
-            // A logger whose pool cannot be reached has no shard to drain, so
-            // its barrier can never be answered.
-            Err(_) => return DrainOutcome::QueueClosed,
+        let handler_guard = match self.handlers.try_read_for(timing.remaining()) {
+            Some(guard) => guard,
+            None => return Err(FlushFailureStage::HandlerSnapshotTimedOut),
         };
-        #[cfg(not(loom))]
-        if budget.in_flight() == 0 {
-            return DrainOutcome::Drained;
-        }
-        #[cfg(not(loom))]
-        if let Some(drained) =
-            pyo3::Python::try_attach(|py| py.detach(|| shard.wait_for_drain_outcome()))
-        {
-            return drained;
-        }
-        #[cfg(not(loom))]
-        return shard.wait_for_drain_outcome();
         #[cfg(loom)]
-        self.shard.wait_for_drain_outcome()
+        let handler_guard = self.handlers.read();
+
+        let handlers = clone_handler_snapshot(&handler_guard);
+        if timing.is_expired() {
+            // The registry still owns every handler while this snapshot drops.
+            drop(handlers);
+            drop(handler_guard);
+            return Err(FlushFailureStage::HandlerSnapshotTimedOut);
+        }
+        if let Err(error) = snapshot_sender.try_send(handlers) {
+            // The registry still owns every handler if the worker has gone.
+            drop(error);
+            drop(handler_guard);
+            return Err(FlushFailureStage::WorkerStartDisconnected);
+        }
+        drop(handler_guard);
+        Ok(())
     }
 
     /// Run one real flush attempt with an injected clock and observer.
     ///
     /// Test-only: production selects the clock and the observer at the
     /// boundary in [`Self::flush_handlers_blocking`]. This entry point runs the
-    /// same drain-then-flush orchestration, so a test can classify the shard
-    /// and the attached handlers through the production path while the
-    /// measurement lands in counters the test owns.
+    /// same barrier, so a test can classify the shard and the attached
+    /// handlers through the production path while the measurement lands in
+    /// counters the test owns.
     #[cfg(all(test, not(loom)))]
     pub(crate) fn flush_handlers_measured<C, O>(&self, clock: &C, observer: &O) -> FlushOutcome
     where
         C: MonotonicClock + ?Sized,
         O: FlushObserver + ?Sized,
     {
-        measure_flush_attempt(clock, observer, || self.flush_handlers_inner())
+        measure_flush_attempt(clock, observer, || {
+            self.flush_handlers_with_timing(FlushDeadline::system(Duration::from_millis(
+                LOGGER_FLUSH_TIMEOUT_MS,
+            )))
+        })
+        .metric_outcome()
     }
-
-    /// Flush every configured handler and report whether all succeeded.
-    ///
-    /// The handler list is snapshotted under the read guard and the guard is
-    /// released before any handler runs. A handler's flush may be arbitrary
-    /// Python, and Python code is free to log through this logger or to add and
-    /// remove handlers; holding the read guard across that call would stall
-    /// those writers, and a writer that then waits on the flush would deadlock.
-    ///
-    /// Every handler is flushed even after one reports failure. A flush is
-    /// best-effort: one broken handler must not leave the records buffered in
-    /// the handlers after it, so the result is the conjunction of all attempts
-    /// rather than the first failure.
-    fn flush_configured_handlers(&self) -> bool {
-        let handlers: Vec<Arc<dyn FemtoHandlerTrait>> = {
-            let attachments = self.handlers.read();
-            attachments
-                .iter()
-                .map(|attachment| Arc::clone(&attachment.handler))
-                .collect()
-        };
-        let mut all_succeeded = true;
-        for handler in handlers {
-            if !handler.flush() {
-                all_succeeded = false;
-            }
-        }
-        all_succeeded
-    }
-}
-
-/// Receives the measurement of one completed flush attempt.
-///
-/// The flush path depends on this trait rather than on the process-wide
-/// counters, so a unit test can observe exactly what one attempt reported
-/// without sharing state with every other logger in the process.
-pub(crate) trait FlushObserver {
-    /// Record the terminal `outcome` of a flush that took `elapsed`.
-    fn record(&self, outcome: FlushOutcome, elapsed: Duration);
-}
-
-/// Time one flush attempt and report its outcome to `observer`.
-///
-/// This is the whole command: one attempt, one clock reading either side of
-/// it, and one record, so a counter and a duration always describe the same
-/// flush. The attempt itself is supplied by the caller, which keeps this
-/// function free of any dependency on the shard, the handlers, or the
-/// process-wide metrics.
-pub(crate) fn measure_flush_attempt<C, O>(
-    clock: &C,
-    observer: &O,
-    attempt: impl FnOnce() -> FlushOutcome,
-) -> FlushOutcome
-where
-    C: MonotonicClock + ?Sized,
-    O: FlushObserver + ?Sized,
-{
-    let started = clock.now();
-    let outcome = attempt();
-    observer.record(outcome, clock.now().saturating_duration_since(started));
-    outcome
-}
-
-/// Observer that counts a flush in one set of flush metrics.
-///
-/// The target is a parameter rather than the process-wide instance so a test
-/// can hold its own counters and attribute a record to it without sharing
-/// state with every other logger in the test binary. Production passes
-/// [`process_flush_metrics`], which is the only instance with a lifetime long
-/// enough to be injected anywhere else.
-struct MetricsFlushObserver<'a> {
-    /// Counters that receive the recorded outcome and duration.
-    metrics: &'a FlushMetrics,
-}
-
-impl<'a> MetricsFlushObserver<'a> {
-    /// Build an observer that reports to `metrics`.
-    const fn new(metrics: &'a FlushMetrics) -> Self {
-        Self { metrics }
-    }
-}
-
-impl FlushObserver for MetricsFlushObserver<'_> {
-    fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
-        self.metrics.record(outcome, elapsed);
-    }
-}
-
-/// Observer that records a flush onto a tracing span, then delegates.
-#[cfg(feature = "tracing-compat")]
-struct TracingFlushObserver<O> {
-    /// Span whose fields describe this attempt.
-    span: tracing::Span,
-    /// Keeps the span entered for the whole attempt.
-    _entered: tracing::span::EnteredSpan,
-    /// Observer that receives the counters once the span is updated.
-    inner: O,
-}
-
-#[cfg(feature = "tracing-compat")]
-impl<O: FlushObserver> TracingFlushObserver<O> {
-    /// Open the flush span now, so a subscriber sees the drain as part of it.
-    fn start(inner: O) -> Self {
-        let span = tracing::trace_span!(
-            target: "femtologging::internal",
-            "logger_flush",
-            operation = "logger_flush",
-            flush_outcome = tracing::field::Empty,
-            elapsed_us = tracing::field::Empty,
-        );
-        let entered = span.clone().entered();
-        Self {
-            span,
-            _entered: entered,
-            inner,
-        }
-    }
-}
-
-#[cfg(feature = "tracing-compat")]
-impl<O: FlushObserver> FlushObserver for TracingFlushObserver<O> {
-    fn record(&self, outcome: FlushOutcome, elapsed: Duration) {
-        self.span.record("flush_outcome", outcome.label());
-        self.span
-            .record("elapsed_us", flush_metrics::elapsed_micros(elapsed));
-        self.inner.record(outcome, elapsed);
-    }
-}
-
-/// The observer a production flush reports to.
-///
-/// Selected at the flush boundary rather than stored on the logger: the
-/// observer is stateless — all its state is the process-wide instance below —
-/// so keeping a copy per logger would only widen `FemtoLogger`.
-fn production_flush_observer() -> impl FlushObserver {
-    #[cfg(feature = "tracing-compat")]
-    {
-        TracingFlushObserver::start(MetricsFlushObserver::new(process_flush_metrics()))
-    }
-    #[cfg(not(feature = "tracing-compat"))]
-    {
-        MetricsFlushObserver::new(process_flush_metrics())
-    }
-}
-
-/// Return the process-wide flush metrics.
-///
-/// The instance lives here, behind the production observer, so orchestration
-/// and unit tests never reach for an ambient global. The `log` bridge also
-/// names it, because a bridge failure is counted without a flush attempt to
-/// carry the observer.
-pub(crate) fn process_flush_metrics() -> &'static FlushMetrics {
-    static METRICS: OnceLock<FlushMetrics> = OnceLock::new();
-    METRICS.get_or_init(FlushMetrics::new)
-}
-
-/// Record a logger flush that failed during a `log`-bridge flush sweep.
-///
-/// `metrics` is a parameter so the sweep can be driven against counters a test
-/// owns; production passes [`process_flush_metrics`].
-#[cfg(feature = "log-compat")]
-pub(crate) fn record_bridge_flush_failure(metrics: &FlushMetrics) {
-    metrics.record_bridge_failure();
 }
 
 #[cfg(all(test, not(loom)))]
 #[path = "flush_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(loom)))]
+#[path = "flush_barrier_tests.rs"]
+mod barrier_tests;

@@ -175,36 +175,35 @@ fn file_handler_concurrent_usage() {
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     let handler = Arc::new(FemtoFileHandler::new(&path).expect("Failed to create file handler"));
-    spawn_concurrent_writers(&handler, 10).expect("writer threads must finish cleanly");
+    write_concurrently(&handler, 10).expect("concurrent writers failed");
     drop(handler);
-    let output = fs::read_to_string(&path).expect("failed to read log output");
-    assert_every_message_written(&output, 10);
+    assert_all_messages_written(&path, 10);
 }
 
-/// Write one record from each of `count` threads sharing `handler`.
-///
-/// Fallible rather than panicking because it is a fixture, not a test: a
-/// failed join is reported to the test body, which owns the verdict.
-fn spawn_concurrent_writers(handler: &Arc<FemtoFileHandler>, count: usize) -> Result<(), String> {
+/// Write `count` records through one shared handler from `count` threads.
+fn write_concurrently(handler: &Arc<FemtoFileHandler>, count: usize) -> Result<(), &'static str> {
     let mut handles = Vec::with_capacity(count);
     for i in 0..count {
-        let h = Arc::clone(handler);
+        let shared = Arc::clone(handler);
         handles.push(thread::spawn(move || {
-            h.expect_handle(FemtoLogRecord::new(
+            shared.expect_handle(FemtoLogRecord::new(
                 "core",
                 FemtoLevel::Info,
                 &format!("msg{}", i),
             ));
         }));
     }
-    for h in handles {
-        h.join().map_err(|_| "writer thread panicked".to_string())?;
+    for handle in handles {
+        handle.join().map_err(|_| "writer thread panicked")?;
     }
     Ok(())
 }
 
-/// Assert the log holds a line for each of `count` concurrent messages.
-fn assert_every_message_written(output: &str, count: usize) {
+/// Assert every message `write_concurrently` produced reached the file.
+fn assert_all_messages_written(path: &std::path::Path, count: usize) {
+    let Ok(output) = fs::read_to_string(path) else {
+        panic!("failed to read log output");
+    };
     for i in 0..count {
         assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }

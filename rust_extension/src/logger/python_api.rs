@@ -1,4 +1,16 @@
 //! Python methods exposed by the `FemtoLogger` PyO3 class.
+//!
+//! This `#[pymethods]` block adds the constructor `new`, the `level` and
+//! `propagate` accessors with `set_level`, handler and filter management
+//! through `py_add_handler`, `py_remove_handler`, `py_clear_handlers` and
+//! `py_clear_filters`, the `get_dropped` and `get_disabled_drops` counters,
+//! and `py_flush_handlers`, which releases the GIL while the barrier runs.
+//! Fallible entry points return `PyResult`; `log` lives in
+//! `convenience_methods` and flush diagnostics in `flush_diagnostics_api`.
+//! A second, non-`#[pymethods]` block holds `flush_handlers_detached`, the
+//! detachment seam that keeps `pyo3` out of the barrier module: the Python
+//! method and the log-compat manager sweep both reach it with the interpreter
+//! token they already hold.
 
 use std::sync::{Arc, atomic::Ordering};
 
@@ -7,6 +19,7 @@ use pyo3::{Py, PyAny};
 
 use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 
+use super::flush::FlushFailureStage;
 use super::{FemtoLogger, HandlerAttachment, PyHandler, validate_handler};
 
 #[pymethods]
@@ -137,13 +150,6 @@ impl FemtoLogger {
         self.dropped_records.load(Ordering::Relaxed)
     }
 
-    /// Return how many records were dropped because producer context capture failed.
-    #[cfg(feature = "python")]
-    #[pyo3(text_signature = "(self)")]
-    pub fn get_context_capture_failures(&self) -> u64 {
-        self.context_capture_failures.load(Ordering::Relaxed)
-    }
-
     /// Return how many records were refused because the logger is disabled.
     ///
     /// The counter rises for records aimed at a logger that
@@ -158,18 +164,21 @@ impl FemtoLogger {
     /// Flush all handlers attached to this logger, releasing the GIL while the
     /// worker and handlers finish.
     ///
-    /// Enqueueing the flush marker and waiting for its acknowledgement share a
-    /// two-second timeout. Flushing attached handlers can take additional time.
-    /// The GIL is released while waiting for the worker and flushing handlers
-    /// so Python callbacks can run.
+    /// Resolves dispatch state, queues a marker for a non-empty handler list,
+    /// then snapshots handlers before allowing the worker to run callbacks.
+    /// With no handlers, it checks only this logger's in-flight work. One
+    /// absolute 2 second deadline covers all stages; built-ins retain shorter
+    /// timeouts. Python calls release the GIL.
+    /// Legacy synchronous handlers fail closed; deadline-aware overrides must
+    /// honour the deadline because code cannot be preempted. Violations may
+    /// keep the shared worker busy after ``False`` but cannot hold this caller.
+    /// Changes completed before the handler snapshot are reflected in this
+    /// barrier; removals after it do not cancel the queued flush.
     ///
     /// Returns
     /// -------
     /// bool
-    ///     ``True`` when the dispatcher drains the queue in time and every
-    ///     handler flush succeeds. ``False`` when the queued work cannot be
-    ///     drained (the shard is gone or the wait times out) or any handler
-    ///     flush returns ``False``.
+    ///     ``True`` on success; ``False`` when completion is unconfirmed or a handler fails.
     ///
     /// Examples
     /// --------
@@ -177,7 +186,7 @@ impl FemtoLogger {
     /// True
     #[pyo3(name = "flush_handlers", text_signature = "(self)")]
     fn py_flush_handlers(&self, py: Python<'_>) -> bool {
-        py.detach(|| self.flush_handlers())
+        self.flush_handlers_detached(py)
     }
 
     /// Capture handler addresses for tests that verify attachment replacement.
@@ -188,5 +197,41 @@ impl FemtoLogger {
     /// Capture filter addresses for tests that verify attachment replacement.
     pub(crate) fn filter_ptrs_for_test(&self) -> Vec<usize> {
         self.filter_ptrs_for_test_native()
+    }
+}
+
+/// Detachment seam for callers that already hold the interpreter.
+///
+/// The barrier in [`super::flush`] names no `pyo3` type, so releasing the GIL
+/// belongs here, at the Python boundary: this module owns the
+/// `Python<'_>` token every Python-facing flush already carries, and the
+/// log-compat manager sweep in [`crate::manager::registry`] shares the same
+/// entry point rather than detaching for itself.
+impl FemtoLogger {
+    /// Release Python while the shard and handlers consume the flush deadline.
+    ///
+    /// The final verdict is still recorded after the interpreter is
+    /// reacquired, so a Python return that lands past the deadline reports
+    /// `false` even when the Rust-side barrier completed in time.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn py_flush(&self, py: Python<'_>) -> bool {
+    ///     self.flush_handlers_detached(py)
+    /// }
+    /// ```
+    pub(crate) fn flush_handlers_detached(&self, py: Python<'_>) -> bool {
+        #[cfg(not(loom))]
+        let outcome = py.detach(|| self.flush_handlers_blocking());
+        #[cfg(loom)]
+        let outcome = {
+            let _ = py;
+            self.flush_handlers_blocking()
+        };
+        outcome.finish(
+            &self.flush_diagnostics,
+            FlushFailureStage::CallerReturnDeadlineExceeded,
+        )
     }
 }

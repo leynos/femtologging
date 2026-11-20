@@ -1,6 +1,12 @@
 //! Unit tests for Python integration paths in FemtoLogger.
 //!
 //! These tests require the `python` feature and exercise the PyO3 bindings.
+//! `should_capture_exc_info_cases` covers the `exc_info` truth test over
+//! `ExcInfoInput`; `py_log_stack_info_variations` and
+//! `py_log_exc_info_variation_cases` check `FemtoLogger::py_log` output, and
+//! `py_log_filtered_by_level` its level threshold.
+//! `capture_python_context_uses_queued_handler_snapshot` proves a queued
+//! `SnapshotPythonHandler` decides whether producer `contextvars` is captured.
 
 use super::*;
 use pyo3::Python;
@@ -88,6 +94,12 @@ struct SnapshotPythonHandler;
 impl FemtoHandlerTrait for SnapshotPythonHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
         Ok(())
+    }
+
+    /// Confirm the barrier so the snapshot tests isolate handler-list
+    /// behaviour; this handler has no buffers of its own to write.
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+        true
     }
 
     fn is_python_backed(&self) -> bool {
