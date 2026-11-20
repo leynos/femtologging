@@ -21,6 +21,9 @@ from tests.make_contract_helpers import (
 _MAKEUTIL_WORKFLOW_JOBS: typ.Final = (
     (".github/workflows/ci.yml", "build-test"),
     (".github/workflows/heavy-tests.yml", "heavy"),
+    # The trunk's coverage lanes run the same contract suite, which parses the
+    # Makefile before asserting anything about it.
+    (".github/workflows/coverage-main.yml", "coverage-measure"),
 )
 
 
