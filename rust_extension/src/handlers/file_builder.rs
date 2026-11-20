@@ -255,7 +255,17 @@ mod tests {
         let handler = builder
             .build_inner()
             .expect("build_inner must succeed for a valid file builder");
-        handler.flush();
+        handler
+            .handle(FemtoLogRecord::new("logger", FemtoLevel::Info, "hello"))
+            .expect("default formatter write must succeed");
+        assert!(handler.flush(), "flush must succeed for default formatter");
+        handler.close();
+
+        let contents = std::fs::read_to_string(&path).expect("default formatter must write output");
+        assert!(
+            contents.contains("logger [INFO] hello"),
+            "default formatter output must reach the configured file: {contents:?}",
+        );
     }
 
     #[rstest]
