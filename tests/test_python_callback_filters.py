@@ -17,6 +17,7 @@ from femtologging import (
     StdlibHandlerAdapter,
     get_logger,
 )
+from tests.documentation_examples import documented_example
 from tests.python_filter_support import (
     REQUEST_ID,
     PrefixRejectingFilter,
@@ -262,3 +263,38 @@ def test_contextvar_enrichment_is_thread_local(
         "each thread's contextvar must be captured against its own record, "
         f"got {payload!r}"
     )
+
+
+def test_documented_callback_enrichment_example_enriches_records() -> None:
+    """The published users' guide example configures an enriching filter.
+
+    The example runs exactly as published, so a guide that drifts back to an
+    API the library does not support fails here instead of misleading a
+    reader.
+    """
+    example = documented_example("callback-enrichment-accepted")
+    namespace: dict[str, object] = {}
+    exec(  # ruff: ignore[exec-builtin] the published example must run as shipped
+        compile(example.body, example.source, "exec"),
+        namespace,
+    )
+
+    collector = RecordCollector()
+    logger = get_logger("service")
+    logger.add_handler(collector)
+
+    assert logger.log("INFO", "request accepted") is not None, (
+        "the documented filter configuration must accept the record"
+    )
+    assert logger.flush_handlers(), "service handler delivery should flush"
+
+    assert len(collector.records) == 1, (
+        "the documented configuration must deliver exactly one record, got "
+        f"{collector.records!r}"
+    )
+    key_values = collector.records[0]["metadata"]["key_values"]
+    assert key_values == {
+        "request_id": "req-123",
+        "user_id": "42",
+        "cache_hit": "False",
+    }, f"the documented filter must enrich the record, got {key_values!r}"

@@ -1417,6 +1417,7 @@ Accepted enrichment must satisfy all of the following:
 
 Example of accepted enrichment:
 
+<!-- tested-example: callback-enrichment-accepted -->
 ```python
 import logging
 
@@ -1430,10 +1431,29 @@ def request_filter(record: logging.LogRecord) -> bool:
     return True
 
 
-logger = femtologging.get_logger(
-    "service",
-    filters=[femtologging.PythonCallbackFilterBuilder(request_filter)],
+(
+    femtologging
+    .ConfigBuilder()
+    .with_filter(
+        "request_enrichment",
+        femtologging.PythonCallbackFilterBuilder(request_filter),
+    )
+    .with_handler("console", femtologging.StreamHandlerBuilder.stderr())
+    .with_root_logger(femtologging.LoggerConfigBuilder().with_level("INFO"))
+    .with_logger(
+        "service",
+        femtologging
+        .LoggerConfigBuilder()
+        .with_level("INFO")
+        .with_filters(["request_enrichment"])
+        .with_handlers(["console"]),
+    )
+    .build_and_init()
 )
+
+logger = femtologging.get_logger("service")
+logger.log("INFO", "request accepted")
+logger.flush_handlers()
 ```
 
 Collisions and invalid values are rejected before the record enters the worker
