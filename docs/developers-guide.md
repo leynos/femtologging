@@ -720,6 +720,36 @@ queue the one-file build behind that wrapper, and the measurement would
 describe the host instead of this repository. The fixture also builds with a
 private `CARGO_HOME`, so it reads no host configuration at all.
 
+### Native backoff randomness
+
+The socket and HTTP workers share the backoff state machine in
+`rust_extension/src/socket_handler/backoff.rs`. Jitter uses `rand` directly at
+version 0.10; it is the only production use of that crate in the extension.
+
+The move from rand 0.8 to 0.10 crossed two releases. rand 0.9 renamed
+`SeedableRng::from_entropy` to `from_os_rng` and `Rng::gen_range` to
+`random_range`; rand 0.10 then removed `from_os_rng`, moved `random_range` to
+`RngExt`, and added `make_rng`. The state machine seeds the standard generator
+with `rand::make_rng`. With rand's default `thread_rng` feature that draws a
+seed from a thread-local `ThreadRng`, which is lazily seeded from the operating
+system and reseeded after 64 KiB of output. A fresh OS request therefore
+happens when the thread-local is first used or reseeded, not on every call; an
+already-seeded `ThreadRng` can supply a seed without one. When an OS request
+does fail, that path panics, preserving the infallible `from_entropy` contract.
+Handling the error was rejected because every caller constructs the worker
+without a fallible path, and a fixed-seed fallback would make every process
+that cannot read entropy retry in lockstep. Both handlers construct the state
+inside their worker thread, so each worker owns its thread-local generator.
+Jitter still samples the inclusive range `MIN_SLEEP_MS..=max_ms`, so the floor,
+cap, saturation, and reset behaviour are unchanged.
+
+Seeded construction is `#[cfg(test)]`-only (`BackoffState::with_seed`). It is
+not exposed through the `test-util` feature, the Python bindings, or
+`BackoffConfig`, whose keys remain `base_ms`, `cap_ms`, `reset_after_ms`, and
+`deadline_ms`. Tests assert application invariants (bounds, caps, deadlines,
+and reset transitions) rather than literal `StdRng` streams, because rand does
+not promise that a seed produces the same stream across versions.
+
 ### Cranelift
 
 Exception: Cranelift is not the development-profile backend. Cranelift requires

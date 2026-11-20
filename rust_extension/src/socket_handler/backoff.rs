@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use rand::{Rng, SeedableRng, rngs::StdRng};
+#[cfg(test)]
+use rand::SeedableRng;
+use rand::{RngExt, rngs::StdRng};
 
 use super::config::BackoffPolicy;
 
@@ -22,14 +24,53 @@ pub struct BackoffState {
 
 impl BackoffState {
     /// Create a new state machine from the supplied policy.
+    ///
+    /// The random source is seeded through [`rand::make_rng`]. With rand's
+    /// default `thread_rng` feature that draws a seed from a thread-local
+    /// `ThreadRng`, which is lazily seeded from the operating system and
+    /// reseeded after 64 KiB of output. A fresh OS request therefore happens
+    /// when the thread-local is first used or reseeds, not on every call; an
+    /// already-seeded `ThreadRng` can supply a seed without one. When an OS
+    /// request does fail, both paths panic, which preserves the previous
+    /// `StdRng::from_entropy` behaviour. That is deliberate: the worker cannot
+    /// produce unpredictable jitter without entropy, and a fixed-seed fallback
+    /// would make every process retry in lockstep. Both handlers construct the
+    /// state inside their worker thread, so each worker owns its thread-local
+    /// generator.
     pub fn new(policy: BackoffPolicy) -> Self {
+        Self::with_rng(policy, rand::make_rng())
+    }
+
+    /// Build state around an already-created random source.
+    fn with_rng(policy: BackoffPolicy, rng: StdRng) -> Self {
         Self {
             current: policy.base,
             failure_since: None,
-            rng: StdRng::from_entropy(),
+            rng,
             last_success: None,
             policy,
         }
+    }
+
+    /// Build state with a deterministic seed for unit tests.
+    ///
+    /// `seed_from_u64` is not suitable for cryptographic use, but jitter only
+    /// needs to spread retries. Tests use it so the same seed and operations
+    /// produce the same delays within one build without asserting a particular
+    /// `StdRng` stream, which is not stable across rand versions.
+    #[cfg(test)]
+    pub(crate) fn with_seed(policy: BackoffPolicy, seed: u64) -> Self {
+        Self::with_rng(policy, StdRng::seed_from_u64(seed))
+    }
+
+    /// Return the current delay bound for unit tests.
+    ///
+    /// The bound is private state, and sampling a jittered delay cannot prove
+    /// whether a reset or a doubling happened: both can return the same value.
+    /// Tests that assert the state transition itself read this bound instead.
+    #[cfg(test)]
+    pub(crate) fn current_bound(&self) -> Duration {
+        self.current
     }
 
     /// Record a successful write event.
@@ -75,7 +116,7 @@ impl BackoffState {
         let sleep_ms = match max_ms {
             0 => MIN_SLEEP_MS,
             1..=MIN_SLEEP_MS => max_ms,
-            _ => self.rng.gen_range(MIN_SLEEP_MS..=max_ms),
+            _ => self.rng.random_range(MIN_SLEEP_MS..=max_ms),
         };
         Some(Duration::from_millis(sleep_ms))
     }
