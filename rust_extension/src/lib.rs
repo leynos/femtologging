@@ -112,13 +112,19 @@ pub use exception_schema::{
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};
 /// Re-export the base handler trait and wrapper.
 pub use handler::{FemtoHandler, FemtoHandlerTrait, HandlerError};
+/// Test-only file-handler construction seam.
+///
+/// Re-exported at the crate root only for unit tests and builds that opt in to
+/// `test-util`, so the default Rust API never names it.
+#[cfg(any(test, feature = "test-util"))]
+pub use handlers::file::TestConfig;
 /// Re-export handler builders and errors.
 pub use handlers::{
     FemtoRotatingFileHandler, FemtoTimedRotatingFileHandler, FileHandlerBuilder,
     HTTPHandlerBuilder, HandlerBuilderTrait, HandlerConfigError, HandlerIOError,
     RotatingFileHandlerBuilder, SocketHandlerBuilder, StreamHandlerBuilder,
     TimedRotatingFileHandlerBuilder,
-    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig},
+    file::{FemtoFileHandler, HandlerConfig, OverflowPolicy},
 };
 #[cfg(feature = "python")]
 pub use handlers::{HandlerOptions, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions};
@@ -246,8 +252,9 @@ mod py_api {
 
     /// Return runtime attachment identifiers for the named logger.
     ///
-    /// Intended for tests validating manager snapshots.
-    #[cfg(feature = "python")]
+    /// Intended for tests validating manager snapshots. The hook exists only
+    /// when both the Python bindings and `test-util` are enabled.
+    #[cfg(all(feature = "python", feature = "test-util"))]
     #[pyfunction]
     pub(crate) fn runtime_attachment_state_for_test(
         name: &str,
@@ -259,7 +266,7 @@ mod py_api {
     }
 }
 
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 use py_api::runtime_attachment_state_for_test;
 use py_api::{get_logger, reset_manager_py};
 
@@ -319,7 +326,7 @@ fn register_core_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello, m)?)?;
     m.add_function(wrap_pyfunction!(get_logger, m)?)?;
     m.add_function(wrap_pyfunction!(reset_manager_py, m)?)?;
-    #[cfg(feature = "python")]
+    #[cfg(all(feature = "python", feature = "test-util"))]
     m.add_function(wrap_pyfunction!(runtime_attachment_state_for_test, m)?)?;
     Ok(())
 }

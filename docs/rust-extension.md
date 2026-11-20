@@ -198,6 +198,16 @@ logger's minimum level using a `FemtoLevel` value. Likewise, `log()` accepts a
 `FemtoLevel` and message, returning the formatted string or `None` when a
 record is filtered out.
 
+### Feature-gated test seams
+
+`TestConfig` and `FemtoFileHandler::with_writer_for_test()` exist only for unit
+tests and builds that enable the non-default `test-util` feature. The
+`FemtoRotatingFileHandler` equivalent and the crate-root re-exports follow the
+same gate, so a default-feature consumer cannot name them. `test-util` is never
+part of a package build; see
+[Maturin build features](developers-guide.md#maturin-build-features) for the
+production and test commands.
+
 ### Log record structure
 
 `FemtoLogRecord` stores a single `FemtoLevel` value as its source of truth for

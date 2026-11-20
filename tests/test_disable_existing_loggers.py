@@ -45,7 +45,7 @@ def test_disable_existing_loggers_clears_unmentioned(
     builder.build_and_init()
 
     stale = get_logger("stale")
-    assert stale.handler_ptrs_for_test(), "stale logger should have a handler"
+    assert stale.handler_identities_for_test(), "stale logger should have a handler"
 
     rebuild = (
         ConfigBuilder()
@@ -55,7 +55,7 @@ def test_disable_existing_loggers_clears_unmentioned(
     rebuild.build_and_init()
 
     stale = get_logger("stale")
-    assert not stale.handler_ptrs_for_test(), (
+    assert not stale.handler_identities_for_test(), (
         "stale logger should lose handlers after it is omitted"
     )
     assert stale.disabled, (
@@ -198,7 +198,7 @@ def test_disable_existing_loggers_keeps_ancestors(
     builder.build_and_init()
 
     initial_handlers = {
-        name: get_logger(name).handler_ptrs_for_test() for name in ancestors
+        name: get_logger(name).handler_identities_for_test() for name in ancestors
     }
 
     child_name = f"{ancestors[-1]}.child"
@@ -210,11 +210,12 @@ def test_disable_existing_loggers_keeps_ancestors(
     rebuild.build_and_init()
 
     child = get_logger(child_name)
-    assert len(child.handler_ptrs_for_test()) == 1, (
+    assert len(child.handler_identities_for_test()) == 1, (
         f"newly configured logger {child_name!r} should have exactly one handler"
     )
     for name in ancestors:
-        assert get_logger(name).handler_ptrs_for_test() == initial_handlers[name], (
+        current = get_logger(name).handler_identities_for_test()
+        assert current == initial_handlers[name], (
             f"ancestor logger {name!r} should retain its handler when a "
             "descendant is configured"
         )

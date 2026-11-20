@@ -14,10 +14,7 @@ use crate::{
     TimedRotatingFileHandlerBuilder,
     handlers::{
         common::PyOverflowPolicy,
-        rotating::{
-            HandlerOptions, PyRotatingFileHandler, ROTATION_VALIDATION_MSG,
-            clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
-        },
+        rotating::{HandlerOptions, PyRotatingFileHandler, ROTATION_VALIDATION_MSG},
         socket_builder::BackoffOverrides,
         timed_rotating::{
             PyTimedRotatingFileHandler, TIMED_ROTATION_VALIDATION_MSG, TimedHandlerOptions,
@@ -109,8 +106,6 @@ fn stream_waiter_count_for_test() -> usize {
 /// Register Python-only functions with the module.
 pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
-    m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
-    m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
     register_test_util_functions(m)?;
     register_frame_filter_functions(m)?;
     register_convenience_functions(m)?;
@@ -124,12 +119,17 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         gil_release_observations_for_test, note_python_thread_ran_for_test,
         reset_gil_release_observations_for_test, wait_for_wait_in_flight_for_test,
     };
+    use crate::handlers::rotating::{
+        clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
+    };
     use crate::handlers::timed_rotating::{
         clear_timed_rotation_test_times_for_test, set_timed_rotation_test_times_for_test,
     };
     use crate::logger::flush_test::{
         cancel_flush_wait_for_test, drain_flush_signals_for_test, wait_for_flush_entry_for_test,
     };
+    m.add_function(wrap_pyfunction!(force_rotating_fresh_failure_for_test, m)?)?;
+    m.add_function(wrap_pyfunction!(clear_rotating_fresh_failure_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(wait_for_flush_entry_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(cancel_flush_wait_for_test, m)?)?;
     m.add_function(wrap_pyfunction!(drain_flush_signals_for_test, m)?)?;
@@ -183,13 +183,26 @@ fn register_convenience_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(feature = "log-compat")]
 pub(crate) fn register_log_compat_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::log_compat::setup_rust_logging, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::log_compat::emit_rust_log, m)?)?;
     m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_enabled, m)?)?;
     m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_max_level, m)?)?;
+    register_log_compat_test_functions(m)?;
+    Ok(())
+}
+
+/// Register the log-compat hooks that only a `test-util` build compiles.
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
+fn register_log_compat_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(crate::log_compat::emit_rust_log, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::log_compat::install_test_global_rust_logger,
         m
     )?)?;
+    Ok(())
+}
+
+/// Without `test-util` there are no log-compat test hooks to register.
+#[cfg(all(feature = "log-compat", not(feature = "test-util")))]
+fn register_log_compat_test_functions(_m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
@@ -201,6 +214,13 @@ pub(crate) fn register_tracing_compat_functions(m: &Bound<'_, PyModule>) -> PyRe
         crate::tracing_compat::python::setup_rust_tracing,
         m
     )?)?;
+    register_tracing_compat_test_functions(m)?;
+    Ok(())
+}
+
+/// Register the tracing-compat hooks that only a `test-util` build compiles.
+#[cfg(all(feature = "tracing-compat", feature = "test-util"))]
+fn register_tracing_compat_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(
         crate::tracing_compat::python::emit_rust_tracing_event,
         m
@@ -217,6 +237,12 @@ pub(crate) fn register_tracing_compat_functions(m: &Bound<'_, PyModule>) -> PyRe
         crate::tracing_compat::python::install_test_global_tracing_subscriber,
         m
     )?)?;
+    Ok(())
+}
+
+/// Without `test-util` there are no tracing-compat test hooks to register.
+#[cfg(all(feature = "tracing-compat", not(feature = "test-util")))]
+fn register_tracing_compat_test_functions(_m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 

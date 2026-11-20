@@ -24,7 +24,17 @@ across Python and Rust code.
   by the Makefile; use this target rather than an independently installed `ty`
   version.
 
-- `make build` – compile the Rust extension by running `pip install -e .`.
+- `make build` – create `./.venv`, sync the development dependencies, and
+  install the editable Rust extension with
+  `maturin develop --features python,test-util`.
+
+- `make check-api-boundary` – build the extension, then build a release wheel
+  from the production maturin configuration and compile three default-feature
+  Rust probes to prove the test-only seams stay absent. See
+  [Maturin build features](developers-guide.md#maturin-build-features). This
+  suite is excluded from default pytest collection, and therefore from
+  `make test` and the CI coverage run, because it builds its own wheel rather
+  than exercising the development extension.
 
 - `make release` – build the extension with optimizations.
 
@@ -49,8 +59,10 @@ Pull-request CI uses a Python-version matrix in `.github/workflows/ci.yml`:
 - Required lanes: Python `3.12`, `3.13`, and `3.14`.
 - Early warning lane: Python `3.15` pre-release as an allowed failure.
 
-All lanes run the same gates: `make check-fmt`, `make lint`, `make typecheck`,
-and `make test`.
+All lanes run the same gates: `make check-fmt`, `make lint`, `make spelling`,
+`make typecheck`, the default and `log-compat` Cargo test lanes, and pytest
+with coverage. The Python `3.12` lane also runs `make check-api-boundary`,
+because that target builds and inspects its own release wheel.
 
 Ruff is pinned in the root `Makefile` with `RUFF_VERSION`; the `RUFF` variable
 uses `uvx ruff==$(RUFF_VERSION)` so formatting and linting use the same Ruff

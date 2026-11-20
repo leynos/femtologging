@@ -2,10 +2,47 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.machinery
 import sys
+import typing as typ
 from pathlib import Path
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+# Test-only names that follow none of the shapes below.
+_TEST_ONLY_EXACT_NAMES = frozenset({"_stream_waiter_count", "AttachmentIdentity"})
+_TEST_ONLY_NAME_PREFIXES = ("_emit_rust_", "_install_test_")
+_TEST_ONLY_NAME_SUFFIX = "_for_test"
+
+
+def _is_test_only_name(name: str) -> bool:
+    """Return whether *name* belongs to a test-only hook or helper.
+
+    Parameters
+    ----------
+    name : str
+        Attribute or stub declaration name to classify.
+
+    Returns
+    -------
+    bool
+        ``True`` for names that only a ``test-util`` build may expose.
+
+    Examples
+    --------
+    >>> _is_test_only_name("wait_for_flush_entry_for_test")
+    True
+    >>> _is_test_only_name("setup_rust_logging")
+    False
+    """
+    return (
+        name in _TEST_ONLY_EXACT_NAMES
+        or name.endswith(_TEST_ONLY_NAME_SUFFIX)
+        or name.startswith(_TEST_ONLY_NAME_PREFIXES)
+    )
 
 
 def _native_location_errors(native_location: object) -> list[str]:
@@ -45,34 +82,226 @@ def _native_location_errors(native_location: object) -> list[str]:
     return errors
 
 
-def release_wheel_errors() -> list[str]:
+def _native_surface_errors(native: object) -> list[str]:
+    """Return violations for test-only attributes on the native surface.
+
+    Both the module namespace and the ``FemtoLogger`` type are checked, because
+    an attachment hook is a method rather than a module function.
+
+    Parameters
+    ----------
+    native : object
+        The imported native extension module.
+
+    Returns
+    -------
+    list[str]
+        Human-readable violations for module functions and logger methods.
+
+    Examples
+    --------
+    >>> _native_surface_errors(object())
+    []
+    """
+    errors: list[str] = []
+    module_hooks = sorted(name for name in dir(native) if _is_test_only_name(name))
+    if module_hooks:
+        errors.append("native extension exposes test hooks: " + ", ".join(module_hooks))
+    logger_type = getattr(native, "FemtoLogger", None)
+    if logger_type is not None:
+        method_hooks = sorted(
+            name for name in dir(logger_type) if _is_test_only_name(name)
+        )
+        if method_hooks:
+            errors.append(
+                "FemtoLogger exposes test-only methods: " + ", ".join(method_hooks)
+            )
+    return errors
+
+
+def _reexported_names(aliases: cabc.Iterable[ast.alias]) -> set[str]:
+    """Return the names *aliases* re-export under an identical alias.
+
+    Parameters
+    ----------
+    aliases : collections.abc.Iterable[ast.alias]
+        Imported names from a ``from`` statement.
+
+    Returns
+    -------
+    set[str]
+        Names imported as themselves, which is how a stub re-exports them.
+
+    Examples
+    --------
+    >>> _reexported_names([ast.alias(name="Token", asname="Token")])
+    {'Token'}
+    >>> _reexported_names([ast.alias(name="Token", asname=None)])
+    set()
+    """
+    return {
+        alias.asname
+        for alias in aliases
+        if alias.asname is not None and alias.asname == alias.name
+    }
+
+
+def _stub_declaration_names(tree: ast.AST) -> set[str]:
+    """Return every name *tree* declares or explicitly re-exports.
+
+    Parsing the stub rather than scanning lines keeps the check correct for
+    syntax that is not a bare ``name:`` line, such as a PEP 695 generic class
+    whose name is followed by ``[``. Type parameters are not declarations of
+    the module's API, so they are not collected. A ``from x import Y as Y``
+    alias is a stub's way of re-exporting ``Y``; a plain import stays private
+    and is not collected.
+
+    Parameters
+    ----------
+    tree : ast.AST
+        Parsed type stub.
+
+    Returns
+    -------
+    set[str]
+        Names declared anywhere in the stub, including nested ones.
+
+    Examples
+    --------
+    >>> sorted(_stub_declaration_names(ast.parse("class Token[T]: ...")))
+    ['Token']
+    >>> _stub_declaration_names(ast.parse("from .mod import Token as Token"))
+    {'Token'}
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        match node:
+            case ast.AsyncFunctionDef() | ast.ClassDef() | ast.FunctionDef():
+                names.add(node.name)
+            case ast.AnnAssign(target=ast.Name(id=name)):
+                names.add(name)
+            case ast.Assign(targets=targets):
+                names.update(
+                    target.id for target in targets if isinstance(target, ast.Name)
+                )
+            case ast.TypeAlias(name=ast.Name(id=name)):
+                names.add(name)
+            case ast.ImportFrom(names=aliases):
+                names.update(_reexported_names(aliases))
+    return names
+
+
+def _stub_surface_errors(package: object) -> list[str]:
+    """Return violations for test-only declarations in the shipped stub.
+
+    A stub is the published contract of the wheel. Declaring a hook that only a
+    ``test-util`` build provides would promise production users an API they
+    cannot call, so the stub must omit the same names as the native module.
+
+    Parameters
+    ----------
+    package : object
+        The imported ``femtologging`` package.
+
+    Returns
+    -------
+    list[str]
+        Human-readable violations found in ``_femtologging_rs.pyi``.
+
+    Examples
+    --------
+    >>> _stub_surface_errors(object())
+    ['femtologging package has no filesystem origin']
+    """
+    package_file = getattr(package, "__file__", None)
+    if not isinstance(package_file, str):
+        return ["femtologging package has no filesystem origin"]
+    stub = Path(package_file).with_name("_femtologging_rs.pyi")
+    if not stub.is_file():
+        return [f"release wheel omits the type stub: {stub}"]
+    try:
+        declarations = _stub_declaration_names(
+            ast.parse(stub.read_text(encoding="utf-8"))
+        )
+    except SyntaxError:
+        return [f"release wheel type stub cannot be parsed: {stub}"]
+    hooks = sorted(name for name in declarations if _is_test_only_name(name))
+    if hooks:
+        return ["type stub declares test-only hooks: " + ", ".join(hooks)]
+    return []
+
+
+def _resolve_probe_inputs(
+    native: object | None, package: object | None
+) -> tuple[object | None, object | None]:
+    """Fill in the native module and package that the caller left unspecified.
+
+    Parameters
+    ----------
+    native : object | None
+        Injected native module, or ``None`` to import the installed one.
+    package : object | None
+        Injected ``femtologging`` package, or ``None`` to import it.
+
+    Returns
+    -------
+    tuple[object | None, object | None]
+        The native module and package to inspect.
+
+    Examples
+    --------
+    >>> native = object()
+    >>> _resolve_probe_inputs(native, object())[0] is native
+    True
+    """
+    if package is None:
+        import femtologging
+
+        package = femtologging
+    if native is None:
+        native = importlib.import_module("femtologging._femtologging_rs")
+    return native, package
+
+
+def release_wheel_errors(
+    *, native: object | None = None, package: object | None = None
+) -> list[str]:
     """Return checks that fail when this process is not using a release wheel.
+
+    Parameters
+    ----------
+    native : object | None
+        Native extension module to inspect. Defaults to the module installed
+        in this process; tests inject a stand-in so no shared import state is
+        replaced.
+    package : object | None
+        ``femtologging`` package to inspect. Defaults to the imported package.
 
     Returns
     -------
     list[str]
         Human-readable violations. An empty list means that the imported
-        extension belongs to this environment and contains no test hooks.
+        extension belongs to this environment and contains no test hooks, and
+        that its stub declares only the production API.
     """
-    import femtologging
-
-    native = importlib.import_module("femtologging._femtologging_rs")
+    native, package = _resolve_probe_inputs(native, package)
     errors = _native_location_errors(getattr(native, "__file__", None))
-
-    hooks = (
-        "set_timed_rotation_test_times_for_test",
-        "clear_timed_rotation_test_times_for_test",
-    )
-    exposed = [name for name in hooks if hasattr(native, name)]
-    if exposed:
-        errors.append(f"native extension exposes test hooks: {', '.join(exposed)}")
-    if femtologging._has_test_util is not False:
+    errors.extend(_native_surface_errors(native))
+    errors.extend(_stub_surface_errors(package))
+    if getattr(package, "_has_test_util", None) is not False:
         errors.append("femtologging._has_test_util must be False")
     return errors
 
 
-def main() -> int:
+def main(*, native: object | None = None, package: object | None = None) -> int:
     """Print release-wheel violations and return a process status.
+
+    Parameters
+    ----------
+    native : object | None
+        Native extension module to inspect. Defaults to the installed module.
+    package : object | None
+        ``femtologging`` package to inspect. Defaults to the imported package.
 
     Returns
     -------
@@ -87,7 +316,7 @@ def main() -> int:
     release wheel probe passed
     0
     """
-    errors = release_wheel_errors()
+    errors = release_wheel_errors(native=native, package=package)
     if errors:
         for error in errors:
             print(f"release wheel probe: {error}", file=sys.stderr)

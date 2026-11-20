@@ -32,7 +32,7 @@ def test_basic_config_emits_expected_records(
     basicConfig(level=level, force=force)
     logger = get_logger("root")
 
-    handlers = logger.handler_ptrs_for_test()
+    handlers = logger.handler_identities_for_test()
     assert len(handlers) == 1, (
         f"basicConfig(level={level!r}, force={force}) must install exactly one "
         f"root handler, but the root logger holds {len(handlers)}"

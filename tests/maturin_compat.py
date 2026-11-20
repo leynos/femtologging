@@ -8,6 +8,7 @@ import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] tests shell out to a pinned maturin.
 import sys
 import typing as typ
+import venv
 import zipfile
 
 if typ.TYPE_CHECKING:
@@ -218,6 +219,61 @@ def build_native_wheel_artifact(root: Path, out_dir: Path) -> Path:
         message = f"Expected exactly one wheel in {out_dir}, found {wheels!r}"
         raise AssertionError(message)
     return wheels[0]
+
+
+def install_wheel_into_fresh_venv(environment: Path, wheel: Path) -> Path:
+    """Create a virtual environment and install one wheel into it.
+
+    The wheel is installed without dependencies and without contacting an
+    index, so the check exercises exactly the archive built by the release
+    packaging configuration.
+
+    Parameters
+    ----------
+    environment:
+        Directory where the virtual environment is created.
+    wheel:
+        Wheel archive to install.
+
+    Returns
+    -------
+    Path
+        Interpreter inside the new environment.
+
+    Raises
+    ------
+    AssertionError
+        If the wheel cannot be installed.
+
+    Examples
+    --------
+    >>> python = install_wheel_into_fresh_venv(env, wheel)  # doctest: +SKIP
+
+    """
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = environment / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
+    # ruff: ignore[subprocess-without-shell-equals-true] fixed local paths.
+    result = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            "--no-index",
+            str(wheel),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        message = f"wheel installation failed:\n{result.stdout}{result.stderr}"
+        raise AssertionError(message)
+    return python
 
 
 def wheel_build_snapshot(whl_path: Path) -> dict[str, typ.Any]:
