@@ -54,7 +54,7 @@ impl Content {
         match self {
             Self::Published => "fn demo() {}\n",
             Self::Stale => "old source\n",
-            Self::Notes => "hand-written notes\n",
+            Self::Notes => "handwritten notes\n",
         }
     }
 }

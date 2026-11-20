@@ -1,6 +1,6 @@
 //! Properties of the frame write loop across generated call scripts.
 //!
-//! [`super::tests`] pins one rule at a time with a hand-written script: an
+//! [`super::tests`] pins one rule at a time with a handwritten script: an
 //! interruption is retried, a failure is not, a drain clamps, a spent budget
 //! stops the loop. What those cannot show is that the rules *compose* over an
 //! arbitrary sequence of partial accepts, interruptions and failures, under

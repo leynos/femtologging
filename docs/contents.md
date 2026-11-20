@@ -60,6 +60,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0009-main-branch-coverage-publication.md](./adrs/adr-0009-main-branch-coverage-publication.md)
   - Records the split between pull-request measurement and main-branch
     publication of the coverage baseline and CodeScene report.
+- [adrs/adr-0010-spelling-config-builder.md](./adrs/adr-0010-spelling-config-builder.md)
+  - Records adoption of the release-pinned spelling configuration builder, the
+    live shared dictionary and the Python 3.14 interpreter pin.
 
 ## Logging Architecture
 
