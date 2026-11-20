@@ -99,10 +99,11 @@ fn assert_released(weak: &Weak<dyn FemtoHandlerTrait>, context: &str) {
 #[serial]
 fn rejected_resource_handler_churn_keeps_registry_constant(
     _gil_and_clean_manager: (),
-    temp_dir: TempDir,
+    temp_dir: Result<TempDir, std::io::Error>,
     #[case] kind: HandlerKind,
 ) {
-    install_core_logger();
+    let temp_dir = temp_dir.expect("the temporary directory should be created");
+    install_core_logger().expect("the baseline configuration should install");
     let baseline = handler_registry_len();
 
     Python::attach(|_py| {
@@ -142,9 +143,10 @@ fn rejected_resource_handler_churn_keeps_registry_constant(
 #[serial]
 fn replacing_resource_handler_id_releases_superseded_object(
     _gil_and_clean_manager: (),
-    temp_dir: TempDir,
+    temp_dir: Result<TempDir, std::io::Error>,
     #[case] kind: HandlerKind,
 ) {
+    let temp_dir = temp_dir.expect("the temporary directory should be created");
     Python::attach(|_py| {
         ConfigBuilder::new()
             .with_handler(
@@ -185,7 +187,11 @@ fn replacing_resource_handler_id_releases_superseded_object(
 
 #[rstest]
 #[serial]
-fn detaching_last_reference_releases_object(_gil_and_clean_manager: (), temp_dir: TempDir) {
+fn detaching_last_reference_releases_object(
+    _gil_and_clean_manager: (),
+    temp_dir: Result<TempDir, std::io::Error>,
+) {
+    let temp_dir = temp_dir.expect("the temporary directory should be created");
     let path = temp_dir.path().join("detached.log");
     Python::attach(|py| {
         ConfigBuilder::new()
@@ -255,8 +261,9 @@ impl FemtoHandlerTrait for GatedHandler {
 #[serial]
 fn in_flight_record_defers_release_until_worker_drains(
     _gil_and_clean_manager: (),
-    temp_dir: TempDir,
+    temp_dir: Result<TempDir, std::io::Error>,
 ) {
+    let temp_dir = temp_dir.expect("the temporary directory should be created");
     let path = temp_dir.path().join("in-flight.log");
     Python::attach(|py| {
         ConfigBuilder::new()

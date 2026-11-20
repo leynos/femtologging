@@ -1,16 +1,18 @@
 //! Behavioural tests for `FemtoLogger`: message formatting, level filtering,
 //! handler attachment and removal, and the thread-safety of both.
 
-use std::collections::BTreeSet;
-
 use _femtologging_rs::FemtoLogger;
-use _femtologging_rs::{DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoStreamHandler};
+use _femtologging_rs::{
+    DefaultFormatter, FemtoHandlerTrait, FemtoLevel, FemtoStreamHandler, HandlerError,
+};
 use rstest::{fixture, rstest};
 
 #[path = "test_utils/fixtures.rs"]
 mod fixtures;
 #[path = "logger_tests/handler_removal.rs"]
 mod handler_removal;
+#[path = "logger_tests/level_race.rs"]
+mod level_race;
 #[path = "test_utils/shared_buffer.rs"]
 mod shared_buffer;
 use fixtures::{handler_tuple, stream_handler_for};
@@ -28,10 +30,11 @@ type DualHandlerSetup = (
     FemtoLogger,
 );
 
-fn attach_native_handler(logger: &FemtoLogger, handler: Arc<dyn FemtoHandlerTrait>) {
-    logger
-        .add_handler(handler)
-        .expect("native test handler should register");
+fn attach_native_handler(
+    logger: &FemtoLogger,
+    handler: Arc<dyn FemtoHandlerTrait>,
+) -> Result<(), HandlerError> {
+    logger.add_handler(handler)
 }
 
 /// Every level a logger may be set to, ordered from most to least verbose.
@@ -144,8 +147,8 @@ fn level_parsing_and_filtering() {
 fn logger_routes_to_multiple_handlers(
     #[from(dual_handler_setup)] (buf1, buf2, handler1, handler2, logger): DualHandlerSetup,
 ) {
-    attach_native_handler(&logger, handler1.clone());
-    attach_native_handler(&logger, handler2.clone());
+    attach_native_handler(&logger, handler1.clone()).expect("native test handler should register");
+    attach_native_handler(&logger, handler2.clone()).expect("native test handler should register");
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler1);
@@ -159,8 +162,10 @@ fn shared_handler_across_loggers(#[from(handler_tuple)] (buffer, handler): Handl
     let handler = Arc::new(handler);
     let l1 = FemtoLogger::new("a".to_string()).expect("test logger should be constructible");
     let l2 = FemtoLogger::new("b".to_string()).expect("test logger should be constructible");
-    attach_native_handler(&l1, handler.clone() as Arc<dyn FemtoHandlerTrait>);
-    attach_native_handler(&l2, handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    attach_native_handler(&l1, handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
+    attach_native_handler(&l2, handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
     l1.log(FemtoLevel::Info, "one");
     l2.log(FemtoLevel::Info, "two");
     drop(l1);
@@ -177,8 +182,8 @@ fn adding_same_handler_multiple_times_duplicates_output(
 ) {
     let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
     let logger = FemtoLogger::new("dup".to_string()).expect("test logger should be constructible");
-    attach_native_handler(&logger, handler.clone());
-    attach_native_handler(&logger, handler.clone());
+    attach_native_handler(&logger, handler.clone()).expect("native test handler should register");
+    attach_native_handler(&logger, handler.clone()).expect("native test handler should register");
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
     drop(handler);
@@ -189,9 +194,9 @@ fn adding_same_handler_multiple_times_duplicates_output(
 fn handler_added_after_logging_only_sees_future_records(
     #[from(dual_handler_setup)] (buf1, buf2, h1, h2, logger): DualHandlerSetup,
 ) {
-    attach_native_handler(&logger, h1.clone());
+    attach_native_handler(&logger, h1.clone()).expect("native test handler should register");
     logger.log(FemtoLevel::Info, "before");
-    attach_native_handler(&logger, h2.clone());
+    attach_native_handler(&logger, h2.clone()).expect("native test handler should register");
     logger.log(FemtoLevel::Info, "after");
     drop(logger);
     drop(h1);
@@ -206,7 +211,8 @@ fn handler_added_after_logging_only_sees_future_records(
 fn logger_drains_records_on_drop(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
     let handler = Arc::new(handler);
     let logger = FemtoLogger::new("core".to_string()).expect("test logger should be constructible");
-    attach_native_handler(&logger, handler.clone() as Arc<dyn FemtoHandlerTrait>);
+    attach_native_handler(&logger, handler.clone() as Arc<dyn FemtoHandlerTrait>)
+        .expect("native test handler should register");
     logger.log(FemtoLevel::Info, "one");
     logger.log(FemtoLevel::Info, "two");
     logger.log(FemtoLevel::Info, "three");
@@ -256,7 +262,8 @@ fn attach_handlers_concurrently(
             let barrier = Arc::clone(&start);
             std::thread::spawn(move || {
                 barrier.wait();
-                attach_native_handler(&log_clone, handler);
+                attach_native_handler(&log_clone, handler)
+                    .expect("native test handler should register");
             })
         })
         .collect();
@@ -308,83 +315,5 @@ fn set_level_is_thread_safe() {
     assert!(
         ALL_LEVELS.contains(&final_level),
         "Final level should be a valid FemtoLevel variant"
-    );
-}
-
-const RACE_RECORD_COUNT: usize = 1000;
-
-#[rstest]
-fn logging_during_level_change(#[from(handler_tuple)] (buffer, handler): HandlerTuple) {
-    use std::sync::Barrier;
-    use std::thread;
-
-    let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(handler);
-    let logger = Arc::new(
-        FemtoLogger::new("race".to_string()).expect("test logger should be constructible"),
-    );
-    attach_native_handler(&logger, Arc::clone(&handler));
-    let barrier = Arc::new(Barrier::new(2));
-
-    let (lg, b) = (Arc::clone(&logger), Arc::clone(&barrier));
-    let producer = thread::spawn(move || {
-        b.wait();
-        (0..RACE_RECORD_COUNT)
-            .filter_map(|index| {
-                let message = format!("msg{index}");
-                lg.log(FemtoLevel::Info, &message)
-                    .is_some()
-                    .then_some(message)
-            })
-            .collect::<BTreeSet<_>>()
-    });
-    barrier.wait();
-    for lvl in ALL_LEVELS.iter().cycle().take(RACE_RECORD_COUNT) {
-        logger.set_level(*lvl);
-    }
-
-    let accepted_messages = producer.join().expect("producer thread panicked");
-    assert!(
-        accepted_messages.len() <= RACE_RECORD_COUNT,
-        "accepted record count ({}) must not exceed {RACE_RECORD_COUNT}",
-        accepted_messages.len(),
-    );
-    let expected_final = ALL_LEVELS[(RACE_RECORD_COUNT - 1) % ALL_LEVELS.len()];
-    assert_eq!(
-        logger.get_level(),
-        expected_final,
-        "the final set_level must be observable after the race",
-    );
-    logger.set_level(FemtoLevel::Trace);
-    assert!(
-        logger.log(FemtoLevel::Info, "after").is_some(),
-        "logger should remain usable after the race",
-    );
-    logger.set_level(FemtoLevel::Critical);
-    assert!(
-        logger.log(FemtoLevel::Info, "suppressed").is_none(),
-        "logger should still suppress records below its level after the race",
-    );
-
-    drop((logger, handler));
-
-    let actual_messages = read_output(&buffer)
-        .lines()
-        .map(|line| {
-            line.strip_prefix("race [INFO] ")
-                .expect("race handler output should use the default formatter")
-                .to_owned()
-        })
-        .collect::<Vec<_>>();
-    let actual_set = actual_messages.iter().cloned().collect::<BTreeSet<_>>();
-    let mut expected_messages = accepted_messages;
-    expected_messages.insert("after".to_owned());
-    assert_eq!(
-        actual_messages.len(),
-        actual_set.len(),
-        "handler output should not duplicate identities: {actual_messages:?}",
-    );
-    assert_eq!(
-        actual_set, expected_messages,
-        "output identities should match accepted records"
     );
 }
