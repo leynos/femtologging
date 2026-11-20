@@ -12,7 +12,8 @@ use rstest::rstest;
 use std::sync::Arc;
 
 #[rstest]
-fn adapter_merges_active_rust_context(_log_max_level: (), unique_logger_name: String) {
+fn adapter_merges_active_rust_context(unique_logger_name: String) {
+    log_max_level();
     let adapter = FemtoLogAdapter;
 
     Python::attach(|py| {
@@ -40,6 +41,16 @@ fn adapter_merges_active_rust_context(_log_max_level: (), unique_logger_name: St
             .expect("handler downcast")
             .collected();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].metadata().key_values["request_id"], "req-42");
+        let collected = records
+            .first()
+            .expect("the bridge should collect exactly one record");
+        assert_eq!(
+            collected
+                .metadata()
+                .key_values
+                .get("request_id")
+                .map(String::as_str),
+            Some("req-42")
+        );
     });
 }

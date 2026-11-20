@@ -16,7 +16,8 @@ use crate::manager;
 /// Enablement follows the live level of a registered target logger.
 #[rstest]
 #[serial]
-fn enabled_uses_the_registered_target_threshold(_log_max_level: (), unique_logger_name: String) {
+fn enabled_uses_the_registered_target_threshold(unique_logger_name: String) {
+    log_max_level();
     let adapter = FemtoLogAdapter;
 
     Python::attach(|py| {
@@ -43,9 +44,9 @@ fn enabled_uses_the_registered_target_threshold(_log_max_level: (), unique_logge
 #[rstest]
 #[serial]
 fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
-    _log_max_level: (),
     unique_logger_name: String,
 ) {
+    log_max_level();
     let adapter = FemtoLogAdapter;
     let rust_target = unique_logger_name.replace('.', "::");
 
@@ -73,7 +74,8 @@ fn enabled_normalizes_module_targets_and_leaves_unknown_targets_unregistered(
 /// Invalid targets use the root threshold, or the default when root is absent.
 #[rstest]
 #[serial]
-fn enabled_uses_root_for_invalid_targets_and_default_when_root_is_absent(_log_max_level: ()) {
+fn enabled_uses_root_for_invalid_targets_and_default_when_root_is_absent() {
+    log_max_level();
     let adapter = FemtoLogAdapter;
     manager::reset_manager();
 
