@@ -154,6 +154,22 @@ def _scanned_steps(
     return [(at, step, _scan_step(step, depends)) for at, step in enumerate(steps)]
 
 
+def _suite_readings(
+    scanned: list[tuple[int, Job, SuiteScan]],
+) -> list[tuple[int, str]]:
+    """Return the index and command of every step in `scanned` that runs the suite."""
+    return [(at, scan.reason) for at, _, scan in scanned if scan.reason is not None]
+
+
+def _unreadable_complaints(scanned: list[tuple[int, Job, SuiteScan]]) -> list[str]:
+    """Return one complaint per shell line in `scanned` that would not tokenise."""
+    return [
+        f"unparseable run line: {line}"
+        for _, _, scan in scanned
+        for line in scan.unreadable
+    ]
+
+
 def suite_steps(job: Job, depends: cabc.Callable[[str], bool]) -> list[tuple[int, str]]:
     """Return the steps of `job` that run the suite and why, in step order.
 
@@ -169,11 +185,7 @@ def suite_steps(job: Job, depends: cabc.Callable[[str], bool]) -> list[tuple[int
     list[tuple[int, str]]
         The step index and the command or action that identifies it.
     """
-    return [
-        (at, scan.reason)
-        for at, _, scan in _scanned_steps(job, depends)
-        if scan.reason is not None
-    ]
+    return _suite_readings(_scanned_steps(job, depends))
 
 
 def _is_tool_install(step: Job) -> bool:
@@ -256,12 +268,8 @@ def provisioning_problems(job: Job, depends: cabc.Callable[[str], bool]) -> list
     if not is_linux_job(job):
         return []
     scanned = _scanned_steps(job, depends)
-    unreadable = [
-        f"unparseable run line: {line}"
-        for _, _, scan in scanned
-        for line in scan.unreadable
-    ]
-    suite = [(at, scan.reason) for at, _, scan in scanned if scan.reason is not None]
+    unreadable = _unreadable_complaints(scanned)
+    suite = _suite_readings(scanned)
     if not suite:
         return unreadable
     steps = [step for _, step, _ in scanned]

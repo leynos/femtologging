@@ -69,7 +69,7 @@ def test_an_unreadable_run_line_cannot_pass_as_no_suite(run: str) -> None:
     """
     assert _problems(INSTALL_STEP, {"name": "Test", "run": run}) == [
         f"unparseable run line: {run}"
-    ]
+    ], run
 
 
 def test_an_unreadable_line_is_reported_beside_a_readable_suite() -> None:
