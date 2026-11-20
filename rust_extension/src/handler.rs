@@ -19,6 +19,7 @@ mod flush_command;
 
 pub(crate) use flush_command::{
     FlushCap, PendingDrops, QueueFlushFailure, flush_command_until, flush_handler_until,
+    report_drops_then_acknowledge,
 };
 
 /// The flush budget of a handler that does not configure one of its own.

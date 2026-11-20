@@ -296,14 +296,18 @@ although the Python call itself cannot return until CPython makes the
 interpreter available.
 
 Built-in handler workers can log synchronous warnings around their own flush
-acknowledgements. File-handler flush failures are logged before the handler
-acknowledges; socket and HTTP warnings follow their acknowledgements. A
+acknowledgements. The drop count a flush marker carried is reported before the
+marker is acknowledged, in every handler, so a caller that observes the flush
+succeed cannot return before the report it carried has been emitted. Other
+worker warnings keep their existing order: file-handler flush failures are
+logged before the handler acknowledges, while socket connection warnings and
+stream flush-error warnings follow their acknowledgements. A
 pre-acknowledgement callback is part of the handler's deadline-bounded flush
-and can make the logger barrier return `false`. The barrier does not wait for a
-post-acknowledgement warning callback as a separate step. If one of those
-callbacks takes the interpreter, PyO3 may wait to reacquire it before returning
-to Python; a late handoff changes the result to `false`, though CPython does
-not bound the Python return itself.
+and can make the logger barrier return `false`; a logging backend slow enough
+to consume the remaining budget turns the acknowledgement into a timeout. If
+one of those callbacks takes the interpreter, PyO3 may wait to reacquire it
+before returning to Python; a late handoff changes the result to `false`,
+though CPython does not bound the Python return itself.
 
 Each logger also keeps fixed-cardinality counters for flush attempts,
 confirmations, terminal failure stages and five elapsed-time buckets. Recording

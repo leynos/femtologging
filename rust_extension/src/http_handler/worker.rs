@@ -36,6 +36,7 @@ use log::warn;
 use ureq::Agent;
 
 use crate::{
+    handler::report_drops_then_acknowledge,
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     shutdown_ack::acknowledge_shutdowns,
@@ -286,14 +287,18 @@ impl Worker {
     /// should not rely on `flush()` to guarantee delivery of records that
     /// encountered transient failures.
     ///
-    /// The acknowledgement goes first so the drop count the handler moved here
-    /// is reported from the worker rather than by the caller when it wakes.
+    /// The drop count the handler moved here is reported before the
+    /// acknowledgement is sent, so a caller that observes the flush succeed
+    /// cannot do so before the report it carried has been emitted.
     fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
-        // Ignore send error: if the receiver has dropped, there's nothing to do.
-        let _ = ack.send(());
-        if let Some(count) = pending_drops {
-            warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-        }
+        report_drops_then_acknowledge(
+            pending_drops,
+            |count| warn!("FemtoHTTPHandler dropped {count} records in the last interval"),
+            || {
+                // Ignore send error: if the receiver has dropped, there's nothing to do.
+                let _ = ack.send(());
+            },
+        );
     }
 
     /// Attempt each queued command once, then acknowledge the shutdown.

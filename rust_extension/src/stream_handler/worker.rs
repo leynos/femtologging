@@ -16,6 +16,7 @@ use log::warn;
 
 use super::StreamCommand;
 use crate::formatter::FemtoFormatter;
+use crate::handler::report_drops_then_acknowledge;
 use crate::log_record::FemtoLogRecord;
 use crate::shutdown::{ShutdownCompletion, run_worker_guarded};
 use crate::sync::Receiver;
@@ -46,8 +47,11 @@ where
 ///
 /// The flush caller's due drop warning travels on the command so the logging
 /// callback runs here, on the worker, rather than on a thread with a deadline
-/// to keep. The warning is emitted after the acknowledgement is sent, so a
-/// slow logging backend cannot make the caller time out first.
+/// to keep. The warning is emitted before the acknowledgement is sent, so a
+/// caller that observes the flush succeed cannot do so before the report it
+/// carried has been emitted. A logging backend slow enough to consume the
+/// caller's remaining budget turns the flush into an acknowledgement timeout;
+/// the wait itself is still bounded by that budget.
 fn handle_flush_command<W: Write>(
     writer: &mut W,
     ack: crate::sync::Sender<io::Result<()>>,
@@ -55,12 +59,15 @@ fn handle_flush_command<W: Write>(
 ) {
     let flush_result = writer.flush();
     let flush_failed = flush_result.is_err();
-    let _ = ack.send(flush_result);
+    report_drops_then_acknowledge(
+        pending_drops,
+        |count| warn!("FemtoStreamHandler: {count} log records dropped in the last interval"),
+        || {
+            let _ = ack.send(flush_result);
+        },
+    );
     if flush_failed {
         warn!("FemtoStreamHandler flush error");
-    }
-    if let Some(count) = pending_drops {
-        warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
     }
 }
 

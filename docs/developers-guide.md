@@ -1800,13 +1800,16 @@ causes through that warner, not through this marker.
 
 The transport is `handler::flush_command::flush_handler_until`, which puts the
 pending count on the flush marker so the worker, not the flush caller, invokes
-the logging callback. The count is taken only after a queue was found, because
-taking it is destructive: a handler whose worker has gone must leave the drops
-pending for the next flush. If the marker never entered the queue,
-`flush_handler_until` hands the count back through the `PendingDrops` restore
-half. `warn_if_due` keeps suppressed drops pending until the interval expires,
-and `RateLimitedWarner::flush` reports every pending count immediately, so
-neither path loses a drop.
+the logging callback. The worker reports the count before it acknowledges the
+marker, so a flush that returns success has already emitted the report it
+carried; a logging backend slow enough to consume the caller's remaining budget
+instead makes the flush report an acknowledgement timeout. The count is taken
+only after a queue was found, because taking it is destructive: a handler whose
+worker has gone must leave the drops pending for the next flush. If the marker
+never entered the queue, `flush_handler_until` hands the count back through the
+`PendingDrops` restore half. `warn_if_due` keeps suppressed drops pending until
+the interval expires, and `RateLimitedWarner::flush` reports every pending
+count immediately, so neither path loses a drop.
 
 The warner's `Clock` trait reports milliseconds since the warner was
 constructed, an opaque counter used only to decide whether an interval has

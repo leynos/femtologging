@@ -7,6 +7,8 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use log::warn;
 
+use crate::handler::report_drops_then_acknowledge;
+
 use super::SocketCommand;
 
 /// Throw away everything left in the queue, without touching the network.
@@ -23,10 +25,15 @@ pub(super) fn discard_rest(
         match rx.try_recv() {
             Ok(SocketCommand::Record(_)) => discarded += 1,
             Ok(SocketCommand::Flush(ack, pending_drops)) => {
-                let _ = ack.send(());
-                if let Some(count) = pending_drops {
-                    warn!("FemtoSocketHandler dropped {count} records in the last interval");
-                }
+                report_drops_then_acknowledge(
+                    pending_drops,
+                    |count| {
+                        warn!("FemtoSocketHandler dropped {count} records in the last interval")
+                    },
+                    || {
+                        let _ = ack.send(());
+                    },
+                );
             }
             Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,

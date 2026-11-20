@@ -5,10 +5,14 @@
 //! so the supplied deadline, not the wall clock, decides how long the wait can
 //! last.
 
+use std::cell::RefCell;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{FlushCap, PendingDrops, QueueFlushFailure, flush_command_until, flush_handler_until};
+use super::{
+    FlushCap, PendingDrops, QueueFlushFailure, flush_command_until, flush_handler_until,
+    report_drops_then_acknowledge,
+};
 use crate::rate_limited_warner::RateLimitedWarner;
 use crate::sync::{Sender, bounded};
 use crate::test_utils::flush_budget::ScriptedClock;
@@ -256,5 +260,62 @@ fn failed_flush_enqueue_restores_the_taken_drop_count() {
         warner.take_due(),
         Some(3),
         "the restored count must be the next warning's figure"
+    );
+}
+
+/// The drop report a marker carries must reach the log before the marker is
+/// acknowledged, so a caller that observes success cannot outrun the report.
+///
+/// The checking closure reads the acknowledgement channel while the report is
+/// being emitted: an empty channel there is what proves the order, because the
+/// acknowledgement is the only event that can race the report.
+#[test]
+fn flush_report_precedes_the_acknowledgement() {
+    let (ack_tx, ack_rx) = bounded::<()>(1);
+    let observed = RefCell::new(Vec::new());
+
+    report_drops_then_acknowledge(
+        Some(4),
+        |count| {
+            let acknowledged = ack_rx.try_recv().is_ok();
+            observed.borrow_mut().push((count, acknowledged));
+        },
+        || {
+            let _ = ack_tx.send(());
+        },
+    );
+
+    assert_eq!(
+        observed.into_inner(),
+        vec![(4, false)],
+        "the drop report must be emitted before the acknowledgement"
+    );
+    assert!(
+        ack_rx.try_recv().is_ok(),
+        "the marker must still be acknowledged after its report"
+    );
+}
+
+/// A marker that carries no count must still be acknowledged.
+#[test]
+fn flush_without_drops_still_acknowledges() {
+    let (ack_tx, ack_rx) = bounded::<()>(1);
+    let mut reported = false;
+
+    report_drops_then_acknowledge(
+        None,
+        |_| reported = true,
+        || {
+            let _ = ack_tx.send(());
+        },
+    );
+
+    assert!(
+        !reported,
+        "a marker without a count must not report a warning"
+    );
+    assert!(
+        ack_rx.try_recv().is_ok(),
+        "the marker must be acknowledged even without a count"
     );
 }

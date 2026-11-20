@@ -13,7 +13,9 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
+    handler::{HandlerError, report_drops_then_acknowledge},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
 };
 
@@ -210,16 +212,23 @@ impl Worker {
 
     /// Flush and acknowledge; even a disconnected worker replies to the request.
     ///
-    /// The acknowledgement goes first so the count the handler moved here is
-    /// reported from the worker rather than by the caller when it wakes.
+    /// The drop count the handler moved here is reported before the
+    /// acknowledgement is sent, so a caller that observes the flush succeed
+    /// cannot do so before the report it carried has been emitted. The
+    /// connection warning stays after the acknowledgement: it describes the
+    /// flush that just happened rather than reporting drops the caller handed
+    /// over.
     fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
         let success = self.flush_connection();
-        let _ = ack.send(());
+        report_drops_then_acknowledge(
+            pending_drops,
+            |count| warn!("FemtoSocketHandler dropped {count} records in the last interval"),
+            || {
+                let _ = ack.send(());
+            },
+        );
         if !success {
             warn!("FemtoSocketHandler flush requested without active connection");
-        }
-        if let Some(count) = pending_drops {
-            warn!("FemtoSocketHandler dropped {count} records in the last interval");
         }
     }
 

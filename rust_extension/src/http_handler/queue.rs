@@ -15,7 +15,9 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use log::warn;
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
+    handler::{HandlerError, report_drops_then_acknowledge},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
 };
 
 /// Commands processed by the worker thread.
@@ -55,10 +57,13 @@ pub(crate) fn discard_rest(rx: &Receiver<HTTPCommand>, shutdown_acks: &mut Vec<S
         match rx.try_recv() {
             Ok(HTTPCommand::Record(_)) => discarded += 1,
             Ok(HTTPCommand::Flush(ack, pending_drops)) => {
-                let _ = ack.send(());
-                if let Some(count) = pending_drops {
-                    warn!("FemtoHTTPHandler dropped {count} records in the last interval");
-                }
+                report_drops_then_acknowledge(
+                    pending_drops,
+                    |count| warn!("FemtoHTTPHandler dropped {count} records in the last interval"),
+                    || {
+                        let _ = ack.send(());
+                    },
+                );
             }
             Ok(HTTPCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,

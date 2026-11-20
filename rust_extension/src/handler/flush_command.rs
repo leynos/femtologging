@@ -39,6 +39,27 @@ where
     }
 }
 
+/// Report the drops a flush marker carried, then acknowledge the marker.
+///
+/// The report goes first because the acknowledgement is what lets the flush
+/// caller treat the marker as handled and return: by the time the caller can
+/// observe success, the count the marker carried must already have reached the
+/// log. Both calls still run on the worker, so the logging callback never runs
+/// on the caller's thread; the caller's remaining deadline only bounds its wait
+/// for the acknowledgement. A logging backend slow enough to consume that
+/// budget therefore turns the flush into an acknowledgement timeout rather
+/// than letting it report success before the drop report exists.
+pub(crate) fn report_drops_then_acknowledge(
+    pending_drops: Option<u64>,
+    report: impl FnOnce(u64),
+    acknowledge: impl FnOnce(),
+) {
+    if let Some(count) = pending_drops {
+        report(count);
+    }
+    acknowledge();
+}
+
 /// Run one handler flush against a capped deadline, carrying its due drops.
 ///
 /// The handler's own budget caps the caller's deadline first, then `prepare`
