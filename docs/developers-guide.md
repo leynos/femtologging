@@ -1272,12 +1272,13 @@ still compile in that lane: PyO3 is an unconditional dependency, and the
 `python` feature only governs extension-module linking. Detaching here needs no
 `cfg(not(loom))` guard, unlike the logger worker's join. `py_handle` attaches
 inside the method, and a Loom model drives the Rust API rather than the
-bindings, so that attach is never reached. The methods that do take a token,
-`flush()` and `close()`, receive it from the caller and never attach, so a
-model that somehow reached one would fail on the borrow rather than
-initializing an interpreter on a Loom coroutine's small stack. The heavy lane's
-file model drives the Rust API (`with_writer_for_test`) and never reaches the
-bindings at all.
+bindings, so that attach is never reached. A model must not call `py_handle`
+directly for that reason: the attach would initialize an interpreter on a Loom
+coroutine's small stack. The methods that do take a token, `flush()` and
+`close()`, receive it from the caller and never attach, so a model that somehow
+reached one would fail on the borrow rather than initializing an interpreter on
+a Loom coroutine's small stack. The heavy lane's file model drives the Rust API
+(`with_writer_for_test`) and never reaches the bindings at all.
 
 ### Testing the boundary
 

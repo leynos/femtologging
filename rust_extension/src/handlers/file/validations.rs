@@ -54,6 +54,17 @@ pub(crate) fn validate_params(capacity: isize, flush_interval: isize) -> PyResul
     Ok((validated_capacity, validated_flush_interval))
 }
 
+// Pins the validators as `const fn`: this initializer is evaluated at compile
+// time, so dropping the qualifier breaks the build. trybuild cannot stand in
+// for the pin because both helpers are crate-private, and a UI fixture
+// compiles as an external crate.
+const _: () = {
+    assert!(validate_capacity_nonzero(1).is_ok());
+    assert!(validate_capacity_nonzero(0).is_err());
+    assert!(validate_flush_interval_value(1).is_ok());
+    assert!(validate_flush_interval_value(0).is_err());
+};
+
 #[cfg(test)]
 mod tests {
     //! Tests for file handler configuration validation.
