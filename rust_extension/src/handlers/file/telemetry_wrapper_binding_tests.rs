@@ -19,7 +19,7 @@ use tempfile::TempDir;
 use tracing_subscriber::prelude::*;
 
 use super::scripted_writer::ScriptedWriter;
-use super::telemetry_event_tests::EventCollector;
+use super::telemetry_event_tests::{CapturedEvent, EventCollector};
 use super::{FemtoFileHandler, HandlerConfig, OverflowPolicy, TestConfig};
 use crate::formatter::DefaultFormatter;
 use crate::handlers::rotating::{FemtoRotatingFileHandler, PyRotatingFileHandler, RotationConfig};
@@ -62,7 +62,7 @@ fn timed_rotating_wrapper(py: Python<'_>, path: &Path) -> Py<PyAny> {
 }
 
 /// Queue configuration shared by the wrapper cases.
-fn test_config() -> HandlerConfig {
+const fn test_config() -> HandlerConfig {
     HandlerConfig {
         capacity: 4,
         flush_interval: 1,
@@ -76,7 +76,7 @@ fn test_config() -> HandlerConfig {
 /// writer only reports stages that call caused. The capacity and the policy
 /// come from the case: a narrow queue is what makes a refusal or an enqueue
 /// timeout reachable, and a wider one leaves room while the worker is parked.
-pub(super) fn scripted_config(
+pub(super) const fn scripted_config(
     writer: ScriptedWriter,
     policy: OverflowPolicy,
     capacity: usize,
@@ -156,6 +156,20 @@ fn each_wrapper_labels_its_own_waits(
     #[case] make_wrapper: fn(Python<'_>, &Path) -> Py<PyAny>,
     #[case] expected_kind: &'static str,
 ) {
+    let (diagnostics, events) = drive_wrapper(make_wrapper);
+
+    assert_wait_counts(&diagnostics);
+    assert_wait_events(&events, expected_kind);
+}
+
+/// Drive one wrapper through handle, flush and close.
+///
+/// The returned diagnostics are read while the scoped subscriber is still
+/// installed, and the events are read from the collector after it has seen
+/// every wait the three calls cause.
+fn drive_wrapper(
+    make_wrapper: fn(Python<'_>, &Path) -> Py<PyAny>,
+) -> (BTreeMap<String, u64>, Vec<CapturedEvent>) {
     let directory = TempDir::new().expect("a temporary directory");
     let path = directory.path().join("wrapper.log");
 
@@ -180,45 +194,68 @@ fn each_wrapper_labels_its_own_waits(
         })
     });
 
+    (diagnostics, collector.captured())
+}
+
+/// Check that the wrapper counted its own accepted record, flush and close.
+fn assert_wait_counts(diagnostics: &BTreeMap<String, u64>) {
     assert_eq!(
-        diagnostics["handle_accepted"], 1,
+        diagnostics.get("handle_accepted").copied(),
+        Some(1),
         "the wrapper must count its accepted record: {diagnostics:?}",
     );
     assert_eq!(
-        diagnostics["flush_acknowledged"], 1,
+        diagnostics.get("flush_acknowledged").copied(),
+        Some(1),
         "the wrapper must count its acknowledged flush: {diagnostics:?}",
     );
     assert_eq!(
-        diagnostics["close_completed"], 1,
+        diagnostics.get("close_completed").copied(),
+        Some(1),
         "the wrapper must count its shutdown: {diagnostics:?}",
     );
+}
 
-    let events = collector.captured();
+/// Check that every wait carried the wrapper's own kind, that one wait emitted
+/// one event, and that each event records the outcome the operation observed.
+fn assert_wait_events(events: &[CapturedEvent], expected_kind: &str) {
     let kinds: Vec<_> = events
         .iter()
-        .map(|event| event.fields["handler_kind"].clone())
+        .map(|event| event.fields.get("handler_kind").map(String::as_str))
         .collect();
     assert_eq!(
         kinds,
-        [expected_kind, expected_kind, expected_kind],
+        [
+            Some(expected_kind),
+            Some(expected_kind),
+            Some(expected_kind)
+        ],
         "every wait must carry the wrapper's own kind: {events:?}",
     );
     let operations: Vec<_> = events
         .iter()
-        .map(|event| event.fields["operation"].clone())
+        .map(|event| event.fields.get("operation").map(String::as_str))
         .collect();
     assert_eq!(
         operations,
-        ["handler_handle", "handler_flush", "handler_close"],
+        [
+            Some("handler_handle"),
+            Some("handler_flush"),
+            Some("handler_close")
+        ],
         "one wait must emit one event: {events:?}",
     );
     let outcomes: Vec<_> = events
         .iter()
-        .map(|event| event.fields["wait_outcome"].clone())
+        .map(|event| event.fields.get("wait_outcome").map(String::as_str))
         .collect();
     assert_eq!(
         outcomes,
-        ["handle_accepted", "flush_acknowledged", "close_completed"],
+        [
+            Some("handle_accepted"),
+            Some("flush_acknowledged"),
+            Some("close_completed")
+        ],
         "the wrappers must record the outcomes they observed: {events:?}",
     );
 }

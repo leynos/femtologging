@@ -37,7 +37,7 @@ impl Schedule {
     }
 
     /// Hold two closers in the shared shutdown at once, then release both.
-    pub(super) fn overlap(self, case: &Case<'_>) {
+    pub(super) fn overlap(case: &Case<'_>) {
         call_handle(case.handler, "park");
         expect_stage(case.entered, Stage::Write);
 
@@ -66,7 +66,7 @@ impl Schedule {
     }
 
     /// Time a close out, release the worker, then observe the retry.
-    pub(super) fn retry_after_timeout(self, case: &Case<'_>) {
+    pub(super) fn retry_after_timeout(case: &Case<'_>) {
         call_close(case.handler);
         assert_eq!(
             count(case.handler, "close_timed_out"),
@@ -94,7 +94,7 @@ impl Schedule {
     }
 
     /// Close cleanly, then check every later call is refused.
-    pub(super) fn calls_after_close(self, case: &Case<'_>) {
+    pub(super) fn calls_after_close(case: &Case<'_>) {
         // No record is queued, so the worker's first stage is the terminal
         // flush; releasing the gate there lets the first close complete.
         let closer = spawn_close(case.handler);
@@ -176,10 +176,10 @@ impl Schedule {
     /// the worker is still parked. Releasing the writer answers the waiting
     /// flush first, so it must record the acknowledgement rather than a
     /// closed-handler outcome.
-    pub(super) fn waiting_flush(self, case: &Case<'_>) {
+    pub(super) fn waiting_flush(case: &Case<'_>) {
         let flusher = spawn_flush(case.handler);
         expect_stage(case.entered, Stage::Flush);
-        assert_eq!(await_gauge(case.handler, 1), 1, "the flush must be waiting",);
+        assert_eq!(await_gauge(case.handler, 1), 1, "the flush must be waiting");
 
         let closer = spawn_close(case.handler);
         // A reading of two is taken only after `take_shutdown`, because the
@@ -239,7 +239,7 @@ impl Schedule {
     /// inside its wait when `close()` takes the sender. Releasing the writer
     /// frees capacity, so the blocked record must still be accepted rather than
     /// reported as a closed call, and the close must then complete.
-    pub(super) fn blocked_handle_then_shutdown(self, case: &Case<'_>) {
+    pub(super) fn blocked_handle_then_shutdown(case: &Case<'_>) {
         Python::attach(|py| fill_queue(case.handler.bind(py), case.entered, case.capacity));
 
         let blocked = spawn_handle(case.handler, "blocked");
@@ -311,9 +311,11 @@ fn spawn_call(
     expectation: &'static str,
     call: impl FnOnce(Python<'_>, &Py<PyAny>) -> pyo3::PyResult<()> + Send + 'static,
 ) -> JoinHandle<()> {
-    let handler = Python::attach(|py| handler.clone_ref(py));
+    let owned_handler = Python::attach(|py| handler.clone_ref(py));
     std::thread::spawn(move || {
-        Python::attach(|py| call(py, &handler).expect(expectation));
+        Python::attach(|py| {
+            call(py, &owned_handler).expect(expectation);
+        });
     })
 }
 
@@ -322,7 +324,7 @@ fn spawn_close(handler: &Py<PyAny>) -> JoinHandle<()> {
     spawn_call(
         handler,
         "a concurrent close must not raise",
-        |py, handler| handler.call_method0(py, "close").map(|_answered| ()),
+        |py, call_handler| call_handler.call_method0(py, "close").map(|_answered| ()),
     )
 }
 
@@ -331,7 +333,7 @@ fn spawn_flush(handler: &Py<PyAny>) -> JoinHandle<()> {
     spawn_call(
         handler,
         "a concurrent flush must not raise",
-        |py, handler| handler.call_method0(py, "flush").map(|_answered| ()),
+        |py, call_handler| call_handler.call_method0(py, "flush").map(|_answered| ()),
     )
 }
 
@@ -340,8 +342,8 @@ fn spawn_handle(handler: &Py<PyAny>, message: &'static str) -> JoinHandle<()> {
     spawn_call(
         handler,
         "a blocked call that gains capacity must be accepted",
-        move |py, handler| {
-            handler
+        move |py, call_handler| {
+            call_handler
                 .call_method1(py, "handle", ("core", "INFO", message))
                 .map(|_answered| ())
         },
@@ -357,7 +359,9 @@ fn join_closers(closers: Vec<JoinHandle<()>>) {
 
 /// Poll the public in-flight gauge until it reaches `expected`.
 fn await_gauge(handler: &Py<PyAny>, expected: u64) -> u64 {
-    await_count(handler, expected, |handler| count(handler, WAITS_IN_FLIGHT))
+    await_count(handler, expected, |probe_handler| {
+        count(probe_handler, WAITS_IN_FLIGHT)
+    })
 }
 
 /// Poll the test-only send gauge until it reaches `expected`.

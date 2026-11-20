@@ -373,3 +373,14 @@ def test_file_handler_handle_after_close_raises(tmp_path: Path) -> None:
     handler.close()
     with pytest.raises(RuntimeError, match="Handler error: handler is closed"):
         handler.handle("core", "INFO", "after close")
+
+
+def test_file_handler_handle_rejects_invalid_level(tmp_path: Path) -> None:
+    """An unparseable level raises ``ValueError`` at the Python boundary."""
+    path = tmp_path / "invalid_level.log"
+    handler = FemtoFileHandler(str(path))
+    try:
+        with pytest.raises(ValueError, match="invalid log level: BOGUS"):
+            handler.handle("core", "BOGUS", "message")
+    finally:
+        handler.close()

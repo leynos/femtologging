@@ -29,8 +29,7 @@ struct SharedBuf {
 impl SharedBuf {
     /// Return the UTF-8 contents of the buffer.
     ///
-    /// Returns an error for invalid UTF-8 so the calling test decides the
-    /// verdict. Recovers from lock poisoning: the bytes remain valid data.
+    /// Recovers from lock poisoning: the bytes remain valid data.
     fn contents(&self) -> Result<String, std::string::FromUtf8Error> {
         let buffer = self
             .buffer
@@ -178,18 +177,19 @@ fn setup_overflow_test(policy: OverflowPolicy) -> (SharedBuf, Arc<Barrier>, Femt
 type RecordOutcomeRx = mpsc::Receiver<Result<(), HandlerError>>;
 
 fn spawn_record_thread(
-    handler: Arc<FemtoFileHandler>,
+    handler: &Arc<FemtoFileHandler>,
     record: FemtoLogRecord,
 ) -> (Arc<Barrier>, RecordOutcomeRx, thread::JoinHandle<()>) {
     let (done_tx, done_rx) = mpsc::channel();
     let send_barrier = Arc::new(Barrier::new(2));
-    let h = Arc::clone(&handler);
+    let h = Arc::clone(handler);
     let sb = Arc::clone(&send_barrier);
     let handle = thread::spawn(move || {
         sb.wait();
         // Deliver the outcome to the test; a dropped receiver means the
-        // test has already failed, so the send error is ignored.
-        let _ = done_tx.send(h.handle(record));
+        // test has already failed, so the send error is deliberately not
+        // inspected.
+        drop(done_tx.send(h.handle(record)));
     });
     (send_barrier, done_rx, handle)
 }
@@ -253,9 +253,8 @@ fn build_from_worker_wires_handler_components() {
     assert_eq!(contents, "core [INFO] test\n");
 }
 
-// `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
-// so this test is not recognised as test-only code and must propagate
-// errors with `?` rather than `.expect(...)`.
+// `#[serial]` hides `#[test]` from Whitaker, so this test is not seen as
+// test-only and must propagate errors with `?` rather than `.expect(...)`.
 #[test]
 #[serial]
 fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::Error>> {
@@ -276,24 +275,26 @@ fn worker_writes_record_when_rotation_fails() -> Result<(), Box<dyn std::error::
         FemtoLevel::Info,
         "after rotation failure",
     ))?;
-    assert!(
-        handler.flush(),
-        "flush should succeed even if rotation reported an error",
-    );
+    if !handler.flush() {
+        return Err("flush should succeed even if rotation reported an error".into());
+    }
     handler.close();
 
     let logs = take_logged_messages();
-    assert!(
-        logs.iter().any(|record| {
-            record.level == Level::Error
-                && record
-                    .message
-                    .contains("FemtoFileHandler rotation error; writing record without rotating")
-        }),
-        "rotation error should be logged"
-    );
+    let rotation_error_logged = logs.iter().any(|record| {
+        record.level == Level::Error
+            && record
+                .message
+                .contains("FemtoFileHandler rotation error; writing record without rotating")
+    });
+    if !rotation_error_logged {
+        return Err("rotation error should be logged".into());
+    }
 
-    assert_eq!(buffer.contents()?, "core [INFO] after rotation failure\n");
+    let contents = buffer.contents()?;
+    if contents != "core [INFO] after rotation failure\n" {
+        return Err(format!("rotated output must hold only the record: {contents:?}").into());
+    }
     Ok(())
 }
 
@@ -340,9 +341,8 @@ fn femto_file_handler_rejects_zero_flush_interval(
     );
 }
 
-// `#[serial]` erases the `#[test]` attribute for Whitaker's test detection,
-// so this test is not recognised as test-only code and must propagate
-// errors with `?` rather than `.expect(...)`.
+// `#[serial]` hides `#[test]` from Whitaker, so this test is not seen as
+// test-only and must propagate errors with `?` rather than `.expect(...)`.
 #[test]
 #[serial]
 fn femto_file_handler_queue_overflow_drop_policy() -> Result<(), Box<dyn std::error::Error>> {
@@ -350,11 +350,16 @@ fn femto_file_handler_queue_overflow_drop_policy() -> Result<(), Box<dyn std::er
 
     handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))?;
     let second = handler.handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"));
-    assert_eq!(second, Err(HandlerError::QueueFull));
+    if second != Err(HandlerError::QueueFull) {
+        return Err(format!("drop policy should refuse the second record: {second:?}").into());
+    }
     start_barrier.wait();
     drop(handler);
 
-    assert_eq!(buffer.contents()?, "core [INFO] first\n");
+    let contents = buffer.contents()?;
+    if contents != "core [INFO] first\n" {
+        return Err(format!("drop policy should keep only the first record: {contents:?}").into());
+    }
     Ok(())
 }
 
@@ -365,9 +370,9 @@ fn femto_file_handler_queue_overflow_block_policy() {
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "first"))
         .expect("first record queued");
 
-    let handler = Arc::new(handler);
+    let shared_handler = Arc::new(handler);
     let (send_barrier, done_rx, t) = spawn_record_thread(
-        Arc::clone(&handler),
+        &shared_handler,
         FemtoLogRecord::new("core", FemtoLevel::Info, "second"),
     );
 
@@ -379,7 +384,7 @@ fn femto_file_handler_queue_overflow_block_policy() {
         .expect("worker did not finish")
         .expect("record send");
     t.join().expect("join thread");
-    drop(handler);
+    drop(shared_handler);
 
     let out = buffer.contents().expect("buffer must be valid UTF-8");
     assert!(out.contains("core [INFO] first"));

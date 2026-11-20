@@ -27,14 +27,14 @@ fn the_python_close_binding_records_a_timeout_then_a_completion() {
 
     let collector = EventCollector::default();
     let subscriber = tracing_subscriber::registry().with(collector.clone());
-    let (recorded_timeouts, handler) = tracing::subscriber::with_default(subscriber, || {
+    let (recorded_timeouts, py_handler) = tracing::subscriber::with_default(subscriber, || {
         Python::attach(|py| {
-            let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
-            handler
+            let py_handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
+            py_handler
                 .call_method0(py, "close")
                 .expect("a timed-out close must not raise");
-            let recorded = public_count(handler.bind(py), "close_timed_out");
-            (recorded, handler)
+            let recorded = public_count(py_handler.bind(py), "close_timed_out");
+            (recorded, py_handler)
         })
     });
     assert_eq!(
@@ -43,7 +43,12 @@ fn the_python_close_binding_records_a_timeout_then_a_completion() {
     );
 
     writer.release();
-    let completed = Python::attach(|py| handler.borrow(py).completion.wait(Duration::from_secs(2)));
+    let completed = Python::attach(|py| {
+        py_handler
+            .borrow(py)
+            .completion
+            .wait(Duration::from_secs(2))
+    });
     assert!(
         completed,
         "the released worker must still signal completion",
@@ -56,36 +61,36 @@ fn the_python_close_binding_records_a_timeout_then_a_completion() {
     let later_subscriber = tracing_subscriber::registry().with(later_collector.clone());
     let recorded_completions = tracing::subscriber::with_default(later_subscriber, || {
         Python::attach(|py| {
-            handler
+            py_handler
                 .call_method0(py, "close")
                 .expect("the later close must not raise");
-            public_count(handler.bind(py), "close_completed")
+            public_count(py_handler.bind(py), "close_completed")
         })
     });
 
-    assert_eq!(recorded_timeouts, 1, "the timeout must stay counted once",);
+    assert_eq!(recorded_timeouts, 1, "the timeout must stay counted once");
     assert_eq!(
         recorded_completions, 1,
         "the later close must record the completion it observed",
     );
-    let first_outcomes: Vec<_> = collector
-        .captured()
+    let first_events = collector.captured();
+    let first_outcomes: Vec<_> = first_events
         .iter()
-        .map(|event| event.fields["wait_outcome"].clone())
+        .map(|event| event.fields.get("wait_outcome").map(String::as_str))
         .collect();
     assert_eq!(
         first_outcomes,
-        ["close_timed_out"],
+        [Some("close_timed_out")],
         "the first close must emit only its timeout",
     );
-    let later_outcomes: Vec<_> = later_collector
-        .captured()
+    let later_events = later_collector.captured();
+    let later_outcomes: Vec<_> = later_events
         .iter()
-        .map(|event| event.fields["wait_outcome"].clone())
+        .map(|event| event.fields.get("wait_outcome").map(String::as_str))
         .collect();
     assert_eq!(
         later_outcomes,
-        ["close_completed"],
+        [Some("close_completed")],
         "the later close must emit the completion it observed",
     );
 }
@@ -118,21 +123,21 @@ fn concurrent_closers_wait_on_one_shutdown() {
     let writer = ScriptedWriter::blocking(entered_tx);
     let handler = handler_with(writer.clone(), OverflowPolicy::Block);
 
-    let handler = Python::attach(|py| {
-        let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
-        handler
+    let py_handler = Python::attach(|py| {
+        let bound_handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
+        bound_handler
             .call_method1(py, "handle", ("core", "INFO", "park"))
             .expect("the parking record must be accepted");
-        handler
+        bound_handler
     });
     expect_stage(&entered_rx, Stage::Write);
 
     let closers: Vec<_> = (0..2)
         .map(|_| {
-            let handler = Python::attach(|py| handler.clone_ref(py));
+            let closer_handler = Python::attach(|py| py_handler.clone_ref(py));
             std::thread::spawn(move || {
                 Python::attach(|py| {
-                    handler
+                    closer_handler
                         .call_method0(py, "close")
                         .expect("a concurrent close must not raise");
                 });
@@ -143,7 +148,7 @@ fn concurrent_closers_wait_on_one_shutdown() {
     // Both closers release the interpreter lock before waiting, so polling
     // from this thread cannot hold either of them up.
     assert_eq!(
-        await_gauge(&handler, 2),
+        await_gauge(&py_handler, 2),
         2,
         "both closers must be counted while they wait on the shared shutdown",
     );
@@ -154,7 +159,7 @@ fn concurrent_closers_wait_on_one_shutdown() {
     }
 
     let (completed, timed_out, gauge) = Python::attach(|py| {
-        let bound = handler.bind(py);
+        let bound = py_handler.bind(py);
         (
             public_count(bound, "close_completed"),
             public_count(bound, "close_timed_out"),
@@ -184,11 +189,11 @@ fn the_python_close_binding_records_a_real_panic() {
     let subscriber = tracing_subscriber::registry().with(collector.clone());
     let recorded = tracing::subscriber::with_default(subscriber, || {
         Python::attach(|py| {
-            let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
-            handler
+            let py_handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
+            py_handler
                 .call_method0(py, "close")
                 .expect("a panicking worker must not raise from close()");
-            public_count(handler.bind(py), "close_panicked")
+            public_count(py_handler.bind(py), "close_panicked")
         })
     });
 
@@ -197,7 +202,17 @@ fn the_python_close_binding_records_a_real_panic() {
         "a worker that panicked must be recorded as a panic",
     );
     let events = collector.captured();
-    assert_eq!(events.len(), 1, "one wait must emit one event: {events:?}");
-    assert_eq!(events[0].fields["operation"], "handler_close");
-    assert_eq!(events[0].fields["wait_outcome"], "close_panicked");
+    let [event] = events.as_slice() else {
+        panic!("one wait must emit one event: {events:?}");
+    };
+    assert_eq!(
+        event.fields.get("operation").map(String::as_str),
+        Some("handler_close"),
+        "the close wait must name its operation",
+    );
+    assert_eq!(
+        event.fields.get("wait_outcome").map(String::as_str),
+        Some("close_panicked"),
+        "the close wait must record the worker panic",
+    );
 }

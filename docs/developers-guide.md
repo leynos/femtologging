@@ -1242,8 +1242,14 @@ their bindings give the interpreter lock back for the duration of those waits.
 The `flush()` and `close()` boundary is described in
 [Python-facing `flush()` and `close()` waits](#python-facing-flush-and-close-waits);
 this section covers `handle()`, whose wait is the unbounded one, and the
-mechanics all three operations share. `FemtoFileHandler`'s `#[pymethods]`
-block, and the rotating and timed-rotating wrappers that delegate to it, take a
+mechanics all three operations share. `FemtoFileHandler::py_handle` takes no
+interpreter token. PyO3 invokes a `#[pymethods]` function with the interpreter
+lock already held, and it can inject `py: Python<'_>` into such a method, as
+`py_flush` does below; `py_handle` instead attaches with `Python::attach(...)`
+to obtain a token and detaches around the enqueue. Either mechanism yields the
+same token, so attaching here is this binding's choice rather than a
+requirement of PyO3. The handler's `close()` boundary, and the rotating and
+timed-rotating wrappers that delegate to `handle()`, still take a
 `py: Python<'_>` token and use `py.detach(...)` around the operation.
 `handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
 (`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
@@ -1294,12 +1300,15 @@ reintroducing a wait on the locked side.
 Because `--cfg loom` builds `--no-default-features`, the `#[pymethods]` blocks
 still compile in that lane: PyO3 is an unconditional dependency, and the
 `python` feature only governs extension-module linking. Detaching here needs no
-`cfg(not(loom))` guard, unlike the logger worker's join: these methods receive
-their `Python<'_>` token from the caller and never attach, so a Loom model that
-somehow reached them would fail on the borrow or the token rather than
-initializing an interpreter on a Loom coroutine's small stack. The heavy lane's
-file model drives the Rust API (`with_writer_for_test`) and never reaches the
-bindings at all.
+`cfg(not(loom))` guard, unlike the logger worker's join. `py_handle` attaches
+inside the method, and a Loom model drives the Rust API rather than the
+bindings, so that attach is never reached. A model must not call `py_handle`
+directly for that reason: the attach would initialize an interpreter on a Loom
+coroutine's small stack. The methods that do take a token, `flush()` and
+`close()`, receive it from the caller and never attach, so a model that somehow
+reached one would fail on the borrow rather than initializing an interpreter on
+a Loom coroutine's small stack. The heavy lane's file model drives the Rust API
+(`with_writer_for_test`) and never reaches the bindings at all.
 
 ### Testing the boundary
 
