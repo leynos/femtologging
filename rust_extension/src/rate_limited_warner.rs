@@ -192,11 +192,11 @@ impl RateLimitedWarner {
 
     /// Take every pending warning count, ignoring the interval.
     ///
-    /// An explicit flush asks what has been lost since the last report, so the
-    /// interval must not withhold the figure: a drop recorded moments after a
-    /// warning is still one the caller is owed, and a flush that returned
-    /// success without it would undercount. Reporting the count restarts the
-    /// interval, exactly as [`Self::flush`] does.
+    /// An explicit flush asks what this warner has seen dropped since the last
+    /// report, so the interval must not withhold the figure: a drop recorded
+    /// moments after a warning is still one the caller is owed, and a flush
+    /// that returned success without it would undercount. Reporting the count
+    /// restarts the interval, exactly as [`Self::flush`] does.
     ///
     /// The number is destructive for the same reason as [`Self::take_due`], so
     /// a caller that cannot deliver it must restore it with

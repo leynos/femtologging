@@ -1791,9 +1791,12 @@ caller that cannot deliver its count must hand it back.
 
 The two takes answer different questions. `take_due` is the ordinary warning
 path, so the interval decides whether it returns anything. `take_pending` backs
-an explicit flush: a flush asks what has been lost since the last report, so it
-must not withhold a drop recorded inside the interval, and it reports restored
-and freshly recorded counts as one figure.
+an explicit flush: a flush asks for the records the handler itself refused
+since the last report, so it must not withhold a handler-side drop recorded
+inside the interval, and it reports restored and freshly recorded counts as one
+figure. The figure covers drops the handler counted. A worker that keeps its
+own warner, as the HTTP and socket workers do, records and reports the drops it
+causes through that warner, not through this marker.
 
 The transport is `handler::flush_command::flush_handler_until`, which puts the
 pending count on the flush marker so the worker, not the flush caller, invokes
