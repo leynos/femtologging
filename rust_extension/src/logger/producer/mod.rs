@@ -5,6 +5,7 @@
 //! counted as dropped, so a slow handler slows the loggers sharing its shard
 //! rather than the code doing the logging.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::handler::FemtoHandlerTrait;
@@ -124,7 +125,16 @@ impl FemtoLogger {
                 Err(err) => {
                     self.context_dropped_records
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                    // No `log` backend is installed by default, so a warning sent
+                    // through the facade would be dropped and a caller that never
+                    // installed the bridge would lose the only diagnostic for a
+                    // record this path discards. A failed stderr write must not
+                    // take down the logging path, so its result is discarded.
+                    drop(writeln!(
+                        std::io::stderr(),
+                        "{}",
+                        context_drop_diagnostic(&err)
+                    ));
                     return None;
                 }
             };
@@ -202,7 +212,7 @@ impl FemtoLogger {
     }
 
     /// Decode the logger's validated atomic representation.
-    pub(crate) fn level_from_raw(level: u8) -> FemtoLevel {
+    pub(crate) const fn level_from_raw(level: u8) -> FemtoLevel {
         match level {
             0 => FemtoLevel::Trace,
             1 => FemtoLevel::Debug,
@@ -242,7 +252,7 @@ impl FemtoLogger {
 
     /// Queue a record for this logger's local handlers on its dispatch shard.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
-        let Some((record, handlers)) = self.select_local_handlers(record) else {
+        let Some((filtered_record, handlers)) = self.select_local_handlers(record) else {
             return;
         };
         #[cfg(feature = "tracing-compat")]
@@ -255,12 +265,12 @@ impl FemtoLogger {
         ) {
             Ok(context) => context,
             Err(error) => {
-                self.record_context_capture_failure(error);
+                self.record_context_capture_failure(&error);
                 return;
             }
         };
         let queued = Box::new(QueuedRecord {
-            record,
+            record: filtered_record,
             handlers,
             #[cfg(feature = "python")]
             context,
@@ -322,4 +332,23 @@ impl FemtoLogger {
             self.handle_parent_propagation(pr);
         }
     }
+}
+
+/// The diagnostic a record dropped for an invalid context writes to stderr.
+///
+/// The write itself targets the process's stderr descriptor, which a test
+/// cannot observe without permanently redirecting it for every thread in the
+/// binary. Splitting the wording out lets a test pin the exact text the drop
+/// path emits, as the refused-target diagnostics do, while the counter
+/// assertion proves the drop path ran.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let err = log_context::merge_context_values(&oversize_map)
+///     .expect_err("an oversize value is refused");
+/// assert!(context_drop_diagnostic(&err).contains("invalid context payload"));
+/// ```
+pub(crate) fn context_drop_diagnostic(error: &log_context::LogContextError) -> String {
+    format!("FemtoLogger: dropping record due to invalid context payload: {error}")
 }

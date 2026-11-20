@@ -21,44 +21,12 @@ use rstest::rstest;
 use crate::logger::PyHandler;
 
 use super::{FlushFailure, reported};
+use crate::test_utils::stderr_capture::with_captured_stderr;
 
 /// Marker that only the raising handler's exception carries.
 const SENSITIVE_MARKER: &str = "SENSITIVE-flush-payload-7d1c";
 
-/// Run `body` with Python's `sys.stderr` replaced by a buffer.
-fn with_captured_stderr<T>(py: Python<'_>, body: impl FnOnce() -> T) -> (T, String) {
-    let contextlib = py.import("contextlib").expect("contextlib is importable");
-    let io = py.import("io").expect("io is importable");
-    let buffer = io
-        .getattr("StringIO")
-        .expect("io.StringIO exists")
-        .call0()
-        .expect("StringIO constructs");
-    let redirect = contextlib
-        .getattr("redirect_stderr")
-        .expect("contextlib.redirect_stderr exists")
-        .call1((&buffer,))
-        .expect("the redirect context constructs");
-    redirect
-        .call_method0("__enter__")
-        .expect("the redirect context enters");
-
-    let result = body();
-
-    // `__exit__` always receives the exception triple; `None` reports that the
-    // body raised nothing, which is the only case this helper supports.
-    redirect
-        .call_method1("__exit__", (py.None(), py.None(), py.None()))
-        .expect("the redirect context exits");
-    let captured = buffer
-        .call_method0("getvalue")
-        .expect("the buffer is readable")
-        .extract::<String>()
-        .expect("the buffer holds text");
-    (result, captured)
-}
-
-/// Build a handler by instantiating *class_name* from Python *source*.
+/// Build a handler by instantiating `class_name` from Python `source`.
 ///
 /// The three builders below differ only in the source they compile, so the
 /// module loading and construction live here once. Each call compiles its own

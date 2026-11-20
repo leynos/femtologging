@@ -1,4 +1,4 @@
-//! Core logger implementation for the FemtoLogger system.
+//! Core logger implementation for the `FemtoLogger` system.
 //!
 //! This module provides the [`FemtoLogger`] struct, which handles log message
 //! filtering, formatting, and asynchronous output through the process-wide
@@ -51,6 +51,10 @@ pub use dispatcher::DispatcherError;
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
 pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
+// The convenience-function test is the only caller of the diagnostic wording;
+// without the gate, `-D unused-imports` fails a build with tests compiled out.
+#[cfg(test)]
+pub(crate) use producer::context_drop_diagnostic;
 // The `log` bridge is the only caller, so the re-export follows that feature
 // or `-D unused-imports` fails a lane with the bridge compiled out.
 #[cfg(feature = "log-compat")]
@@ -183,16 +187,9 @@ impl FemtoLogger {
 
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
-        let mut handlers = self.handlers.write();
-        if let Some(pos) = handlers
-            .iter()
-            .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
-        {
-            handlers.remove(pos);
-            true
-        } else {
-            false
-        }
+        remove_first_matching(&mut self.handlers.write(), |attachment| {
+            Arc::ptr_eq(&attachment.handler, handler)
+        })
     }
 
     /// Remove all handlers from this logger.
@@ -208,13 +205,9 @@ impl FemtoLogger {
     ///
     /// Removes the first matching attachment. Returns `true` if one was removed.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
-        let mut filters = self.filters.write();
-        if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
-            filters.remove(pos);
-            true
-        } else {
-            false
-        }
+        remove_first_matching(&mut self.filters.write(), |attached| {
+            Arc::ptr_eq(attached, filter)
+        })
     }
 
     /// Remove all filters from this logger, so later records are not filtered by them.
@@ -256,7 +249,7 @@ impl FemtoLogger {
         self.handlers
             .read()
             .iter()
-            .map(|attachment| Arc::as_ptr(&attachment.handler) as *const () as usize)
+            .map(|attachment| Arc::as_ptr(&attachment.handler).cast::<()>() as usize)
             .collect()
     }
 
@@ -265,7 +258,7 @@ impl FemtoLogger {
         self.filters
             .read()
             .iter()
-            .map(|filter| Arc::as_ptr(filter) as *const () as usize)
+            .map(|filter| Arc::as_ptr(filter).cast::<()>() as usize)
             .collect()
     }
 }
@@ -287,6 +280,18 @@ impl Drop for FemtoLogger {
         #[cfg(not(loom))]
         self.finish_dispatch_state();
     }
+}
+
+/// Remove the first item of `items` that `is_target` selects.
+///
+/// Returns whether an item was removed. Selection is by predicate rather than
+/// by value so that callers keep identity semantics: handlers and filters are
+/// compared by pointer, not by the payload they carry.
+fn remove_first_matching<T>(items: &mut Vec<T>, is_target: impl Fn(&T) -> bool) -> bool {
+    items.iter().position(is_target).is_some_and(|pos| {
+        items.remove(pos);
+        true
+    })
 }
 
 #[cfg(test)]

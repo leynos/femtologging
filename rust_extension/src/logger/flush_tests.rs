@@ -134,8 +134,18 @@ struct HeldHandler {
 
 impl FemtoHandlerTrait for HeldHandler {
     fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-        let _ = self.started.send(());
-        let _ = self.release.lock().recv();
+        // A refused start signal means the test stopped waiting before the
+        // worker got here. There is nobody left to tell, so it is reported and
+        // the handler still blocks below.
+        if self.started.send(()).is_err() {
+            log::trace!("HeldHandler: test left before the handler started");
+        }
+        // A disconnected release sender means the test dropped it without
+        // releasing the handler, so the wait returns at once and the handler
+        // leaves, which is the outcome dropping the sender asks for.
+        if self.release.lock().recv().is_err() {
+            log::trace!("HeldHandler: release sender dropped before the handler finished");
+        }
         Ok(())
     }
 
@@ -152,7 +162,7 @@ fn leaked(shard: Shard) -> &'static Shard {
 /// Build a logger on a freshly started two-deep shard.
 fn logger_on_test_shard(name: &str) -> FemtoLogger {
     let shard = leaked(Shard::start(0, 2).expect("test shard should start"));
-    FemtoLogger::assembled_for_test(name.to_string(), shard)
+    FemtoLogger::assembled_for_test(name.to_owned(), shard)
 }
 
 /// Attach one handler and report the logger.
@@ -271,7 +281,7 @@ fn a_blocked_worker_reports_an_acknowledgement_timeout() {
 fn a_refused_barrier_reports_a_closed_channel() {
     let (shard, worker) = Shard::with_unanswering_worker_for_test(2);
     let logger = with_handler(
-        FemtoLogger::assembled_for_test("flush.closed".to_string(), leaked(shard)),
+        FemtoLogger::assembled_for_test("flush.closed".to_owned(), leaked(shard)),
         Arc::new(PassingHandler),
     );
     // The record stays in the stand-in worker's hands, holding its permit, so

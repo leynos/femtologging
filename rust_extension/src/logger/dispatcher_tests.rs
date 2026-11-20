@@ -6,10 +6,23 @@
 //! without exhausting the process's real thread resources.
 
 use super::super::pid_reservation::PidReservation;
-use super::shards_for;
+use super::shard::Shard;
+use super::{Dispatcher, shards_for};
 
 /// The default the pool falls back to when the machine reports no limit.
 const DEFAULT: usize = super::DEFAULT_SHARD_COUNT;
+
+/// Start a shard, refusing the second one.
+///
+/// The injected refusal stands in for an operating system that will not start
+/// another thread, so a pool's partial-start error can be asserted without
+/// exhausting the process's real thread resources.
+fn refuse_second_shard(index: usize, depth: usize) -> Result<Shard, std::io::Error> {
+    if index == 1 {
+        return Err(std::io::Error::other("injected worker-start refusal"));
+    }
+    Shard::start(index, depth)
+}
 
 #[test]
 fn a_machine_with_plenty_of_cores_gets_the_default_pool() {
@@ -66,8 +79,6 @@ fn a_machine_reporting_nothing_gets_a_usable_pool() {
 /// refusing every record on a shard that can still hold one.
 #[test]
 fn a_loggers_budget_leaves_another_logger_a_slot() {
-    use super::shard::Shard;
-
     for depth in 1..=8 {
         let shard = Shard::start(0, depth).expect("a test shard should start");
         let limit = shard.budget().limit_for_test();
@@ -86,14 +97,45 @@ fn a_loggers_budget_leaves_another_logger_a_slot() {
     }
 }
 
+/// A pool that would own no shard is refused when it is built.
+///
+/// The refusal is what makes `assign_shard` total: by the time a pool exists it
+/// holds a shard, so round-robin assignment cannot look up an empty pool.
+#[test]
+fn a_pool_of_zero_shards_is_refused() {
+    use std::io::ErrorKind;
+
+    let Err(error) = Dispatcher::start_with(std::process::id(), 0, Shard::start) else {
+        panic!("a pool with no shard must be refused");
+    };
+    assert_eq!(error.started, 0, "no worker start was attempted");
+    assert_eq!(error.total, 0, "no shard was requested");
+    assert_eq!(
+        error.source.kind(),
+        ErrorKind::InvalidInput,
+        "an empty pool is an invalid request, not a thread refusal"
+    );
+    assert!(
+        error.to_string().contains("at least one shard"),
+        "the refusal must name the invariant: {error}"
+    );
+
+    let Err(seam_error) = super::shared_with_shards_for_test(0) else {
+        panic!("the test seam must refuse an empty pool too");
+    };
+    assert_eq!(
+        seam_error.source.kind(),
+        ErrorKind::InvalidInput,
+        "the test seam must report the same invalid request"
+    );
+}
+
 #[test]
 fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
-    use std::io::{Error, ErrorKind};
+    use std::io::ErrorKind;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use pyo3::{Python, exceptions::PyRuntimeError};
-
-    use super::{Dispatcher, shard::Shard};
 
     let process_id = std::process::id();
     let unused_process_id = process_id.wrapping_add(1);
@@ -102,13 +144,7 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
         let start_guard = PidReservation::try_reserve(&reservation, process_id)
             .expect("the initial test reservation should be free");
         Dispatcher::start_reserved_pool_with(unused_process_id, start_guard, || {
-            Dispatcher::start_with(unused_process_id, 2, |index, depth| {
-                if index == 1 {
-                    Err(Error::other("injected worker-start refusal"))
-                } else {
-                    Shard::start(index, depth)
-                }
-            })
+            Dispatcher::start_with(unused_process_id, 2, refuse_second_shard)
         })
     };
 

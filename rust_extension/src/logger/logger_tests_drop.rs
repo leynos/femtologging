@@ -12,7 +12,7 @@ use super::*;
 fn drop_delivers_records_queued_before_it() {
     let handler = Arc::new(CollectingHandler::new());
     let logger =
-        FemtoLogger::new("drop-drain".to_string()).expect("test logger should be constructible");
+        FemtoLogger::new("drop-drain".to_owned()).expect("test logger should be constructible");
     logger
         .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("native collecting handler should register");
@@ -31,7 +31,7 @@ fn drop_delivers_records_queued_before_it() {
 fn drop_delivers_every_record_queued_before_it_in_order() {
     let handler = Arc::new(CollectingHandler::new());
     let logger =
-        FemtoLogger::new("drop-order".to_string()).expect("test logger should be constructible");
+        FemtoLogger::new("drop-order".to_owned()).expect("test logger should be constructible");
     logger
         .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
         .expect("native collecting handler should register");
@@ -94,8 +94,18 @@ fn drop_does_not_hold_the_handler_list_while_draining() {
 
     impl FemtoHandlerTrait for BlockingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
-            let _ = self.entered.send(());
-            let _ = self.release.recv();
+            // A refused signal means the test stopped waiting before the
+            // handler was entered; there is nobody left to tell, so it is
+            // reported and the handler still waits for its release below.
+            if self.entered.send(()).is_err() {
+                log::trace!("BlockingHandler: test left before the handler was entered");
+            }
+            // A disconnected release sender means the test dropped it without
+            // releasing the handler; the wait returns at once, which is the
+            // outcome dropping the sender asks for.
+            if self.release.recv().is_err() {
+                log::trace!("BlockingHandler: release sender dropped before the handler finished");
+            }
             Ok(())
         }
 
@@ -108,7 +118,7 @@ fn drop_does_not_hold_the_handler_list_while_draining() {
     let (release_tx, release_rx) = bounded::<()>(1);
 
     let logger =
-        FemtoLogger::new("drop-lock".to_string()).expect("test logger should be constructible");
+        FemtoLogger::new("drop-lock".to_owned()).expect("test logger should be constructible");
     let handlers = Arc::clone(&logger.handlers);
     logger
         .add_handler(Arc::new(BlockingHandler {

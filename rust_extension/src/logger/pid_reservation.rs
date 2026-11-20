@@ -32,19 +32,31 @@ impl<'a> PidReservation<'a> {
         } else {
             // A different PID can only be the parent reservation copied by
             // fork. Its child may clear it because the parent thread is gone.
-            let _ = reservation.compare_exchange(owner, 0, Ordering::AcqRel, Ordering::Acquire);
+            // A failed clear means the word changed under us — the owner
+            // released it or another child thread cleared it first — so the
+            // caller's retry loop finds it free or owned afresh.
+            if reservation
+                .compare_exchange(owner, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                log::trace!("PidReservation: stale reservation changed during the clear");
+            }
         }
     }
 }
 
 impl Drop for PidReservation<'_> {
     fn drop(&mut self) {
-        let _ = self.reservation.compare_exchange(
-            self.process_id,
-            0,
-            Ordering::Release,
-            Ordering::Relaxed,
-        );
+        // A failed release means the reservation had already been cleared or
+        // taken again, so the word holds another writer's value and this
+        // owner must not overwrite it.
+        if self
+            .reservation
+            .compare_exchange(self.process_id, 0, Ordering::Release, Ordering::Relaxed)
+            .is_err()
+        {
+            log::trace!("PidReservation: reservation changed before its release");
+        }
     }
 }
 
