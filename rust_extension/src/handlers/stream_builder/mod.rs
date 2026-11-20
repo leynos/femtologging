@@ -267,5 +267,5 @@ impl HandlerBuilderTrait for StreamHandlerBuilder {
 }
 
 #[cfg(test)]
-#[path = "stream_builder/tests.rs"]
+#[path = "tests.rs"]
 mod tests;

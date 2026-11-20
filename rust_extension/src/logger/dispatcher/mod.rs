@@ -45,7 +45,7 @@ mod shard;
 use pyo3::{PyErr, exceptions::PyRuntimeError};
 
 #[cfg(all(test, not(loom)))]
-#[path = "dispatcher_tests.rs"]
+#[path = "../dispatcher_tests.rs"]
 mod dispatcher_tests;
 
 #[cfg(not(loom))]
