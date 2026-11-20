@@ -699,9 +699,11 @@ HTTP client.
   endpoint or the header field, never its value.
 - If a collector answered a 300 or a POST 307/308 in a way the handler treated
   as delivered, make that route answer 2xx directly, or use a 301, 302 or 303.
-- Raise both `connect_timeout` and `write_timeout` when a connection must be
-  allowed to establish for longer: the connection waits for the smaller of the
-  two, so raising only `write_timeout` cannot extend it.
+- A connection waits for at most the smaller of `connect_timeout` and
+  `write_timeout`, so `write_timeout` caps connection establishment as well. To
+  allow a connection to establish for a required duration, raise
+  `write_timeout` to at least that duration, and raise `connect_timeout` too if
+  the duration exceeds it.
 
 For the full transport contract, see
 [the Rust extension guide](rust-extension.md#http-transport-and-tls).

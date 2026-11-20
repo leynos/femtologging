@@ -191,26 +191,31 @@ fn a_rejected_header_or_credential_is_never_echoed(
     );
 }
 
-/// Scenario: a custom `Authorization` value that is not ASCII text.
+/// Scenario: a text header - `Authorization` or `Host` - whose value is not
+/// ASCII text, in several spellings of the name.
 ///
 /// Invariant: the builder's validation rejects it. `HeaderValue::from_str`
-/// admits any byte from `0x20` upwards, but the send path decodes the
-/// `Authorization` value as text, so `Bearer café` would build successfully and
-/// then fail every attempt. The error must not echo the credential.
-#[test]
-fn a_non_ascii_authorization_header_is_rejected() {
+/// admits any byte from `0x20` upwards, but the send path decodes these two
+/// values as text, so a value such as `Bearer café` would build successfully
+/// and then fail every attempt. The error must not echo the value.
+#[rstest]
+#[case::authorization("Authorization", "Bearer café")]
+#[case::authorization_lowercase("authorization", "Bearer café")]
+#[case::host("Host", "café.example")]
+#[case::host_mixed_case("HoSt", "café.example")]
+fn a_non_ascii_text_header_is_rejected(#[case] name: &str, #[case] value: &str) {
     let config = config(
         HTTPMethod::POST,
         AuthConfig::None,
         SerializationFormat::UrlEncoded,
-        &[("Authorization", "Bearer café")],
+        &[(name, value)],
     );
 
     let err = validate_request_headers(&config).expect_err("the value cannot be sent");
 
     assert!(
-        !err.contains("café"),
-        "the error must not echo a configured credential: {err}"
+        !err.contains(value),
+        "the error must not echo the configured value: {err}"
     );
 }
 
@@ -241,8 +246,9 @@ proptest! {
     /// parsable name, a parsable value, and - for `Authorization` and `Host`,
     /// which the send path decodes as text - a value `HeaderValue::to_str`
     /// still accepts. The fixed names are mixed into the generator so the two
-    /// text rules are exercised on every run, not only when random generation
-    /// happens to produce them.
+    /// text rules are exercised far more often than random generation alone
+    /// would produce them; the deterministic cases in
+    /// [`a_non_ascii_text_header_is_rejected`] cover each rule for certain.
     #[test]
     fn header_validation_matches_the_send_path(
         name in prop_oneof![3 => any::<String>(), 1 => text_header_name()],
