@@ -1617,8 +1617,14 @@ manager lock is dropped, `build_and_init` calls
 `displaced.drop_without_gil(py)`, so handler teardown that flushes or joins a
 worker runs without the GIL.
 
-`dictConfig` and `fileConfig` use this same builder path, so their validation
-and transaction boundary match direct builder use.
+`dictConfig` and `fileConfig` use this same builder path, so their
+builder-level validation and commit semantics match direct builder use. Only a
+`dictConfig` document can carry ``"()"`` filter entries; `fileConfig` has no
+filter section. Declarative-only mode also rejects those entries in Python
+before the builder is created. When factories are enabled and processing
+reaches such an entry, its resolution and invocation happen before this
+transaction boundary and are not undone by a rejection. See the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 At runtime, each handler is paired with its resolved filter chain in a
 `HandlerAttachment`. The logger evaluates that chain on the producer thread

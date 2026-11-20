@@ -1,10 +1,11 @@
 """Configuration via logging-style dictionaries.
 
 This module implements :func:`dictConfig`, a restricted variant of
-``logging.config.dictConfig``. Handler ``level`` and incremental
-configuration are unsupported. Top-level, handler, and logger-level
-``filters`` lists are supported; each filter must
-contain exactly one of ``level`` or ``name``.
+``logging.config.dictConfig`` with no handler ``level`` or incremental
+configuration. Filters may be declarative or use the ``"()"`` factory form.
+
+Factory entries are trusted-code-equivalent input, so lower-trust configuration
+must exclude them; see ``docs/users-guide.md#filter-factory-trust-boundary``.
 
 Example:
 -------
@@ -29,6 +30,7 @@ from . import _femtologging_rs as rust
 # Re-export BasicConfig, basicConfig, and fileConfig for backward compatibility
 # (these are also available from the top-level femtologging package)
 from ._basic_config import BasicConfig, basicConfig
+from ._config_policy import validate_allow_factories
 from ._timed_handler_config import parse_timed_args
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
@@ -325,14 +327,34 @@ def _build_formatter(fcfg: cabc.Mapping[str, object]) -> object:
 
 
 # ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.dictConfig
-def dictConfig(config: cabc.Mapping[str, object]) -> None:
+def dictConfig(
+    config: cabc.Mapping[str, object], *, allow_factories: bool = True
+) -> None:
     """Configure logging using a ``dictConfig``-style dictionary.
 
     Parameters
     ----------
     config : cabc.Mapping[str, object]
         A dictionary compatible with :mod:`logging.config`. Unsupported
-        features (handler ``level``) raise ``ValueError``.
+        features raise ``ValueError``.
+    allow_factories : bool, default=True
+        Whether filter entries may use the stdlib factory form ``{"()": ...}``;
+        ``False`` accepts only declarative ``level`` and ``name`` filters.
+        Non-bool values raise ``TypeError``.
+
+    Notes
+    -----
+    **Security:** a ``"()"`` filter entry is trusted-code-equivalent. A dotted
+    string reference imports modules during resolution and then invokes the
+    resolved callable; a direct callable object is invoked without that
+    resolution step. Both run code chosen by the configuration author, so
+    lower-trust configuration (tenants, HTTP APIs, remote configuration
+    services, writable files) must reject factory entries or pass
+    ``allow_factories=False``; checks after resolution or invocation are too
+    late. ``allow_factories=False`` rejects filter factories only and applies no
+    trust policy to the rest of the document, so callers must validate
+    permitted handler classes and destinations separately. See
+    ``docs/users-guide.md#filter-factory-trust-boundary``.
 
     Examples
     --------
@@ -347,12 +369,13 @@ def dictConfig(config: cabc.Mapping[str, object]) -> None:
     """
     from . import config_sections
 
+    allow_factories = validate_allow_factories(allow_factories)
     version = _validate_dict_config(config)
+    filters = config_sections._collect_filters(config, allow_factories=allow_factories)
     builder = typ.cast("typ.Any", _create_config_builder(version, config))
-    builder = config_sections._process_filters(builder, config)
-    builder = config_sections._process_formatters(builder, config)
-    builder = config_sections._process_handlers(builder, config)
-    builder = config_sections._process_loggers(builder, config)
+    builder = config_sections._process_sections(
+        builder, config, filters, allow_factories=allow_factories
+    )
     builder = config_sections._process_root_logger(builder, config)
     builder.build_and_init()
 

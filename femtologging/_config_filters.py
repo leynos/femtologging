@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import typing as typ
 
+from ._config_policy import factory_disallowed_message
 from ._femtologging_rs import (
     LevelFilterBuilder,
     NameFilterBuilder,
     PythonCallbackFilterBuilder,
 )
 from ._filter_factory import resolve_factory
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 _DECLARATIVE_KEYS: frozenset[str] = frozenset({"level", "name"})
 
@@ -80,9 +84,66 @@ def _build_declarative_filter(fid: str, data: dict[str, object]) -> object:
     return NameFilterBuilder().with_prefix(name)
 
 
-def build_filter_from_dict(fid: str, data: dict[str, object]) -> object:
-    """Create a filter builder from ``dictConfig`` filter data."""
-    validate_filter_config_keys(fid, data)
-    if "()" in data:
-        return _build_factory_filter(fid, data)
-    return _build_declarative_filter(fid, data)
+def build_filter_from_dict(
+    fid: str, data: cabc.Mapping[str, object], *, allow_factories: bool = True
+) -> object:
+    """Create a filter builder from ``dictConfig`` filter data.
+
+    Parameters
+    ----------
+    fid
+        Filter identifier used in error messages and registry lookups.
+    data
+        Filter entry body. A ``"()"`` key selects the stdlib factory form; an
+        entry without it must declare exactly one of ``level`` or ``name``.
+    allow_factories
+        When ``False``, reject any entry carrying a ``"()"`` key. The initial
+        key scan rejects before any value is read, so a factory target it sees
+        is never read, resolved, or invoked. A key that appears only during
+        copying is rejected before dispatch, so it is never resolved or
+        invoked. Declarative ``level`` and ``name`` entries still work.
+
+    Returns
+    -------
+    object
+        A ``LevelFilterBuilder``, ``NameFilterBuilder``, or
+        ``PythonCallbackFilterBuilder``.
+
+    Raises
+    ------
+    ValueError
+        If the entry is malformed, mixes factory and declarative forms, or
+        uses a factory while ``allow_factories`` is ``False``.
+
+    Notes
+    -----
+    A non-string ``level`` or ``name``, or a factory target that is not
+    callable, raises ``TypeError`` from the builder helpers.
+
+    Examples
+    --------
+    >>> from femtologging._config_filters import build_filter_from_dict
+    >>> type(build_filter_from_dict("lvl", {"level": "INFO"})).__name__
+    'LevelFilterBuilder'
+    >>> build_filter_from_dict("f", {"()": "pkg.Factory"}, allow_factories=False)
+    Traceback (most recent call last):
+    ...
+    ValueError: filter 'f' uses a '()' factory, rejected by allow_factories=False
+
+    """
+    # Scan keys first: copying a mapping reads every value, so a check after
+    # the copy would run a hostile value accessor before the policy rejection.
+    if not allow_factories and "()" in list(data):
+        msg = factory_disallowed_message(fid)
+        raise ValueError(msg)
+    # Copy once so the policy re-check, validation, and dispatch all inspect the
+    # same keys, even if a dict subclass mutates its mapping during validation.
+    entry = dict(data)
+    has_factory = "()" in entry
+    if not allow_factories and has_factory:
+        msg = factory_disallowed_message(fid)
+        raise ValueError(msg)
+    validate_filter_config_keys(fid, entry)
+    if has_factory:
+        return _build_factory_filter(fid, entry)
+    return _build_declarative_filter(fid, entry)

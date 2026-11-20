@@ -872,6 +872,15 @@ keys as keyword arguments, and wrapped as producer-thread callback filters. The
 callback may be either a plain callable or a ``logging.Filter``-style object
 exposing ``filter(record)``.
 
+Factory entries are trusted-code-equivalent input. A dotted string target is
+imported and resolved, then invoked; a direct callable object skips resolution
+but is still invoked. Callers that accept lower-trust configuration must reject
+factory entries or call ``dictConfig(config, allow_factories=False)``, which
+rejects any top-level filter entry carrying a ``"()"`` key, by presence alone,
+before resolution or invocation. That check does not scan nested values. An
+allowlist applied after resolution or invocation is too late. See the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
+
 When a Python callback filter accepts a record, any new or modified attributes
 it adds to the mutable ``logging.LogRecord`` view are copied into
 ``RecordMetadata.key_values`` before the record crosses the async queue
@@ -952,6 +961,15 @@ surfaces mature further.
 
 ## 3. Runtime Reconfiguration
 
+Configuration that carries filter factory entries (``"()"``) remains
+trusted-code-equivalent during reconfiguration: every bootstrap-shaped reload
+that enables factories and reaches factory construction resolves and invokes
+those factories again. Use ``allow_factories=False`` for lower-trust reloads,
+which rejects the entries before any of them runs; see the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary)
+and
+[runtime reconfiguration](users-guide.md#runtime-reconfiguration-and-reloads).
+
 ### 3.1. Bootstrap transaction boundary
 
 `ConfigBuilder::build_and_init()` is split into a fallible preparation step and
@@ -973,8 +991,10 @@ Preparation runs in this order:
 5. `stage_loggers` pairs every plan with an existing logger or a new
    unregistered logger object, reading the registry without modifying it.
 
-None of these steps mutate live logger state, so a rejected configuration
-leaves every pre-existing logger untouched.
+None of these steps mutate live logger state, so a builder preparation failure
+leaves every pre-existing logger untouched by the builder. Code run earlier by
+``dictConfig``, such as filter factory resolution, is outside this guarantee;
+see [Transaction limits](#transaction-limits).
 
 `manager::commit_configuration` then performs the entire transition under one
 manager write lock. Under that lock it first rechecks registry capacity for
@@ -1097,11 +1117,18 @@ This differs from the standard library in three ways:
 
 #### Transaction limits
 
-Two side effects sit outside the atomic guarantee. Records already queued or
+Three side effects sit outside the atomic guarantee. Records already queued or
 snapshotted onto a logger before the commit are not retracted. Handler
-construction happens during preparation, so it can open a file or socket before
-a later preparation failure rejects the configuration. A rejection restores
-only live logger state; it does not undo the effects of handler construction.
+construction happens during the builder's preparation, so it can open a file or
+socket before a later preparation failure rejects the configuration. Factory
+resolution happens earlier still, in the Python ``dictConfig`` translation
+phase: when factories are enabled and processing reaches them, it resolves
+dotted ``"()"`` targets and invokes both dotted and direct callables before
+``build_and_init()`` is called. The builder's preparation itself never mutates
+live logger state, but a rejected transaction applies none of its staged logger
+changes; it does not restore logger state that a factory changed directly, nor
+undo the effects of handler construction or factory resolution. See
+[Filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
 
 ### 3.2. Runtime mutation control plane
 

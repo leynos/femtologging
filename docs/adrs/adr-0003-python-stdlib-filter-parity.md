@@ -5,6 +5,9 @@
 Accepted – decision recorded on 2026-02-25 to add Python standard library
 (`logging`) filter parity in a phased rollout.
 
+Amended by ADR-0003 (2026-11-18) for the filter factory trust-boundary policy
+(issue #450).
+
 ## Date
 
 2026-02-25.
@@ -237,3 +240,15 @@ run synchronously in the captured producer context, as does formatting done
 during that call. A handler that defers formatting or emission to another
 thread or process needs separate context propagation. Handler subclasses that
 override `handle()` define their own internal behaviour.
+
+## Amendments
+
+### 2026-11-18: Filter factory trust boundary (issue #450)
+
+Filter entries using the stdlib ``"()"`` form are trusted-code-equivalent
+input. A dotted target imports modules during resolution and then invokes the
+resolved callable; a direct callable object is invoked without that resolution
+step. Callers that accept lower-trust configuration must reject `"()"` entries
+or use `dictConfig(config, allow_factories=False)`. An allowlist applied after
+resolution or invocation is too late. See the
+[filter factory trust boundary](../users-guide.md#filter-factory-trust-boundary).

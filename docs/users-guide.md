@@ -1052,15 +1052,58 @@ builder.build_and_init()
   The factory target may be a dotted path or a direct callable, and is
   instantiated with the remaining keys as keyword arguments. Mixing `"()"` with
   `level` or `name` is rejected. Loggers, handlers, and the root logger accept a
-  `filters` list of filter IDs.
+  `filters` list of filter IDs. Factory entries are trusted-code-equivalent
+  input; read [Filter factory trust boundary](#filter-factory-trust-boundary)
+  before accepting configuration from any source that is not fully trusted.
 - Unsupported stdlib features raise `ValueError`: incremental updates and
   handler `level`. The `formatters` section accepts percent-style `format` and
   `datefmt` values, and a handler can reference its registered formatter ID.
 - A `root` section is mandatory. Named loggers support `level`,
   `handlers`, `filters`, and `propagate` (bool).
 - The parsed configuration is passed to `ConfigBuilder.build_and_init()`, so
-  handler and filter validation completes before live logger state changes. A
-  failed configuration leaves the current logger configuration intact.
+  handler and filter validation completes before the builder applies its staged
+  changes to live loggers. A failed configuration applies none of its staged
+  logger changes, but it does not undo side effects already performed while
+  preparing it, including any change a factory made directly to a live logger.
+
+#### Filter factory trust boundary
+
+A top-level filter entry containing `"()"` is **trusted-code-equivalent**. A
+dotted string target is imported and resolved, then invoked; a direct callable
+object skips resolution but is still invoked. Either way the configuration
+author selects the code, and the remaining entry keys are passed as keyword
+arguments. Side effects happen during resolution and invocation, so a factory
+can do anything the application process can do, whether or not it returns a
+usable filter.
+
+Configuration assembled from tenants, HTTP APIs, remote configuration services,
+writable files, or any other lower-trust source must either reject factory
+entries before calling `dictConfig`, or pass `allow_factories=False` for a
+supported declarative-only route. That mode accepts `level` and `name` filters
+and rejects any top-level filter entry carrying `"()"`, including direct
+callable objects, by key presence before import, resolution, or invocation. It
+does not scan nested values for that key.
+
+An allowlist or type check applied after resolution or invocation is too late.
+Checking that the resolved object is callable, or that the returned value is a
+filter, cannot undo module import side effects or the factory's own side
+effects, which have already happened. Validate or allowlist paths before
+resolution, or reject factory entries outright.
+
+Declarative-only mode does not sandbox the rest of the configuration. Handlers
+still open files and network connections, and a Python callback filter
+installed before the call can still enrich records after a declarative-only
+reload with values that reach downstream systems. The atomic configuration
+transaction covers the logger changes it stages; it does not undo side effects
+that occurred while preparing the configuration, including logger changes a
+factory makes directly.
+
+Factories run again on each `dictConfig` call that enables factories and
+reaches factory construction, including application-managed reloads; a call
+rejected under `allow_factories=False` runs none. See
+[Runtime reconfiguration and reloads](#runtime-reconfiguration-and-reloads).
+`fileConfig` builds its schema from INI sections and never emits `"()"` filter
+entries.
 
 ### fileConfig (INI compatibility)
 
@@ -1239,10 +1282,14 @@ For upgrade steps covering handler filters and formatter builders, see the
   enables it again.
 
 Configuration preparation validates logger names and resource references before
-changing live logger state. If validation fails, every existing logger keeps
-its state. Records already queued before a successful change are not retracted,
-and handler construction can open destinations before a later preparation error
-is reported.
+changing live logger state. If validation fails, none of the staged logger
+changes are applied. Every existing logger keeps the state it had before
+preparation, apart from changes made directly by code that preparation ran or
+by other threads while it ran. Records already queued before a successful
+change are not retracted, handler construction can open destinations, and
+filter factory resolution can import modules and run configuration-selected
+code, before a later preparation error is reported. See
+[Filter factory trust boundary](#filter-factory-trust-boundary).
 
 ## Operational tips and caveats
 
@@ -1289,6 +1336,35 @@ is reported.
   messages before logging.
 - `reset_manager()` is a destructive operation intended for tests. Do not call
   it while other threads might still hold references to existing loggers.
+
+### Runtime reconfiguration and reloads
+
+- Repeated `dictConfig` calls use bootstrap-shaped replacement: each call
+  prepares and atomically commits a new configuration for the loggers it
+  configures, instead of applying incremental updates. Omitted loggers are
+  handled separately by `disable_existing_loggers`: when it is `False` they
+  keep their existing handlers and filters.
+- Factory-bearing configuration stays inside the trusted-code boundary. A
+  `"()"` filter entry is resolved and invoked again whenever a `dictConfig`
+  call reaches factory construction with factories enabled, so an
+  application-managed reload re-runs that code with the reloaded document's
+  keys. See [Filter factory trust boundary](#filter-factory-trust-boundary).
+- Call `dictConfig(config, allow_factories=False)` when a reload can receive a
+  lower-trust document. That mode rejects `"()"` entries before import,
+  resolution, or invocation.
+- Declarative-only mode checks only the incoming document. A logger omitted
+  from the reload keeps its existing filters when `disable_existing_loggers` is
+  `False`, so an installed callback filter can still run after a successful
+  declarative-only reload. Removing one logger's attachment only stops that
+  logger from invoking the callback. To retire the callback, remove or replace
+  every attachment that can invoke it, including handler attachments.
+- `fileConfig` translates INI sections and never emits `"()"` filter entries,
+  so an INI reload cannot introduce a factory through that path.
+- `RuntimeConfigBuilder` mutations select registered filters by ID through
+  `replace_filters`, `append_filters`, `remove_filters`, and `clear_filters`.
+  They do not resolve `"()"` entries. That does not make every registered
+  filter factory-free: a Python callback filter still runs caller-supplied
+  Python on the producer thread when it evaluates each record.
 
 ## Rust log facade bridge
 
