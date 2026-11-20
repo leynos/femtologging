@@ -66,6 +66,16 @@ impl RotationConfig {
     }
 }
 
+// Pins the constructors as `const fn`: this initializer is evaluated at
+// compile time, so dropping the qualifier breaks the build. The builder
+// setters cannot be pinned this way because they consume and rebuild owned,
+// non-const handler state; their Python surface is covered by
+// `tests/ui/pass/pyo3_signature.rs` and the behavioural suite.
+const _: () = {
+    assert!(RotationConfig::new(1, 0).max_bytes == 1);
+    assert!(RotationConfig::disabled().backup_count == 0);
+};
+
 impl Default for RotationConfig {
     fn default() -> Self {
         Self::disabled()
@@ -92,7 +102,7 @@ impl FemtoRotatingFileHandler {
     ///
     /// Internal visibility allows the builder to construct instances whilst
     /// preventing external crates from bypassing validation.
-    pub(crate) fn new_with_rotation_limits(
+    pub(crate) const fn new_with_rotation_limits(
         inner: FemtoFileHandler,
         max_bytes: u64,
         backup_count: usize,
@@ -105,11 +115,15 @@ impl FemtoRotatingFileHandler {
     }
 
     /// Return the configured rotation thresholds.
-    pub(crate) fn rotation_limits(&self) -> (u64, usize) {
+    pub(crate) const fn rotation_limits(&self) -> (u64, usize) {
         (self.max_bytes, self.backup_count)
     }
 
     /// Build a rotating handler with the supplied configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error from opening or creating the configured `path`.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,

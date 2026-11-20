@@ -1,6 +1,6 @@
 //! Python bindings for timed rotating handler APIs.
 //!
-//! This keeps PyO3 details separate from the Rust core so configuration and
+//! This keeps `PyO3` details separate from the Rust core so configuration and
 //! rotation logic stay testable without Python.
 
 use chrono::NaiveTime;
@@ -43,7 +43,7 @@ pub struct PyTimedRotatingFileHandler {
 
 impl PyTimedRotatingFileHandler {
     /// Wraps a constructed core handler for Python ownership.
-    pub(crate) fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
+    pub(crate) const fn from_core(inner: CoreTimedRotatingFileHandler) -> Self {
         Self { inner }
     }
 
@@ -106,18 +106,18 @@ pub struct TimedHandlerOptions {
 impl TimedHandlerOptions {
     /// Returns the stored local trigger without converting it to a Python
     /// object.
-    pub(crate) fn at_time_naive(&self) -> Option<NaiveTime> {
+    pub(crate) const fn at_time_naive(&self) -> Option<NaiveTime> {
         self.at_time
     }
 
     /// Converts Python option values into validated queue, policy, schedule,
     /// and retention configuration; invalid values become Python errors.
     fn to_configs(&self) -> PyResult<(HandlerConfig, TimedRotationSchedule, usize)> {
-        let capacity = isize::try_from(self.capacity)
+        let raw_capacity = isize::try_from(self.capacity)
             .map_err(|_| PyValueError::new_err("capacity must fit within isize"))?;
         let (capacity, flush_interval) = match self.flush_interval {
-            -1 => file::validate_params(capacity, 1)?,
-            value => file::validate_params(capacity, value)?,
+            -1 => file::validate_params(raw_capacity, 1)?,
+            value => file::validate_params(raw_capacity, value)?,
         };
         let overflow_policy = file::policy::parse_policy_string(&self.policy)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -144,8 +144,8 @@ impl Default for TimedHandlerOptions {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_interval: 1,
-            policy: "drop".to_string(),
-            when: "H".to_string(),
+            policy: "drop".to_owned(),
+            when: "H".to_owned(),
             interval: 1,
             backup_count: 0,
             utc: false,
@@ -165,13 +165,17 @@ impl TimedHandlerOptions {
     #[pyo3(signature = (
         capacity = DEFAULT_CHANNEL_CAPACITY,
         flush_interval = 1,
-        policy = "drop".to_string(),
-        when = "H".to_string(),
+        policy = "drop".to_owned(),
+        when = "H".to_owned(),
         interval = 1,
         backup_count = 0,
         utc = false,
         at_time = None,
     ))]
+    // One Rust parameter per Python option is what PyO3 requires, so the eight
+    // options cannot be grouped without changing the Python signature. The
+    // target argument budget of four therefore cannot be met here at source;
+    // the conflict is recorded for `harden-lint-config` rather than suppressed.
     fn new(
         capacity: usize,
         flush_interval: isize,
@@ -182,8 +186,8 @@ impl TimedHandlerOptions {
         utc: bool,
         at_time: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let at_time = match at_time {
-            Some(value) => Some(extract_naive_time(value)?),
+        let parsed_at_time = match at_time {
+            Some(value) => Some(extract_naive_time(&value)?),
             None => None,
         };
         let options = Self {
@@ -194,7 +198,7 @@ impl TimedHandlerOptions {
             interval,
             backup_count,
             utc,
-            at_time,
+            at_time: parsed_at_time,
         };
         let _ = options.to_configs()?;
         Ok(options)
@@ -214,11 +218,11 @@ impl PyTimedRotatingFileHandler {
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
-    fn py_new(path: String, options: Option<TimedHandlerOptions>) -> PyResult<Self> {
-        let options = options.unwrap_or_default();
-        let (config, schedule, backup_count) = options.to_configs()?;
+    fn py_new(path: &str, options: Option<TimedHandlerOptions>) -> PyResult<Self> {
+        let opts = options.unwrap_or_default();
+        let (config, schedule, backup_count) = opts.to_configs()?;
         CoreTimedRotatingFileHandler::with_capacity_flush_policy(
-            &path,
+            path,
             DefaultFormatter,
             config,
             TimedRotationConfig {
@@ -232,25 +236,25 @@ impl PyTimedRotatingFileHandler {
 
     /// Returns the canonical cadence string from the validated schedule.
     #[getter]
-    fn when(&self) -> &str {
+    const fn when(&self) -> &str {
         self.inner.schedule().when().as_str()
     }
 
     /// Returns the validated cadence multiplier.
     #[getter]
-    fn interval(&self) -> u32 {
+    const fn interval(&self) -> u32 {
         self.inner.schedule().interval()
     }
 
     /// Returns the configured number of retained rotated files.
     #[getter]
-    fn backup_count(&self) -> usize {
+    const fn backup_count(&self) -> usize {
         self.inner.backup_count()
     }
 
     /// Returns whether rollover calculations use UTC rather than local time.
     #[getter]
-    fn utc(&self) -> bool {
+    const fn utc(&self) -> bool {
         self.inner.schedule().use_utc()
     }
 
@@ -269,9 +273,13 @@ impl PyTimedRotatingFileHandler {
     /// The wait for queue capacity runs with the interpreter lock released, so
     /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
     /// the "Concurrency" section of the user guide for the full contract.
+    ///
+    /// PyO3 calls this with the interpreter lock held, so no caller supplies a
+    /// token: the body attaches with `Python::attach(...)` to obtain one and
+    /// detaches around the enqueue.
     #[pyo3(name = "handle")]
-    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
-    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    // @codescene(disable:"Excess Number of Function Arguments") Stable Python API signature (2026-10-28).
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         // Parsing raises `ValueError`, so it must happen while the lock is
         // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
@@ -279,7 +287,7 @@ impl PyTimedRotatingFileHandler {
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
         let (result, timer) = WaitScope::start(self.inner.inner.diagnostics())
-            .run(|| py.detach(|| self.inner.inner.enqueue(record)));
+            .run(|| Python::attach(|py| py.detach(|| self.inner.inner.enqueue(record))));
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_handle", "timed_rotating"),
@@ -333,15 +341,15 @@ impl PyTimedRotatingFileHandler {
     /// state.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
+    /// finish on the worker thread. Only a shared `PyO3` borrow is needed, so a
     /// close can start while another thread still holds the handler in a
     /// detached flush call. Closing does not cancel a `handle` call that is
     /// already waiting for queue capacity; that call returns only when the
     /// worker makes room or the channel closes.
     #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
+    fn py_close(slf: &Bound<'_, Self>, py: Python<'_>) {
         let (shutdown, diagnostics, policy_bucket) = {
-            let handler = slf.borrow(py);
+            let handler = slf.borrow();
             let file_handler = &handler.inner.inner;
             (
                 handler.take_shutdown(),

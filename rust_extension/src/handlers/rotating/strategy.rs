@@ -51,7 +51,7 @@ pub(crate) enum RotationOutcome {
 
 impl FileRotationStrategy {
     /// Creates rotation state with no prior rotation outcome.
-    pub(crate) fn new(path: PathBuf, max_bytes: u64, backup_count: usize) -> Self {
+    pub(crate) const fn new(path: PathBuf, max_bytes: u64, backup_count: usize) -> Self {
         Self {
             path,
             max_bytes,
@@ -61,12 +61,12 @@ impl FileRotationStrategy {
     }
 
     #[cfg(test)]
-    pub(crate) fn take_last_outcome(&mut self) -> RotationOutcome {
+    pub(crate) const fn take_last_outcome(&mut self) -> RotationOutcome {
         std::mem::replace(&mut self.last_outcome, RotationOutcome::Skipped)
     }
 
     /// Calculates the encoded record size used for the pre-write threshold.
-    pub(crate) fn next_record_bytes(message: &str) -> u64 {
+    pub(crate) const fn next_record_bytes(message: &str) -> u64 {
         message.len() as u64 + 1
     }
 
@@ -96,8 +96,8 @@ impl FileRotationStrategy {
         }
 
         let capacity = writer.capacity();
-        let original_file = self.swap_writer_with_temp(writer, capacity)?;
-        let original_file = self.perform_rotation_with_rollback(writer, original_file, capacity)?;
+        let pending_file = self.swap_writer_with_temp(writer, capacity)?;
+        let original_file = self.perform_rotation_with_rollback(writer, pending_file, capacity)?;
         self.finalize_rotation(writer, original_file, capacity)
     }
 
@@ -271,11 +271,10 @@ impl FileRotationStrategy {
     /// Builds the numbered backup path beside the active log path.
     pub(crate) fn backup_path(&self, index: usize) -> PathBuf {
         let mut backup = self.path.clone();
-        let mut name = self
-            .path
-            .file_name()
-            .map(|file_name| file_name.to_os_string())
-            .unwrap_or_else(|| self.path.as_os_str().to_os_string());
+        let mut name = self.path.file_name().map_or_else(
+            || self.path.as_os_str().to_os_string(),
+            std::ffi::OsStr::to_os_string,
+        );
         name.push(format!(".{index}"));
         backup.set_file_name(name);
         backup

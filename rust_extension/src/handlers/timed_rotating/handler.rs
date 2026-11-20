@@ -39,7 +39,7 @@ pub struct FemtoTimedRotatingFileHandler {
 
 impl FemtoTimedRotatingFileHandler {
     /// Wraps an existing file handler with timed-rotation metadata.
-    pub(crate) fn new_with_schedule(
+    pub(crate) const fn new_with_schedule(
         inner: FemtoFileHandler,
         schedule: TimedRotationSchedule,
         backup_count: usize,
@@ -56,7 +56,7 @@ impl FemtoTimedRotatingFileHandler {
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
     )]
-    pub(crate) fn schedule(&self) -> &TimedRotationSchedule {
+    pub(crate) const fn schedule(&self) -> &TimedRotationSchedule {
         &self.schedule
     }
 
@@ -65,7 +65,7 @@ impl FemtoTimedRotatingFileHandler {
         not(feature = "python"),
         expect(dead_code, reason = "python-only getter")
     )]
-    pub(crate) fn backup_count(&self) -> usize {
+    pub(crate) const fn backup_count(&self) -> usize {
         self.backup_count
     }
 

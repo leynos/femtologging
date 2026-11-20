@@ -27,7 +27,7 @@ pub const ROTATION_VALIDATION_MSG: &str =
 
 /// Python wrapper for the rotating file handler core type.
 ///
-/// The wrapper keeps PyO3 attributes out of the core module whilst preserving
+/// The wrapper keeps `PyO3` attributes out of the core module whilst preserving
 /// the existing Python class name.
 #[pyclass(name = "FemtoRotatingFileHandler")]
 pub struct PyRotatingFileHandler {
@@ -37,7 +37,7 @@ pub struct PyRotatingFileHandler {
 
 impl PyRotatingFileHandler {
     /// Wrap a core rotating file handler for Python exposure.
-    pub(crate) fn from_core(inner: CoreRotatingFileHandler) -> Self {
+    pub(crate) const fn from_core(inner: CoreRotatingFileHandler) -> Self {
         Self { inner }
     }
 
@@ -98,12 +98,12 @@ impl HandlerOptions {
             ));
         }
 
-        let capacity = isize::try_from(self.capacity).map_err(|_| {
+        let raw_capacity = isize::try_from(self.capacity).map_err(|_| {
             pyo3::exceptions::PyValueError::new_err("capacity must fit within isize")
         })?;
         let (capacity, flush_interval) = match self.flush_interval {
-            -1 => file::validate_params(capacity, 1)?,
-            value => file::validate_params(capacity, value)?,
+            -1 => file::validate_params(raw_capacity, 1)?,
+            value => file::validate_params(raw_capacity, value)?,
         };
 
         let overflow_policy = file::policy::parse_policy_string(&self.policy)
@@ -152,7 +152,7 @@ impl HandlerOptions {
     #[pyo3(signature = (
         capacity = DEFAULT_CHANNEL_CAPACITY,
         flush_interval = 1,
-        policy = "drop".to_string(),
+        policy = "drop".to_owned(),
         rotation = None,
     ))]
     fn new(
@@ -182,7 +182,7 @@ impl Default for HandlerOptions {
         Self {
             capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_interval: 1,
-            policy: "drop".to_string(),
+            policy: "drop".to_owned(),
             max_bytes: 0,
             backup_count: 0,
         }
@@ -203,12 +203,12 @@ impl PyRotatingFileHandler {
     #[new]
     #[pyo3(text_signature = "(path, options=None)")]
     #[pyo3(signature = (path, options = None))]
-    fn py_new(path: String, options: Option<HandlerOptions>) -> PyResult<Self> {
+    fn py_new(path: &str, options: Option<HandlerOptions>) -> PyResult<Self> {
         let opts = options.unwrap_or_default();
         let (handler_cfg, rotation) = opts.to_configs()?;
 
         CoreRotatingFileHandler::with_capacity_flush_policy(
-            &path,
+            path,
             DefaultFormatter,
             handler_cfg,
             rotation,
@@ -219,21 +219,23 @@ impl PyRotatingFileHandler {
 
     /// Expose the configured maximum number of bytes before rotation.
     #[getter]
-    fn max_bytes(&self) -> u64 {
+    const fn max_bytes(&self) -> u64 {
         self.inner.rotation_limits().0
     }
 
     /// Expose the configured backup count.
     #[getter]
-    fn backup_count(&self) -> usize {
+    const fn backup_count(&self) -> usize {
         self.inner.rotation_limits().1
     }
 
     /// Send one record to the rotating file handler.
     ///
     /// The wait for queue capacity runs with the interpreter lock released, so
-    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
-    /// the "Concurrency" section of the user guide for the full contract.
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread.
+    /// PyO3 calls this with the lock held, so the body attaches with
+    /// `Python::attach(...)` for a token and detaches around the enqueue;
+    /// see the user guide's "Concurrency" section for the full contract.
     ///
     /// # Examples
     ///
@@ -241,8 +243,8 @@ impl PyRotatingFileHandler {
     /// handler.py_handle("service", "INFO", "started")?;
     /// ```
     #[pyo3(name = "handle")]
-    // @codescene(disable:"Excess Number of Function Arguments") PyO3 token and stable Python API (2026-10-28).
-    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    // @codescene(disable:"Excess Number of Function Arguments") Stable Python API signature (2026-10-28).
+    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
         // Parsing raises `ValueError`, so it must happen while the lock is
         // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
@@ -250,7 +252,7 @@ impl PyRotatingFileHandler {
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
         let (result, timer) = WaitScope::start(self.inner.inner.diagnostics())
-            .run(|| py.detach(|| self.inner.inner.enqueue(record)));
+            .run(|| Python::attach(|py| py.detach(|| self.inner.inner.enqueue(record))));
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_handle", "rotating"),
@@ -312,9 +314,11 @@ impl PyRotatingFileHandler {
     ///
     /// Examples
     /// --------
+    /// ```python
     /// >>> diagnostics = handler.wait_diagnostics()
     /// >>> diagnostics["close_completed"] >= 0
     /// True
+    /// ```
     #[pyo3(name = "wait_diagnostics")]
     fn py_wait_diagnostics(&self) -> std::collections::BTreeMap<&'static str, u64> {
         self.inner.inner.diagnostics().snapshot().to_map()
@@ -330,7 +334,7 @@ impl PyRotatingFileHandler {
     /// Close the handler and stop its file worker.
     ///
     /// The GIL is released while waiting so a Python callable formatter can
-    /// finish on the worker thread. Only a shared PyO3 borrow is needed, so a
+    /// finish on the worker thread. Only a shared `PyO3` borrow is needed, so a
     /// close can start while another thread still holds the handler in a
     /// detached flush call. Closing does not cancel a `handle` call that is
     /// already waiting for queue capacity; that call returns only when the
@@ -342,9 +346,9 @@ impl PyRotatingFileHandler {
     /// handler.py_close();
     /// ```
     #[pyo3(name = "close")]
-    fn py_close(slf: Py<Self>, py: Python<'_>) {
+    fn py_close(slf: &Bound<'_, Self>, py: Python<'_>) {
         let (shutdown, diagnostics, policy_bucket) = {
-            let handler = slf.borrow(py);
+            let handler = slf.borrow();
             let file_handler = &handler.inner.inner;
             (
                 handler.take_shutdown(),
@@ -374,15 +378,13 @@ impl PyRotatingFileHandler {
 /// # Examples
 ///
 /// ```ignore
-/// force_rotating_fresh_failure_for_test(2, Some("simulated reopen failure"))?;
+/// force_rotating_fresh_failure_for_test(2, Some("simulated reopen failure"));
 /// ```
 #[pyfunction]
-pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>) -> PyResult<()> {
-    let reason = reason
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "python requested failure".to_string());
-    fresh_failure::set_forced_fresh_failure(count, reason);
-    Ok(())
+pub fn force_rotating_fresh_failure_for_test(count: usize, reason: Option<&str>) {
+    let failure_reason =
+        reason.map_or_else(|| "python requested failure".to_owned(), str::to_owned);
+    fresh_failure::set_forced_fresh_failure(count, failure_reason);
 }
 
 /// Clear any forced reopen failures installed by a test.
