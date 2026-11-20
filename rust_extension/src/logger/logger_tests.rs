@@ -348,6 +348,17 @@ fn a_handler_flush_may_attach_another_handler() {
 #[path = "logger_tests_drop.rs"]
 mod logger_tests_drop;
 
+// Guard-release-before-drop tests live in a separate module to respect
+// the 400-line limit.
+#[path = "logger_tests_lock_release.rs"]
+mod logger_tests_lock_release;
+
+// Re-entrant removal tests need Python objects, so they are separate from the
+// feature-independent lock-release module.
+#[cfg(feature = "python")]
+#[path = "logger_tests_reentrant_removal.rs"]
+mod logger_tests_reentrant_removal;
+
 // Drain-on-drop and pool-shape tests are in a separate module to respect
 // the 400-line limit.
 #[path = "logger_tests_shutdown.rs"]

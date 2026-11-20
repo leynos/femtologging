@@ -5,6 +5,11 @@ from __future__ import annotations
 import pytest
 
 from femtologging import BasicConfig, basicConfig, get_logger, reset_manager
+from tests.reentrant_finalizer_support import (
+    BASIC_CONFIG_MARKER,
+    BASIC_CONFIG_SCENARIO,
+    run_reentrant_finalizer_script,
+)
 
 # Levels emitted by every case, ordered from most to least verbose so the
 # expected sets below read as prefixes of this sequence.
@@ -83,3 +88,14 @@ def test_basic_config_rejects_unknown_attribute() -> None:
 
     with pytest.raises(AttributeError, match="filenam"):
         setattr(cfg, misspelled_attribute, "/var/log/app.log")
+
+
+@pytest.mark.timeout(20)
+def test_basic_config_force_runs_a_handler_finalizer_after_releasing_locks() -> None:
+    """``basicConfig(force=True)`` may destroy a handler whose finalizer logs.
+
+    The child prints its marker only after the re-entrant ``info`` call inside
+    ``__del__`` returns, so a deadlock fails by timeout rather than passing as
+    a process that simply exited.
+    """
+    run_reentrant_finalizer_script(BASIC_CONFIG_SCENARIO, BASIC_CONFIG_MARKER)
