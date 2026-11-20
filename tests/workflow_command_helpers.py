@@ -7,6 +7,10 @@ the only two questions the provisioning contract asks of that text, namely
 which Make goals a command names and whether it runs Cargo's test runner.
 Keeping them apart from the provisioning rules lets each module stay small and
 independently testable.
+
+A line the shell lexer cannot read is reported, not silently emptied: an
+unclosed quote may hide the very command the contract is looking for, so the
+caller has to decide what an unverifiable step means.
 """
 
 from __future__ import annotations
@@ -72,15 +76,49 @@ VALUE_OPTIONS: typ.Final[frozenset[str]] = frozenset({
 })
 
 
+class UnreadableShellLineError(ValueError):
+    """Raised when a line of shell text cannot be tokenised.
+
+    An unclosed quote may be hiding the command that follows it, so the reader
+    refuses to guess. Returning no tokens instead would make a suite step look
+    goal-free and let the provisioning contract pass it unexamined.
+    """
+
+    def __init__(self, line: str) -> None:
+        """Name `line` as the shell text that would not tokenise."""
+        super().__init__(f"unparseable shell line: {line}")
+
+
 def _line_tokens(line: str) -> list[str]:
-    """Return shell-like tokens for `line`, with comments removed."""
+    """Return shell-like tokens for `line`, with comments removed.
+
+    Parameters
+    ----------
+    line
+        One logical shell command.
+
+    Returns
+    -------
+    list[str]
+        The tokens after comment removal.
+
+    Raises
+    ------
+    UnreadableShellLineError
+        When the line holds an unclosed quote, so its words cannot be known.
+
+    Examples
+    --------
+    >>> _line_tokens("make test # trailing note")
+    ['make', 'test']
+    """
     lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
     lexer.commenters = "#"
     try:
         return list(lexer)
-    except ValueError:
-        return []
+    except ValueError as error:
+        raise UnreadableShellLineError(line) from error
 
 
 def _command_segments(tokens: list[str]) -> list[list[str]]:
@@ -135,6 +173,9 @@ def make_goals(line: str) -> list[str]:
     A step may run several commands on one line, so the token stream is split
     at shell control operators and each command is read separately. Options,
     option values, variable assignments and bare job counts are not goals.
+
+    A line that cannot be tokenised raises `UnreadableShellLineError` rather
+    than reporting no goals, so its caller can treat the step as unverifiable.
 
     Parameters
     ----------
