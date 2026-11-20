@@ -68,6 +68,16 @@ impl RotationConfig {
     }
 }
 
+// Pins the constructors as `const fn`: this initializer is evaluated at
+// compile time, so dropping the qualifier breaks the build. The builder
+// setters cannot be pinned this way because they consume and rebuild owned,
+// non-const handler state; their Python surface is covered by
+// `tests/ui/pass/pyo3_signature.rs` and the behavioural suite.
+const _: () = {
+    assert!(RotationConfig::new(1, 0).max_bytes == 1);
+    assert!(RotationConfig::disabled().backup_count == 0);
+};
+
 impl Default for RotationConfig {
     fn default() -> Self {
         Self::disabled()

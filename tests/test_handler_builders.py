@@ -83,21 +83,9 @@ _FLUSH_CASES: typ.Final = {
     "stream": (_configure_stream_flush, "flush_after_ms"),
 }
 
-flush_config_cases = pytest.mark.parametrize(
+flush_cases = pytest.mark.parametrize(
     ("configure_flush", "config_key"),
     [pytest.param(*case, id=name) for name, case in _FLUSH_CASES.items()],
-)
-
-flush_zero_cases = pytest.mark.parametrize(
-    ("configure_flush", "zero_error"),
-    [
-        pytest.param(
-            configure_flush,
-            f"{config_key} must be greater than zero",
-            id=name,
-        )
-        for name, (configure_flush, config_key) in _FLUSH_CASES.items()
-    ],
 )
 
 flush_setter_cases = pytest.mark.parametrize(
@@ -106,13 +94,13 @@ flush_setter_cases = pytest.mark.parametrize(
 )
 
 
-@flush_zero_cases
+@flush_cases
 def test_flush_setter_rejects_zero(
     configure_flush: cabc.Callable[[int], dict[str, object]],
-    zero_error: str,
+    config_key: str,
 ) -> None:
     """Zero flush intervals are invalid and name the offending parameter."""
-    with pytest.raises(ValueError, match=zero_error):
+    with pytest.raises(ValueError, match=f"{config_key} must be greater than zero"):
         configure_flush(0)
 
 
@@ -127,7 +115,7 @@ def test_flush_setter_rejects_negative(
         configure_flush(value)
 
 
-@flush_config_cases
+@flush_cases
 @pytest.mark.parametrize(
     "interval",
     [
@@ -153,7 +141,7 @@ def test_flush_interval_round_trips_named_examples(
     )
 
 
-@flush_config_cases
+@flush_cases
 @_FLUSH_INTERVAL_PROPERTY
 def test_flush_interval_round_trips_for_any_valid_value(
     configure_flush: cabc.Callable[[int], dict[str, object]],
@@ -215,6 +203,14 @@ def test_timed_builder_numeric_setters_reject_non_positive(
 def test_timed_builder_setters_reject_overflow(tmp_path: Path, field: str) -> None:
     """Values wider than u64 raise ``OverflowError`` naming the field."""
     builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed_overflow.log"))
+    with pytest.raises(OverflowError, match=f"{field} exceeds the allowable range"):
+        getattr(builder, f"with_{field}")(2**64)
+
+
+@pytest.mark.parametrize("field", ["capacity", "max_bytes", "backup_count"])
+def test_rotating_builder_setters_reject_overflow(tmp_path: Path, field: str) -> None:
+    """Values wider than u64 raise ``OverflowError`` naming the field."""
+    builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating_overflow.log"))
     with pytest.raises(OverflowError, match=f"{field} exceeds the allowable range"):
         getattr(builder, f"with_{field}")(2**64)
 
