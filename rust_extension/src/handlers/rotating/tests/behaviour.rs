@@ -195,6 +195,13 @@ fn rotating_handler_performs_size_based_rotation() {
     handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
         .expect("second record queued");
+    // `handle` only queues records. The drop waits at most one second for the
+    // worker before detaching it, so assert the flush instead of assuming the
+    // write completed.
+    assert!(
+        handler.flush(),
+        "queued records must flush before checking rotation"
+    );
     drop(handler);
 
     let primary = fs::read_to_string(&path).expect("primary log file must be readable");
@@ -225,6 +232,11 @@ fn rotating_handler_respects_test_builder_defaults() {
     handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"))
         .expect("record queued");
+    // As above, the drop is not a flush: assert completion before reading.
+    assert!(
+        handler.flush(),
+        "queued record must flush before checking the written contents"
+    );
     drop(handler);
 
     let contents = fs::read_to_string(&path).expect("log file must be readable");
