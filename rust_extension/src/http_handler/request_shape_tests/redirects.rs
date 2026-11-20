@@ -171,6 +171,41 @@ fn execute_redirect_chain(
     result
 }
 
+/// What one timed attempt against a delayed chain produced.
+struct TimedChain {
+    /// The attempt's outcome.
+    result: Result<ResponseClass, String>,
+    /// How long the attempt took.
+    elapsed: Duration,
+    /// How many requests the server read.
+    served: usize,
+}
+
+/// Run one attempt against a chain whose hops each answer after `delay`.
+///
+/// The budget is passed through rather than taken from the agent, because the
+/// tests here are about a budget shorter than the agent's own timeout.
+fn run_delayed_chain(
+    listener: TcpListener,
+    redirects: usize,
+    delay: Duration,
+    budget: Duration,
+) -> TimedChain {
+    let (addr, server, served) =
+        spawn_redirect_chain(listener, redirects, delay).expect("spawn delayed redirect chain");
+    let config = post_config(format!("http://{addr}/hop0"), AuthConfig::None, &[]);
+
+    let started = Instant::now();
+    let result = execute_attempt(&config, &test_agent(), "msg=redirect", budget);
+    let elapsed = started.elapsed();
+    server.join().expect("redirect chain server should finish");
+    TimedChain {
+        result,
+        elapsed,
+        served: served.load(Ordering::SeqCst),
+    }
+}
+
 /// Scenario: the collector redirects to a second listener, and the request
 /// carries the configured auth, a cookie, and a custom credential header.
 ///
@@ -280,17 +315,17 @@ fn a_fifth_redirect_is_refused(tcp_listener: io::Result<TcpListener>) {
 /// that a redirect cannot hold the worker past its deadline.
 #[rstest]
 fn one_deadline_bounds_the_whole_redirect_chain(tcp_listener: io::Result<TcpListener>) {
-    let delay = Duration::from_millis(250);
     let budget = Duration::from_millis(400);
-    let (addr, server, served) =
-        spawn_redirect_chain(tcp_listener.expect("bind ephemeral listener"), 4, delay)
-            .expect("spawn delayed redirect chain");
-    let config = post_config(format!("http://{addr}/hop0"), AuthConfig::None, &[]);
-
-    let started = Instant::now();
-    let result = execute_attempt(&config, &test_agent(), "msg=redirect", budget);
-    let elapsed = started.elapsed();
-    server.join().expect("redirect chain server should finish");
+    let TimedChain {
+        result,
+        elapsed,
+        served,
+    } = run_delayed_chain(
+        tcp_listener.expect("bind ephemeral listener"),
+        4,
+        Duration::from_millis(250),
+        budget,
+    );
 
     assert!(
         result.is_err(),
@@ -301,7 +336,7 @@ fn one_deadline_bounds_the_whole_redirect_chain(tcp_listener: io::Result<TcpList
         "the whole chain must stop near its {budget:?} budget, not restart it per hop: took {elapsed:?}"
     );
     assert!(
-        served.load(Ordering::SeqCst) < 5,
+        served < 5,
         "the chain must stop before its last hop is requested"
     );
 }
@@ -313,17 +348,15 @@ fn one_deadline_bounds_the_whole_redirect_chain(tcp_listener: io::Result<TcpList
 /// still let the hop in flight run for the agent's whole timeout.
 #[rstest]
 fn a_slow_hop_cannot_outlast_the_attempt_budget(tcp_listener: io::Result<TcpListener>) {
-    let delay = Duration::from_secs(1);
     let budget = Duration::from_millis(300);
-    let (addr, server, _served) =
-        spawn_redirect_chain(tcp_listener.expect("bind ephemeral listener"), 1, delay)
-            .expect("spawn delayed redirect chain");
-    let config = post_config(format!("http://{addr}/hop0"), AuthConfig::None, &[]);
-
-    let started = Instant::now();
-    let result = execute_attempt(&config, &test_agent(), "msg=redirect", budget);
-    let elapsed = started.elapsed();
-    server.join().expect("redirect chain server should finish");
+    let TimedChain {
+        result, elapsed, ..
+    } = run_delayed_chain(
+        tcp_listener.expect("bind ephemeral listener"),
+        1,
+        Duration::from_secs(1),
+        budget,
+    );
 
     assert!(
         result.is_err(),
