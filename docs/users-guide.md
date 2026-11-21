@@ -1110,6 +1110,7 @@ also passes its logger string through unvalidated and unescaped.
 Before — the message contains a real LF, so the record spans two physical lines
 and the second looks like a separate event:
 
+<!-- tested-example: default-formatter-framing-before -->
 ```text
 core [INFO] first
 core [CRITICAL] forged
@@ -1117,6 +1118,7 @@ core [CRITICAL] forged
 
 After — the message LF is escaped, so the message occupies one physical line:
 
+<!-- tested-example: default-formatter-framing-after -->
 ```text
 core [INFO] first\ncore [CRITICAL] forged
 ```
@@ -1124,6 +1126,7 @@ core [INFO] first\ncore [CRITICAL] forged
 Stack and traceback payloads still follow the message on their own lines, so a
 diagnostic record remains multiline:
 
+<!-- tested-example: default-formatter-framing-diagnostic -->
 ```text
 core [ERROR] request failed\ncore [CRITICAL] forged
 Stack (most recent call last):

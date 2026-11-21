@@ -380,6 +380,6 @@ AssertionError: assert 'core [INFO] first\\nsecond\n' == 'core [INFO] first\nsec
 
 The left-hand value is the escaped output and the right-hand value is the old
 expectation. Update the expectation to the escaped form, or configure a
-formatter that receives the raw message. A parser that reports more records
+formatter that receives the raw message. A parser that reports fewer records
 than it used to is reading the escaped message as one record; treat the `\n`,
 `\r`, and `\u{...}` sequences as message text rather than as line boundaries.
