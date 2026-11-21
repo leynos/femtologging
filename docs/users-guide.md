@@ -778,12 +778,15 @@ avoid raising from `handle`.
 
 `FemtoLogger.flush_handlers()` also calls the handler's `flush` method when it
 has one, so a custom handler that buffers records can persist them. The call
-blocks the thread that invoked `flush_handlers()` until the dispatch worker has
-handled the logger's queued records and then run `flush` on every registered
-handler; the handler callbacks themselves run on the dispatch worker, not on
-the invoking thread, so a custom `flush` must not rely on caller-thread state
-such as a thread-local or an enclosing interpreter frame. Every registered
-handler is flushed even when an earlier one fails. A missing or non-callable
+queues a barrier behind any records already queued for the logger's shard, and
+blocks the invoking thread while the dispatch worker handles those records and
+then runs `flush` on the registered handlers, up to the flush deadline. The
+handler callbacks themselves run on the dispatch worker, not on the invoking
+thread, so a custom `flush` must not rely on caller-thread state such as a
+thread-local or an enclosing interpreter frame. Handlers are attempted while
+budget remains: a handler that fails does not stop the ones after it, but
+handlers left when the deadline expires are not flushed, and the caller can
+return `False` while a callback is still running. A missing or non-callable
 `flush` counts as success, so handlers without one need no change. A `flush`
 that returns `None`, as `logging.Handler.flush` does, has flushed without
 complaint; every other result succeeds only when it is truthy, so `False` or

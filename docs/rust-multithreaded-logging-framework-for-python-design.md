@@ -753,16 +753,19 @@ the right moment.
 ### 3.5 Handler flush at the Python boundary
 
 `FemtoLogger.flush_handlers()` reaches the handler behind the Python wrapper,
-not only the dispatch shard. The calling thread first waits for its records to
-drain, then enqueues a barrier job that makes the shard worker flush every
-configured handler before it acknowledges. The handler callbacks therefore run
-on the shard worker, not on the calling thread. A built-in handler is flushed
-through its native implementation; a user-defined handler is asked to flush
-through its own `flush` method, which lets a buffering handler persist its
-records and runs on the worker with the interpreter attached. Every handler is
-flushed even when an earlier one fails, and the results are combined. A missing
-or non-callable `flush` counts as success, a `None` return counts as success,
-any other return value is read for its truthiness, and a raised exception is
+not only the dispatch shard. The calling thread enqueues a barrier job behind
+the records already queued for its shard, then waits for the worker's
+acknowledgement; the worker flushes every configured handler as part of that
+job. The handler callbacks therefore run on the shard worker, not on the
+calling thread. A built-in handler is flushed through its native
+implementation; a user-defined handler is asked to flush through its own
+`flush` method, which lets a buffering handler persist its records and runs on
+the worker with the interpreter attached. Handlers are attempted while budget
+remains: an earlier failure does not stop the ones after it, but handlers left
+when the deadline expires are not flushed, and a callback still running at the
+deadline completes on the worker after the caller has returned. A missing or
+non-callable `flush` counts as success, a `None` return counts as success, any
+other return value is read for its truthiness, and a raised exception is
 reported as failure. The warning gives a bounded failure category and, except
 for a user-defined handler's own flush failure, whose fixed message already
 identifies it as custom, the handler kind; the exception text is never recorded.

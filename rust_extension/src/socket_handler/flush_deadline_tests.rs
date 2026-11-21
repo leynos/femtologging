@@ -65,21 +65,25 @@ fn handler_with_unread_queue(
     (handler, tx, rx)
 }
 
-/// Build a handler whose worker answers every flush marker at once.
+/// Build a handler whose worker answers every flush marker as soon as it takes
+/// one.
 ///
-/// The answer is therefore genuinely ready when the caller's receive begins,
-/// which is what separates the lateness rule from an ordinary timeout: the
-/// caller really receives an acknowledgement and still has to refuse it.
+/// The worker and the caller are not synchronised, so the answer is not
+/// guaranteed to be waiting when the caller's receive begins. The caller does
+/// receive it within its budget, which is what separates the lateness rule from
+/// an ordinary timeout: it really receives an acknowledgement and still has to
+/// refuse it.
 fn handler_with_answering_worker(capacity: usize, flush_timeout: Duration) -> FemtoSocketHandler {
     handler_with_worker_reporting(capacity, flush_timeout, true)
 }
 
-/// Build a handler whose worker reports the requested outcome at once.
+/// Build a handler whose worker reports the requested outcome as soon as it
+/// takes a marker.
 ///
 /// `is_successful` selects whether the acknowledgement carries a confirmed
 /// flush or the I/O failure a real worker reports when `flush()` fails. The
-/// answer is ready before the caller's receive either way, so the tests using
-/// this helper decide on the outcome alone rather than on lateness.
+/// answer arrives well within the budget, so the tests using this helper decide
+/// on the outcome rather than on lateness.
 fn handler_with_worker_reporting(
     capacity: usize,
     flush_timeout: Duration,
@@ -107,7 +111,7 @@ fn handler_with_worker_reporting(
     )
 }
 
-/// A successful outcome received before the deadline confirms the flush, so the
+/// A successful outcome received within the deadline confirms the flush, so the
 /// failure test below is about the outcome and not about a missing answer.
 #[test]
 fn a_successful_flush_acknowledgement_received_in_time_confirms() {
@@ -126,11 +130,12 @@ fn a_successful_flush_acknowledgement_received_in_time_confirms() {
     handler.close();
 }
 
-/// An I/O failure received before the deadline must not confirm the flush.
+/// An I/O failure received within the deadline must not confirm the flush.
 ///
-/// The acknowledgement is genuinely ready when the receive begins, so this
-/// separates the outcome rule from the lateness rule: an in-time answer still
-/// has to report a successful flush to count.
+/// The worker answers as soon as it takes the marker, so the caller really
+/// receives the failure within its budget; this separates the outcome rule from
+/// the lateness rule: an in-time answer still has to report a successful flush
+/// to count.
 #[test]
 fn a_failed_flush_acknowledgement_received_in_time_does_not_confirm() {
     let handler = handler_with_worker_reporting(2, Duration::from_secs(1), false);
@@ -146,7 +151,10 @@ fn a_failed_flush_acknowledgement_received_in_time_does_not_confirm() {
     assert_eq!(
         clock.samples(),
         4,
-        "the outcome must be checked rather than inferred from a refused wait"
+        concat!(
+            "four samples mean the acknowledgement was received and its lateness ",
+            "checked, so the refusal is the failed outcome rather than a timeout"
+        )
     );
 
     let mut handler = handler;

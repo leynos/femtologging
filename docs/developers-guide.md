@@ -1502,23 +1502,25 @@ implementation with the GIL detached, and a user-defined handler is asked to
 flush through its own `flush` method, which runs with the interpreter attached,
 so whether other Python threads run while it blocks depends on the operation it
 blocks on. Those calls run on the dispatch worker, as part of the barrier job
-that follows the drain, not on the thread that called `flush_handlers()`. The
-barrier snapshots the handlers on the caller's behalf and sends that snapshot
-to the worker, so a custom `flush` must not rely on caller-thread state.
+the shard runs after the work queued ahead of it, not on the thread that called
+`flush_handlers()`. The barrier snapshots the handlers on the caller's behalf
+and sends that snapshot to the worker, so a custom `flush` must not rely on
+caller-thread state.
 
-Every handler is flushed even when an earlier one fails, and the results are
-combined afterwards; one handler's failure must not leave the records buffered
-in the handlers after it. `send_handler_snapshot_until` snapshots the attached
-handlers under the handler read guard and drops the guard before the snapshot
-is sent, and only the worker calls `flush_until` on the entries. That ordering
-is the invariant, not an implementation detail: a Python `flush` may call back
-into the logger, and a guard held across the callback would leave a writer
-waiting for a lock the callback cannot release. A missing or non-callable
-`flush` method counts as success. A `flush` that returns `None` also succeeds,
-because Python's flush protocol reports failure by raising; any other falsy
-return value, `False` and `0` included, reports failure, and so does a `flush`
-that raises. A failed flush reports only a bounded category; the handler's
-exception text is never printed or logged, for the reason given under
+Handlers are attempted while budget remains, so one handler's failure must not
+leave the records buffered in the handlers after it; the deadline, not a
+failure, ends the sequence, and handlers left at that point are not flushed.
+`send_handler_snapshot_until` snapshots the attached handlers under the handler
+read guard and drops the guard before the snapshot is sent, and only the worker
+calls `flush_until` on the entries. That ordering is the invariant, not an
+implementation detail: a Python `flush` may call back into the logger, and a
+guard held across the callback would leave a writer waiting for a lock the
+callback cannot release. A missing or non-callable `flush` method counts as
+success. A `flush` that returns `None` also succeeds, because Python's flush
+protocol reports failure by raising; any other falsy return value, `False` and
+`0` included, reports failure, and so does a `flush` that raises. A failed
+flush reports only a bounded category; the handler's exception text is never
+printed or logged, for the reason given under
 [Flush observability](#flush-observability).
 
 The one path outside that rule is not a flush failure at all: when an attached

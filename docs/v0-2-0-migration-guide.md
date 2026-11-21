@@ -436,13 +436,16 @@ handler is flushed through its own native implementation; a custom handler that
 defines `flush` now receives a call it did not receive before, and can use it
 to persist buffered records. A missing or non-callable `flush` still counts as
 success, so an existing handler that does not define one needs no change. The
-call blocks the thread that invoked `flush_handlers()` until the queued records
-have been dispatched and every registered handler has been flushed, but the
-handler callbacks themselves run on the dispatch worker rather than on that
-invoking thread. An upgrading handler that depended on caller-thread state,
-such as a thread-local or an enclosing interpreter frame, must not do so: the
-callback has neither. Every registered handler is flushed even when an earlier
-one fails. A `flush` that returns `None` succeeds, and every other result
+call queues a barrier behind the logger's already queued records and blocks the
+thread that invoked `flush_handlers()` while the worker handles those records
+and then runs the handler flushes, up to the flush deadline; the handler
+callbacks themselves run on the dispatch worker rather than on that invoking
+thread. An upgrading handler that depended on caller-thread state, such as a
+thread-local or an enclosing interpreter frame, must not do so: the callback
+has neither. Handlers are attempted while budget remains; a handler that fails
+does not stop the ones after it, but handlers left when the deadline expires
+are not flushed, and the caller can return `False` while a callback is still
+running. A `flush` that returns `None` succeeds, and every other result
 succeeds only when it is truthy. An exception raised by `flush` logs a bounded
 warning that omits the exception text and makes `flush_handlers()` return
 `False`, so keep the method non-blocking and defensive, as with `handle`.
