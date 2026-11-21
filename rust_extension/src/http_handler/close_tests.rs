@@ -26,7 +26,9 @@ use super::{build_http_handler, send_info_record, spawn_retry_server, tcp_listen
 use crate::http_handler::FemtoHTTPHandler;
 use crate::http_handler::config::{HTTPHandlerConfig, HTTPMethod};
 use crate::http_handler::queue::HTTPCommand;
+use crate::rate_limited_warner::RateLimitedWarner;
 use crate::shutdown_signal::ShutdownSignal;
+use crate::test_utils::test_worker::TestWorker;
 
 /// Spawn a server that accepts connections, reads each request, and never
 /// replies.
@@ -302,7 +304,12 @@ fn a_worker_that_leaves_on_the_signal_is_joined_not_abandoned() {
         let _ = left_tx.send(());
     });
     let flush_timeout = Duration::from_millis(200);
-    let mut handler = FemtoHTTPHandler::with_worker_for_test(tx, signal, handle, flush_timeout);
+    let mut handler = FemtoHTTPHandler::with_worker_for_test(
+        tx,
+        TestWorker::new(signal, handle),
+        flush_timeout,
+        RateLimitedWarner::new(Duration::from_secs(1)),
+    );
 
     let started = Instant::now();
     handler.close();

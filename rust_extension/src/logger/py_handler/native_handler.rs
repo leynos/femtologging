@@ -1,11 +1,20 @@
 //! Native dispatch for built-in handlers registered through Python.
+//!
+//! `NativeHandlerKind::from_object` recognises each wrapped built-in — the
+//! stream, file, rotating, timed-rotating, socket and HTTP handlers — so
+//! `handle` can extract the native recipient with `PyRef` and deliver the
+//! complete `FemtoLogRecord` rather than a lossy Python view. `flush` and
+//! `flush_until` reach the native flush through `flush_native` and
+//! `flush_detached`, releasing the interpreter so a handler's queue wait
+//! does not block other Python threads.
 
 use log::warn;
+use pyo3::PyClass;
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
 use pyo3::{Bound, PyAny};
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use crate::handlers::{
     rotating::PyRotatingFileHandler, timed_rotating::PyTimedRotatingFileHandler,
 };
@@ -40,13 +49,7 @@ where
             let flushed =
                 crate::py_detach::detach_for_wait(py, || FemtoHandlerTrait::flush(handler_ref));
             if !flushed {
-                // `flush_handlers()` reports these failures, so an operator
-                // needs a bounded record of the handler failing to flush
-                // rather than only a `False` return.
-                warn!(
-                    "PyHandler: flush failed: handler_kind={}, category=flush_failed",
-                    kind.label()
-                );
+                warn_flush_failed(kind);
             }
             flushed
         }
@@ -55,6 +58,19 @@ where
             false
         }
     }
+}
+
+/// Record a built-in handler that did not confirm its flush.
+///
+/// `flush_handlers()` reports these failures, so an operator needs a bounded
+/// record of the handler failing to flush, naming which built-in did, rather
+/// than only a `False` return. Both flush paths use this so the warning is the
+/// same whichever entry point reached the handler.
+fn warn_flush_failed(kind: NativeHandlerKind) {
+    warn!(
+        "PyHandler: flush failed: handler_kind={}, category=flush_failed",
+        kind.label()
+    );
 }
 
 /// Built-in handlers that can retain the original Rust record across Python registration.
@@ -187,4 +203,66 @@ impl NativeHandlerKind {
             Self::Http => flush_native::<FemtoHTTPHandler>(py, obj, self),
         }
     }
+
+    /// Flush the matching built-in handler under the supplied deadline.
+    ///
+    /// A Python registration must not report a confirmed barrier while the
+    /// wrapped handler still buffers records, so the handler's own
+    /// deadline-aware flush runs here. Failing to extract the wrapped handler
+    /// returns `false`: the barrier cannot confirm a flush it did not perform.
+    /// A handler that declines the flush is recorded with the same handler-kind
+    /// warning the legacy `flush` path emits, so the barrier's `False` still
+    /// points at one built-in handler.
+    pub(super) fn flush_until(
+        self,
+        py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+        context: &FlushContext,
+    ) -> bool {
+        let confirmed = match self {
+            Self::Stream => flush_detached::<FemtoStreamHandler>(py, obj, context),
+            Self::File => flush_detached::<FemtoFileHandler>(py, obj, context),
+            Self::RotatingFile => flush_detached::<PyRotatingFileHandler>(py, obj, context),
+            Self::TimedRotatingFile => {
+                flush_detached::<PyTimedRotatingFileHandler>(py, obj, context)
+            }
+            Self::Socket => flush_detached::<FemtoSocketHandler>(py, obj, context),
+            Self::Http => flush_detached::<FemtoHTTPHandler>(py, obj, context),
+        };
+        match confirmed {
+            Ok(true) => true,
+            Ok(false) => {
+                warn_flush_failed(self);
+                false
+            }
+            Err(err) => {
+                let _ = map_py_err(py, err, "extract native handler for flush");
+                false
+            }
+        }
+    }
+}
+
+/// Flush one wrapped built-in handler with the interpreter released.
+///
+/// The shard worker attaches the interpreter only to reach the Rust handler
+/// behind the Python object. Holding it through the handler's queue wait would
+/// block every other Python thread for the whole flush budget, so the wait
+/// runs detached. The borrow is safe to carry across the release: the caller
+/// owns the Python object for the duration of the call, so the handler cannot
+/// be deallocated, and a concurrent `PyRefMut` would fail its borrow check
+/// rather than alias this shared reference.
+fn flush_detached<T>(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    context: &FlushContext,
+) -> PyResult<bool>
+where
+    T: FemtoHandlerTrait + PyClass + Sync,
+{
+    let handler = obj.extract::<PyRef<'_, T>>()?;
+    let handler_ref: &T = &handler;
+    Ok(crate::py_detach::detach_for_wait(py, || {
+        FemtoHandlerTrait::flush_until(handler_ref, context)
+    }))
 }

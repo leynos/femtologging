@@ -12,9 +12,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use _femtologging_rs::rate_limited_warner::Clock;
 use _femtologging_rs::{
-    DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler, StreamHandlerConfig,
+    DefaultFormatter, FemtoLevel, FemtoLogRecord, FemtoStreamHandler, MonotonicClock,
+    StreamHandlerConfig,
 };
 
 #[path = "test_utils/handle_expect.rs"]
@@ -27,7 +27,7 @@ use waiter::{WaiterObservation, serialise};
 /// Configured flush timeout; long enough that resting on it would be obvious.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(4);
 
-/// The same timeout in the millisecond resolution of [`Clock`].
+/// The same timeout in the millisecond offsets the scripted clock reports.
 const FLUSH_TIMEOUT_MS: u64 = 4_000;
 
 /// Upper bound on a call that must return without waiting on real time.
@@ -40,7 +40,7 @@ const PROMPT: Duration = Duration::from_secs(1);
 /// Upper bound on how long a test writer waits for its release signal.
 const RELEASE_WAIT: Duration = Duration::from_secs(10);
 
-/// Scripted time the queueing stage consumes, in the resolution of [`Clock`].
+/// Scripted time the queueing stage consumes, in milliseconds of clock offset.
 const ACK_REMAINDER_MS: u64 = 200;
 
 /// Readings that leave the acknowledgement stage exactly [`ACK_REMAINDER_MS`].
@@ -55,10 +55,13 @@ const MIN_ACK_WAIT: Duration = Duration::from_millis(ACK_REMAINDER_MS / 2);
 /// Clock whose readings are scripted in advance.
 ///
 /// The handler reads this clock for its flush deadline, so scripting it drives
-/// both waits. Readings are consumed in order and the last one repeats once the
-/// script runs dry: sampling more often than expected must not hand back a
-/// budget the test meant to spend.
+/// both waits. Readings are millisecond offsets from the instant the clock was
+/// built, consumed in order; the last one repeats once the script runs dry, so
+/// sampling more often than expected never hands back a budget the test meant
+/// to spend.
 struct ScriptedClock {
+    /// Instant every scripted offset is measured from.
+    base: Instant,
     /// Readings still to hand out, and the last one already handed out.
     state: Mutex<ScriptedState>,
 }
@@ -76,8 +79,9 @@ impl ScriptedClock {
     ///
     /// The name avoids `new`, which Clippy reserves for constructors returning
     /// `Self`; this constructor erases the type to the handler's seam.
-    fn scripted(readings: impl IntoIterator<Item = u64>) -> Arc<dyn Clock> {
+    fn scripted(readings: impl IntoIterator<Item = u64>) -> Arc<dyn MonotonicClock> {
         Arc::new(Self {
+            base: Instant::now(),
             state: Mutex::new(ScriptedState {
                 remaining: readings.into_iter().collect(),
                 last: 0,
@@ -86,13 +90,13 @@ impl ScriptedClock {
     }
 }
 
-impl Clock for ScriptedClock {
-    fn now_millis(&self) -> u64 {
+impl MonotonicClock for ScriptedClock {
+    fn now(&self) -> Instant {
         let mut state = self.state.lock().expect("scripted clock lock");
         if let Some(reading) = state.remaining.pop_front() {
             state.last = reading;
         }
-        state.last
+        self.base + Duration::from_millis(state.last)
     }
 }
 

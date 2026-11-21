@@ -1,5 +1,12 @@
 //! Behavioural tests for `FemtoLogger`: message formatting, level filtering,
 //! handler attachment and removal, and the thread-safety of both.
+//!
+//! Compiled as an external crate against `_femtologging_rs`, this suite drives
+//! `FemtoLogger` with `FemtoStreamHandler` and `DefaultFormatter` over an
+//! in-memory `SharedBuf`. It pins formatting (`log_formats_message`), name
+//! validation (`an_empty_logger_name_is_refused`) plus filtering and
+//! concurrency cases (`logger_filters_levels`, `add_handler_is_thread_safe`,
+//! `logging_during_level_change`); `handler_removal` covers detachment.
 
 use std::collections::BTreeSet;
 
@@ -230,23 +237,22 @@ fn add_handler_is_thread_safe() {
         .map(|_| Arc::new(stream_handler_for(&buffer)) as Arc<dyn FemtoHandlerTrait>)
         .collect();
 
-    attach_handlers_concurrently(&logger, &new_handlers).expect("handler threads must attach");
+    attach_concurrently(&logger, &new_handlers).expect("concurrent attach failed");
 
     logger.log(FemtoLevel::Info, "hello");
     drop(logger);
-    drop(new_handlers);
+    for h in new_handlers {
+        drop(h);
+    }
     let output = read_output(&buffer);
     assert_eq!(output.lines().count(), 4);
 }
 
-/// Attach every handler to `logger` from its own thread, released together.
-///
-/// Fallible rather than panicking because it is a fixture: a failed join is
-/// reported to the test body, which owns the verdict.
-fn attach_handlers_concurrently(
+/// Attach each handler from its own thread, released together by a barrier.
+fn attach_concurrently(
     logger: &Arc<FemtoLogger>,
     handlers: &[Arc<dyn FemtoHandlerTrait>],
-) -> Result<(), String> {
+) -> Result<(), &'static str> {
     let start = Arc::new(std::sync::Barrier::new(handlers.len() + 1));
     let worker_threads: Vec<_> = handlers
         .iter()
@@ -262,9 +268,10 @@ fn attach_handlers_concurrently(
         .collect();
 
     start.wait();
-    worker_threads
-        .into_iter()
-        .try_for_each(|worker| worker.join().map_err(|_| "thread panicked".to_string()))
+    for worker in worker_threads {
+        worker.join().map_err(|_| "thread panicked")?;
+    }
+    Ok(())
 }
 
 #[test]

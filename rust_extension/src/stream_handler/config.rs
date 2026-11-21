@@ -3,10 +3,10 @@
 //! `StreamHandlerBuilder` constructs these values before passing them to
 //! [`FemtoStreamHandler`](super::FemtoStreamHandler) for runtime use.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use crate::rate_limited_warner::{Clock, DEFAULT_WARN_INTERVAL, RateLimitedWarner, SystemClock};
+use crate::monotonic_clock::{SharedClock, system_clock};
+use crate::rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner};
 
 /// Default queue capacity used when a stream builder does not provide one.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -24,7 +24,7 @@ pub struct HandlerConfig {
     /// Clock the flush deadline is measured against, injected separately from
     /// the warner so a test can script the deadline without also changing when
     /// drop warnings are due.
-    pub clock: Arc<dyn Clock>,
+    pub clock: SharedClock,
 }
 
 impl Default for HandlerConfig {
@@ -33,7 +33,7 @@ impl Default for HandlerConfig {
             capacity: DEFAULT_CHANNEL_CAPACITY,
             flush_timeout: Duration::from_secs(1),
             warner: RateLimitedWarner::new(DEFAULT_WARN_INTERVAL),
-            clock: Arc::new(SystemClock::default()),
+            clock: system_clock(),
         }
     }
 }
@@ -53,12 +53,18 @@ impl HandlerConfig {
 
     /// Replace the clock the flush deadline is measured against.
     ///
+    /// The injected clock is the same seam [`FlushContext::with_clock`] takes,
+    /// so a test can script a handler's deadline and the barrier's context from
+    /// one source.
+    ///
+    /// [`FlushContext::with_clock`]: crate::handler::FlushContext::with_clock
+    ///
     /// # Examples
     ///
     /// ```ignore
     /// let config = HandlerConfig::default().with_clock(scripted_clock());
     /// ```
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+    pub fn with_clock(mut self, clock: SharedClock) -> Self {
         self.clock = clock;
         self
     }

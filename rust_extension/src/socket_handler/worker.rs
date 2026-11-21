@@ -7,19 +7,16 @@
 //! and then stalls, that record costs the configured connect and write
 //! timeouts before anyone learns anything.
 
-use std::{
-    io,
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{io, sync::Arc, thread, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 use log::warn;
 
 use crate::{
-    handler::HandlerError, log_record::FemtoLogRecord, rate_limited_warner::RateLimitedWarner,
-    shutdown_ack::acknowledge_shutdowns, shutdown_signal::ShutdownSignal,
+    handler::{HandlerError, report_drops_then_acknowledge},
+    log_record::FemtoLogRecord,
+    rate_limited_warner::RateLimitedWarner,
+    shutdown_signal::ShutdownSignal,
 };
 
 use super::{
@@ -30,6 +27,11 @@ use super::{
     transport::{ActiveConnection, connect_transport},
 };
 
+#[path = "worker_drain.rs"]
+mod drain;
+
+use drain::{discard_rest, warn_discarded};
+
 /// Commands processed by the worker thread.
 #[derive(Debug)]
 #[expect(
@@ -39,8 +41,14 @@ use super::{
 pub enum SocketCommand {
     /// Carry one record for serialization and socket delivery.
     Record(FemtoLogRecord),
-    /// Flush the active connection and acknowledge completion.
-    Flush(Sender<()>),
+    /// Flush the active connection, then acknowledge with the flush outcome
+    /// and any drop count the caller took from the warner.
+    ///
+    /// The outcome travels back so a caller waiting on this marker can tell a
+    /// confirmed flush from a connection that failed. Acknowledging both as
+    /// success would let a barrier flush report records persisted that the
+    /// socket rejected.
+    Flush(Sender<io::Result<()>>, Option<u64>),
     /// Begin shutdown and acknowledge after worker cleanup.
     Shutdown(Sender<()>),
 }
@@ -208,18 +216,41 @@ impl Worker {
     }
 
     /// Flush and acknowledge; even a disconnected worker replies to the request.
-    fn handle_flush_command(&mut self, ack: Sender<()>) {
-        let success = self.flush_connection();
-        let _ = ack.send(());
-        if !success {
+    ///
+    /// The drop count the handler moved here is reported before the
+    /// acknowledgement is sent, so a caller that observes the flush succeed
+    /// cannot do so before the report it carried has been emitted. The
+    /// acknowledgement itself carries the flush outcome: an I/O failure is
+    /// reported to the caller rather than acknowledged as a successful flush.
+    /// The connection warning stays after the acknowledgement because it
+    /// describes the flush that just happened rather than reporting drops the
+    /// caller handed over.
+    fn handle_flush_command(&mut self, ack: Sender<io::Result<()>>, pending_drops: Option<u64>) {
+        let had_connection = self.connection.is_some();
+        let flush_result = self.flush_connection();
+        let flush_failed = flush_result.is_err();
+        report_drops_then_acknowledge(
+            pending_drops,
+            |count| warn!("FemtoSocketHandler dropped {count} records in the last interval"),
+            || {
+                // Ignore send error: a caller that stopped waiting has nothing
+                // left to learn from the outcome.
+                let _ = ack.send(flush_result);
+            },
+        );
+        if flush_failed {
+            warn!("FemtoSocketHandler flush failed; the connection was dropped");
+        } else if !had_connection {
             warn!("FemtoSocketHandler flush requested without active connection");
         }
     }
 
     /// Flush the active connection within the remaining write budget.
     ///
-    /// Example: no active connection returns `false` without network I/O.
-    fn flush_connection(&mut self) -> bool {
+    /// A handler with no active connection has nothing buffered to flush, so
+    /// it reports success without network I/O; the caller still warns that the
+    /// flush had no connection to confirm.
+    fn flush_connection(&mut self) -> io::Result<()> {
         match self.connection.as_mut() {
             Some(conn) => {
                 let result = self.signal.clamp(self.config.write_timeout).map_or_else(
@@ -229,9 +260,9 @@ impl Worker {
                 if result.is_err() {
                     self.connection = None;
                 }
-                result.is_ok()
+                result
             }
-            None => false,
+            None => Ok(()),
         }
     }
 
@@ -247,26 +278,46 @@ impl Worker {
 
     /// Drain once per record; discard the queue when the shutdown deadline expires.
     fn drain_pending(&mut self, rx: &Receiver<SocketCommand>, shutdown_ack: Option<Sender<()>>) {
-        let mut discarded = 0_u64;
-        let mut shutdown_acks = Vec::new();
-        loop {
-            if self.signal.is_aborted() {
-                discarded += discard_rest(rx, &mut shutdown_acks);
-                break;
-            }
-            match rx.try_recv() {
-                Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
-                Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
-        }
+        let (discarded, shutdown_acks) = self.discard_queued_commands(rx);
         warn_discarded(discarded);
         self.warner.flush(|count| {
             warn!("FemtoSocketHandler dropped {count} records during shutdown");
         });
         self.flush_silently();
-        acknowledge_shutdowns(shutdown_acks, shutdown_ack);
+        // Keep every shutdown acknowledgement behind the last request and
+        // cleanup. The final send is the worker's final action.
+        crate::shutdown_ack::acknowledge_shutdowns(shutdown_acks, shutdown_ack);
+    }
+
+    /// Attempt each queued command once, stopping at abort or on an empty queue.
+    fn discard_queued_commands(&mut self, rx: &Receiver<SocketCommand>) -> (u64, Vec<Sender<()>>) {
+        let mut discarded = 0_u64;
+        let mut shutdown_acks = Vec::new();
+        while !self.signal.is_aborted() {
+            match rx.try_recv() {
+                Ok(command) => self.apply_drained_command(command, &mut shutdown_acks),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => {
+                    return (discarded, shutdown_acks);
+                }
+            }
+        }
+        discarded += discard_rest(rx, &mut shutdown_acks);
+        (discarded, shutdown_acks)
+    }
+
+    /// Apply one command that was still queued when the shutdown started.
+    fn apply_drained_command(
+        &mut self,
+        command: SocketCommand,
+        shutdown_acks: &mut Vec<Sender<()>>,
+    ) {
+        match command {
+            SocketCommand::Record(record) => self.handle_record_command(record),
+            SocketCommand::Flush(ack, pending_drops) => {
+                self.handle_flush_command(ack, pending_drops);
+            }
+            SocketCommand::Shutdown(ack) => shutdown_acks.push(ack),
+        }
     }
 
     /// Consume commands; shutdown starts a bounded drain before its acknowledgement.
@@ -284,7 +335,9 @@ impl Worker {
             }
             match rx.recv() {
                 Ok(SocketCommand::Record(record)) => self.handle_record_command(record),
-                Ok(SocketCommand::Flush(ack)) => self.handle_flush_command(ack),
+                Ok(SocketCommand::Flush(ack, pending_drops)) => {
+                    self.handle_flush_command(ack, pending_drops);
+                }
                 Ok(SocketCommand::Shutdown(ack)) => {
                     self.drain_pending(&rx, Some(ack));
                     return;
@@ -296,37 +349,6 @@ impl Worker {
             }
         }
     }
-}
-
-/// Throw away everything left in the queue, without touching the network.
-///
-/// Returns how many records were discarded. Flush senders receive their
-/// acknowledgement immediately; shutdown senders are saved for the worker's
-/// final action, after it has finished all remaining cleanup.
-fn discard_rest(rx: &Receiver<SocketCommand>, shutdown_acks: &mut Vec<Sender<()>>) -> u64 {
-    let mut discarded = 0_u64;
-    loop {
-        match rx.try_recv() {
-            Ok(SocketCommand::Record(_)) => discarded += 1,
-            Ok(SocketCommand::Flush(ack)) => {
-                let _ = ack.send(());
-            }
-            Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
-            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,
-        }
-    }
-}
-
-/// Say how many records the shutdown deadline cost, once.
-///
-/// Deliberately not rate-limited through the warner: this fires at most once
-/// per handler, and a count of the records a shutdown abandoned is the kind of
-/// thing a caller needs to see whether or not a warning interval has elapsed.
-fn warn_discarded(discarded: u64) {
-    if discarded == 0 {
-        return;
-    }
-    warn!("FemtoSocketHandler discarded {discarded} queued records at its shutdown deadline");
 }
 
 /// Build a framed record; payloads within `max_frame_size` are writable.
@@ -366,24 +388,6 @@ pub fn enqueue_record(
             Err(HandlerError::Closed)
         }
     }
-}
-
-/// Send a flush command and wait one budget for its acknowledgement.
-///
-/// The whole wait, not each half of it: the send and the receive share a
-/// single deadline, so a send that spends the budget leaves the receive
-/// nothing rather than starting a fresh timeout of its own.
-pub fn flush_queue(tx: &Sender<SocketCommand>, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    let (ack_tx, ack_rx) = bounded(1);
-    if tx
-        .send_timeout(SocketCommand::Flush(ack_tx), timeout)
-        .is_err()
-    {
-        return false;
-    }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    ack_rx.recv_timeout(remaining).is_ok()
 }
 
 #[cfg(test)]

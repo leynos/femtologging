@@ -8,38 +8,35 @@
 
 mod config;
 
-mod deadline;
-
 mod shutdown;
+
+mod trait_impl;
 
 mod waiter;
 
 mod worker;
 
 use std::{
-    any::Any,
     io::{self, Write},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use log::{trace, warn};
 use pyo3::prelude::*;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
-use crate::rate_limited_warner::Clock;
-use crate::shutdown::ShutdownCompletion;
-use crate::sync::{
-    JoinHandle, Mutex, RecvTimeoutError, SendTimeoutError, Sender, TrySendError, bounded, spawn,
+use crate::handler::{
+    FemtoHandlerTrait, FlushCap, FlushContext, PendingDrops, deadline_after, flush_handler_until,
 };
+use crate::shutdown::ShutdownCompletion;
+use crate::sync::{JoinHandle, Mutex, Sender, bounded, spawn};
 use crate::{
     formatter::{DefaultFormatter, FemtoFormatter},
     log_record::FemtoLogRecord,
+    monotonic_clock::SharedClock,
     rate_limited_warner::RateLimitedWarner,
 };
 
 pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig};
-use deadline::FlushDeadline;
 use shutdown::StreamShutdown;
 use waiter::WaitGuard;
 #[cfg(feature = "test-util")]
@@ -54,12 +51,13 @@ use worker::run_stream_worker;
 enum StreamCommand {
     /// Owned record consumed by the worker in queue order.
     Record(FemtoLogRecord),
-    /// Flush request carrying the worker's I/O result acknowledgement channel.
-    Flush(Sender<io::Result<()>>),
+    /// Flush request carrying its acknowledgement and deferred drop warning.
+    Flush(Sender<io::Result<()>>, Option<u64>),
 }
 
 /// Writes formatted log records to a stream (stderr by default) on a background thread, so
-/// the caller never waits for the write. `flush` bounds its whole wait by `flush_timeout`.
+/// the caller never waits for the write. `flush` spends at most `flush_timeout` in total
+/// across enqueueing its command and waiting for the worker's acknowledgement.
 #[pyclass]
 pub struct FemtoStreamHandler {
     /// Queue sender taken during close; shared so no closer needs an exclusive borrow.
@@ -76,7 +74,7 @@ pub struct FemtoStreamHandler {
     flush_timeout: Duration,
     /// Clock the flush deadline is measured against, injected through
     /// `HandlerConfig` so a test can script the deadline alone.
-    clock: Arc<dyn Clock>,
+    clock: SharedClock,
 }
 
 #[pymethods]
@@ -242,7 +240,6 @@ impl FemtoStreamHandler {
         let completion = ShutdownCompletion::new();
         let worker_completion = Arc::clone(&completion);
         let handle = spawn(move || run_stream_worker(rx, writer, formatter, worker_completion));
-        let clock = Arc::clone(&config.clock);
 
         Self {
             tx: Mutex::new(Some(tx)),
@@ -250,13 +247,70 @@ impl FemtoStreamHandler {
             completion,
             warner: config.warner,
             flush_timeout: config.flush_timeout,
-            clock,
+            clock: config.clock,
         }
     }
 
     /// Flush any pending log records.
+    ///
+    /// Python callers release the interpreter while waiting for the handler's
+    /// worker acknowledgement, allowing Python formatters to run there.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        let now = self.clock.now();
+        let Some(deadline) = deadline_after(now, self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(&FlushContext::with_clock(
+            now,
+            Some(deadline),
+            Arc::clone(&self.clock),
+        ))
+    }
+
+    /// Flush any pending log records, waiting no longer than the context's
+    /// deadline.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare `flush()` keeps the bound it documents and a barrier flush cannot
+    /// outlive the deadline it was given. Time is sampled from the context, so
+    /// a barrier test controls this handler's deadline transition as well as
+    /// the logger's.
+    fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
+    }
+
+    /// Flush against `deadline`, sampling each queue wait from `now`.
+    ///
+    /// Production passes [`Instant::now`] here; tests pass a scripted source,
+    /// so a stalled worker queue can be shown to consume exactly the budget
+    /// the caller supplied rather than a fresh copy for each wait.
+    fn flush_by_at(&self, deadline: Instant, now: &mut dyn FnMut() -> Instant) -> bool {
+        // The helper below runs both bounded queue waits, so the whole call is
+        // inside them from here. The marker lets a shutdown test release a
+        // gated formatter only once this thread has reached its wait, instead
+        // of inferring that from elapsed time.
+        let _waiting = WaitGuard::enter();
+        // Cap first, then read the sender: the guard is taken and released
+        // inside the closure, so no lock outlives the deadline sample.
+        let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
+        let outcome = flush_handler_until(
+            PendingDrops::new(
+                || self.warner.take_pending(),
+                |count| self.warner.restore_drops(count),
+            ),
+            &mut cap,
+            || self.tx.lock().clone(),
+            |tx, pending_drops, budget| {
+                let (ack_tx, ack_rx) = bounded(1);
+                tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)
+                    .ok()?;
+                Some(move |budget| ack_rx.recv_timeout(budget).ok())
+            },
+        );
+        matches!(outcome, Some(Ok(Ok(()))))
     }
 
     /// Close the handler and wait for the worker to finish its queued work.
@@ -274,108 +328,5 @@ impl FemtoStreamHandler {
         let handle = self.handle.lock().take();
         let completion = Arc::clone(&self.completion);
         StreamShutdown::new(handle, completion, self.flush_timeout)
-    }
-}
-
-impl FemtoHandlerTrait for FemtoStreamHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        // Clone under the lock and release it before sending: a blocking send
-        // must not hold the lock that close needs to take the sender.
-        let Some(tx) = self.tx.lock().clone() else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-            });
-            return Err(HandlerError::Closed);
-        };
-        match tx.try_send(StreamCommand::Record(record)) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
-                // Name the queue state, never the record, so the trace carries
-                // no caller payload.
-                trace!("FemtoStreamHandler: queue full; record dropped");
-                self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                Err(HandlerError::QueueFull)
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                trace!("FemtoStreamHandler: queue disconnected; record dropped");
-                self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
-                Err(HandlerError::Closed)
-            }
-        }
-    }
-
-    fn flush(&self) -> bool {
-        // Bind first: a guard held in the match scrutinee lives through the send.
-        let Some(tx) = self.tx.lock().clone() else {
-            trace!("FemtoStreamHandler: flush on a closed handler");
-            return false;
-        };
-        self.warner.flush(|count| {
-            warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-        });
-        let (ack_tx, ack_rx) = bounded(1);
-        // One deadline covers both waits. The channel send can block when the
-        // queue is full and the acknowledgement can take a further interval,
-        // so applying the timeout to each in turn would let a flush wait
-        // nearly twice the configured limit.
-        let deadline = FlushDeadline::after(self.clock.now_millis(), self.flush_timeout);
-        let enqueue_budget = deadline.remaining(self.clock.now_millis());
-        // Try the queue first so the waiting marker is raised only when this
-        // call is actually blocked on a full queue. A marker taken before the
-        // attempt would also appear for a command that never had to wait.
-        match tx.try_send(StreamCommand::Flush(ack_tx)) {
-            Ok(()) => {}
-            Err(TrySendError::Full(command)) => {
-                let _waiting = WaitGuard::enter();
-                match tx.send_timeout(command, enqueue_budget) {
-                    Ok(()) => {}
-                    Err(SendTimeoutError::Timeout(_)) => {
-                        // The return value cannot say which stage expired. Name
-                        // the stage in the trace, with no record payload, so an
-                        // operator can tell a full queue from a slow worker.
-                        trace!("FemtoStreamHandler: flush command not queued within the deadline");
-                        return false;
-                    }
-                    Err(SendTimeoutError::Disconnected(_)) => {
-                        trace!("FemtoStreamHandler: flush command queue disconnected");
-                        return false;
-                    }
-                }
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                trace!("FemtoStreamHandler: flush command queue disconnected");
-                return false;
-            }
-        }
-        let ack_budget = deadline.remaining(self.clock.now_millis());
-        // The acknowledgement is the second wait, so it gets its own marker: a
-        // command queued at once still blocks here until the worker answers.
-        let _waiting = WaitGuard::enter();
-        match ack_rx.recv_timeout(ack_budget) {
-            Ok(Ok(())) => true,
-            Ok(Err(_)) => {
-                trace!("FemtoStreamHandler: flush acknowledgement reported an I/O error");
-                false
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                trace!("FemtoStreamHandler: flush acknowledgement channel disconnected");
-                false
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                trace!("FemtoStreamHandler: flush acknowledgement timed out");
-                false
-            }
-        }
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

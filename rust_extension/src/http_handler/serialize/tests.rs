@@ -292,3 +292,30 @@ fn legitimate_custom_fields_remain_flat_and_string_valued() {
         "custom fields should stay flat and string-valued in URL-encoded output"
     );
 }
+
+/// The wire order is part of the format, so a split serialiser must not move
+/// `threadName` behind the caller's key/value pairs.
+#[rstest]
+fn thread_name_precedes_caller_key_values(test_record: FemtoLogRecord) {
+    let mut metadata = test_record.metadata().clone();
+    metadata.thread_name = Some("worker-1".to_owned());
+    metadata
+        .key_values
+        .insert("request_id".to_owned(), "abc".to_owned());
+    let record = FemtoLogRecord::with_metadata(
+        test_record.logger(),
+        test_record.level(),
+        test_record.message(),
+        metadata,
+    );
+
+    let json = serialize_json(&record, None).expect("serialize");
+    let thread_name_at = json.find("\"threadName\"").expect("threadName is emitted");
+    let key_at = json
+        .find("\"request_id\"")
+        .expect("key/value pair is emitted");
+    assert!(
+        thread_name_at < key_at,
+        "threadName must stay ahead of caller keys: {json}"
+    );
+}

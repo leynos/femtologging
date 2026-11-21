@@ -41,6 +41,10 @@ impl FemtoHandlerTrait for CollectingHandler {
         Ok(())
     }
 
+    fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+        true
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

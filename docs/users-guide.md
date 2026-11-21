@@ -192,9 +192,11 @@ calls its `flush()` when it defines one and treats a missing or non-callable
 `flush` as success. A `flush()` that returns `None` — as
 `logging.Handler.flush()` does — counts as success, and any other falsy return
 value counts as failure. An exception, or an error other than a missing or
-non-callable `flush` attribute, also counts as failure. Enqueueing the flush
-marker and waiting for its acknowledgement share a two-second timeout. Flushing
-attached handlers can take additional time. The method returns `True` when the
+non-callable `flush` attribute, also counts as failure. One two-second deadline
+covers the whole barrier — resolving dispatch state, enqueueing the marker,
+waiting for its acknowledgement, and flushing every attached handler. A
+synchronous handler callback can overrun its own wait, but the caller does not
+get a separate budget for handler flushing. The method returns `True` when the
 worker acknowledges the marker in time and every handler flush succeeds; it
 returns `False` if the marker cannot be enqueued or acknowledged in time, or
 any handler flush fails. A failing handler does not stop the remaining handlers
@@ -327,6 +329,12 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
   dispatch-admission refusals.
+- Use `logger.get_flush_diagnostics()` to poll fixed-cardinality flush-barrier
+  counters for attempts, confirmations, failure stages and elapsed-time
+  buckets. The keys remain stable and include no logger names, paths, messages
+  or payloads. Values are a best-effort snapshot read from relaxed atomics, so
+  concurrent updates may appear at different instants. Exporting these values
+  through a shared metrics adapter remains the application's responsibility.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
@@ -341,6 +349,44 @@ fields with safe defaults does not require a version bump.
   record never reaches the level check, filters, formatter, or dispatch, so
   this counter is separate from `get_dropped()`. A later configuration that
   names the logger re-enables it and stops the counter rising.
+
+### Flushing logger handlers
+
+`logger.flush_handlers()` queues a marker behind records the logger has already
+accepted when handlers are attached, then snapshots the handlers before
+allowing the worker to run their flush callbacks. With no handlers but records
+in flight, it queues a shard-wide drain marker instead; that marker sits behind
+work other loggers have already queued on the same shard, so that work can
+delay the flush. Handler additions and removals completed before that snapshot
+are reflected in this barrier; a handler removed afterwards remains alive in
+the snapshot until the worker releases it, and later additions participate in
+the next barrier. One two-second deadline covers dispatch resolution, marker
+insertion, handler-list locking, worker acknowledgement and every handler
+flush. Built-in handlers keep their own shorter flush limits, whether fixed or
+configurable: the file handlers stop waiting after a fixed second, while the
+stream handler has a configurable `flush_timeout`. The Python method releases
+the GIL while waiting so Python handlers can run.
+
+The method returns `False` when a stage is not confirmed by the deadline, the
+worker has exited, or a handler reports failure or lacks deadline support. A
+user-defined Python handler is asked to flush itself: the barrier calls its
+callable `flush` method. A handler with no callable `flush` has nothing to
+drain, so it is confirmed once the record reaches it; one whose `flush` raises
+or returns a falsy value other than `None` reports failure, and its exception
+text is never printed. `None` counts as success, as Python's flush protocol
+reports success that way. The timeout bounds the caller's Rust barrier wait; it
+cannot stop a synchronous handler callback that is still running. In normal
+builds, logger drop waits for its own in-flight records only, up to the bounded
+drain timeout, and does not join the shared process-wide worker. A callback
+that violates its deadline may keep that worker occupied after the flush returns
+`False`. PyO3 must reacquire the interpreter before returning to Python, so
+interpreter contention can delay the Python return beyond the barrier deadline.
+
+Custom Rust handlers that should participate must implement the deadline-aware
+`FemtoHandlerTrait::flush_until(context)` contract. Its default fails closed
+without invoking legacy synchronous `flush()` code. See the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the compatibility rules.
 
 ## Built-in handlers
 
@@ -377,6 +423,15 @@ fields with safe defaults does not require a version bump.
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
   `.build()`.
+
+A direct `flush()` shares one configured `flush_timeout` between queue
+admission and the acknowledgement, so admission that spends part of that budget
+leaves less of it for the worker's answer. Under load, `flush()` can therefore
+return `False` even though the handler is healthy: admission may spend the
+budget while the queue is full, or the worker may not acknowledge what is left.
+The logger's `flush_handlers()` does not change this: it gives the handler the
+barrier's deadline, and the handler still caps its own wait at its configured
+`flush_timeout`.
 
 ### FemtoFileHandler
 
@@ -583,9 +638,12 @@ socket_handler = (
   timeout covers both the wait for queue space and the acknowledgement, so a
   flush returns `False` once that single budget is spent rather than waiting a
   second full timeout for the worker to answer. It returns `False` when the
-  handler is closed, the worker channel is gone, or the budget expires. Python
-  `flush()` releases the GIL while it waits, so other Python threads keep
-  running during a flush that blocks on a full queue or a slow collector.
+  handler is closed, the worker channel is gone, the connection fails to flush
+  with an I/O error, the marker is discarded during shutdown, or the budget
+  expires. An acknowledgement therefore has to report a successful flush to
+  count, not merely arrive. Python `flush()` releases the GIL while it waits,
+  so other Python threads keep running during a flush that blocks on a full
+  queue or a slow collector.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -720,17 +778,23 @@ avoid raising from `handle`.
 
 `FemtoLogger.flush_handlers()` also calls the handler's `flush` method when it
 has one, so a custom handler that buffers records can persist them. The call
-runs on the thread that called `flush_handlers()`, after the logger's queued
-records have been dispatched, and every registered handler is flushed even when
-an earlier one fails. A missing or non-callable `flush` counts as success, so
-handlers without one need no change. A `flush` that returns `None`, as
-`logging.Handler.flush` does, has flushed without complaint; every other result
-succeeds only when it is truthy, so `False` or `0` reports failure. An
-exception raised by `flush` logs a bounded warning that omits the exception
-text and makes `flush_handlers()` return `False`. The calling thread releases
-the GIL while it waits for queued records and native handlers. A custom `flush`
-runs with the interpreter attached. Whether other Python threads can run while
-it blocks depends on the blocking operation.
+queues a barrier behind any records already queued for the logger's shard, and
+blocks the invoking thread while the dispatch worker handles those records and
+then runs `flush` on the registered handlers, up to the flush deadline. The
+handler callbacks themselves run on the dispatch worker, not on the invoking
+thread, so a custom `flush` must not rely on caller-thread state such as a
+thread-local or an enclosing interpreter frame. Handlers are attempted while
+budget remains: a handler that fails does not stop the ones after it, but
+handlers left when the deadline expires are not flushed, and the caller can
+return `False` while a callback is still running. A missing or non-callable
+`flush` counts as success, so handlers without one need no change. A `flush`
+that returns `None`, as `logging.Handler.flush` does, has flushed without
+complaint; every other result succeeds only when it is truthy, so `False` or
+`0` reports failure. An exception raised by `flush` logs a bounded warning that
+omits the exception text and makes `flush_handlers()` return `False`. The
+calling thread releases the GIL while it waits for queued records and native
+handlers. A custom `flush` runs with the interpreter attached. Whether other
+Python threads can run while it blocks depends on the blocking operation.
 
 #### Handler stability contract
 
