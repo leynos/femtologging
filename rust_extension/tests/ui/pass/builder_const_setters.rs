@@ -11,7 +11,7 @@
 //!
 //! - `FileHandlerBuilder` gets its `with_capacity` and
 //!   `with_flush_after_records` from `builder_methods!`, which emits
-//!   non-`const` methods; only its hand-written `with_overflow_policy` is
+//!   non-`const` methods; only its handwritten `with_overflow_policy` is
 //!   `const`.
 //! - `with_backoff` needs a `BackoffOverrides` value, and that type is not
 //!   re-exported, so an external fixture cannot name it.
@@ -19,7 +19,8 @@
 //!
 //! The two unpinnable families are covered in-crate instead: the backoff
 //! overrides and both `with_backoff` setters in
-//! `src/handlers/socket_builder/mod.rs`, and the formatter identifier in
+//! `src/handlers/socket_builder/const_eval_tests.rs`, and the formatter
+//! identifier in
 //! `src/handlers/formatter_id.rs`.
 //!
 //! Covered here: `FileHandlerBuilder::with_overflow_policy`; the three `const`
