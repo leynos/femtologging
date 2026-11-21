@@ -5,20 +5,34 @@
 //! `const` qualifier. A run-time test cannot detect that: a `const fn` that
 //! quietly stops being one still passes every behavioural test.
 //!
-//! The chain cannot start from `new(..)` inside a `const` item. All three
-//! constructors allocate (`PathBuf` or `String`) and are therefore ordinary
-//! `fn`s, so the builder arrives as a parameter instead. `FileHandlerBuilder`
-//! additionally gets its `with_capacity` and `with_flush_after_records` from
-//! `builder_methods!`, which emits non-`const` methods; only its hand-written
-//! `with_overflow_policy` is pinned here. The crate-private
-//! `FormatterId::Default.as_str()` cannot be named by an external fixture at
-//! all, so `src/handlers/formatter_id.rs` carries that in-crate pin.
+//! The chains cannot start from `new(..)` inside a `const` item — every builder
+//! constructor is an ordinary `fn` — so the builder arrives as a parameter
+//! instead. Three setter families are deliberately absent here:
+//!
+//! - `FileHandlerBuilder` gets its `with_capacity` and
+//!   `with_flush_after_records` from `builder_methods!`, which emits
+//!   non-`const` methods; only its hand-written `with_overflow_policy` is
+//!   `const`.
+//! - `with_backoff` needs a `BackoffOverrides` value, and that type is not
+//!   re-exported, so an external fixture cannot name it.
+//! - `FormatterId::Default.as_str()` is crate-private for the same reason.
+//!
+//! The two unpinnable families are covered in-crate instead: the backoff
+//! overrides and both `with_backoff` setters in
+//! `src/handlers/socket_builder/mod.rs`, and the formatter identifier in
+//! `src/handlers/formatter_id.rs`.
+//!
+//! Covered here: `FileHandlerBuilder::with_overflow_policy`; the three `const`
+//! setters on each of the rotating and timed-rotating file builders; the four
+//! generated scalar setters on `SocketHandlerBuilder`; and
+//! `HTTPHandlerBuilder`'s three generated scalar setters plus `with_method` and
+//! `with_json_format`.
 
 use std::num::NonZeroU64;
 
 use _femtologging_rs::{
-    FileHandlerBuilder, OverflowPolicy, RotatingFileHandlerBuilder,
-    TimedRotatingFileHandlerBuilder,
+    FileHandlerBuilder, HTTPHandlerBuilder, HTTPMethod, OverflowPolicy,
+    RotatingFileHandlerBuilder, SocketHandlerBuilder, TimedRotatingFileHandlerBuilder,
 };
 
 /// The overflow policy every chain applies.
@@ -53,10 +67,29 @@ const fn timed_rotating_builder_chain(
         .with_overflow_policy(POLICY)
 }
 
+const fn socket_builder_chain(builder: SocketHandlerBuilder) -> SocketHandlerBuilder {
+    builder
+        .with_capacity(64)
+        .with_connect_timeout_ms(1)
+        .with_write_timeout_ms(1)
+        .with_max_frame_size(1)
+}
+
+const fn http_builder_chain(builder: HTTPHandlerBuilder) -> HTTPHandlerBuilder {
+    builder
+        .with_capacity(64)
+        .with_connect_timeout_ms(1)
+        .with_write_timeout_ms(1)
+        .with_method(HTTPMethod::GET)
+        .with_json_format()
+}
+
 fn main() {
     // The const fns are the assertion; naming them keeps them used.
     let _: fn(FileHandlerBuilder) -> FileHandlerBuilder = file_builder_chain;
     let _: fn(RotatingFileHandlerBuilder) -> RotatingFileHandlerBuilder = rotating_builder_chain;
     let _: fn(TimedRotatingFileHandlerBuilder) -> TimedRotatingFileHandlerBuilder =
         timed_rotating_builder_chain;
+    let _: fn(SocketHandlerBuilder) -> SocketHandlerBuilder = socket_builder_chain;
+    let _: fn(HTTPHandlerBuilder) -> HTTPHandlerBuilder = http_builder_chain;
 }

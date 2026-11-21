@@ -386,3 +386,8 @@ impl HandlerBuilderTrait for SocketHandlerBuilder {
 }
 #[cfg(feature = "python")]
 mod python_bindings;
+
+// Kept in its own file: this module pushes `mod.rs` close to the 400-line
+// bound that the Whitaker `module-max-lines` lint enforces.
+#[cfg(test)]
+mod const_eval_tests;
