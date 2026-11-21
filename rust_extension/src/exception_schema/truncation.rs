@@ -82,11 +82,22 @@ pub struct PayloadTruncation {
     /// order.
     ///
     /// A traceback walk counts each frame it visits and drops. A live-stack
-    /// walk stops at the ceiling rather than walking the remainder, so its
-    /// count says a tail was omitted without claiming how long it is: the
-    /// value is then a lower bound of at least one.
+    /// walk stops at the ceiling rather than walking the remainder, and a
+    /// traceback walk can stop at its visit allowance before reaching the
+    /// throw site. In both cases the count only proves that at least this many
+    /// frames were left out, and [`Self::frames_omitted_is_lower_bound`] says
+    /// so.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub frames_omitted: u32,
+    /// `frames_omitted` is a lower bound rather than an exact count.
+    ///
+    /// Set when a walk stopped before the end of the chain: a live stack that
+    /// hit the frame ceiling, or a traceback whose visit allowance expired
+    /// before the innermost frame. When set, the retained window is not
+    /// guaranteed to reach the failure site, and consumers should render the
+    /// count as "at least" rather than as an exact total.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frames_omitted_is_lower_bound: bool,
     /// The exception cause was dropped because a traversal ceiling was hit.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cause_omitted: bool,
@@ -154,6 +165,7 @@ impl PayloadTruncation {
         self.notes_omitted = self.notes_omitted.saturating_add(other.notes_omitted);
         self.notes_truncated |= other.notes_truncated;
         self.frames_omitted = self.frames_omitted.saturating_add(other.frames_omitted);
+        self.frames_omitted_is_lower_bound |= other.frames_omitted_is_lower_bound;
         self.cause_omitted |= other.cause_omitted;
         self.context_omitted |= other.context_omitted;
         self.exceptions_omitted = self

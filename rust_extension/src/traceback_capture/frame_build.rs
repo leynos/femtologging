@@ -24,7 +24,7 @@
 use std::collections::HashSet;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyIterator, PyString};
+use pyo3::types::{PyIterator, PyString, PyStringMethods};
 
 use crate::exception_schema::StackFrame;
 
@@ -225,15 +225,45 @@ fn lookup_source_line(
     prepare_source(linecache, frame, filename, prepared);
     let raw = linecache.call_method1("getline", (filename, lineno)).ok()?;
     let raw = raw.cast::<PyString>().ok()?;
-    let raw = values::bounded_string(raw, limit.saturating_add(1)).text;
-    let first_line = raw
+    let trimmed = trim_short_line(raw);
+    let text = match trimmed {
+        Some(line) => line,
+        // A line too long to trim safely is bounded first; a pathological
+        // source line can then lose its statement to leading indentation, but
+        // the scan stays inside the ceiling.
+        None => values::bounded_string(raw, limit.saturating_add(1)).text,
+    };
+    let first_line = text
         .split_once('\n')
-        .map_or(raw.as_str(), |(line, _)| line)
+        .map_or(text.as_str(), |(line, _)| line)
         .trim();
     if first_line.is_empty() {
         return None;
     }
     Some(truncate_to_limit(first_line, limit).unwrap_or_else(|| first_line.to_string()))
+}
+
+/// Longest source line copied in full so it can be trimmed before clamping.
+const MAX_TRIMMED_LINE: usize = 8 * 1024;
+
+/// Return the trimmed contents of a short source line.
+///
+/// `linecache` returns one physical line, but it can carry any amount of leading
+/// indentation or trailing padding. Trimming first lets a statement that fits
+/// once its indentation is removed survive the byte ceiling, which is what
+/// `traceback.FrameSummary` displays. The trim is only attempted for a line
+/// short enough that copying it whole is bounded; a longer line takes the
+/// prefix path in the caller instead.
+fn trim_short_line(raw: &Bound<'_, PyString>) -> Option<String> {
+    let code_points = raw.code_point_len().ok()?;
+    if code_points > MAX_TRIMMED_LINE {
+        return None;
+    }
+    let py = raw.py();
+    let strip = py.get_type::<PyString>().getattr("strip").ok()?;
+    let stripped = strip.call1((raw,)).ok()?;
+    let stripped = stripped.cast::<PyString>().ok()?;
+    Some(stripped.to_string_lossy().into_owned())
 }
 
 /// Prime and refresh `linecache` for one source file, once per capture.

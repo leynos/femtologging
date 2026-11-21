@@ -47,6 +47,26 @@ fn stack_frame_omission_marker_precedes_retained_frames() {
 }
 
 #[test]
+fn a_lower_bound_frame_count_is_rendered_as_at_least() {
+    let stack = StackTracePayload {
+        truncation: PayloadTruncation {
+            frames_omitted: 2,
+            frames_omitted_is_lower_bound: true,
+            ..Default::default()
+        }
+        .into_option(),
+        ..single_frame_stack()
+    };
+
+    let output = format_stack_payload(&stack);
+
+    assert!(
+        output.contains("... at least 2 frames omitted ...\n"),
+        "a walk that stopped early must not report an exact count: {output}"
+    );
+}
+
+#[test]
 fn exception_frame_omission_marker_precedes_retained_frames() {
     let payload = single_frame_exception().with_truncation(PayloadTruncation {
         frames_omitted: 5,

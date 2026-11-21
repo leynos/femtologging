@@ -221,10 +221,13 @@ to each capture:
 The ASCII `...` suffix fits inside each text limit. A fixed-size optional
 `truncation` marker records shortened messages, argument representations, and
 notes; omitted arguments, notes, frames, links, or group members; failed
-elements; and aggregate-budget exhaustion. Identifiers that are shortened
-already carry a visible `...` suffix. The schema remains version 1 because the
-marker is optional and defaults to absent. Absent markers leave existing
-formatter output unchanged.
+elements; and aggregate-budget exhaustion. A walk that stops before the end of
+its chain — a live stack at the frame ceiling, or a traceback whose visit
+allowance expires before the throw site — sets `frames_omitted_is_lower_bound`,
+so its frame count is rendered as a minimum rather than an exact total.
+Identifiers that are shortened already carry a visible `...` suffix. The schema
+remains version 1 because the marker is optional and defaults to absent. Absent
+markers leave existing formatter output unchanged.
 
 Built-in strings, bytes, and bytearrays are sliced or escaped from bounded
 prefixes before capture retains them. `KeyError` is handled without invoking

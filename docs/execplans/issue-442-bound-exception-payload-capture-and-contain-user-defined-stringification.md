@@ -83,8 +83,9 @@ perform **no** capture today. The residual defect is narrower:
 - **`PayloadTruncation` marker.** Optional, fixed-size, emitted only when a
   field is non-default. Fixed fields: `message_truncated`, `args_omitted`,
   `args_truncated`, `notes_omitted`, `notes_truncated`, `frames_omitted`,
-  `cause_omitted`, `context_omitted`, `exceptions_omitted`, `members_truncated`,
-  `failed_elements`, `budget_exhausted`.
+  `frames_omitted_is_lower_bound`, `cause_omitted`, `context_omitted`,
+  `exceptions_omitted`, `members_truncated`, `failed_elements`,
+  `budget_exhausted`.
 - **Budget spend order**: type, message, innermost-to-outermost frames, args,
   notes, cause, context, group members.
 - **Group limits**: width 15, depth 10.
@@ -92,7 +93,8 @@ perform **no** capture today. The residual defect is narrower:
   `TypeError`; internal traversal failures degrade to a minimal type-only
   payload with no frames and `budget_exhausted` set.
 - **Frame ring buffer** keeps the innermost traceback entries and reports
-  `frames_omitted`.
+  `frames_omitted`, with `frames_omitted_is_lower_bound` set whenever a walk
+  stopped before the end of its chain.
 
 ## Task breakdown
 

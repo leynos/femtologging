@@ -83,11 +83,15 @@ mod traceback_capture_budget_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_containment_tests;
 #[cfg(all(test, feature = "python"))]
+mod traceback_capture_frame_tests;
+#[cfg(all(test, feature = "python"))]
 mod traceback_capture_graceful_degradation_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_group_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_limits_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_note_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_stack_limits_tests;
 #[cfg(all(test, feature = "python"))]

@@ -271,10 +271,14 @@ optional fixed-size `truncation` mapping. It reports shortened messages,
 arguments, or notes; omitted arguments, notes, frames, causes, contexts, and
 exception-group members; failed elements; and aggregate-budget exhaustion. For
 example, text formatters can show `... 2 earlier frames omitted ...` before
-retained frames. The mapping is absent only when every marker field is at its
-default: a message that was shortened without dropping any component still
-carries `message_truncated`, as does a capture cut short by the aggregate
-budget with no positive omission count. Existing formatted output is unchanged.
+retained frames. When a walk stopped before the end of its chain — a live stack
+at its frame ceiling, or a traceback whose visit allowance expired before the
+throw site — the count is only a minimum, `frames_omitted_is_lower_bound` is
+set, and formatters say `... at least 2 frames omitted ...` instead. The
+mapping is absent only when every marker field is at its default: a message
+that was shortened without dropping any component still carries
+`message_truncated`, as does a capture cut short by the aggregate budget with
+no positive omission count. Existing formatted output is unchanged.
 
 The logger threshold is checked before record construction or exception/stack
 capture. Native level and name filters can also reject without capture when

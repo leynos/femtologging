@@ -16,7 +16,7 @@
 //! which marker flag reports that edge being dropped.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyIterator, PyList, PyString, PyTuple};
+use pyo3::types::{PyIterator, PyList, PySlice, PyString, PyTuple};
 
 use super::limits::CaptureLimits;
 use super::values;
@@ -109,22 +109,41 @@ fn leaf_type_name(exc_type: &Bound<'_, PyAny>, limit: usize) -> String {
     let Some(qualname) = string_attr(exc_type, "__qualname__") else {
         return String::new();
     };
-    let leaf = last_component(&qualname).unwrap_or(qualname);
-    values::bounded_string(&leaf, limit).text
+    bounded_leaf(&qualname, limit).unwrap_or_else(|| "<type name unavailable>".to_string())
 }
 
-/// Return the last dot-separated component of `value`, using the `str` method
-/// itself so a subclass cannot override the split.
-fn last_component<'py>(value: &Bound<'py, PyString>) -> Option<Bound<'py, PyString>> {
+/// Longest qualname scanned when locating its leaf.
+///
+/// `rsplit` copies every component before the byte ceiling applies, so a
+/// megabyte-long qualname would be copied in full on the logging thread.
+/// Locating the leaf here scans without copying and only slices the bounded
+/// leaf; past this ceiling the scan itself is skipped.
+const MAX_QUALNAME_SCAN: usize = 4096;
+
+/// Return the bounded leaf of a dotted qualified name.
+///
+/// The split is located with the native `str.rfind`, which scans without
+/// allocating, and only `limit` code points are then copied. Calling `rsplit`
+/// on the instance would run user code for a subclass, so the type's own method
+/// is used; a qualname too long to scan yields `None`.
+fn bounded_leaf(value: &Bound<'_, PyString>, limit: usize) -> Option<String> {
     let py = value.py();
-    let rsplit = py.get_type::<PyString>().getattr("rsplit").ok()?;
-    let parts = rsplit.call1((value, ".", 1)).ok()?;
-    let parts = parts.cast::<PyList>().ok()?;
-    parts
-        .get_item(parts.len().checked_sub(1)?)
+    let code_points = value.code_point_len().ok()?;
+    if code_points > MAX_QUALNAME_SCAN {
+        return None;
+    }
+    let rfind = py.get_type::<PyString>().getattr("rfind").ok()?;
+    let last_dot: isize = rfind.call1((value, ".")).ok()?.extract().ok()?;
+    let start = last_dot.saturating_add(1).max(0);
+    let stop = start.saturating_add(isize::try_from(limit).unwrap_or(isize::MAX));
+    let getitem = py.get_type::<PyString>().getattr("__getitem__").ok()?;
+    let slice = PySlice::new(py, start, stop, 1);
+    let leaf = getitem
+        .call1((value, slice))
         .ok()?
-        .cast_into()
-        .ok()
+        .cast_into::<PyString>()
+        .ok()?;
+    Some(values::bounded_string(&leaf, limit).text)
 }
 
 /// Read a string attribute, without converting it to Rust.

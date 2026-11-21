@@ -19,15 +19,12 @@
 //! apply, and a lossy decode would not reproduce CPython's escapes.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyByteArray, PyBytes, PySlice, PyString, PyStringMethods};
+use pyo3::types::{PySlice, PyString, PyStringMethods};
 
-use super::limits::{TRUNCATION_SUFFIX, TRUNCATION_SUFFIX_LEN, truncate_to_limit};
+use super::limits::{TRUNCATION_SUFFIX_LEN, truncate_to_limit};
 
-/// Largest byte string rendered inline rather than summarised.
-///
-/// Escaping expands one byte to as many as four characters, so this ceiling also
-/// bounds the work a large `bytes` or `bytearray` argument can demand.
-const MAX_INLINE_BLOB: usize = 512;
+mod literal;
+use literal::{bounded_rendered, force_truncate, render_byte_like};
 
 /// A value that was converted to text, together with how it was obtained.
 pub(super) struct BoundedText {
@@ -42,7 +39,7 @@ pub(super) struct BoundedText {
 
 impl BoundedText {
     /// Record a conversion failure with `placeholder` inside the byte ceiling.
-    fn failure(placeholder: &str, limit: usize) -> Self {
+    pub(super) fn failure(placeholder: &str, limit: usize) -> Self {
         let truncated = placeholder.len() > limit;
         let text = truncate_to_limit(placeholder, limit).unwrap_or_else(|| placeholder.to_string());
         Self {
@@ -147,61 +144,6 @@ pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> Boun
     stringify(value, limit, "<exception str() failed>")
 }
 
-/// Render a `bytes` or `bytearray` value from a bounded copy.
-///
-/// Returns `None` for any other type, including subclasses of `bytes` and
-/// `bytearray`: a subclass may override `__str__` or `__repr__`, so rendering
-/// its buffer directly would ignore the representation it defines. An oversized
-/// exact `bytearray` is summarised from its length alone, so its buffer is
-/// copied only when it is small enough to render inline and no borrowed slice
-/// outlives the check.
-fn render_byte_like(value: &Bound<'_, PyAny>) -> Option<(String, bool)> {
-    if value.is_exact_instance_of::<PyBytes>()
-        && let Ok(bytes) = value.cast::<PyBytes>()
-    {
-        return Some(render_blob(bytes.as_bytes()));
-    }
-    if !value.is_exact_instance_of::<PyByteArray>() {
-        return None;
-    }
-    let bytearray = value.cast::<PyByteArray>().ok()?;
-    if bytearray.len() > MAX_INLINE_BLOB {
-        // Summarise from the length alone, like the inline path's wrapper, so
-        // the type name survives without copying the buffer.
-        let (summary, _) = oversized_blob();
-        return Some((format!("bytearray({summary})"), true));
-    }
-    let (rendered, truncated) = render_blob(&bytearray.to_vec());
-    Some((format!("bytearray({rendered})"), truncated))
-}
-
-/// The placeholder used for a byte string too large to render inline.
-fn oversized_blob() -> (String, bool) {
-    ("b'<binary blob>'".to_string(), true)
-}
-
-/// Clamp an already-rendered built-in and preserve whether its source was cut.
-fn bounded_rendered(rendered: String, was_truncated: bool, limit: usize) -> BoundedText {
-    if was_truncated {
-        return BoundedText::ok(truncate_literal(&rendered, limit), true);
-    }
-    clamp(rendered, limit)
-}
-
-/// Cut a prefix and include the ASCII marker whenever the ceiling permits it.
-fn force_truncate(value: &str, limit: usize) -> String {
-    let suffix_bytes = if limit >= TRUNCATION_SUFFIX_LEN {
-        TRUNCATION_SUFFIX_LEN
-    } else {
-        0
-    };
-    let prefix = prefix_within(value, limit.saturating_sub(suffix_bytes));
-    let mut truncated = String::with_capacity(prefix.len() + suffix_bytes);
-    truncated.push_str(prefix);
-    truncated.push_str(&TRUNCATION_SUFFIX[..suffix_bytes]);
-    truncated
-}
-
 /// Render a built-in string or byte-like value from a bounded slice.
 ///
 /// Returns `None` for any other type, leaving the caller to take the general
@@ -230,10 +172,19 @@ fn render_long_string(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedT
     }
     let text = value.cast::<PyString>().ok()?;
     let Ok(code_points) = text.code_point_len() else {
-        return Some(BoundedText::failure("<repr conversion failed>", limit));
+        // A non-canonical string cannot be sliced here; the general `repr`
+        // path still produces a usable representation.
+        return None;
     };
     if code_points <= limit {
-        return None;
+        // The input fits, but its escaped representation may not: a short run
+        // of NULs expands fourfold. `repr` is safe to call on the whole value
+        // because the value itself is already inside the ceiling.
+        let Ok(rendered) = text.repr() else {
+            return Some(BoundedText::failure("<repr conversion failed>", limit));
+        };
+        let rendered = rendered.to_string_lossy().into_owned();
+        return Some(bounded_rendered(rendered, false, limit));
     }
     let reserve = TRUNCATION_SUFFIX_LEN.saturating_add(2);
     let stop = limit.saturating_sub(reserve);
@@ -243,147 +194,6 @@ fn render_long_string(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedT
     let Ok(rendered) = prefix.repr() else {
         return Some(BoundedText::failure("<repr conversion failed>", limit));
     };
-    let rendered = rendered.to_string_lossy();
-    Some(BoundedText::ok(truncate_literal(&rendered, limit), true))
-}
-
-/// Cut `value` to at most `budget` bytes on a character boundary.
-fn prefix_within(value: &str, budget: usize) -> &str {
-    let mut cut = budget.min(value.len());
-    while cut > 0 && !value.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    &value[..cut]
-}
-
-/// Shorten a rendered literal to `limit` bytes, keeping its closing quote.
-///
-/// The marker goes inside the literal's quotes, and any wrapper suffix such as
-/// the `)` of `bytearray(...)` is kept after them. Cutting the assembled text
-/// from the end instead would strip the closing quote, leaving something that
-/// no longer reads as Python; the quote and wrapper survive even when the
-/// ceiling leaves no room for the marker.
-///
-/// The body is cut with [`truncated_body`], so the shortened literal never ends
-/// halfway through an escape such as `\x41`. When the ceiling cannot even hold
-/// the closing quote and wrapper, the ceiling wins and the text is cut from the
-/// end: a truncated literal is better than one that claims a close it lost.
-fn truncate_literal(rendered: &str, limit: usize) -> String {
-    let Some(quote_start) = rendered.rfind(['\'', '"']) else {
-        return force_truncate(rendered, limit);
-    };
-    let quote = &rendered[quote_start..quote_start + 1];
-    let body = &rendered[..quote_start];
-    let tail = &rendered[quote_start + 1..];
-    let closing = quote.len() + tail.len();
-    if closing > limit {
-        return force_truncate(rendered, limit);
-    }
-    let overhead = TRUNCATION_SUFFIX_LEN + closing;
-    if limit <= overhead {
-        let budget = limit - closing;
-        return format!("{}{quote}{tail}", truncated_body(body, budget));
-    }
-    let budget = limit - overhead;
-    format!(
-        "{}{TRUNCATION_SUFFIX}{quote}{tail}",
-        truncated_body(body, budget)
-    )
-}
-
-/// Longest prefix of a literal body within `budget` that ends between escapes.
-///
-/// An escape that would extend past the budget is dropped whole, because a cut
-/// escape such as `\x4` no longer means the character it started to describe.
-fn truncated_body(body: &str, budget: usize) -> &str {
-    let mut index = 0;
-    let mut safe = 0;
-    while index < body.len() && index < budget {
-        let Some(ch) = body[index..].chars().next() else {
-            break;
-        };
-        let width = if ch == '\\' {
-            let Some(width) = completed_escape(&body[index..]) else {
-                break;
-            };
-            width
-        } else {
-            ch.len_utf8()
-        };
-        if index + width > budget {
-            break;
-        }
-        index += width;
-        safe = index;
-    }
-    &body[..safe]
-}
-
-/// Byte width of the complete escape sequence at the start of `rest`.
-///
-/// Returns `None` when `rest` begins with a backslash that is not followed by
-/// the rest of its escape, which is how a literal body cut short would look.
-fn completed_escape(rest: &str) -> Option<usize> {
-    let width = match rest.as_bytes().get(1)? {
-        b'x' => 4,
-        b'u' => 6,
-        b'U' => 10,
-        _ => 2,
-    };
-    (rest.len() >= width).then_some(width)
-}
-
-/// Render a byte string in CPython's own `bytes` repr form.
-///
-/// CPython escapes a byte string itself rather than decoding it, so the bytes
-/// are escaped here one at a time instead of being lossily decoded first. A
-/// lossy decode would fold every high byte into U+FFFD and lose the value; it
-/// also cannot express `\x7f` or `\x00` in the form CPython prints them. The
-/// rules reproduced are CPython's: printable ASCII stands for itself, `\\` and
-/// `'` are escaped, `\t`, `\n` and `\r` use their short forms, and everything
-/// else becomes `\xNN`. The quote flips to `"` when the contents hold a `'` but
-/// no `"`, so the result stays a valid Python literal either way.
-fn render_blob(raw: &[u8]) -> (String, bool) {
-    if raw.len() > MAX_INLINE_BLOB {
-        return oversized_blob();
-    }
-    let quote = if raw.contains(&b'\'') && !raw.contains(&b'"') {
-        '"'
-    } else {
-        '\''
-    };
-    let mut rendered = String::with_capacity(raw.len() + 3);
-    rendered.push('b');
-    rendered.push(quote);
-    for byte in raw {
-        push_escaped_byte(&mut rendered, *byte, quote);
-    }
-    rendered.push(quote);
-    (rendered, false)
-}
-
-/// Append one byte of a byte string in CPython's repr form.
-fn push_escaped_byte(rendered: &mut String, byte: u8, quote: char) {
-    match byte {
-        b'\\' => rendered.push_str("\\\\"),
-        b'\t' => rendered.push_str("\\t"),
-        b'\n' => rendered.push_str("\\n"),
-        b'\r' => rendered.push_str("\\r"),
-        // The closing quote is only ever the active one, so the other quote
-        // character is left to stand for itself.
-        0x20..=0x7e => match char::from(byte) {
-            ch if ch == quote => {
-                rendered.push('\\');
-                rendered.push(ch);
-            }
-            ch => rendered.push(ch),
-        },
-        other => {
-            // `\xNN` is how CPython prints every other byte, including DEL and
-            // every byte above the ASCII range.
-            rendered.push_str("\\x");
-            rendered.push(char::from_digit(u32::from(other) >> 4, 16).unwrap_or('0'));
-            rendered.push(char::from_digit(u32::from(other) & 0xf, 16).unwrap_or('0'));
-        }
-    }
+    let rendered = rendered.to_string_lossy().into_owned();
+    Some(bounded_rendered(rendered, true, limit))
 }

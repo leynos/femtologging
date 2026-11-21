@@ -46,7 +46,14 @@ pub(super) fn push_frame_omission(output: &mut String, truncation: Option<&Paylo
     else {
         return;
     };
-    output.push_str(&format!("... {omitted} earlier frames omitted ...\n"));
+    // A lower-bound count must not read as an exact one, and a walk that
+    // stopped early cannot promise the dropped frames were all "earlier" than
+    // the retained ones, so that case uses neutral wording.
+    if truncation.is_some_and(|marker| marker.frames_omitted_is_lower_bound) {
+        output.push_str(&format!("... at least {omitted} frames omitted ...\n"));
+    } else {
+        output.push_str(&format!("... {omitted} earlier frames omitted ...\n"));
+    }
 }
 
 /// Format the summary line for omissions without a structural marker.

@@ -325,6 +325,24 @@ class TestTruncationMarkers:
         )
 
     @staticmethod
+    def test_a_lower_bound_frame_count_is_rendered_as_at_least() -> None:
+        """A stack cut short should not present its count as exact."""
+        record = _emit_femto_record({
+            "stack_info": {
+                "frames": [{"filename": "app.py", "lineno": 8, "function": "run"}],
+                "truncation": {
+                    "frames_omitted": 2,
+                    "frames_omitted_is_lower_bound": True,
+                },
+            }
+        })
+
+        assert record.stack_info is not None, "truncated stack payload should render"
+        assert "... at least 2 frames omitted ..." in record.stack_info.splitlines(), (
+            "an incomplete walk must report a minimum, not an exact count"
+        )
+
+    @staticmethod
     def test_stack_marker_precedes_retained_frames() -> None:
         """Stack text should place omitted-frame markers before frames."""
         record = _emit_femto_record({

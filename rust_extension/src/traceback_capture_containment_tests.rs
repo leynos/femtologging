@@ -15,6 +15,8 @@
 //! way to tell the two implementations apart, so the counting exception here
 //! leaves its counter in the script's namespace where the test can read it.
 
+use std::ffi::CStr;
+
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rstest::rstest;
@@ -22,6 +24,7 @@ use rstest::rstest;
 use crate::test_utils::capture_limit_helpers::{
     capture_raised, capture_raised_in, marker, tiny_limits,
 };
+use crate::traceback_capture::CaptureLimits;
 
 #[rstest]
 fn a_raising_repr_is_skipped_without_failing_the_capture() {
@@ -130,36 +133,105 @@ raise ValueError(LargeRepr())
 }
 
 #[rstest]
-fn large_bytes_are_bounded_before_exception_stringification() {
+#[case(c"raise ValueError(b'\\xab' * 100000)", "...'")]
+#[case(c"raise ValueError(bytearray(b'x' * 100000))", "...')")]
+fn large_binary_arguments_are_bounded_before_stringification(
+    #[case] source: &CStr,
+    #[case] suffix: &str,
+) {
     Python::attach(|py| {
-        let payload = capture_raised(py, c"raise ValueError(b'\\xab' * 100000)", &tiny_limits());
+        let payload = capture_raised(py, source, &tiny_limits());
 
         assert!(payload.message.len() <= 32);
         assert!(
-            payload.message.ends_with("...'"),
-            "the summarised blob should keep its closing quote: {:?}",
+            payload.message.ends_with(suffix),
+            "the summarised binary argument should keep its closing quote and wrapper: {:?}",
             payload.message
         );
         assert!(marker(&payload).message_truncated);
     });
 }
 
-#[rstest]
-fn large_bytearrays_are_bounded_before_exception_stringification() {
+#[test]
+fn an_exception_group_does_not_repr_every_member() {
     Python::attach(|py| {
-        let payload = capture_raised(
+        let globals = PyDict::new(py);
+        let payload = capture_raised_in(
             py,
-            c"raise ValueError(bytearray(b'x' * 100000))",
+            c"
+repr_calls = 0
+
+class Counted(Exception):
+    def __repr__(self):
+        global repr_calls
+        repr_calls += 1
+        return 'x' * 1000
+
+raise ExceptionGroup('g', [Counted(i) for i in range(100)])
+",
             &tiny_limits(),
+            &globals,
         );
 
-        assert!(payload.message.len() <= 32);
+        let calls: usize = globals
+            .get_item("repr_calls")
+            .expect("counter lookup should succeed")
+            .expect("counter should be defined")
+            .extract()
+            .expect("counter should be an integer");
+        // Only the members the group walker can retain are represented; the
+        // caller's whole sequence is never handed to `repr`.
         assert!(
-            payload.message.ends_with("...')"),
-            "the summarised bytearray should keep its closing quote and wrapper: {:?}",
-            payload.message
+            calls <= 2,
+            "capture represented {calls} members despite a width of 2"
         );
-        assert!(marker(&payload).message_truncated);
+        assert!(
+            payload.args_repr[1].len() <= 16,
+            "the group member summary must respect the argument ceiling: {:?}",
+            payload.args_repr[1]
+        );
+    });
+}
+
+#[test]
+fn a_short_literal_that_expands_past_the_ceiling_keeps_its_quotes() {
+    Python::attach(|py| {
+        // The input is short enough to render inline, but escaping expands it
+        // past the argument ceiling. Clipping it as plain text would cut the
+        // final escape and drop the closing quote.
+        let payload = capture_raised(py, c"raise ValueError(b'\\x00' * 12)", &tiny_limits());
+        let argument = &payload.args_repr[0];
+
+        assert!(
+            argument.len() <= 16,
+            "argument exceeded its ceiling: {argument:?}"
+        );
+        assert!(
+            argument.ends_with('\''),
+            "the clipped literal must keep its closing quote: {argument:?}"
+        );
+        assert!(
+            !argument.ends_with('x') && !argument.ends_with('\\'),
+            "the clipped literal must not end inside an escape: {argument:?}"
+        );
+    });
+}
+
+#[test]
+fn a_bytearray_apostrophe_keeps_cpython_escaping() {
+    Python::attach(|py| {
+        // CPython's `bytearray` repr selects double quotes but still escapes an
+        // apostrophe, unlike the shared `bytes` renderer.
+        let payload = capture_raised(
+            py,
+            c"raise ValueError(bytearray(b\"a'\"))",
+            &CaptureLimits::default(),
+        );
+
+        assert_eq!(
+            payload.args_repr[0], "bytearray(b\"a\\'\")",
+            "the inline bytearray must match CPython's representation"
+        );
     });
 }
 

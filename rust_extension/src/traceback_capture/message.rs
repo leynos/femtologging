@@ -34,10 +34,11 @@
 //! rather than one per argument.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple, PyType};
+use pyo3::types::{PyIterator, PyTuple};
 
 use super::attrs::as_u32;
-use super::limits::{CaptureBudget, CaptureLimits, STR_FAILURE_SENTINEL, TRUNCATION_SUFFIX};
+use super::limits::{CaptureBudget, CaptureLimits, TRUNCATION_SUFFIX};
+use super::types;
 use super::values::{self, BoundedText};
 use crate::exception_schema::PayloadTruncation;
 
@@ -61,6 +62,12 @@ pub(super) struct RenderedArgs {
     total: usize,
     /// How many argument representations raised and were skipped.
     failed: u32,
+    /// Position of the first argument whose representation failed.
+    ///
+    /// A failure in the middle of the tuple is a gap, not a suffix: rendering
+    /// the surviving texts in order would silently move later arguments into
+    /// earlier positions. The message stops at this position instead.
+    first_failed: Option<usize>,
     /// Whether any retained representation was shortened.
     pub(super) truncated: bool,
     /// First original value, used for bounded `str(value)` parity.
@@ -74,6 +81,7 @@ impl RenderedArgs {
             texts: Vec::new(),
             total: 0,
             failed: 0,
+            first_failed: None,
             truncated: false,
             first_arg: None,
         }
@@ -90,6 +98,12 @@ impl RenderedArgs {
     /// Return `true` when some argument is missing from [`Self::texts`].
     fn is_incomplete(&self) -> bool {
         self.texts.len() < self.total
+    }
+
+    /// Record that the argument at `index` produced no representation.
+    fn record_failure(&mut self, index: usize) {
+        self.failed += 1;
+        self.first_failed.get_or_insert(index);
     }
 
     /// Report argument conversions that failed while building a node message.
@@ -135,6 +149,7 @@ pub(super) fn render_args(
         texts: Vec::with_capacity(total.min(limits.max_args)),
         total,
         failed: 0,
+        first_failed: None,
         truncated: false,
         first_arg: None,
     };
@@ -142,18 +157,95 @@ pub(super) fn render_args(
         if index == 0 {
             rendered.first_arg = Some(arg.clone().unbind());
         }
+        if index == 1 && types::is_exception_group(exception.py(), exception) {
+            let members = group_members_text(&arg, limits);
+            rendered.truncated |= members.text.truncated;
+            rendered.failed = rendered.failed.saturating_add(members.failed);
+            rendered.texts.push(members.text.text);
+            continue;
+        }
         let Some(text) = values::repr_bounded(&arg, limits.max_arg_bytes) else {
-            rendered.failed += 1;
+            rendered.record_failure(index);
             continue;
         };
         if text.failed {
-            rendered.failed += 1;
+            rendered.record_failure(index);
             continue;
         }
         rendered.truncated |= text.truncated;
         rendered.texts.push(text.text);
     }
     rendered
+}
+
+/// A bounded rendering of an exception group's member sequence.
+struct GroupMembers {
+    /// The represented members, inside the per-argument byte ceiling.
+    text: BoundedText,
+    /// Members whose representation raised and was replaced by a placeholder.
+    failed: u32,
+}
+
+/// Render an exception group's member sequence without representing every member.
+///
+/// `repr` on the caller's sequence would call `__repr__` on every member,
+/// including the ones the group walker drops, and build the whole text before
+/// the byte ceiling could apply. Only the members the walker can retain are
+/// represented, with one extra position read to prove that a tail exists. A
+/// member's failing `__repr__` becomes a placeholder and is counted, so the
+/// summary never grows past the member and byte ceilings.
+fn group_members_text(value: &Bound<'_, PyAny>, limits: &CaptureLimits) -> GroupMembers {
+    let placeholder = "<exception group members unavailable>";
+    let Ok(iterator) = PyIterator::from_object(value) else {
+        return GroupMembers {
+            text: BoundedText::failure(placeholder, limits.max_arg_bytes),
+            failed: 0,
+        };
+    };
+    let probe = limits.max_group_width.saturating_add(1);
+    let mut rendered = String::from("[");
+    let mut failed = 0u32;
+    let mut kept = 0usize;
+    let mut tail = false;
+    for (index, item) in iterator.take(probe).enumerate() {
+        if index == limits.max_group_width {
+            tail = true;
+            break;
+        }
+        if kept > 0 {
+            rendered.push_str(", ");
+        }
+        let Ok(item) = item else {
+            failed = failed.saturating_add(1);
+            rendered.push_str("<member unavailable>");
+            kept += 1;
+            continue;
+        };
+        match values::repr_bounded(&item, limits.max_arg_bytes) {
+            Some(text) if !text.failed => rendered.push_str(&text.text),
+            _ => {
+                failed = failed.saturating_add(1);
+                rendered.push_str("<repr conversion failed>");
+            }
+        }
+        kept += 1;
+    }
+    if tail && kept > 0 {
+        rendered.push_str(", ");
+    }
+    if tail {
+        rendered.push_str(TRUNCATION_SUFFIX);
+    }
+    rendered.push(']');
+    let was_shortened = tail || rendered.len() > limits.max_arg_bytes;
+    let bounded = values::clamp(rendered, limits.max_arg_bytes);
+    GroupMembers {
+        text: BoundedText {
+            truncated: bounded.truncated || was_shortened,
+            ..bounded
+        },
+        failed,
+    }
 }
 
 /// Read the exception's real `args` tuple through `BaseException`'s descriptor.
@@ -193,145 +285,10 @@ pub(super) fn retain_args(
     retained
 }
 
-/// Build the exception's message, clamped to `limit` bytes.
-///
-/// `str(exception)` is called only where it is cheap or cannot be replaced. An
-/// exception with one argument has nothing to re-render beyond the
-/// representation already taken, and one whose type overrides `__str__` has a
-/// message the argument tuple cannot reproduce. Only the default multi-argument
-/// case — where `str` would mean one `__repr__` per argument — is assembled
-/// from the representations instead.
-pub(super) fn build_message(
-    exception: &Bound<'_, PyAny>,
-    args: &RenderedArgs,
-    limit: usize,
-) -> BoundedText {
-    if let Some(message) = syntax_error_message(exception, limit) {
-        return message;
-    }
-    if let Some(message) = key_error_message(exception, args, limit) {
-        return message;
-    }
-    if uses_default_str(exception).unwrap_or(false) {
-        if args.total > 1 {
-            return values::clamp(joined_args(args), limit);
-        }
-        if let Some(argument) = args.first_arg.as_ref() {
-            return values::stringify_argument(argument.bind(exception.py()), limit);
-        }
-    }
-    values::stringify(exception, limit, STR_FAILURE_SENTINEL)
-}
-
-/// Preserve the message field exposed by `TracebackException` for syntax errors.
-fn syntax_error_message(exception: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
-    let py = exception.py();
-    let syntax_error = py
-        .import("builtins")
-        .and_then(|builtins| builtins.getattr("SyntaxError"))
-        .ok()?;
-    if !exception.is_instance(&syntax_error).ok()? {
-        return None;
-    }
-    let message = exception.getattr("msg").ok()?;
-    let message = message.cast::<PyString>().ok()?;
-    Some(values::bounded_string(message, limit))
-}
-
-/// Report whether `exception` inherits `BaseException.__str__` unchanged.
-///
-/// Returns `None` when the comparison cannot be made, which leaves the caller
-/// on the `str` path — the safe direction, because the joined form is only
-/// correct for types whose `__str__` really is the default.
-fn uses_default_str(exception: &Bound<'_, PyAny>) -> Option<bool> {
-    let py = exception.py();
-    let base = py
-        .import("builtins")
-        .and_then(|builtins| builtins.getattr("BaseException"))
-        .ok()?;
-    let inherited = class_attribute(&base, "__str__")?;
-    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
-    // Identity, not equality: a subclass that copied the body but redefined the
-    // slot still counts as overriding, which is the conservative reading.
-    Some(actual.is(&inherited))
-}
-
-/// Read a class attribute through the ordinary type lookup.
-///
-/// `cls.__str__` goes through the metaclass's `__getattribute__`, which
-/// application code can override, so the value compared here could be produced
-/// by user code rather than read from the class's method-resolution order.
-/// Calling `type.__getattribute__` directly performs the MRO lookup the
-/// comparison needs.
-fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
-    let py = class.py();
-    let type_type = py.get_type::<PyType>();
-    let getattribute = type_type.getattr("__getattribute__").ok()?;
-    getattribute.call1((class, name)).ok()
-}
-
-/// Reproduce `KeyError.__str__` from the argument representations already taken.
-///
-/// CPython renders a single-argument `KeyError` as `repr(args[0])` and the
-/// multi-argument form as the default `repr(args)`. Both are exactly what
-/// [`render_args`] and [`joined_args`] already produce, so using them avoids a
-/// second trip through user code — and avoids the unbounded intermediate string
-/// that `str(a_large_key)` would build before the ceiling could apply.
-///
-/// A subclass that overrides `__str__` is left alone: its own rendering is the
-/// correct message, so the identity check fails and the caller falls back to
-/// `str`.
-fn key_error_message(
-    exception: &Bound<'_, PyAny>,
-    args: &RenderedArgs,
-    limit: usize,
-) -> Option<BoundedText> {
-    let py = exception.py();
-    let key_error = py.import("builtins").ok()?.getattr("KeyError").ok()?;
-    if !exception
-        .get_type()
-        .is_subclass(&key_error)
-        .unwrap_or(false)
-    {
-        return None;
-    }
-    let inherited = class_attribute(&key_error, "__str__")?;
-    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
-    if !actual.is(&inherited) {
-        return None;
-    }
-    if args.total > 1 {
-        return Some(values::clamp(joined_args(args), limit));
-    }
-    args.texts
-        .first()
-        .map(|text| values::clamp(text.clone(), limit))
-}
-
-/// Assemble CPython's multi-argument message from bounded representations.
-///
-/// The result mirrors the shape `BaseException.__str__` produces — the `args`
-/// tuple's `repr` — so a message stays recognisable, but it is built from the
-/// representations already retained rather than by re-running user code. An
-/// argument the count or size ceiling dropped appears as `...`, which keeps the
-/// message honest about being a prefix.
-fn joined_args(args: &RenderedArgs) -> String {
-    let mut rendered = String::from("(");
-    for (index, text) in args.texts.iter().enumerate() {
-        if index > 0 {
-            rendered.push_str(", ");
-        }
-        rendered.push_str(text);
-    }
-    if args.is_incomplete() {
-        if !args.texts.is_empty() {
-            rendered.push_str(", ");
-        }
-        rendered.push_str(TRUNCATION_SUFFIX);
-    }
-    rendered.push(')');
-    rendered
-}
+mod build;
+pub(super) use build::build_message;
+#[cfg(test)]
+use build::joined_args;
 
 #[cfg(test)]
 #[path = "message_tests.rs"]

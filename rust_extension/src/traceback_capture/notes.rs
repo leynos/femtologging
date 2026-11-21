@@ -61,6 +61,7 @@ pub(super) fn retain_notes(
     let mut visited = 0usize;
     let mut exhausted = false;
     let mut failed = false;
+    let mut tail_after_retention = false;
     for item in iterator.take(scan_limit) {
         visited += 1;
         let item = match item {
@@ -77,10 +78,10 @@ pub(super) fn retain_notes(
             continue;
         };
         if retained.len() >= limits.max_notes {
+            tail_after_retention = true;
             break;
         }
         let rendered = values::bounded_string(note, limits.max_note_bytes);
-        marker.notes_truncated |= rendered.truncated;
         if rendered.failed {
             marker.failed_elements = marker.failed_elements.saturating_add(1);
             continue;
@@ -89,10 +90,18 @@ pub(super) fn retain_notes(
             exhausted = true;
             break;
         }
+        // Only a note that survived the charge is part of the payload, so only
+        // then can its shortening be reported as a property of retained text.
+        marker.notes_truncated |= rendered.truncated;
         retained.push(rendered.text);
     }
     let omitted = known_len.map_or_else(
-        || usize::from(visited > limits.max_notes || failed || exhausted),
+        || {
+            // A tail is only proven when retention stopped because the ceiling
+            // was already full. An extra position consumed by a non-note, or
+            // by the last retained note, shows no missing note.
+            usize::from(tail_after_retention || failed || exhausted)
+        },
         |length| {
             length
                 .saturating_sub(visited)

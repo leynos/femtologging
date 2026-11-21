@@ -98,6 +98,13 @@ fn resolve<'py>(entry: &Bound<'py, PyAny>) -> Option<ChainEntry<'py>> {
 /// `traceback` is the head of a `tb_next` chain, which runs outermost first, so
 /// the frames dropped are the earliest ones and the result stays in
 /// outermost-first order.
+///
+/// The scan is bounded by the visit allowance. If it expires before the end of
+/// the chain, the innermost frames — including the throw site — were never
+/// reached, so the retained window is a tail of the *visited prefix* rather
+/// than of the traceback. That case sets
+/// [`PayloadTruncation::frames_omitted_is_lower_bound`], which tells consumers
+/// the count is a minimum and the window may not reach the failure.
 pub(super) fn collect_traceback_frames(
     py: Python<'_>,
     traceback: Option<&Bound<'_, PyAny>>,
@@ -109,10 +116,16 @@ pub(super) fn collect_traceback_frames(
         return Vec::new();
     };
     let Ok(linecache) = py.import("linecache") else {
+        // The chain exists but cannot be converted; an unmarked empty list
+        // would read as "there were no frames".
+        marker.frames_omitted = marker.frames_omitted.saturating_add(1);
+        marker.frames_omitted_is_lower_bound = true;
         return Vec::new();
     };
 
-    let mut retained = VecDeque::with_capacity(limits.max_frames);
+    // A caller-supplied ceiling can be far larger than any real chain, so the
+    // ring starts small and grows with the entries actually seen.
+    let mut retained = VecDeque::with_capacity(limits.max_frames.min(8));
     let mut omitted = 0usize;
     let mut current = Some(head.clone());
     while let Some(entry) = current {
@@ -122,8 +135,11 @@ pub(super) fn collect_traceback_frames(
         // still add to the omission count while the allowance lasts.
         if !budget.charge_visit() {
             // The tail is unvisited, so only the fact that something was left is
-            // recorded, not an exact count.
+            // recorded, not an exact count. The visit failure is reported only
+            // through `frames_omitted_is_lower_bound`; marking the budget
+            // exhausted would also skip conversion of frames already retained.
             omitted = omitted.saturating_add(1);
+            marker.frames_omitted_is_lower_bound = true;
             break;
         }
         let Some(resolved) = resolve(&entry) else {
@@ -184,7 +200,7 @@ pub(super) fn collect_stack_frames(
     let mut omitted = 0usize;
     let mut visited = 0usize;
     let mut prepared = PreparedSources::default();
-    let mut frames = Vec::with_capacity(limits.max_frames);
+    let mut frames = Vec::with_capacity(limits.max_frames.min(8));
     let mut current = Some(head);
     while let Some(entry) = current {
         let Some(resolved) = resolve(&entry) else {
@@ -196,7 +212,10 @@ pub(super) fn collect_stack_frames(
         // dropped, and the rest of the stack is left unresolved: the count
         // records that a tail was omitted without claiming how long it is.
         if visited == limits.max_frames || budget.is_exhausted() {
+            // The remaining stack was not walked, so the count proves a tail
+            // was omitted without saying how long it is.
             omitted += 1;
+            marker.frames_omitted_is_lower_bound = true;
             break;
         }
         visited += 1;

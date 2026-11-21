@@ -66,10 +66,18 @@ def _format_frame_omission(truncation: cabc.Mapping[str, object]) -> str | None:
     --------
     >>> _format_frame_omission({"frames_omitted": 2})
     '... 2 earlier frames omitted ...'
+    >>> _format_frame_omission(
+    ...     {"frames_omitted": 2, "frames_omitted_is_lower_bound": True}
+    ... )
+    '... at least 2 frames omitted ...'
 
     """
     omitted = _positive_count(truncation, "frames_omitted")
-    return f"... {omitted} earlier frames omitted ..." if omitted else None
+    if not omitted:
+        return None
+    if truncation.get("frames_omitted_is_lower_bound"):
+        return f"... at least {omitted} frames omitted ..."
+    return f"... {omitted} earlier frames omitted ..."
 
 
 def _format_chain_omissions(

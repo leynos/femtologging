@@ -46,6 +46,7 @@ fn truncation_marker_json_round_trip() {
         notes_omitted: 2,
         notes_truncated: true,
         frames_omitted: 5,
+        frames_omitted_is_lower_bound: true,
         cause_omitted: true,
         context_omitted: true,
         exceptions_omitted: 4,

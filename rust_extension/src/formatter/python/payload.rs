@@ -200,6 +200,11 @@ fn truncation_to_py(py: Python<'_>, marker: &PayloadTruncation) -> PyResult<Py<P
     set_count(&dict, "notes_omitted", marker.notes_omitted)?;
     set_flag(&dict, "notes_truncated", marker.notes_truncated)?;
     set_count(&dict, "frames_omitted", marker.frames_omitted)?;
+    set_flag(
+        &dict,
+        "frames_omitted_is_lower_bound",
+        marker.frames_omitted_is_lower_bound,
+    )?;
     set_flag(&dict, "cause_omitted", marker.cause_omitted)?;
     set_flag(&dict, "context_omitted", marker.context_omitted)?;
     set_count(&dict, "exceptions_omitted", marker.exceptions_omitted)?;

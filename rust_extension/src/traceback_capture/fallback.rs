@@ -34,6 +34,14 @@ pub(super) fn minimal_payload(
             let _ = PyErr::take(exception.py());
             (TYPE_PLACEHOLDER.to_string(), None)
         });
+    // Both name lookups can fail without raising: a metaclass may hide the
+    // attributes. An empty identity says nothing, so substitute the placeholder
+    // before the byte budget is charged and let a zero-byte limit still empty it.
+    let type_name = if type_name.is_empty() {
+        TYPE_PLACEHOLDER.to_string()
+    } else {
+        type_name
+    };
     let (type_name, _) = budget.retain_text(type_name);
     let module = module.and_then(|module| {
         let (module, _) = budget.retain_text(module);

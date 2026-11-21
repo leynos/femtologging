@@ -103,6 +103,9 @@ class PayloadTruncation(typ.TypedDict, total=False):
         Whether any retained note was shortened.
     frames_omitted : int, optional
         Number of stack frames that were dropped.
+    frames_omitted_is_lower_bound : bool, optional
+        Whether ``frames_omitted`` is a lower bound rather than an exact
+        count, because the walk stopped before the end of the chain.
     cause_omitted : bool, optional
         Whether an exception cause link was dropped.
     context_omitted : bool, optional
@@ -124,6 +127,7 @@ class PayloadTruncation(typ.TypedDict, total=False):
     notes_omitted: int
     notes_truncated: bool
     frames_omitted: int
+    frames_omitted_is_lower_bound: bool
     cause_omitted: bool
     context_omitted: bool
     exceptions_omitted: int

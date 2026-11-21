@@ -86,31 +86,6 @@ macro_rules! assert_chained_exception_structure {
 }
 
 #[rstest]
-fn capture_exception_without_notes_returns_empty_notes() {
-    // Standard exceptions without __notes__ should return empty notes vector.
-    // This tests the get_optional_attr degradation path for missing attributes.
-    Python::attach(|py| {
-        let exc = create_value_error(py, "test error").expect("exception should build");
-
-        // Do not assert CPython internals/version-specific defaults for __notes__.
-        // Only assert the capture output degrades to an empty notes vector.
-        let payload = capture_exception(py, &exc)
-            .expect("capture_exception should succeed")
-            .expect("payload should be Some");
-
-        assert!(
-            payload.notes.is_empty(),
-            "notes should be empty when __notes__ is missing/None/empty"
-        );
-        assert_eq!(payload.type_name, "ValueError");
-        assert!(
-            payload.truncation.is_none(),
-            "a missing __notes__ attribute is not a capture failure"
-        );
-    });
-}
-
-#[rstest]
 fn capture_exception_with_empty_args_tuple() {
     // Exception with empty args tuple should produce empty args_repr.
     Python::attach(|py| {
@@ -182,71 +157,6 @@ except ValueError as e:
             .expect("payload should be Some");
 
         assert_chained_exception_structure!(&payload, "RuntimeError", "ValueError");
-    });
-}
-
-#[rstest]
-fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
-    // Exceptions with a non-iterable __notes__ attribute should degrade gracefully.
-    // This tests the type-mismatch degradation path for __notes__.
-    Python::attach(|py| {
-        let exc = create_value_error(py, "test error").expect("exception should build");
-
-        // Set a malformed, non-iterable __notes__ value (integer instead of list)
-        exc.setattr("__notes__", 123_i32)
-            .expect("setting non-iterable __notes__ should succeed at Python level");
-
-        let payload = capture_exception(py, &exc)
-            .expect("capture_exception should succeed even with malformed __notes__")
-            .expect("payload should be Some");
-
-        // For non-iterable __notes__, we expect graceful degradation to empty notes
-        assert!(
-            payload.notes.is_empty(),
-            "expected empty notes for non-iterable __notes__, got: {:?}",
-            payload.notes
-        );
-        assert_eq!(payload.type_name, "ValueError");
-    });
-}
-
-#[rstest]
-fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
-    // Exceptions with __notes__ containing non-string elements should still
-    // be captured without failing, degrading notes content as needed.
-    // Per ADR "partial extraction of collections" rule: non-string entries are
-    // dropped/ignored but valid strings are preserved.
-    Python::attach(|py| {
-        let exc = create_value_error(py, "test error").expect("exception should build");
-
-        // Create a list with mixed types: valid string, integer, bytes, None
-        let code = c"
-notes_list = ['valid note', 42, b'bytes note', None]
-";
-        let globals = PyDict::new(py);
-        py.run(code, Some(&globals), None)
-            .expect("code to create notes list should succeed");
-        let notes_list = globals
-            .get_item("notes_list")
-            .expect("get_item should not fail")
-            .expect("notes_list should exist");
-
-        exc.setattr("__notes__", notes_list)
-            .expect("setting list-valued __notes__ should succeed");
-
-        let payload = capture_exception(py, &exc)
-            .expect("capture_exception should succeed even with malformed note entries")
-            .expect("payload should be Some");
-
-        assert_eq!(payload.type_name, "ValueError");
-
-        // Per ADR "partial extraction of collections" rule: only valid string
-        // entries are preserved; non-strings are skipped.
-        assert_eq!(
-            payload.notes,
-            vec!["valid note"],
-            "only valid string notes should survive; non-strings should be skipped"
-        );
     });
 }
 
@@ -339,23 +249,34 @@ fn a_lookalike_traceback_yields_no_frames() {
         );
 
         let exc_type = exc_value.get_type();
-        let real_frame = exc_value
-            .getattr("__traceback__")
-            .expect("the exception should carry a traceback")
-            .getattr("tb_frame")
-            .expect("the traceback should describe a frame");
-        let fake = py
-            .eval(
-                c"type('Fake', (), {'tb_frame': None, 'tb_next': None})()",
-                None,
-                None,
-            )
+        // The lookalike's `tb_frame` is a property that counts reads, so a walker
+        // that duck-typed the object would be caught even if it ignored the
+        // missing `tb_lineno` and `tb_lasti` attributes.
+        let globals = PyDict::new(py);
+        py.run(
+            c"
+reads = 0
+
+class Fake:
+    @property
+    def tb_frame(self):
+        global reads
+        reads += 1
+        return None
+
+    tb_next = None
+",
+            Some(&globals),
+            None,
+        )
+        .expect("fake traceback class should build");
+        let fake = globals
+            .get_item("Fake")
+            .expect("class lookup should succeed")
+            .expect("class should be defined")
+            .call0()
             .expect("fake traceback should build");
-        // Give the lookalike a real frame, so only its non-traceback type can
-        // make capture reject it.
-        fake.setattr("tb_frame", real_frame)
-            .expect("the lookalike should accept a frame");
-        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value, fake.as_any()])
+        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value, &fake])
             .expect("tuple creation should succeed");
 
         let payload = capture_exception(py, tuple.as_any())
@@ -374,6 +295,16 @@ fn a_lookalike_traceback_yields_no_frames() {
             payload.truncation.is_none(),
             "a lookalike traceback should not be reported as omitted: {:?}",
             payload.truncation
+        );
+        let reads: usize = globals
+            .get_item("reads")
+            .expect("counter lookup should succeed")
+            .expect("counter should be defined")
+            .extract()
+            .expect("counter should be an integer");
+        assert_eq!(
+            reads, 0,
+            "type rejection must happen before any traceback attribute is read"
         );
     });
 }
