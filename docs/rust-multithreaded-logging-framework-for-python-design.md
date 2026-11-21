@@ -754,13 +754,15 @@ the right moment.
 
 `FemtoLogger.flush_handlers()` reaches the handler behind the Python wrapper,
 not only the dispatch shard. The calling thread first waits for its records to
-drain, then flushes every configured handler on that same thread. A built-in
-handler is flushed through its native implementation with the GIL detached; a
-user-defined handler is asked to flush through its own `flush` method, which
-lets a buffering handler persist its records. Every handler is flushed even
-when an earlier one fails, and the results are combined. A missing or
-non-callable `flush` counts as success, a `None` return counts as success, any
-other return value is read for its truthiness, and a raised exception is
+drain, then enqueues a barrier job that makes the shard worker flush every
+configured handler before it acknowledges. The handler callbacks therefore run
+on the shard worker, not on the calling thread. A built-in handler is flushed
+through its native implementation; a user-defined handler is asked to flush
+through its own `flush` method, which lets a buffering handler persist its
+records and runs on the worker with the interpreter attached. Every handler is
+flushed even when an earlier one fails, and the results are combined. A missing
+or non-callable `flush` counts as success, a `None` return counts as success,
+any other return value is read for its truthiness, and a raised exception is
 reported as failure. The warning gives a bounded failure category and, except
 for a user-defined handler's own flush failure, whose fixed message already
 identifies it as custom, the handler kind; the exception text is never recorded.
@@ -1625,12 +1627,13 @@ stage. The method returns `True` when the worker acknowledges the marker in
 time and every handler flush succeeds, and `False` when dispatch resolution,
 marker enqueue, acknowledgement, or a handler flush fails.
 
-`flush_configured_handlers()` copies the handler list under the read guard,
-releases the guard, and then calls `flush()` on every entry. A failing handler
-does not short-circuit the loop: later handlers are still flushed, and the
-method returns the conjunction of the individual results. The snapshot
-preserves attachment order, and because one handler's `flush()` can change
-state a later handler observes, the aggregate result can depend on that order.
+`send_handler_snapshot_until()` copies the handler list under the read guard
+and releases the guard before the snapshot is sent to the worker, which then
+calls `flush_until()` on every entry. A failing handler does not short-circuit
+the loop: later handlers are still flushed, and the sequence reports the first
+failure. The snapshot preserves attachment order, and because one handler's
+`flush()` can change state a later handler observes, the aggregate result can
+depend on that order.
 
 For `log::Log::flush`, `FemtoLogAdapter` snapshots the registered logger
 references under the `MANAGER` read guard, releases the guard, then detaches

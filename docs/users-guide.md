@@ -638,9 +638,12 @@ socket_handler = (
   timeout covers both the wait for queue space and the acknowledgement, so a
   flush returns `False` once that single budget is spent rather than waiting a
   second full timeout for the worker to answer. It returns `False` when the
-  handler is closed, the worker channel is gone, or the budget expires. Python
-  `flush()` releases the GIL while it waits, so other Python threads keep
-  running during a flush that blocks on a full queue or a slow collector.
+  handler is closed, the worker channel is gone, the connection fails to flush
+  with an I/O error, the marker is discarded during shutdown, or the budget
+  expires. An acknowledgement therefore has to report a successful flush to
+  count, not merely arrive. Python `flush()` releases the GIL while it waits,
+  so other Python threads keep running during a flush that blocks on a full
+  queue or a slow collector.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -775,17 +778,20 @@ avoid raising from `handle`.
 
 `FemtoLogger.flush_handlers()` also calls the handler's `flush` method when it
 has one, so a custom handler that buffers records can persist them. The call
-runs on the thread that called `flush_handlers()`, after the logger's queued
-records have been dispatched, and every registered handler is flushed even when
-an earlier one fails. A missing or non-callable `flush` counts as success, so
-handlers without one need no change. A `flush` that returns `None`, as
-`logging.Handler.flush` does, has flushed without complaint; every other result
-succeeds only when it is truthy, so `False` or `0` reports failure. An
-exception raised by `flush` logs a bounded warning that omits the exception
-text and makes `flush_handlers()` return `False`. The calling thread releases
-the GIL while it waits for queued records and native handlers. A custom `flush`
-runs with the interpreter attached. Whether other Python threads can run while
-it blocks depends on the blocking operation.
+blocks the thread that invoked `flush_handlers()` until the dispatch worker has
+handled the logger's queued records and then run `flush` on every registered
+handler; the handler callbacks themselves run on the dispatch worker, not on
+the invoking thread, so a custom `flush` must not rely on caller-thread state
+such as a thread-local or an enclosing interpreter frame. Every registered
+handler is flushed even when an earlier one fails. A missing or non-callable
+`flush` counts as success, so handlers without one need no change. A `flush`
+that returns `None`, as `logging.Handler.flush` does, has flushed without
+complaint; every other result succeeds only when it is truthy, so `False` or
+`0` reports failure. An exception raised by `flush` logs a bounded warning that
+omits the exception text and makes `flush_handlers()` return `False`. The
+calling thread releases the GIL while it waits for queued records and native
+handlers. A custom `flush` runs with the interpreter attached. Whether other
+Python threads can run while it blocks depends on the blocking operation.
 
 #### Handler stability contract
 
