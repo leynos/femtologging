@@ -41,9 +41,14 @@ use drain::{discard_rest, warn_discarded};
 pub enum SocketCommand {
     /// Carry one record for serialization and socket delivery.
     Record(FemtoLogRecord),
-    /// Flush the active connection, then acknowledge with any drop count the
-    /// caller took from the warner.
-    Flush(Sender<()>, Option<u64>),
+    /// Flush the active connection, then acknowledge with the flush outcome
+    /// and any drop count the caller took from the warner.
+    ///
+    /// The outcome travels back so a caller waiting on this marker can tell a
+    /// confirmed flush from a connection that failed. Acknowledging both as
+    /// success would let a barrier flush report records persisted that the
+    /// socket rejected.
+    Flush(Sender<io::Result<()>>, Option<u64>),
     /// Begin shutdown and acknowledge after worker cleanup.
     Shutdown(Sender<()>),
 }
@@ -215,27 +220,37 @@ impl Worker {
     /// The drop count the handler moved here is reported before the
     /// acknowledgement is sent, so a caller that observes the flush succeed
     /// cannot do so before the report it carried has been emitted. The
-    /// connection warning stays after the acknowledgement: it describes the
-    /// flush that just happened rather than reporting drops the caller handed
-    /// over.
-    fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
-        let success = self.flush_connection();
+    /// acknowledgement itself carries the flush outcome: an I/O failure is
+    /// reported to the caller rather than acknowledged as a successful flush.
+    /// The connection warning stays after the acknowledgement because it
+    /// describes the flush that just happened rather than reporting drops the
+    /// caller handed over.
+    fn handle_flush_command(&mut self, ack: Sender<io::Result<()>>, pending_drops: Option<u64>) {
+        let had_connection = self.connection.is_some();
+        let flush_result = self.flush_connection();
+        let flush_failed = flush_result.is_err();
         report_drops_then_acknowledge(
             pending_drops,
             |count| warn!("FemtoSocketHandler dropped {count} records in the last interval"),
             || {
-                let _ = ack.send(());
+                // Ignore send error: a caller that stopped waiting has nothing
+                // left to learn from the outcome.
+                let _ = ack.send(flush_result);
             },
         );
-        if !success {
+        if flush_failed {
+            warn!("FemtoSocketHandler flush failed; the connection was dropped");
+        } else if !had_connection {
             warn!("FemtoSocketHandler flush requested without active connection");
         }
     }
 
     /// Flush the active connection within the remaining write budget.
     ///
-    /// Example: no active connection returns `false` without network I/O.
-    fn flush_connection(&mut self) -> bool {
+    /// A handler with no active connection has nothing buffered to flush, so
+    /// it reports success without network I/O; the caller still warns that the
+    /// flush had no connection to confirm.
+    fn flush_connection(&mut self) -> io::Result<()> {
         match self.connection.as_mut() {
             Some(conn) => {
                 let result = self.signal.clamp(self.config.write_timeout).map_or_else(
@@ -245,9 +260,9 @@ impl Worker {
                 if result.is_err() {
                     self.connection = None;
                 }
-                result.is_ok()
+                result
             }
-            None => false,
+            None => Ok(()),
         }
     }
 

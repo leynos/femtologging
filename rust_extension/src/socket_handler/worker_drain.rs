@@ -4,6 +4,8 @@
 //! transport, so the worker can discard a backlog without writing to a
 //! collector that has stopped reading.
 
+use std::io;
+
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use log::warn;
 
@@ -13,9 +15,10 @@ use super::SocketCommand;
 
 /// Throw away everything left in the queue, without touching the network.
 ///
-/// Returns how many records were discarded. Flush senders receive their
-/// acknowledgement immediately; shutdown senders are saved for the worker's
-/// final action, after it has finished all remaining cleanup.
+/// Returns how many records were discarded. A flush sender is answered
+/// immediately with a failure, because its marker was discarded rather than
+/// written; shutdown senders are saved for the worker's final action, after it
+/// has finished all remaining cleanup.
 pub(super) fn discard_rest(
     rx: &Receiver<SocketCommand>,
     shutdown_acks: &mut Vec<Sender<()>>,
@@ -31,7 +34,13 @@ pub(super) fn discard_rest(
                         warn!("FemtoSocketHandler dropped {count} records in the last interval")
                     },
                     || {
-                        let _ = ack.send(());
+                        // The backlog is being discarded rather than written,
+                        // so this marker was not flushed. Report that rather
+                        // than confirm a flush that never touched the socket.
+                        let _ = ack.send(Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "socket worker discarded the flush marker during shutdown",
+                        )));
                     },
                 );
             }

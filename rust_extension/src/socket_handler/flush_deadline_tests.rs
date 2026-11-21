@@ -4,10 +4,12 @@
 //! worker cannot answer a marker, and each asserts a property of the caller's
 //! budget rather than of the network: an acknowledgement whose budget was spent
 //! on admission returns at once, and a marker refused by a full queue hands its
-//! deferred drop count back to the warner. One test supplies a worker that does
-//! answer, and shows that an answer the caller only observes after the deadline
-//! is refused rather than counted as confirmed.
+//! deferred drop count back to the warner. The remaining tests supply a worker
+//! that does answer: one shows that an answer the caller only observes after
+//! the deadline is refused, and two show that the outcome the answer carries —
+//! success or an I/O failure — decides the flush even when it arrives in time.
 
+use std::io;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -69,12 +71,31 @@ fn handler_with_unread_queue(
 /// which is what separates the lateness rule from an ordinary timeout: the
 /// caller really receives an acknowledgement and still has to refuse it.
 fn handler_with_answering_worker(capacity: usize, flush_timeout: Duration) -> FemtoSocketHandler {
+    handler_with_worker_reporting(capacity, flush_timeout, true)
+}
+
+/// Build a handler whose worker reports the requested outcome at once.
+///
+/// `is_successful` selects whether the acknowledgement carries a confirmed
+/// flush or the I/O failure a real worker reports when `flush()` fails. The
+/// answer is ready before the caller's receive either way, so the tests using
+/// this helper decide on the outcome alone rather than on lateness.
+fn handler_with_worker_reporting(
+    capacity: usize,
+    flush_timeout: Duration,
+    is_successful: bool,
+) -> FemtoSocketHandler {
     let (tx, rx) = bounded(capacity);
     let worker = thread::spawn(move || {
         // Any other command, such as the shutdown request, ends the loop; the
         // handler treats the closed channel as a worker that has already left.
         while let Ok(SocketCommand::Flush(ack, _pending_drops)) = rx.recv() {
-            let _ = ack.send(());
+            let outcome = if is_successful {
+                Ok(())
+            } else {
+                Err(io::Error::other("socket flush failed in the test worker"))
+            };
+            let _ = ack.send(outcome);
         }
     });
     let signal = Arc::new(ShutdownSignal::new());
@@ -84,6 +105,52 @@ fn handler_with_answering_worker(capacity: usize, flush_timeout: Duration) -> Fe
         flush_timeout,
         RateLimitedWarner::new(Duration::from_secs(1)),
     )
+}
+
+/// A successful outcome received before the deadline confirms the flush, so the
+/// failure test below is about the outcome and not about a missing answer.
+#[test]
+fn a_successful_flush_acknowledgement_received_in_time_confirms() {
+    let handler = handler_with_answering_worker(2, Duration::from_secs(1));
+
+    let mut clock = ScriptedClock::new(&[0, 0, 0, 0]);
+    let deadline = clock.deadline();
+    let confirmed = handler.flush_by_at(deadline, &mut || clock.now());
+
+    assert!(
+        confirmed,
+        "a confirmed flush received before the deadline must succeed"
+    );
+
+    let mut handler = handler;
+    handler.close();
+}
+
+/// An I/O failure received before the deadline must not confirm the flush.
+///
+/// The acknowledgement is genuinely ready when the receive begins, so this
+/// separates the outcome rule from the lateness rule: an in-time answer still
+/// has to report a successful flush to count.
+#[test]
+fn a_failed_flush_acknowledgement_received_in_time_does_not_confirm() {
+    let handler = handler_with_worker_reporting(2, Duration::from_secs(1), false);
+
+    let mut clock = ScriptedClock::new(&[0, 0, 0, 0]);
+    let deadline = clock.deadline();
+    let confirmed = handler.flush_by_at(deadline, &mut || clock.now());
+
+    assert!(
+        !confirmed,
+        "an I/O failure reported before the deadline must not confirm the flush"
+    );
+    assert_eq!(
+        clock.samples(),
+        4,
+        "the outcome must be checked rather than inferred from a refused wait"
+    );
+
+    let mut handler = handler;
+    handler.close();
 }
 
 /// An answer the caller only observes after the deadline must not confirm the

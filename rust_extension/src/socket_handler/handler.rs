@@ -118,6 +118,11 @@ impl FemtoSocketHandler {
     /// Production passes [`Instant::now`] here; tests pass a scripted source,
     /// so a stalled worker queue can be shown to consume exactly the budget
     /// the caller supplied rather than a fresh copy for each wait.
+    ///
+    /// The worker reports its own flush outcome on the acknowledgement, so an
+    /// I/O failure is not confirmed even when the answer arrives in time. A
+    /// marker discarded at shutdown reports the same way: the caller asked for
+    /// records to reach the collector, and they did not.
     fn flush_by_at(&self, deadline: Instant, now: &mut dyn FnMut() -> Instant) -> bool {
         // The sender is checked before the cap is formed: a closed handler
         // must not consume any of the caller's budget deciding it has nowhere
@@ -140,7 +145,7 @@ impl FemtoSocketHandler {
                 Some(move |budget| ack_rx.recv_timeout(budget).ok())
             },
         );
-        matches!(outcome, Some(Ok(())))
+        matches!(outcome, Some(Ok(Ok(()))))
     }
 
     /// Close the handler, waiting for the worker only while it is answering.
