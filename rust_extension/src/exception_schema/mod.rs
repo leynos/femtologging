@@ -113,16 +113,23 @@ pub const EXCEPTION_SCHEMA_VERSION: u16 = 1;
 /// Maximum nesting depth that recursive schema version validation traverses.
 ///
 /// The root payload is at depth 0, and each `cause`, `context`, or
-/// exception-group edge adds one. The limit matches the default recursion
-/// limit of `serde_json`, so a payload that can be deserialized from JSON can
-/// also be validated. It bounds validation work; it is not a parsing limit.
-pub const MAX_EXCEPTION_PAYLOAD_DEPTH: usize = 128;
+/// exception-group edge adds one. The limit matches the default
+/// `max_exception_depth` of the recursive frame filter, so validation accepts
+/// by depth every payload tree that processing accepts. It bounds validation
+/// work; it is not a parsing limit.
+///
+/// Nesting depth in a serialized document and payload-edge depth are not
+/// equivalent, so a payload that parses is not necessarily one this limit
+/// accepts; the node limit can also reject a wide tree that parses.
+pub const MAX_EXCEPTION_PAYLOAD_DEPTH: usize = 1_000;
 
 /// Maximum number of payload nodes that recursive validation visits.
 ///
 /// The root counts as one node, as does every nested `cause`, `context`, and
-/// exception-group member. It bounds validation work; it is not a parsing
-/// limit.
+/// exception-group member. The limit matches the default
+/// `max_exception_nodes` of the recursive frame filter. It bounds validation
+/// work; it is not a parsing limit, so a wide payload tree can deserialize and
+/// still exceed this bound.
 pub const MAX_EXCEPTION_PAYLOAD_NODES: usize = 10_000;
 
 /// A single frame in a Python stack trace.

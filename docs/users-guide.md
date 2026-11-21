@@ -249,11 +249,13 @@ is the one reported.
 A mismatch below the root is reported as `SchemaVersionError::Nested`, which
 carries a dot-separated path to the failing payload, such as
 `cause.exceptions[3].context`. The root payload is at depth 0, and each child
-edge adds one. The walk stops at `MAX_EXCEPTION_PAYLOAD_DEPTH` (128, matching
-the default recursion limit of `serde_json`) and at
-`MAX_EXCEPTION_PAYLOAD_NODES` (10,000) nodes. Exceeding either bound reports
-`TreeTooDeep` or `TreeTooLarge`. These limits bound validation work; they are
-not parsing limits.
+edge adds one. The walk stops at `MAX_EXCEPTION_PAYLOAD_DEPTH` (1,000, matching
+the frame filter's default `max_exception_depth`) and at
+`MAX_EXCEPTION_PAYLOAD_NODES` (10,000, matching its default
+`max_exception_nodes`). Exceeding either bound reports `TreeTooDeep` or
+`TreeTooLarge`. These limits bound validation work; they are not parsing
+limits, so a payload tree that deserializes can still be rejected by either
+bound.
 
 Rust-side validation returns these variants from `SchemaVersionError`:
 
@@ -264,7 +266,10 @@ Rust-side validation returns these variants from `SchemaVersionError`:
 - `TreeTooLarge { max_nodes }`
 
 `SchemaVersionError` is `#[non_exhaustive]`, so matching it requires a wildcard
-arm. Use these variants to choose explicit behaviour when versions mismatch:
+arm. This breaks downstream code that matched the original two variants
+exhaustively; the [v0.2.0 migration guide](v0-2-0-migration-guide.md) records
+the migration. Use these variants to choose explicit behaviour when versions
+mismatch:
 
 <!-- tested-example: process-payload-schema-versioning -->
 ```rust

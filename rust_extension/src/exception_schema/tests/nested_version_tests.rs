@@ -375,3 +375,22 @@ fn a_tree_past_the_node_limit_reports_the_limit() {
         other => panic!("expected TreeTooLarge, got {other:?}"),
     }
 }
+
+/// Validation and recursive frame filtering must agree on their bounds.
+///
+/// A payload the frame filter processes should not be rejected by schema
+/// validation for exceeding a traversal limit the filter would allow.
+#[cfg(feature = "python")]
+#[rstest]
+fn limits_match_recursive_frame_processing() {
+    use crate::frame_filter_py::{DEFAULT_MAX_EXCEPTION_DEPTH, DEFAULT_MAX_EXCEPTION_NODES};
+
+    assert_eq!(
+        MAX_EXCEPTION_PAYLOAD_DEPTH, DEFAULT_MAX_EXCEPTION_DEPTH,
+        "validation depth and frame-filter depth must stay aligned"
+    );
+    assert_eq!(
+        MAX_EXCEPTION_PAYLOAD_NODES, DEFAULT_MAX_EXCEPTION_NODES,
+        "validation and frame-filter node limits must stay aligned"
+    );
+}
