@@ -275,15 +275,12 @@ impl PyTimedRotatingFileHandler {
     /// mapping delivery failures to a Python value error.
     ///
     /// The wait for queue capacity runs with the interpreter lock released, so
-    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
-    /// the "Concurrency" section of the user guide for the full contract.
-    ///
-    /// PyO3 calls this with the interpreter lock held, so no caller supplies a
-    /// token: the body attaches with `Python::attach(...)` to obtain one and
-    /// detaches around the enqueue.
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. PyO3
+    /// supplies the interpreter token, as it does for `flush` and `close`, and
+    /// the enqueue runs detached from it. See the "Concurrency" section of the
+    /// user guide for the full contract.
     #[pyo3(name = "handle")]
-    // @codescene(disable:"Excess Number of Function Arguments") Stable Python API signature (2026-10-28).
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
         // Parsing raises `ValueError`, so it must happen while the lock is
         // still held; only the enqueue below can wait on the worker.
         let parsed_level = FemtoLevel::parse_py(level)?;
@@ -291,7 +288,7 @@ impl PyTimedRotatingFileHandler {
         // Rotation happens on the worker, so the producer only enqueues and
         // the closure touches no Python object.
         let (result, timer) = WaitScope::start(self.inner.inner.diagnostics())
-            .run(|| Python::attach(|py| py.detach(|| self.inner.inner.enqueue(record))));
+            .run(|| py.detach(|| self.inner.inner.enqueue(record)));
         self.inner.inner.record_wait(
             timer,
             WaitSite::new("handler_handle", "timed_rotating"),

@@ -68,15 +68,28 @@ impl RotationConfig {
     }
 }
 
-// Pins the constructors as `const fn`: this initializer is evaluated at
+// Pins the constructors as `const fn`: these initializers are evaluated at
 // compile time, so dropping the qualifier breaks the build. The builder
-// setters cannot be pinned this way because they consume and rebuild owned,
-// non-const handler state; their Python surface is covered by
-// `tests/ui/pass/pyo3_signature.rs` and the behavioural suite.
+// setters are pinned by `tests/ui/pass/rotation_builder_const.rs`, and their
+// Python surface by `tests/ui/pass/pyo3_builder_shapes.rs`. The strategy's
+// constructor is crate-private, so it is pinned here; the path arrives as a
+// parameter because constructing one cannot run in a const item.
 const _: () = {
     assert!(RotationConfig::new(1, 0).max_bytes == 1);
     assert!(RotationConfig::disabled().backup_count == 0);
 };
+
+/// Calls [`FileRotationStrategy::new`] in const context, so dropping its
+/// `const` qualifier breaks the build.
+const fn strategy_with(
+    path: std::path::PathBuf,
+    max_bytes: u64,
+    backup_count: usize,
+) -> FileRotationStrategy {
+    FileRotationStrategy::new(path, max_bytes, backup_count)
+}
+
+const _: fn(std::path::PathBuf, u64, usize) -> FileRotationStrategy = strategy_with;
 
 impl Default for RotationConfig {
     fn default() -> Self {

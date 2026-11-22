@@ -1,0 +1,26 @@
+error: unused return value of `RotatingFileHandlerBuilder::with_max_bytes` that must be used
+  --> tests/ui/fail/unused_rotation_setter.rs:12:5
+   |
+12 |     RotatingFileHandlerBuilder::new("unused_max_bytes.log").with_max_bytes(1024);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/fail/unused_rotation_setter.rs:7:9
+   |
+ 7 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+12 |     let _ = RotatingFileHandlerBuilder::new("unused_max_bytes.log").with_max_bytes(1024);
+   |     +++++++
+
+error: unused return value of `TimedRotatingFileHandlerBuilder::with_backup_count` that must be used
+  --> tests/ui/fail/unused_rotation_setter.rs:13:5
+   |
+13 |     TimedRotatingFileHandlerBuilder::new("unused_backup_count.log").with_backup_count(3);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+13 |     let _ = TimedRotatingFileHandlerBuilder::new("unused_backup_count.log").with_backup_count(3);
+   |     +++++++
