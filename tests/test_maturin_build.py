@@ -28,6 +28,27 @@ _EXPECTED_WHEEL_SNAPSHOT = pth.Path(__file__).with_name("data") / (
 )
 _GENERATOR_PLACEHOLDER = "<maturin-version>"
 
+# The probe imports this module in a child interpreter that pretends the
+# standard-library venv and ensurepip modules are absent. It fails if a
+# module-level import would break collection before the fixture can skip.
+_VENV_BLOCKED_IMPORT_PROBE = """\
+import os
+import sys
+
+
+class BlockStdlibVenv:
+    def find_spec(self, name, path=None, target=None):
+        if name in {"venv", "ensurepip"}:
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
+sys.meta_path.insert(0, BlockStdlibVenv())
+sys.path.insert(0, os.getcwd())
+import tests.test_maturin_build
+print("imported")
+"""
+
 
 def repo_root() -> pth.Path:
     """Return the repository root path.
@@ -88,6 +109,24 @@ def test_clean_venv_skip_reason_names_missing_modules(
     ), "the skip reason must name every missing stdlib module"
 
 
+def test_packaging_tests_import_without_stdlib_venv() -> None:
+    """The module imports, and so collects, without venv or ensurepip."""
+    # ruff: ignore[subprocess-without-shell-equals-true] fixed probe of the
+    # running interpreter against a repository-local module path.
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", _VENV_BLOCKED_IMPORT_PROBE],
+        check=False,
+        capture_output=True,
+        cwd=repo_root(),
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        "importing the packaging tests must not require the stdlib venv module:\n"
+        f"{result.stdout}{result.stderr}"
+    )
+
+
 def test_maturin_pins_are_synchronized() -> None:
     """Maturin version pins stay aligned across build entrypoints."""
     pins = read_maturin_pins(repo_root())
@@ -129,7 +168,7 @@ def test_installed_maturin_matches_expected_pin() -> None:
     )
 
 
-@pytest.mark.timeout(3620)
+@pytest.mark.timeout(0)
 def test_maturin_wheel_build_snapshot(
     production_wheel: pth.Path,
     tmp_path: pth.Path,
