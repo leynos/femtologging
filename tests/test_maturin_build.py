@@ -8,15 +8,10 @@ import pathlib as pth
 import subprocess  # ruff: ignore[suspicious-subprocess-import] fixed local wheel probe.
 import sys
 import tomllib
-import venv
 
 import pytest
 
-from tests.clean_wheel_env import (
-    assert_wheel_imports_in_clean_env,
-    clean_venv_available,
-    missing_clean_venv_modules,
-)
+from tests import clean_wheel_env
 from tests.maturin_compat import (
     build_native_wheel_artifact,
     read_expected_maturin_version,
@@ -71,14 +66,26 @@ def production_wheel(tmp_path_factory: pytest.TempPathFactory) -> pth.Path:
         pytest.skip("maturin compatibility snapshot stops at Python 3.14")
     # The clean-environment smoke test needs a stdlib venv, so skip before
     # paying for the release build when the interpreter cannot provide one.
-    if not clean_venv_available():
-        pytest.skip(
-            "clean wheel smoke test requires missing stdlib modules: "
-            + ", ".join(missing_clean_venv_modules())
-        )
+    # Importing ``venv`` at module scope would instead break collection.
+    skip_reason = clean_wheel_env.clean_venv_skip_reason()
+    if skip_reason is not None:
+        pytest.skip(skip_reason)
     return build_native_wheel_artifact(
         repo_root(), tmp_path_factory.mktemp("production-wheel")
     )
+
+
+def test_clean_venv_skip_reason_names_missing_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing venv or ensurepip produces a skip reason naming both modules."""
+    monkeypatch.setattr(clean_wheel_env, "_find_spec", lambda name: None)
+    assert clean_wheel_env.clean_venv_available() is False, (
+        "simulated absent stdlib modules must make the clean venv unavailable"
+    )
+    assert clean_wheel_env.clean_venv_skip_reason() == (
+        "clean wheel smoke test requires missing stdlib modules: venv, ensurepip"
+    ), "the skip reason must name every missing stdlib module"
 
 
 def test_maturin_pins_are_synchronized() -> None:
@@ -147,7 +154,9 @@ def test_maturin_wheel_build_snapshot(
         "built wheel metadata and layout must match the recorded manifest in "
         f"{_EXPECTED_WHEEL_SNAPSHOT.name}"
     )
-    assert_wheel_imports_in_clean_env(production_wheel, tmp_path / "clean-env")
+    clean_wheel_env.assert_wheel_imports_in_clean_env(
+        production_wheel, tmp_path / "clean-env"
+    )
 
 
 @pytest.mark.timeout(3620)
@@ -157,7 +166,10 @@ def test_release_wheel_does_not_expose_timed_rotation_hooks(
 ) -> None:
     """A fresh environment imports a production wheel without test hooks."""
     environment = tmp_path / "venv"
-    venv.EnvBuilder(with_pip=True).create(environment)
+    venv_module = pytest.importorskip(
+        "venv", reason="the release wheel probe needs the stdlib venv module"
+    )
+    venv_module.EnvBuilder(with_pip=True).create(environment)
     python = environment / (
         "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
     )

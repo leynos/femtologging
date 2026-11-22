@@ -75,13 +75,14 @@ for module in (femtologging, rust_extension):
 """
 
 
+def _find_spec(name: str) -> object | None:
+    """Return the import specification for *name*, if it is importable."""
+    return importlib.util.find_spec(name)
+
+
 def missing_clean_venv_modules() -> tuple[str, ...]:
     """Return the stdlib modules needed to create a pip-equipped virtualenv."""
-    return tuple(
-        name
-        for name in _REQUIRED_VENV_MODULES
-        if importlib.util.find_spec(name) is None
-    )
+    return tuple(name for name in _REQUIRED_VENV_MODULES if _find_spec(name) is None)
 
 
 def clean_venv_available() -> bool:
@@ -99,6 +100,30 @@ def clean_venv_available() -> bool:
 
     """
     return not missing_clean_venv_modules()
+
+
+def clean_venv_skip_reason() -> str | None:
+    """Return why a clean virtual environment cannot be created, if it cannot.
+
+    Returns
+    -------
+    str | None
+        A skip message naming every missing standard-library module, or
+        ``None`` when ``venv`` and ``ensurepip`` are both importable.
+
+    Examples
+    --------
+    >>> reason = clean_venv_skip_reason()
+    >>> reason is None or "venv" in reason
+    True
+
+    """
+    missing = missing_clean_venv_modules()
+    if not missing:
+        return None
+    return "clean wheel smoke test requires missing stdlib modules: " + ", ".join(
+        missing
+    )
 
 
 def assert_wheel_imports_in_clean_env(wheel_path: Path, work_dir: Path) -> None:
