@@ -1,5 +1,11 @@
 //! Tests for the default `FemtoHandler` and for trait-object dispatch of
 //! `FemtoHandlerTrait` methods onto user-supplied implementations.
+//!
+//! These integration tests import `_femtologging_rs` as an external crate.
+//! `DummyHandler` checks that `flush_until` fails closed without calling
+//! `flush`, and the `python`-gated `DefaultDispatchHandler` covers
+//! `handle_with_context`, `MissingContextDispatch` rejection at registration,
+//! and the native direct-dispatch default.
 
 use _femtologging_rs::{FemtoHandler, FemtoHandlerTrait, FemtoLogRecord, HandlerError};
 #[cfg(feature = "python")]
@@ -40,11 +46,15 @@ fn default_handler_flush_returns_true() {
 }
 
 #[test]
-fn overridden_flush_called_via_trait() {
+fn legacy_flush_until_fails_closed_without_calling_flush() {
     let handler = DummyHandler::default();
     let trait_obj: &dyn FemtoHandlerTrait = &handler;
-    assert!(trait_obj.flush());
-    assert!(*handler.flushed.lock().expect("flushed flag mutex poisoned"));
+    let now = std::time::Instant::now();
+    assert!(!trait_obj.flush_until(&_femtologging_rs::FlushContext::new(
+        now,
+        now + std::time::Duration::from_secs(1),
+    )));
+    assert!(!*handler.flushed.lock().expect("flushed flag mutex poisoned"));
 }
 
 /// Handler double for checking default context-aware dispatch behavior.

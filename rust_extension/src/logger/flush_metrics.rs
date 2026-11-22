@@ -32,8 +32,6 @@ use std::time::Duration;
 
 use crate::rate_limited_warner::{DEFAULT_WARN_INTERVAL, RateLimitedWarner};
 
-use super::DrainOutcome;
-
 /// Upper bounds of the finite flush-duration histogram buckets, in microseconds.
 ///
 /// Every bound is inclusive. The histogram has one bucket more than this list:
@@ -83,24 +81,6 @@ impl FlushOutcome {
             Self::AckTimeout => 1,
             Self::ChannelClosed => 2,
             Self::HandlerFailure => 3,
-        }
-    }
-
-    /// Return whether the flush completed successfully.
-    pub(crate) const fn is_success(self) -> bool {
-        matches!(self, Self::Success)
-    }
-
-    /// Classify a drain wait that did not succeed, or `None` when it drained.
-    ///
-    /// The two failure causes need different diagnoses, so the flush path
-    /// keeps them apart instead of collapsing every failed barrier into one
-    /// undifferentiated failure.
-    pub(crate) const fn from_drain(outcome: DrainOutcome) -> Option<Self> {
-        match outcome {
-            DrainOutcome::Drained => None,
-            DrainOutcome::QueueClosed => Some(Self::ChannelClosed),
-            DrainOutcome::TimedOut => Some(Self::AckTimeout),
         }
     }
 }
@@ -285,20 +265,6 @@ mod tests {
         }
 
         assert_eq!(metrics.snapshot().outcomes, [1, 1, 1, 1]);
-    }
-
-    /// A failed drain wait maps to the cause it reports, and a drained one to none.
-    #[test]
-    fn each_drain_failure_has_its_own_outcome() {
-        assert_eq!(FlushOutcome::from_drain(DrainOutcome::Drained), None);
-        assert_eq!(
-            FlushOutcome::from_drain(DrainOutcome::QueueClosed),
-            Some(FlushOutcome::ChannelClosed),
-        );
-        assert_eq!(
-            FlushOutcome::from_drain(DrainOutcome::TimedOut),
-            Some(FlushOutcome::AckTimeout),
-        );
     }
 
     /// The bridge failure counter rises without touching the per-logger outcomes.

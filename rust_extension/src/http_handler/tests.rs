@@ -1,4 +1,15 @@
 //! Integration tests for the HTTP handler.
+//!
+//! Each scenario binds a loopback listener and inspects the request the worker
+//! actually sends: method, headers, body, JSON formatting and authentication.
+//! `spawn_mock_server`, `read_http_request` and `read_headers` are the shared
+//! arrangement, while `send_info_record` admits one record. The construction
+//! path differs by scenario: most tests build through `build_http_handler`,
+//! `sends_json_format` calls `FemtoHTTPHandler::with_config` directly, and the
+//! authentication tests go through `HTTPHandlerBuilder` in `test_auth_header`.
+//! The sibling `close`, `retry`, `drain`, `channel_property` and
+//! `response_classification` submodules carry the shutdown, retry, channel and
+//! classification contracts.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -143,6 +154,35 @@ fn sends_records_over_http(tcp_listener: io::Result<TcpListener>) {
     assert_eq!(captured.path, "/log");
     assert!(captured.body.contains("msg=test+message"));
     assert!(captured.body.contains("levelname=INFO"));
+
+    drop(handler);
+}
+
+/// Scenario: an endpoint built through the public builder whose path holds a
+/// character the HTTP client would reject.
+///
+/// Invariant: the built handler sends the path ureq 2 sent. The builder keeps
+/// the endpoint as configured and the transport parses each request target, so
+/// this drives both halves through the interface a caller actually uses. A
+/// space is encoded once, and an already-encoded path is left alone.
+#[rstest]
+#[case::space("/log ingest", "/log%20ingest")]
+#[case::already_encoded("/log%20ingest", "/log%20ingest")]
+fn a_built_handler_preserves_the_endpoint_encoding(
+    tcp_listener: io::Result<TcpListener>,
+    #[case] path: &str,
+    #[case] expected: &str,
+) {
+    let tcp_listener = tcp_listener.expect("bind ephemeral listener");
+    let (addr, rx) = spawn_mock_server(tcp_listener, 200).expect("spawn mock server");
+    let handler = HTTPHandlerBuilder::new()
+        .with_url(format!("http://{addr}{path}"))
+        .build_inner()
+        .expect("a percent-encodable endpoint must build");
+    send_info_record(&handler, "encoded path").expect("record should be queued");
+
+    let captured = rx.recv_timeout(Duration::from_secs(5)).expect("request");
+    assert_eq!(captured.path, expected);
 
     drop(handler);
 }
@@ -315,3 +355,10 @@ mod channel_property;
 // Response classification tests (unit tests for the worker module)
 #[path = "response_classification_tests.rs"]
 mod response_classification;
+// Contracts for the bytes one request puts on the wire.
+#[path = "request_shape_tests.rs"]
+mod request_shape;
+
+// Transport-origin admission tests: marked records never enter the queue.
+#[path = "origin_tests.rs"]
+mod origin;

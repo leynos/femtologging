@@ -17,7 +17,7 @@ use super::strategy::FileRotationStrategy;
 use crate::handlers::file::TestConfig;
 use crate::{
     formatter::FemtoFormatter,
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{FemtoHandlerTrait, FlushContext, HandlerError},
     handlers::file::{BuilderOptions, FemtoFileHandler, HandlerConfig, NoRotation},
     log_record::FemtoLogRecord,
 };
@@ -193,8 +193,15 @@ impl FemtoHandlerTrait for FemtoRotatingFileHandler {
     delegate! {
         to self.inner {
             fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError>;
-            fn flush(&self) -> bool;
         }
+    }
+
+    fn flush(&self) -> bool {
+        self.inner.flush()
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.inner.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn Any {

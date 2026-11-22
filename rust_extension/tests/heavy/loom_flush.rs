@@ -27,7 +27,9 @@ use std::sync::Arc;
 
 use loom::sync::{Arc as LoomArc, Mutex as LoomMutex};
 
-use _femtologging_rs::{FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoLogger, HandlerError};
+use _femtologging_rs::{
+    FemtoHandlerTrait, FemtoLevel, FemtoLogRecord, FemtoLogger, FlushContext, HandlerError,
+};
 
 /// Record- and flush-observation state shared with the asserting model thread.
 struct ProbeState {
@@ -92,6 +94,17 @@ impl FemtoHandlerTrait for FlushProbe {
         state.deliveries_at_first_flush.get_or_insert(deliveries);
         state.flushes += 1;
         self.flush_succeeds
+    }
+
+    /// Opt into the barrier's flush protocol, which is what the worker calls.
+    ///
+    /// The trait default fails closed without consulting `flush`, so a probe
+    /// that overrode only `flush` would never be counted, and the model's
+    /// "flushed exactly once" assertion would fail for every case. Loom has no
+    /// clock, so the probe delegates rather than giving the deadline a meaning
+    /// it cannot observe here.
+    fn flush_until(&self, _context: &FlushContext) -> bool {
+        self.flush()
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -13,9 +13,10 @@ use rstest::rstest;
 use serial_test::serial;
 
 use super::{NativeHandlerKind, PyHandler};
-use crate::handler::FemtoHandlerTrait;
+use crate::handler::{FemtoHandlerTrait, FlushContext};
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::{FemtoFileHandler, FemtoSocketHandler, SocketHandlerConfig};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "tracing-compat")]
 use std::sync::Arc;
@@ -107,6 +108,34 @@ fn native_flush_failure_warns_with_the_handler_kind(#[case] kind: ClosedKind) {
             kind.label()
         );
         assert_flush_warning(kind.label(), "flush_failed", "a closed native handler");
+    });
+}
+
+/// A failed native flush under the barrier names the handler kind too.
+///
+/// `flush_until` reaches the warning through the same helper as the legacy
+/// path, so a `False` returned by `flush_handlers()` still points at the
+/// built-in handler that declined rather than only at the call.
+#[rstest]
+#[case::file(ClosedKind::File)]
+#[case::socket(ClosedKind::Socket)]
+#[serial]
+fn barrier_flush_failure_warns_with_the_handler_kind(#[case] kind: ClosedKind) {
+    Python::attach(|py| {
+        install_test_logger();
+        let wrapper = PyHandler::new(py, closed_native_handler(py, kind));
+        let started_at = Instant::now();
+        let context = FlushContext::new(started_at, started_at + Duration::from_secs(2));
+        assert!(
+            !wrapper.flush_until(&context),
+            "a closed {} handler must report a failed barrier flush",
+            kind.label()
+        );
+        assert_flush_warning(
+            kind.label(),
+            "flush_failed",
+            "a closed native handler under the barrier",
+        );
     });
 }
 

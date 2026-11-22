@@ -14,6 +14,7 @@ use super::python_callback_validation::{
 };
 use super::python_callback_warning::CallbackFailureWarner;
 use crate::filters::{FemtoFilter, FilterBuilderTrait};
+use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 
@@ -164,6 +165,153 @@ fn python_callback_filter_extracts_enrichment() {
         assert_eq!(
             decision.enrichment.get("request_id"),
             Some(&"abc-123".to_owned())
+        );
+    });
+}
+
+#[test]
+#[serial_test::serial]
+fn python_callback_filter_warns_when_a_reserved_attribute_changes() {
+    install_test_logger();
+    Python::attach(|py| {
+        let module = PyModule::from_code(
+            py,
+            CString::new(concat!(
+                "def spoof(record):\n",
+                "    record.msg = 'spoofed message'\n",
+                "    return True\n",
+            ))
+            .expect("valid Python code")
+            .as_c_str(),
+            CString::new("test_reserved_warning.py")
+                .expect("valid filename")
+                .as_c_str(),
+            CString::new("test_reserved_warning")
+                .expect("valid module name")
+                .as_c_str(),
+        )
+        .expect("module creation should succeed");
+        let filter = PythonCallbackFilter::new(
+            module
+                .getattr("spoof")
+                .expect("function should exist")
+                .unbind(),
+            "reserved-warning-test".into(),
+        );
+        let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+
+        let decision = filter.decision(&mut record, &mut crate::filters::FilterContext::default());
+        let warnings: Vec<String> = take_logged_messages()
+            .into_iter()
+            .map(|entry| entry.message)
+            .collect();
+
+        assert!(
+            decision.accepted,
+            "the callback should still accept the record"
+        );
+        assert!(
+            !decision.enrichment.contains_key("msg"),
+            "a changed reserved attribute must not enrich record metadata"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("reserved-warning-test")
+                    && warning.contains("is reserved")),
+            "a changed reserved attribute must emit a warning; captured {warnings:?}"
+        );
+    });
+}
+
+/// Build a callback that replaces `attribute` with an object whose `__eq__` raises.
+fn uncomparable_filter(py: Python<'_>, attribute: &str, description: &str) -> PythonCallbackFilter {
+    let preamble = concat!(
+        "class Uncomparable:\n",
+        "    def __eq__(self, other):\n",
+        "        raise RuntimeError('uncomparable')\n",
+        "\n",
+        "def spoof(record):\n",
+    );
+    let source = format!("{preamble}    record.{attribute} = Uncomparable()\n    return True\n");
+    let module_name = description.replace('-', "_");
+    let module = PyModule::from_code(
+        py,
+        CString::new(source).expect("valid Python code").as_c_str(),
+        CString::new(format!("{module_name}.py"))
+            .expect("valid filename")
+            .as_c_str(),
+        CString::new(module_name)
+            .expect("valid module name")
+            .as_c_str(),
+    )
+    .expect("module creation should succeed");
+    PythonCallbackFilter::new(
+        module
+            .getattr("spoof")
+            .expect("function should exist")
+            .unbind(),
+        description.into(),
+    )
+}
+
+#[test]
+#[serial_test::serial]
+fn python_callback_filter_treats_uncomparable_reserved_attribute_as_changed() {
+    install_test_logger();
+    Python::attach(|py| {
+        let filter = uncomparable_filter(py, "msg", "uncomparable-reserved-test");
+        let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+
+        let decision = filter.decision(&mut record, &mut crate::filters::FilterContext::default());
+        let warnings: Vec<String> = take_logged_messages()
+            .into_iter()
+            .map(|entry| entry.message)
+            .collect();
+
+        assert!(
+            decision.accepted,
+            "a failed comparison on a reserved attribute must not reject the record"
+        );
+        assert!(
+            !decision.callback_failed,
+            "the comparison failure must be reported as reserved, not as a callback failure"
+        );
+        assert!(
+            !decision.enrichment.contains_key("msg"),
+            "a reserved attribute must never enrich record metadata"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("uncomparable-reserved-test")
+                    && warning.contains("is reserved")),
+            "a changed reserved attribute must emit a warning; captured {warnings:?}"
+        );
+    });
+}
+
+#[test]
+fn python_callback_filter_rejects_uncomparable_custom_attribute() {
+    Python::attach(|py| {
+        let filter = uncomparable_filter(py, "request_id", "uncomparable-custom-test");
+        let mut record = FemtoLogRecord::new("core", FemtoLevel::Info, "hello");
+        // The attribute must already exist on the record view so the callback
+        // change is compared rather than accepted as a brand-new attribute.
+        record
+            .metadata_mut()
+            .key_values
+            .insert("request_id".to_owned(), "abc-123".to_owned());
+
+        let decision = filter.decision(&mut record, &mut crate::filters::FilterContext::default());
+
+        assert!(
+            !decision.accepted,
+            "a failed comparison on a custom attribute must still reject the record"
+        );
+        assert!(
+            decision.callback_failed,
+            "a failed comparison on a custom attribute is a callback failure"
         );
     });
 }

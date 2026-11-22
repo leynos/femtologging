@@ -1,8 +1,16 @@
 //! Unit tests for FemtoLogger.
+//!
+//! `CollectingHandler` from `logger_tests_helpers` records what each test
+//! dispatches. `clear_handlers_removes_all` covers handler management and
+//! `multiple_filters_must_all_pass` the filter chain, which
+//! `logger_dispatches_through_its_shard` exercises end to end. Fault isolation
+//! is covered by `a_panicking_handler_does_not_silence_later_records` and
+//! `a_handler_error_does_not_skip_later_handlers`, and attaching mid-flush by
+//! `a_handler_flush_may_attach_another_handler`.
 
 use super::*;
 use crate::filters::{FilterBuilderTrait, LevelFilterBuilder, NameFilterBuilder};
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+use crate::handler::{FemtoHandlerTrait, FlushContext, HandlerError};
 use std::any::Any;
 use std::sync::Arc;
 
@@ -122,6 +130,10 @@ fn a_panicking_handler_does_not_silence_later_records() {
             panic!("handler boom");
         }
 
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+            true
+        }
+
         fn as_any(&self) -> &dyn Any {
             self
         }
@@ -156,6 +168,10 @@ fn a_handler_error_does_not_skip_later_handlers() {
     impl FemtoHandlerTrait for FailingHandler {
         fn handle(&self, _record: FemtoLogRecord) -> Result<(), HandlerError> {
             Err(HandlerError::Message("handler failed".to_owned()))
+        }
+
+        fn flush_until(&self, _context: &crate::handler::FlushContext) -> bool {
+            true
         }
 
         fn as_any(&self) -> &dyn Any {
@@ -215,7 +231,7 @@ impl FemtoHandlerTrait for FlushOutcomeHandler {
         Ok(())
     }
 
-    fn flush(&self) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.succeeds
@@ -283,7 +299,7 @@ impl FemtoHandlerTrait for AttachingFlushHandler {
         Ok(())
     }
 
-    fn flush(&self) -> bool {
+    fn flush_until(&self, _context: &FlushContext) -> bool {
         if !self
             .attached_once
             .swap(true, std::sync::atomic::Ordering::Relaxed)

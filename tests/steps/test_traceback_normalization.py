@@ -14,7 +14,8 @@ from __future__ import annotations
 import pytest
 
 from tests.steps._hypothesis_support import _ENTRYPOINT_PROPERTY_CASES
-from tests.steps.conftest import normalize_traceback_output
+from tests.steps.stack_frames import strip_external_stack_frames
+from tests.steps.traceback_normalization import normalize_traceback_output
 
 _STABLE_ENTRYPOINT = (
     "Stack (most recent call last):\n"
@@ -22,6 +23,16 @@ _STABLE_ENTRYPOINT = (
     "    sys.exit(console_main())\n"
     '  File "<file>", line <N>, in console_main\n'
     "    code = main()\n"
+)
+_APPLICATION_RUNPY_OUTPUT = (
+    "Stack (most recent call last):\n"
+    '  File "/workspace/femtologging/runpy.py", line 4, in run_module\n'
+    "    dispatch()\n"
+)
+_APPLICATION_RUNPY_EXPECTED = (
+    "Stack (most recent call last):\n"
+    '  File "<file>", line <N>, in run_module\n'
+    "    dispatch()\n"
 )
 
 _NORMALIZATION_CASES = (
@@ -155,6 +166,93 @@ _NORMALIZATION_CASES = (
     pytest.param(
         (
             "Stack (most recent call last):\n"
+            '  File "/usr/lib/python3.15/runpy.py", line 198, in '
+            "_run_module_as_main\n"
+            "    return _run_code(code, main_globals, None,\n"
+            '                      "__main__", mod_spec)\n'
+            '  File "/tmp/__main__.py", line 12, in <module>\n'
+            "    raise SystemExit(main())\n"
+            '  File "/tmp/pytest.py", line 25, in console_main\n'
+            "    code = main()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "drop every source line of a wrapped launcher frame",
+        id="drops_wrapped_launcher_source_lines",
+    ),
+    pytest.param(
+        _APPLICATION_RUNPY_OUTPUT,
+        _APPLICATION_RUNPY_EXPECTED,
+        "keep an application runpy module frame outside the standard library",
+        id="keeps_application_runpy_module_frame",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/workspace/python3.12/app/runpy.py", line 7, in run_module\n'
+            "    dispatch()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in run_module\n'
+            "    dispatch()\n"
+        ),
+        "keep an application runpy frame beneath a directory named for an interpreter",
+        id="keeps_runpy_beneath_interpreter_named_directory",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/workspace/python3.12/runpy.py", line 7, in run_module\n'
+            "    dispatch()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in run_module\n'
+            "    dispatch()\n"
+        ),
+        "keep an application runpy frame directly inside an interpreter-named "
+        "directory",
+        id="keeps_runpy_inside_interpreter_named_directory",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "/usr/lib64/python3.12/runpy.py", line 88, in _run_code\n'
+            "    exec(code, run_globals)\n"
+            '  File "/tmp/pytest.py", line 25, in console_main\n'
+            "    code = main()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "drop launcher frames from a lib64 standard-library layout",
+        id="drops_lib64_layout_launcher_frame",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
+            '  File "C:/Python313/Lib/runpy.py", line 88, in _run_code\n'
+            "    exec(code, run_globals)\n"
+            '  File "/tmp/pytest.py", line 25, in console_main\n'
+            "    code = main()\n"
+        ),
+        (
+            "Stack (most recent call last):\n"
+            '  File "<file>", line <N>, in console_main\n'
+            "    code = main()\n"
+        ),
+        "drop launcher frames from the Windows standard-library layout",
+        id="drops_windows_layout_launcher_frame",
+    ),
+    pytest.param(
+        (
+            "Stack (most recent call last):\n"
             '  File "/tmp/app.py", line 11, in main\n'
             "    process_request()\n"
         ),
@@ -214,6 +312,16 @@ class TestTracebackNormalization:
         """Normalize traceback frames to their stable snapshot forms."""
         assert normalize_traceback_output(output) == expected, (
             f"normalize_traceback_output should {reason}"
+        )
+
+    @staticmethod
+    def test_an_application_runpy_frame_survives_the_whole_pipeline() -> None:
+        """Keep an application runpy module through stripping and normalizing."""
+        normalized = normalize_traceback_output(
+            strip_external_stack_frames(_APPLICATION_RUNPY_OUTPUT)
+        )
+        assert normalized == _APPLICATION_RUNPY_EXPECTED, (
+            "an application runpy frame must survive the snapshot pipeline"
         )
 
     @staticmethod

@@ -189,18 +189,21 @@ access is governed by the Python architecture and its own lint stack.
 - A contributor who reaches for `std::env` gets a build failure naming the
   remedy, in every feature lane and every target kind.
 - `rust_extension/tests/env_access_policy.rs` fails if any of the six entries
-  leaves `clippy.toml`, if the manifest stops denying the lint, or if the
-  policy target stops covering every target and feature, stops failing when a
-  lane fails, or drops out of `make lint`. The failure path is held at two
-  levels: the driver's own unit tests, and a test that runs the real
-  `make lint-env-policy` with a failing lane ahead of a passing one. It also
+  leaves `clippy.toml` or if the manifest stops denying the lint. It also
   compiles `tests/fixtures/env_policy_probe.rs` through `clippy-driver` under
   this crate's `clippy.toml` and checks that all six methods are rejected, that
   each diagnostic carries the remedy this ADR promises, and that the
   composition-root `expect` suppresses exactly one call. Each of its assertions
   records the mutation that proved it.
-- Adding a feature to the crate manifest without adding a lane fails that test,
-  so the lane list cannot drift behind the feature list.
+- `tests/test_env_access_policy_contract.py` fails if the policy lane stops
+  covering every target and feature, if the recipe stops passing its inputs, if
+  the lane list drifts behind the feature list, or if the lane drops out of
+  `make lint`. The failure path is held at two levels: the driver's own unit
+  tests, and a contract that runs the real `make lint-env-policy` with a
+  failing lane ahead of a passing one. Because that contract puts a recording
+  fake `cargo` first on `PATH`, it can require the target to fail, and to stop,
+  at the rejected lane without waiting on Cargo's package-cache lock; see the
+  addendum below.
 - Adding a new environment-dependent boundary means choosing among three named
   shapes, so a reviewer can reject one that is heavier or lighter than the
   call-site count warrants.
@@ -349,3 +352,39 @@ The scan is `rust_extension/tests/test_utils/source_scan/`, and its contracts
 are `rust_extension/tests/env_policy_source_scan.rs`,
 `rust_extension/tests/test_utils/policy_routes.rs` and
 `rust_extension/tests/test_utils/policy_walk.rs`.
+
+## Addendum: the contract test runs a fake Cargo (2026-11-18)
+
+The decision above stands unchanged: the extension reads the process
+environment only through a named seam, and the lint enforcing that still runs
+in every feature lane and every target kind. What changed is the Make-level
+contract test. The Consequences section above describes the failure path as
+held partly by "a test that runs the real `make lint-env-policy` with a failing
+lane ahead of a passing one". That test still runs the real Make, `uv` and lane
+driver, but a recording fake `cargo` now sits first on `PATH`, so it compiles
+nothing and observes no real policy violation
+([#537](https://github.com/leynos/femtologging/issues/537)).
+
+The cause is scheduling rather than policy. The accepting lane once waited 420
+seconds on Cargo's package-cache lock while another agent's dependency resolve
+held it, so a slow run measured the host's load rather than this repository's
+wiring. What the contract keeps is what the Make target owns: that a failing
+lane fails the target, that the driver names it and forwards every lane's
+diagnostic on standard error, and that Cargo receives the exact argument vector
+the Makefile's defaults imply, lane by lane and in order.
+
+The child still inherits this process's environment, because `uv` and Make need
+it. The helper therefore applies the rule in this ADR in the other direction:
+it clears every Make variable assigned with `?=`, since an exported value would
+replace the Makefile default the contract reads, together with Make's own
+controls (`MAKEFLAGS`, `GNUMAKEFLAGS` and `MAKEFILES`) and the fake's
+`FAKE_CARGO_REJECT` control. A test that needs an inherited value supplies the
+parent environment as an argument instead of editing this process's environment.
+
+Enforcement therefore remains where it compiled before —
+`rust_extension/tests/env_access_policy.rs`, its probe and `syn` source scan,
+and the `make lint` lanes. The Make-level Consequences entry belongs to
+`tests/test_env_access_policy_contract.py`, the test this addendum describes.
+This addendum records that the Make-level contract test is a wiring test, not a
+compile test. The measurements behind it, and the rejected alternatives, are in
+`docs/debugging/debugging-plan-2026-09-08-env-policy-timeout.md`.

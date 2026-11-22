@@ -105,14 +105,20 @@ fn stream_waiter_count_for_test() -> usize {
 
 /// Register Python-only functions with the module.
 pub(crate) fn register_python_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
+    register_configuration_functions(m)?;
+    #[cfg(feature = "test-util")]
     register_test_util_functions(m)?;
-    register_frame_filter_functions(m)?;
-    register_convenience_functions(m)?;
+    register_dispatch_functions(m)?;
     Ok(())
 }
 
-/// Register the test-only hooks that the `test-util` feature adds.
+/// Register the configuration and rotation-control entry points.
+fn register_configuration_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(crate::file_config::parse_ini_file, m)?)?;
+    Ok(())
+}
+
+/// Register the test-only entry points that Python fixtures drive.
 #[cfg(feature = "test-util")]
 fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     use crate::gil_release_test::{
@@ -149,24 +155,13 @@ fn register_test_util_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Without `test-util` there are no test hooks to register.
-#[cfg(not(feature = "test-util"))]
-fn register_test_util_functions(_m: &Bound<'_, PyModule>) -> PyResult<()> {
-    Ok(())
-}
-
-/// Register the frame-filtering helpers.
-fn register_frame_filter_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register the frame filter and module-level convenience entry points.
+fn register_dispatch_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::frame_filter_py::filter_frames, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::frame_filter_py::get_logging_infrastructure_patterns,
         m
     )?)?;
-    Ok(())
-}
-
-/// Register the module-level convenience logging functions.
-fn register_convenience_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_debug, m)?)?;
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_info, m)?)?;
     m.add_function(wrap_pyfunction!(crate::convenience_functions::py_warn, m)?)?;

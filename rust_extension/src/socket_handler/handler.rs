@@ -1,4 +1,12 @@
-//! Public handler type exported by the crate.
+//! Public socket handler exported by the crate.
+//!
+//! `FemtoSocketHandler` forwards MessagePack-framed records to a transport
+//! through a worker spawned by `spawn_worker` from a `SocketHandlerConfig`.
+//! `flush` forms a deadline from the configured timeout, `flush_by` samples
+//! time from a `FlushContext` and `flush_by_at` spends what remains on each
+//! queue wait; `FemtoHandlerTrait::flush_until` is the barrier entry point
+//! over that wait. `close` owns the shutdown stage through
+//! `request_shutdown`, `join_worker` and `abandon_worker`.
 
 use std::{
     sync::Arc,
@@ -16,7 +24,10 @@ use pyo3::Python;
 use parking_lot::Mutex;
 
 use crate::{
-    handler::{FemtoHandlerTrait, HandlerError},
+    handler::{
+        FemtoHandlerTrait, FlushCap, FlushContext, HandlerError, PendingDrops, deadline_after,
+        flush_handler_until,
+    },
     log_record::FemtoLogRecord,
     rate_limited_warner::RateLimitedWarner,
     shutdown_signal::ShutdownSignal,
@@ -25,7 +36,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
-    worker::{SocketCommand, enqueue_record, flush_queue, spawn_worker},
+    worker::{SocketCommand, enqueue_record, spawn_worker},
 };
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -80,7 +91,61 @@ impl FemtoSocketHandler {
 
     /// Flush any pending log records.
     pub fn flush(&self) -> bool {
-        <Self as FemtoHandlerTrait>::flush(self)
+        let now = Instant::now();
+        let Some(deadline) = deadline_after(now, self.flush_timeout) else {
+            return false;
+        };
+        self.flush_by(&FlushContext::system(now, Some(deadline)))
+    }
+
+    /// Flush any pending log records, waiting no longer than the context's
+    /// deadline.
+    ///
+    /// The wait also stops at this handler's configured `flush_timeout`, so a
+    /// bare `flush()` keeps the bound it documents and a barrier flush cannot
+    /// outlive the deadline it was given. Time is sampled from the context, so
+    /// a barrier test controls this handler's deadline transition as well as
+    /// the logger's.
+    fn flush_by(&self, context: &FlushContext) -> bool {
+        let Some(deadline) = context.deadline() else {
+            return false;
+        };
+        self.flush_by_at(deadline, &mut || context.now())
+    }
+
+    /// Flush against `deadline`, sampling each queue wait from `now`.
+    ///
+    /// Production passes [`Instant::now`] here; tests pass a scripted source,
+    /// so a stalled worker queue can be shown to consume exactly the budget
+    /// the caller supplied rather than a fresh copy for each wait.
+    ///
+    /// The worker reports its own flush outcome on the acknowledgement, so an
+    /// I/O failure is not confirmed even when the answer arrives in time. A
+    /// marker discarded at shutdown reports the same way: the caller asked for
+    /// records to reach the collector, and they did not.
+    fn flush_by_at(&self, deadline: Instant, now: &mut dyn FnMut() -> Instant) -> bool {
+        // The sender is checked before the cap is formed: a closed handler
+        // must not consume any of the caller's budget deciding it has nowhere
+        // to send.
+        let Some(tx) = self.sender() else {
+            return false;
+        };
+        let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
+        let outcome = flush_handler_until(
+            PendingDrops::new(
+                || self.warner.take_pending(),
+                |count| self.warner.restore_drops(count),
+            ),
+            &mut cap,
+            || Some(tx),
+            |tx, pending_drops, budget| {
+                let (ack_tx, ack_rx) = crossbeam_channel::bounded(1);
+                tx.send_timeout(SocketCommand::Flush(ack_tx, pending_drops), budget)
+                    .ok()?;
+                Some(move |budget| ack_rx.recv_timeout(budget).ok())
+            },
+        );
+        matches!(outcome, Some(Ok(Ok(()))))
     }
 
     /// Close the handler, waiting for the worker only while it is answering.
@@ -133,7 +198,11 @@ impl FemtoSocketHandler {
             // Already closed. There is no worker left to wait for.
             return ShutdownOutcome::Finished;
         };
-        let deadline = Instant::now() + self.flush_timeout;
+        let Some(deadline) = deadline_after(Instant::now(), self.flush_timeout) else {
+            // An unrepresentable deadline cannot be waited out, so the shutdown
+            // fails closed rather than blocking on an unbounded join.
+            return ShutdownOutcome::TimedOut;
+        };
         if let Some(signal) = self.signal.as_ref() {
             signal.begin_shutdown(deadline);
         }
@@ -229,60 +298,6 @@ enum ShutdownOutcome {
     TimedOut,
 }
 
-#[cfg(feature = "python")]
-#[pymethods]
-impl FemtoSocketHandler {
-    /// Convert Python arguments to a record and enqueue it for delivery.
-    ///
-    /// Example: `handler.handle("app", "INFO", "started")` queues one record.
-    #[pyo3(name = "handle")]
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
-        let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
-        self.handle(FemtoLogRecord::new(logger, parsed_level, message))
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
-    }
-
-    /// Flush pending log records without shutting down the worker thread.
-    ///
-    /// The flush timeout equals the ``write_timeout`` configured on the
-    /// handler (default: 1 second).
-    ///
-    /// Returns
-    /// -------
-    /// bool
-    ///     ``True`` when the worker acknowledges the flush within the
-    ///     configured timeout.
-    ///     ``False`` when the handler has already been closed, the
-    ///     internal channel to the worker has been dropped, or the worker
-    ///     does not acknowledge before the timeout elapses.
-    ///
-    /// Examples
-    /// --------
-    /// >>> handler.flush()
-    /// True
-    /// >>> handler.close()
-    /// >>> handler.flush()
-    /// False
-    #[pyo3(name = "flush")]
-    fn py_flush(&self, py: Python<'_>) -> bool {
-        crate::py_detach::detach_for_wait(py, || self.flush())
-    }
-
-    /// Close the handler, waiting for the worker at most ``write_timeout``.
-    ///
-    /// A worker that acknowledges the shutdown within ``write_timeout`` is
-    /// joined. One that does not, typically because it is stuck writing to an
-    /// unresponsive collector, is abandoned with a warning rather than waited
-    /// for, and the records still queued are discarded rather than written.
-    ///
-    /// The wait runs with the GIL released, so a close that spends its budget
-    /// waiting does not hold the interpreter while it does.
-    #[pyo3(name = "close")]
-    fn py_close(&mut self, py: Python<'_>) {
-        crate::py_detach::detach_for_wait(py, || self.close());
-    }
-}
-
 impl FemtoHandlerTrait for FemtoSocketHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
@@ -296,13 +311,11 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
     }
 
     fn flush(&self) -> bool {
-        let Some(tx) = self.sender() else {
-            return false;
-        };
-        self.warner.flush(|count| {
-            log::warn!("FemtoSocketHandler dropped {count} records in the last interval");
-        });
-        flush_queue(&tx, self.flush_timeout)
+        FemtoSocketHandler::flush(self)
+    }
+
+    fn flush_until(&self, context: &FlushContext) -> bool {
+        self.flush_by(context)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -346,6 +359,10 @@ impl std::fmt::Debug for FemtoSocketHandler {
             .finish()
     }
 }
+
+#[cfg(feature = "python")]
+#[path = "handler_python.rs"]
+mod python_api;
 
 #[cfg(test)]
 #[path = "handler_test_accessors.rs"]

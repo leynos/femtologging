@@ -3,13 +3,21 @@
 //! This module provides [`PyHandler`], which wraps Python handler objects
 //! to allow them to be used by the Rust logging infrastructure.
 
+#[cfg(feature = "python")]
+use pyo3::Py;
+use pyo3::PyAny;
 use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::types::PyAnyMethods;
-use pyo3::{Py, PyAny};
+#[cfg(feature = "python")]
 use std::any::Any;
 
-use crate::handler::{FemtoHandlerTrait, HandlerError};
+#[cfg(feature = "python")]
+use crate::handler::FemtoHandlerTrait;
+use crate::handler::HandlerError;
+// Only the feature-enabled wrapper has a record to dispatch; the fallback in
+// `no_python` brings its own import.
+#[cfg(feature = "python")]
 use crate::log_record::FemtoLogRecord;
 use log::warn;
 
@@ -200,6 +208,47 @@ impl FemtoHandlerTrait for PyHandler {
         true
     }
 
+    /// Flush a wrapped handler under the barrier's deadline.
+    ///
+    /// A built-in handler keeps its own queue and buffer, so the barrier asks
+    /// its native implementation to flush. Reporting success without doing so
+    /// would confirm records that are still buffered.
+    ///
+    /// Any other Python object is asked to flush itself, exactly as the legacy
+    /// [`Self::flush`] path does. A user-defined handler may buffer records
+    /// after `handle` or `handle_record` returns, and only the handler knows
+    /// how to drain that buffer, so the barrier calls its `flush` method. A
+    /// handler without a callable `flush` has nothing to drain and confirms by
+    /// opting out; one that raises, or returns a value that is falsy but not
+    /// `None`, reports failure, because CPython's `None` is the usual "no
+    /// result" answer from a successful flush. The exception itself is never
+    /// printed, in case it quotes a record.
+    ///
+    /// The barrier's deadline bounds the wait for the handler to answer, not
+    /// the duration of the handler's own `flush` call, which runs to
+    /// completion on the shard worker. Attaching the interpreter can itself
+    /// consume the last of the budget, so a custom `flush` starts only while
+    /// time remains: once the caller has been told the flush was not confirmed,
+    /// starting the callback would keep the worker busy for a verdict already
+    /// delivered.
+    fn flush_until(&self, context: &crate::handler::FlushContext) -> bool {
+        // The barrier path keeps the diagnostics the legacy `flush` path has:
+        // one span around the wait, and an interpreter that cannot be attached
+        // reported as a failed flush rather than panicking across the FFI
+        // boundary during finalisation.
+        self.flush_with_interpreter(|| {
+            Python::try_attach(|py| match self.native_handler {
+                Some(native_handler) => native_handler.flush_until(py, self.obj.bind(py), context),
+                // A built-in handler checks the deadline inside its own
+                // `flush_until`; a custom callable has no such check, so the
+                // decision belongs here, after the attach that may have used
+                // up the budget.
+                None if context.is_expired() => false,
+                None => self.call_python_flush(py),
+            })
+        })
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -213,41 +262,7 @@ mod flush_diagnostics_tests;
 #[path = "py_handler/tests.rs"]
 mod tests;
 
-/// Fallback PyHandler when python feature is disabled.
 #[cfg(not(feature = "python"))]
-pub struct PyHandler {
-    /// Python handler object retained by the feature-disabled wrapper.
-    pub obj: Py<PyAny>,
-}
-
+mod no_python;
 #[cfg(not(feature = "python"))]
-impl PyHandler {
-    /// Wrap the Python object without feature-specific capability inspection.
-    pub fn new(_py: Python<'_>, obj: Py<PyAny>) -> Self {
-        Self { obj }
-    }
-}
-
-#[cfg(not(feature = "python"))]
-impl FemtoHandlerTrait for PyHandler {
-    fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
-        Python::attach(|py| {
-            self.obj
-                .call_method1(
-                    py,
-                    "handle",
-                    (record.logger(), record.level_str(), record.message()),
-                )
-                .map(|_| ())
-                .map_err(|err| map_py_err(py, err, "handle"))
-        })
-    }
-
-    fn is_python_backed(&self) -> bool {
-        true
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
+pub use self::no_python::PyHandler;

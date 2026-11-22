@@ -1,9 +1,9 @@
-//! Python-visible test hooks for rotating handler failure injection.
+//! Python-visible hooks that let a test force and clear file-reopen failures.
 //!
-//! The hooks exist only when the extension is built with both the `python`
-//! bindings and the non-default `test-util` feature. Keeping them in their own
-//! module leaves the production bindings free of test seams and keeps the
-//! `python` binding module under the repository's line limit.
+//! The rotating worker retries a failed reopen, and driving that path from
+//! Python needs a way to make the next reopen attempts fail on demand. These
+//! hooks are the only Python surface for that state; the mechanism itself lives
+//! in [`super::fresh_failure`].
 
 use pyo3::prelude::*;
 

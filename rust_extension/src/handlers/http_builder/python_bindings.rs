@@ -13,6 +13,10 @@ use crate::macros::{AsPyDict, dict_into_py};
 
 use super::HTTPHandlerBuilder;
 
+mod auth;
+
+use auth::{AuthSpec, parse_auth_spec};
+
 /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
 fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
     match method.to_uppercase().as_str() {
@@ -22,37 +26,6 @@ fn parse_http_method(method: &str) -> PyResult<HTTPMethod> {
             "unsupported HTTP method: {method}; expected GET or POST"
         ))),
     }
-}
-
-/// Clone `builder` with the authentication selected by the given credentials.
-///
-/// Bearer-token and basic-auth settings are mutually exclusive, and basic auth
-/// requires both a username and a password, so a mixed or partial mapping is
-/// rejected before either setting is applied.
-fn authenticated_builder(
-    builder: &HTTPHandlerBuilder,
-    token: Option<Bound<'_, PyAny>>,
-    username: Option<Bound<'_, PyAny>>,
-    password: Option<Bound<'_, PyAny>>,
-) -> PyResult<HTTPHandlerBuilder> {
-    if let Some(token) = token {
-        if username.is_some() || password.is_some() {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "with_auth config must not mix 'token' with 'username'/'password'",
-            ));
-        }
-        return Ok(builder
-            .clone()
-            .with_bearer_token(token.extract::<String>()?));
-    }
-    let (Some(username), Some(password)) = (username, password) else {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "with_auth config must specify either 'token' or both 'username' and 'password'",
-        ));
-    };
-    let username: String = username.extract()?;
-    let password: String = password.extract()?;
-    Ok(builder.clone().with_basic_auth(username, password))
 }
 
 #[pymethods]
@@ -110,10 +83,13 @@ impl HTTPHandlerBuilder {
         mut slf: PyRefMut<'py, Self>,
         config: &Bound<'py, PyDict>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let token = config.get_item("token")?;
-        let username = config.get_item("username")?;
-        let password = config.get_item("password")?;
-        *slf = authenticated_builder(&slf, token, username, password)?;
+        let updated = match parse_auth_spec(config)? {
+            AuthSpec::Bearer(token) => slf.clone().with_bearer_token(token),
+            AuthSpec::Basic { username, password } => {
+                slf.clone().with_basic_auth(username, password)
+            }
+        };
+        *slf = updated;
         Ok(slf)
     }
 

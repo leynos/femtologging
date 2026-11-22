@@ -29,13 +29,27 @@ mod filtered;
 mod handler;
 mod queue;
 mod record;
+mod redirect;
 mod response;
 mod serialize;
+mod transport;
+// The bridges suspend this marker as well as the worker setting it, so the
+// module is crate-visible even though it belongs to the HTTP adapter.
+pub(crate) mod transport_origin;
 mod url_encoding;
 mod worker;
 
 #[cfg(test)]
 mod tests;
+// The TLS fixture is an rcgen ECDSA certificate. native-tls's Schannel backend
+// imports PKCS#8 identities through an RSA provider, so the fixture cannot be
+// loaded on Windows, and rcgen's ring backend cannot generate an RSA key to
+// replace it. Only the fixture is platform-bound; the transport it exercises
+// is not.
+#[cfg(all(test, not(target_os = "windows")))]
+mod tls_tests;
 
 pub use config::{AuthConfig, HTTPHandlerConfig, HTTPMethod, SerializationFormat};
 pub use handler::FemtoHTTPHandler;
+
+pub(crate) use transport::validate_request_headers;

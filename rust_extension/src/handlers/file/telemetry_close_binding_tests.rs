@@ -12,6 +12,7 @@ use super::telemetry_event_tests::EventCollector;
 use super::*;
 use pyo3::{Py, Python};
 use std::sync::mpsc;
+use std::time::Duration;
 use tracing_subscriber::prelude::*;
 
 /// The Python `close()` binding records a real timeout and a later completion.

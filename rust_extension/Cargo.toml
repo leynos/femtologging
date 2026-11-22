@@ -37,10 +37,20 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rmp-serde = "1.3"
 native-tls = { version = "0.2", features = ["vendored"] }
-rand = "0.8"
+rand = "0.10"
 encoding_rs = "0.8"
 ini = { package = "rust-ini", version = "0.21.3" }
-ureq = { version = "2.9", features = ["native-tls"] }
+# ureq 3's default features, `rustls` and `gzip`, are the TLS engine and
+# compression the handler already had: ureq 2's `native-tls` feature only made a
+# native-tls connector available, and the handler never selected one. Keeping
+# the defaults therefore preserves both the trust store and the `Accept-Encoding`
+# behaviour the migration must not change.
+ureq = "3.4"
+# ureq 2 parsed every request URL with `url::Url`, which percent-encodes
+# characters such as spaces; ureq 3 parses an `http::Uri` and rejects them at
+# send time. The transport parses each target with `url::Url`, the parser ureq 2
+# used, so the accepted endpoints and the bytes on the wire stay unchanged.
+url = "2.5"
 percent-encoding = "2.3"
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -81,6 +91,7 @@ proptest = "1.0.0"
 loom = "0.7.2"
 itertools = "0.15"
 serial_test = "4"
+rcgen = "0.14"
 _femtologging_rs = { path = ".", package = "femtologging_rs", default-features = false, features = ["test-util", "log-compat"] }
 static_assertions = "1"
 filetime = "0.2"
@@ -111,4 +122,9 @@ required-features = ["log-compat"]
 [[test]]
 name = "log_bridge_config_tests"
 path = "tests/log_bridge_config_tests.rs"
+required-features = ["log-compat"]
+
+[[test]]
+name = "http_transport_feedback_tests"
+path = "tests/http_transport_feedback_tests.rs"
 required-features = ["log-compat"]

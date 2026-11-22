@@ -331,7 +331,13 @@ record enrichment persisted into Rust-owned metadata before queueing.[^adr003]
 The ADR also defines the callback-enrichment persistence contract:
 
 - Enrichment keys must be strings and must not collide with stdlib
-  `LogRecord` attributes or femtologging-reserved metadata keys.
+  `LogRecord` attributes or femtologging-reserved metadata keys. One
+  case-sensitive reserved-name predicate governs Python `extra`, scoped
+  context, Rust `push_log_context`, callback enrichment, and HTTP
+  serialization. Admission validates key length, reserved name, key count,
+  value length, and aggregate size in that order; HTTP serialization
+  defensively omits reserved names from `key_values` so records constructed
+  without admission cannot override authoritative fields.
 - Enrichment values may only be `str`, `int`, `float`, `bool`, or `None`.
   Non-string scalar values are stringified before persistence.
 - Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key, 1,024
@@ -339,9 +345,12 @@ The ADR also defines the callback-enrichment persistence contract:
   record.
 
 Macro-driven structured logging and scoped context propagation use the same
-producer-side bounds when materializing `RecordMetadata.key_values`. Inline
-macro fields override scoped-context values on key collisions before the merged
-map is validated and persisted.
+producer-side bounds and reserved-name predicate when materializing
+`RecordMetadata.key_values`. Inline macro fields override scoped-context values
+on key collisions before the merged map is validated and persisted. Reserved
+names fail the merged validation, so Rust `log_with_metadata` drops the record
+and increments its context-drop counter rather than admitting an overriding
+field.
 
 ### 1.2. Python Builder API Design (Congruent with Rust and Python Schemas)
 
@@ -867,10 +876,12 @@ When a Python callback filter accepts a record, any new or modified attributes
 it adds to the mutable ``logging.LogRecord`` view are copied into
 ``RecordMetadata.key_values`` before the record crosses the async queue
 boundary. Accepted enrichment keys must be non-empty strings that do not
-collide with stdlib ``LogRecord`` attributes or femtologging-reserved keys.
-Values are limited to ``str``, ``int``, ``float``, ``bool``, and ``None`` and
-are stringified into Rust-owned metadata with bounds of 64 keys, 64 UTF-8 bytes
-per key, 1,024 UTF-8 bytes per value, and 16 KiB total per record.
+collide with stdlib ``LogRecord`` attributes or femtologging-reserved keys. A
+callback that changes a reserved attribute is ignored with a warning, and the
+original attribute value is restored. Values are limited to ``str``, ``int``,
+``float``, ``bool``, and ``None`` and are stringified into Rust-owned metadata
+with bounds of 64 keys, 64 UTF-8 bytes per key, 1,024 UTF-8 bytes per value,
+and 16 KiB total per record.
 
 The ADR defines the conflict rules for mixed declarative and factory syntax:
 

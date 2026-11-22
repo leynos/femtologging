@@ -34,8 +34,9 @@ def test_the_uv_cache_is_keyed_on_the_runner_and_the_python_version() -> None:
     assert len(caches) == 1, f"expected one 'Cache uv' step, found {len(caches)}"
     settings = caches[0].get("with", {})
     key = str(settings.get("key", ""))
-    assert "runner.environment" in key, f"the uv cache key ignores the runner: {key}"
-    assert "matrix.python-version" in key, f"the uv cache key ignores Python: {key}"
+    required_key_tokens = ("runner.environment", "matrix.python-version", "uv.lock")
+    missing = [token for token in required_key_tokens if token not in key]
+    assert not missing, f"the uv cache key ignores {missing}: {key}"
     restore = str(settings.get("restore-keys", ""))
     assert "runner.environment" in restore, f"restore-keys ignore the runner: {restore}"
     assert "matrix.python-version" in restore, f"restore-keys ignore Python: {restore}"

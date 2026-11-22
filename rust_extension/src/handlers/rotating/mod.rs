@@ -15,13 +15,15 @@ pub(crate) use fresh_failure::force_fresh_failure_once_for_test;
 #[cfg(feature = "python")]
 pub(crate) mod python;
 #[cfg(all(feature = "python", feature = "test-util"))]
-mod testing;
+mod python_test_hooks;
 #[cfg(feature = "python")]
 pub(crate) use python::PyRotatingFileHandler;
 #[cfg(feature = "python")]
 pub use python::{HandlerOptions, ROTATION_VALIDATION_MSG};
 #[cfg(all(feature = "python", feature = "test-util"))]
-pub use testing::{clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test};
+pub use python_test_hooks::{
+    clear_rotating_fresh_failure_for_test, force_rotating_fresh_failure_for_test,
+};
 
 #[cfg(test)]
 mod tests;

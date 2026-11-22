@@ -1,9 +1,18 @@
-"""Exercise the release verification boundaries with invalid inputs."""
+"""Test the release verification checks in scripts/release_wheel_probe.py.
+
+The tests cover rejected invalid installations, accepted production wheels, the
+HTTP delivery check, and the delivery of a probe record through the native HTTP
+handler. The delivery check must reach a loopback endpoint, so it is exercised
+against both malformed and absent deliveries as well as the real handler. The
+sdist verification and rebuild steps in .github/workflows/build-wheels.yml are
+covered here too.
+"""
 
 from __future__ import annotations
 
 import importlib.machinery
 import io
+import queue
 import sys
 import tarfile
 import typing as typ
@@ -77,6 +86,21 @@ def _packaged_stub(tmp_path: Path, stub_body: str = "") -> SimpleNamespace:
     return SimpleNamespace(__file__=str(package_file), _has_test_util=False)
 
 
+def _production_native() -> SimpleNamespace:
+    """Build a stand-in native module inside this environment's ``sys.prefix``."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
+    return SimpleNamespace(__file__=str(origin))
+
+
+_UNEXPECTED_DELIVERY = "the delivery check ran before the identity checks passed"
+
+
+def _unexpected_delivery_check() -> list[str]:
+    """Fail a test whose setup must not reach the HTTP delivery check."""
+    raise AssertionError(_UNEXPECTED_DELIVERY)
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -89,6 +113,7 @@ def _packaged_stub(tmp_path: Path, stub_body: str = "") -> SimpleNamespace:
 )
 def test_release_probe_rejects_invalid_installations(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     case: tuple[str | None, bool, bool, str],
 ) -> None:
     """Invalid module origins and test-enabled builds fail the probe."""
@@ -98,6 +123,10 @@ def test_release_probe_rejects_invalid_installations(
         native.set_timed_rotation_test_times_for_test = lambda: None
     package = _packaged_stub(tmp_path)
     package._has_test_util = has_util
+    # A defective installation must not reach the network at all.
+    monkeypatch.setattr(
+        release_wheel_probe, "http_behaviour_errors", _unexpected_delivery_check
+    )
     assert any(
         expected in error
         for error in release_wheel_probe.release_wheel_errors(
@@ -107,17 +136,28 @@ def test_release_probe_rejects_invalid_installations(
 
 
 def test_release_probe_accepts_a_production_wheel(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A native extension inside the environment with no hooks passes the probe."""
-    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
-    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
-    native = SimpleNamespace(__file__=str(origin))
+    native = _production_native()
     package = _packaged_stub(tmp_path)
+    deliveries: list[bool] = []
+
+    def record_delivery_check() -> list[str]:
+        """Record that the probe checked delivery, without using the network."""
+        deliveries.append(True)
+        return []
+
+    monkeypatch.setattr(
+        release_wheel_probe, "http_behaviour_errors", record_delivery_check
+    )
 
     assert not release_wheel_probe.release_wheel_errors(
         native=native, package=package
     ), "A production native extension reports no violations."
+    assert deliveries == [True], "The probe must verify delivery as well as location."
     assert release_wheel_probe.main(native=native, package=package) == 0, (
         "The probe exits successfully."
     )
@@ -174,6 +214,82 @@ def test_release_probe_checks_every_stub_declaration_shape(
         assert any(expected in error for error in errors), (
             "Report the test-only stub declaration."
         )
+
+
+def test_release_probe_reports_a_delivery_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A wheel whose native worker cannot deliver a record fails the probe."""
+    monkeypatch.setattr(
+        release_wheel_probe,
+        "http_behaviour_errors",
+        lambda: ["no HTTP delivery reached http://127.0.0.1:1/probe"],
+    )
+    native = _production_native()
+    package = _packaged_stub(tmp_path)
+
+    assert release_wheel_probe.main(native=native, package=package) == 1, (
+        "A delivery failure must exit non-zero."
+    )
+    assert "no HTTP delivery reached" in capsys.readouterr().err, (
+        "Report the specific delivery failure."
+    )
+
+
+def test_release_probe_delivers_a_record_through_the_native_handler() -> None:
+    """The installed extension's native HTTP worker delivers the probe record."""
+    assert not release_wheel_probe.http_behaviour_errors(), (
+        "The handler built from this installation must deliver its record."
+    )
+
+
+def _collector_receiving(pending: tuple[str, bytes] | None) -> SimpleNamespace:
+    """Build a collector stand-in that holds at most one delivered request."""
+    requests: queue.Queue[tuple[str, bytes]] = queue.Queue()
+    if pending is not None:
+        requests.put(pending)
+    return SimpleNamespace(requests=requests)
+
+
+@pytest.mark.parametrize(
+    ("delivered", "expected"),
+    [
+        (("/other", b"release-wheel-probe"), "wrong request path"),
+        (("/probe", b"unrelated"), "did not contain the record message"),
+    ],
+)
+def test_collect_delivery_reports_a_malformed_delivery(
+    delivered: tuple[str, bytes], expected: str
+) -> None:
+    """A request on the wrong path or without the record message is a failure."""
+    errors = release_wheel_probe._collect_delivery(
+        typ.cast(
+            "release_wheel_probe._RecordCollector", _collector_receiving(delivered)
+        ),
+        "http://127.0.0.1:1/probe",
+    )
+
+    assert any(expected in error for error in errors), (
+        "Report the specific defect in the delivered request."
+    )
+
+
+def test_collect_delivery_reports_an_absent_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A collector that receives nothing names the endpoint it waited on."""
+    monkeypatch.setattr(release_wheel_probe, "_DELIVERY_TIMEOUT_SECONDS", 0.01)
+
+    errors = release_wheel_probe._collect_delivery(
+        typ.cast("release_wheel_probe._RecordCollector", _collector_receiving(None)),
+        "http://127.0.0.1:1/probe",
+    )
+
+    assert errors == ["no HTTP delivery reached http://127.0.0.1:1/probe"], (
+        "A missing delivery must name the endpoint the handler was given."
+    )
 
 
 def test_promised_test_hooks_missing_exits_with_usage_error(

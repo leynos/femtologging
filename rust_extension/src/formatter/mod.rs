@@ -9,6 +9,7 @@ use std::{fmt, sync::Arc};
 
 use crate::log_record::FemtoLogRecord;
 
+mod escape;
 mod exception;
 #[cfg(feature = "python")]
 mod percent;
@@ -16,6 +17,7 @@ mod percent;
 #[cfg(feature = "python")]
 pub mod python;
 
+use escape::escape_message_line_separators;
 pub use exception::{ExceptionFormat, format_exception_payload, format_stack_payload};
 #[cfg(feature = "python")]
 pub use percent::PercentFormatter;
@@ -71,18 +73,36 @@ impl fmt::Debug for SharedFormatter {
 
 /// Formatter that renders a record as `LOGGER [LEVEL] message`.
 ///
-/// A stack trace and an exception traceback, when the record carries them, follow on new lines.
+/// Line separators in the message are escaped before the record is composed,
+/// so a message cannot start a new line that looks like another record. The
+/// escaped set is the one Python's `str.splitlines()` recognizes: LF, CR, VT,
+/// FF, U+001C, U+001D, U+001E, NEL, U+2028, and U+2029. Each becomes its
+/// `char::escape_debug` form, such as `\n` or `\u{2028}`; every other
+/// character, including a backslash, is kept verbatim. The escaped text is not
+/// reversible because a literal `\n` looks the same as an escaped LF.
+///
+/// A stack trace and an exception traceback, when the record carries them,
+/// follow on new lines and keep their own structure. Their text is not escaped,
+/// so it can span lines. An exception message may include application data and
+/// is not a trusted single-line field: a separator inside it can still forge a
+/// line.
+///
+/// # Examples
+///
+/// ```rust
+/// use _femtologging_rs::{DefaultFormatter, FemtoFormatter, FemtoLevel, FemtoLogRecord};
+///
+/// let record = FemtoLogRecord::new("core", FemtoLevel::Info, "one\ntwo");
+///
+/// assert_eq!(DefaultFormatter.format(&record), "core [INFO] one\\ntwo");
+/// ```
 #[derive(Copy, Clone, Debug)]
 pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        let mut output = format!(
-            "{} [{}] {}",
-            record.logger(),
-            record.level_str(),
-            record.message()
-        );
+        let message = escape_message_line_separators(record.message());
+        let mut output = format!("{} [{}] {}", record.logger(), record.level_str(), message);
 
         // Append stack trace if present (before exception for readability)
         if let Some(stack) = record.stack_payload() {
@@ -163,6 +183,60 @@ mod tests {
         assert!(output.contains("test.py"));
         assert!(output.contains("line 42"));
         assert!(output.contains("test_func"));
+    }
+
+    #[test]
+    fn default_formatter_escapes_multiline_message_before_payloads() {
+        let formatter = DefaultFormatter;
+        let exception = ExceptionPayload::new("ValueError", "test error");
+        let frame = StackFrame::new("test.py", 42, "test_func");
+        let stack = StackTracePayload::new(vec![frame]);
+        let record = FemtoLogRecord::new(
+            "core",
+            FemtoLevel::Error,
+            "failed\ncore [CRITICAL] forged\r\nnext",
+        )
+        .with_stack(stack)
+        .with_exception(exception);
+
+        let output = formatter.format(&record);
+        let mut lines = output.split('\n');
+
+        assert_eq!(
+            lines.next(),
+            Some("core [ERROR] failed\\ncore [CRITICAL] forged\\r\\nnext"),
+            "the message must stay on the first physical line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some("Stack (most recent call last):"),
+            "the stack must keep its own structure after the escaped message",
+        );
+        assert_eq!(
+            lines.next(),
+            Some("  File \"test.py\", line 42, in test_func"),
+            "the stack frame must occupy its own physical line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some(""),
+            "the stack and traceback must be separated by a blank line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some("Traceback (most recent call last):"),
+            "the traceback header must occupy its own physical line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some("ValueError: test error"),
+            "the exception line must occupy its own physical line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some(""),
+            "the exception payload must end with its own newline",
+        );
     }
 
     #[test]

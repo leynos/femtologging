@@ -1,8 +1,7 @@
-//! Unit tests for the HTTP worker's own helpers.
+//! Unit tests for the HTTP worker's shutdown and drop accounting.
 //!
 //! Response classification has its own file, `response_classification_tests.rs`,
-//! and is not repeated here: what is left in the worker is the authentication
-//! encoding that no other module owns.
+//! and request construction has `transport_tests.rs`; neither is repeated here.
 
 use super::*;
 use std::{
@@ -14,14 +13,6 @@ use std::{
 };
 
 use crate::{level::FemtoLevel, shutdown_signal::ShutdownSignal};
-
-#[test]
-fn base64_encode_basic() {
-    assert_eq!(base64_encode(b"user:pass"), "dXNlcjpwYXNz");
-    assert_eq!(base64_encode(b"a"), "YQ==");
-    assert_eq!(base64_encode(b"ab"), "YWI=");
-    assert_eq!(base64_encode(b"abc"), "YWJj");
-}
 
 #[test]
 #[serial_test::serial]

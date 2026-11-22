@@ -14,6 +14,7 @@
 //! record.
 mod builder_options;
 mod config;
+mod flush;
 mod handler_impl;
 mod io_utils;
 pub(crate) mod policy;
@@ -29,22 +30,21 @@ use std::{
     io::{self, BufWriter, Seek, Write},
     path::Path,
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use pyo3::prelude::*;
 
-use crate::formatter::{DefaultFormatter, FemtoFormatter};
 // The test modules reach `FemtoHandlerTrait::handle` through `use super::*`;
 // the production bindings import the trait directly in `python.rs`.
+use crate::formatter::{DefaultFormatter, FemtoFormatter};
 #[cfg(test)]
 use crate::handler::FemtoHandlerTrait;
 #[cfg(test)]
 use crate::level::FemtoLevel;
+#[cfg(test)]
+use crate::log_record::FemtoLogRecord;
 use crate::shutdown::{ShutdownCompletion, TerminalStatus};
-use crate::sync::{
-    JoinHandle, Mutex, Receiver, RecvTimeoutError, SendTimeoutError, Sender, bounded,
-};
+use crate::sync::{JoinHandle, Mutex, Sender};
 use io_utils::open_log_file;
 use worker::{FileCommand, WorkerConfig, spawn_worker};
 
@@ -57,9 +57,8 @@ pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy};
 pub(crate) use validations::{
     validate_capacity_nonzero, validate_flush_interval_nonzero, validate_params,
 };
-pub(crate) use worker::{NoRotation, RotationStrategy};
-
 pub(crate) use wait_outcomes::{EnqueueFailure, FlushOutcome, WorkerShutdown, classify_enqueue};
+pub(crate) use worker::{NoRotation, RotationStrategy};
 
 /// File-based logging handler exposed to Python.
 ///
@@ -168,62 +167,7 @@ impl FemtoFileHandler {
         )
     }
 
-    /// Flush the worker's buffer, waiting up to one second. Returns `true` only when the flush
-    /// is confirmed in time; `false` if the handler is closed, unreachable or the flush fails.
-    pub fn flush(&self) -> bool {
-        matches!(self.flush_outcome(), FlushOutcome::Acknowledged)
-    }
-
-    /// Flush and report why the attempt finished.
-    ///
-    /// The Python binding records this outcome so an operator can tell a
-    /// timed-out flush from a flush of an already-closed handler, which the
-    /// public `bool` cannot express.
-    pub(crate) fn flush_outcome(&self) -> FlushOutcome {
-        // Bind first: a guard in the `match` scrutinee lives through the send.
-        let tx = self.tx.lock().clone();
-        match tx {
-            Some(tx) => self.perform_flush(&tx),
-            None => FlushOutcome::Closed,
-        }
-    }
-
-    /// Waits for the worker's flush acknowledgement without taking ownership of
-    /// the worker thread.
-    ///
-    /// The enqueue and the acknowledgement share one deadline but are reported
-    /// separately: a request that never reached the worker and a request the
-    /// worker never answered point at different faults.
-    fn perform_flush(&self, tx: &Sender<FileCommand>) -> FlushOutcome {
-        let deadline = Instant::now() + Duration::from_secs(1);
-        let (ack_tx, ack_rx) = bounded(1);
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match tx.send_timeout(FileCommand::Flush(ack_tx), remaining) {
-            Ok(()) => {}
-            Err(SendTimeoutError::Disconnected(_)) => return FlushOutcome::Disconnected,
-            Err(SendTimeoutError::Timeout(_)) => return FlushOutcome::EnqueueTimedOut,
-        }
-        self.wait_for_flush_completion(&ack_rx, deadline)
-    }
-
-    /// Classifies the worker's answer to a flush request.
-    fn wait_for_flush_completion(
-        &self,
-        ack_rx: &Receiver<io::Result<()>>,
-        deadline: Instant,
-    ) -> FlushOutcome {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match ack_rx.recv_timeout(remaining) {
-            Ok(Ok(())) => FlushOutcome::Acknowledged,
-            Ok(Err(_)) => FlushOutcome::Failed,
-            Err(RecvTimeoutError::Timeout) => FlushOutcome::AckTimedOut,
-            // The worker dropped the acknowledgement sender without answering,
-            // which means it died between accepting the request and replying.
-            Err(RecvTimeoutError::Disconnected) => FlushOutcome::Disconnected,
-        }
-    }
-
-    /// Return the bounded overflow-policy bucket for telemetry.
+    /// Return the overflow policy as the bounded label wait diagnostics use.
     pub(crate) fn policy_bucket(&self) -> &'static str {
         match self.overflow_policy {
             OverflowPolicy::Drop => "drop",
@@ -353,6 +297,8 @@ impl FemtoFileHandler {
     }
 }
 
+#[cfg(test)]
+mod flush_ack_support;
 #[cfg(test)]
 mod flush_ack_tests;
 #[cfg(test)]

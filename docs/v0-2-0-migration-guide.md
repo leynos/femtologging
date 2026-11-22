@@ -17,22 +17,24 @@ ______________________________________________________________________
 
 ## Impact at a glance
 
-| Priority           | Area                            | What to do                                                                                                                               |
-| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).          |
-| Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                       |
-| Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                              |
-| Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                 |
-| Review if enabled  | Async `log_context` use         | Replace reliance on thread-local leakage between tasks with `contextvars`-aware code.                                                    |
-| Review if enabled  | Shared dispatch                 | Review handlers that keep per-logger state in `threading.local`; use `contextvars` or keep the state with the handler.                   |
-| Review if enabled  | `StdlibHandlerAdapter`          | Review handler levels and `contextvars`-dependent filters now that dispatch honours both.                                                |
-| Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                                     |
-| Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                 |
-| Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger. |
-| Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                   |
-| Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                           |
-| Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                              |
-| Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                 |
+| Priority           | Area                            | What to do                                                                                                                                                                                       |
+| ------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).                                                                  |
+| Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                                                                               |
+| Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                                                                                      |
+| Required if called | Reserved structured-field names | Rename any `extra=`, `log_context(...)`, `push_log_context`, or `RecordMetadata::key_values` name that uses a built-in record name; those names now raise, or the record is dropped and counted. |
+| Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                                                                         |
+| Review if enabled  | Async `log_context` use         | Replace reliance on thread-local leakage between tasks with `contextvars`-aware code.                                                                                                            |
+| Review if enabled  | Shared dispatch                 | Review handlers that keep per-logger state in `threading.local`; use `contextvars` or keep the state with the handler.                                                                           |
+| Review if enabled  | `StdlibHandlerAdapter`          | Review handler levels and `contextvars`-dependent filters now that dispatch honours both.                                                                                                        |
+| Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                                                                                             |
+| Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                                                                         |
+| Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger.                                                         |
+| Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                                                                           |
+| Review if enabled  | HTTP handlers                   | Expect `HandlerConfigError` for an invalid endpoint or header, and check the four-redirect limit and credential stripping.                                                                       |
+| Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                                                                                   |
+| Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                                                                                      |
+| Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                                                                         |
 
 _Table 1: Obligations when moving to v0.2.0._
 
@@ -100,6 +102,43 @@ exception instead of being silently discarded.
 When a field is present both in `extra` and in an active `log_context`, the
 inline value takes precedence. `exception()` is unchanged and does not accept
 `extra`.
+
+Field names that belong to the record itself are reserved. `name`, `msg`,
+`args`, `levelname`, `levelno`, `pathname`, `filename`, `module`, `exc_info`,
+`exc_text`, `stack_info`, `lineno`, `funcName`, `created`, `msecs`,
+`relativeCreated`, `thread`, `threadName`, `process`, `processName`, `message`,
+`asctime`, `taskName`, `logger`, `level`, `metadata`, `module_path`,
+`line_number`, `timestamp`, `thread_id`, `thread_name`, and `key_values` all
+raise `ValueError` when used as an `extra` key or a `log_context(...)` key.
+Matching is exact and case-sensitive, so `Name` and `logger_name` remain
+legitimate custom fields. Rust callers see the same contract:
+`push_log_context` returns `LogContextError::ReservedKey`, and
+`log_with_metadata` drops a record whose context contains a reserved name and
+counts it through `get_context_dropped()`. An enabled logger counts that drop
+even when the record is below its severity threshold, because context admission
+runs before the level gate. A logger that configuration disabled never reaches
+admission: it returns first and increments the disabled-logger counter instead.
+
+Renaming the field fixes admission, but an HTTP handler that selected the old
+name must be updated with it, because `with_record_fields` matches top-level
+wire names.
+
+Before:
+
+```python
+logger.info("order accepted", extra={"message": "accepted"})
+handler = HTTPHandlerBuilder().with_record_fields(["name", "message"]).build()
+```
+
+After:
+
+```python
+logger.info("order accepted", extra={"message_id": "accepted"})
+handler = HTTPHandlerBuilder().with_record_fields(["name", "message_id"]).build()
+```
+
+Selections of authoritative fields such as `msg` need no change: they name the
+built-in field rather than a custom one.
 
 ______________________________________________________________________
 
@@ -271,6 +310,14 @@ three observable behaviours:
   to answer". `FemtoHTTPHandler.flush()` already shared one deadline and is
   unchanged.
 
+The stream, file, and rotating-file handler flushes use the same accounting. A
+direct `flush()` on any worker-queue handler now spends one configured flush
+timeout across queue admission and the acknowledgement, so the acknowledgement
+may receive less than the full timeout, and a busy worker can make `flush()`
+return `False` sooner than before. The logger's `flush_handlers()` does not
+change this: it gives the handler the barrier's deadline, and the handler still
+caps its wait at its own configured timeout.
+
 The bound on `close()` itself is the budget: a worker that misses the deadline
 is detached, so the caller is never held past it. The bound on the worker's own
 exit is looser, because it is on what the worker _starts_: no standard-library
@@ -389,12 +436,19 @@ handler is flushed through its own native implementation; a custom handler that
 defines `flush` now receives a call it did not receive before, and can use it
 to persist buffered records. A missing or non-callable `flush` still counts as
 success, so an existing handler that does not define one needs no change. The
-method runs on the thread that called `flush_handlers()`, after the queued
-records have been dispatched, and every registered handler is flushed even when
-an earlier one fails. A `flush` that returns `None` succeeds, and every other
-result succeeds only when it is truthy. An exception raised by `flush` logs a
-bounded warning that omits the exception text and makes `flush_handlers()`
-return `False`, so keep the method non-blocking and defensive, as with `handle`.
+call queues a barrier behind the logger's already queued records and blocks the
+thread that invoked `flush_handlers()` while the worker handles those records
+and then runs the handler flushes, up to the flush deadline; the handler
+callbacks themselves run on the dispatch worker rather than on that invoking
+thread. An upgrading handler that depended on caller-thread state, such as a
+thread-local or an enclosing interpreter frame, must not do so: the callback
+has neither. Handlers are attempted while budget remains; a handler that fails
+does not stop the ones after it, but handlers left when the deadline expires
+are not flushed, and the caller can return `False` while a callback is still
+running. A `flush` that returns `None` succeeds, and every other result
+succeeds only when it is truthy. An exception raised by `flush` logs a bounded
+warning that omits the exception text and makes `flush_handlers()` return
+`False`, so keep the method non-blocking and defensive, as with `handle`.
 
 ______________________________________________________________________
 
@@ -417,6 +471,57 @@ For the complete parameter and error contract, see
 [the users guide section on frame filtering][user-filtering].
 
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
+[user-flushing]: users-guide.md#managing-handlers-and-custom-sinks
+
+______________________________________________________________________
+
+## Deadline-aware Rust handler flushing
+
+`FemtoLogger::flush_handlers()` now applies one two-second deadline to marker
+insertion, the non-empty handler snapshot, worker acknowledgement and every
+handler flush. It returns `false` when any part of that barrier is unconfirmed.
+Built-in handlers keep their shorter configured timeouts.
+
+Custom Rust handlers that implement only synchronous `flush()` now fail closed:
+the barrier does not call that method and returns `false`. Override
+`flush_until(context)` to opt in. The implementation must use bounded waits
+against the supplied absolute deadline and report `false` when completion is
+not confirmed. The logger cannot interrupt arbitrary synchronous handler code
+once it starts; calling an unbounded `flush()` from `flush_until()` can still
+occupy the shared worker after the caller returns. In normal builds, logger
+drop waits only for that logger's in-flight records, up to the bounded drain
+timeout; it does not join the process-wide worker. Loom models join their
+logger-owned worker during cleanup.
+
+A user-defined Python handler is asked to flush itself: the barrier calls its
+callable `flush` method. A handler that defines no callable `flush` opts out
+and is confirmed once the record reaches it; one whose `flush` raises or
+returns a falsy value other than `None` reports failure, and the exception text
+is never printed in case it quotes a record. `None` counts as success, as
+Python's flush protocol reports success that way. The call runs synchronously
+on the worker, so the barrier deadline bounds the wait for the answer, not the
+duration of the handler's own `flush`.
+
+Python-facing calls release the GIL while waiting for the worker. CPython must
+reacquire the interpreter before returning to Python, so interpreter contention
+can delay the Python return beyond the Rust barrier deadline; a late handoff
+changes the result to `false`.
+
+`FemtoLogger.get_flush_diagnostics()` exposes fixed-cardinality counters for
+barrier attempts, confirmations, failure stages and elapsed-time buckets. Those
+buckets are disjoint ranges (up to 10 ms, over 10 to 100 ms, over 100 to 500
+ms, over 500 ms to 2 s, and over 2 s), so each attempt increments exactly one
+rather than a cumulative series. The keys are stable and contain no logger
+names, paths, messages or payloads. Values are a best-effort snapshot read from
+relaxed atomics, so concurrent updates may appear at different instants.
+Exporting them through a shared metrics adapter remains the application's
+responsibility. See [the `get_flush_diagnostics()` counters][user-flushing] for
+the counter contract.
+
+See the [user guide](users-guide.md#flushing-logger-handlers), the
+[developer guide](developers-guide.md#logger-handler-flush-barrier), and the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the public contract and implementation details.
 
 ______________________________________________________________________
 
@@ -625,6 +730,52 @@ blocking thread-local destructor can no longer hold `close()` past its timeout.
 
 ______________________________________________________________________
 
+## HTTP handler endpoint validation and redirects
+
+`HTTPHandlerBuilder` now validates what the HTTP transport will send, and the
+worker applies ureq 2's redirect rules itself instead of delegating them to the
+HTTP client.
+
+### What changes
+
+- An endpoint that is not an absolute `http` or `https` URL, or that the
+  transport cannot express, raises `HandlerConfigError` when the handler is
+  built. It no longer builds and then fails on every record.
+- A header name, header value, or bearer token that cannot be encoded as an
+  HTTP header raises `HandlerConfigError` at build time. The message does not
+  echo the value.
+- A path that needs percent-encoding is still accepted and encoded: a space in
+  the path is sent as `%20`. A GET payload is appended to the configured
+  endpoint before the endpoint is parsed, so an endpoint ending in a space
+  still sends the encoded form followed by the query.
+- At most four redirects are followed. A 300, a 307 or 308 answering a POST, and
+  a redirect with a missing or non-UTF-8 `Location` are permanent outcomes. A
+  fifth redirect is retried as a transport failure, `Authorization` and
+  `Cookie` are removed before the redirect target is requested, and a
+  `Location` with a space is followed to its percent-encoded form.
+- `write_timeout` also bounds connection establishment, so a connection waits
+  for at most the smaller of `connect_timeout` and `write_timeout`.
+- A whole redirect chain shares one `write_timeout` budget. A chain that is
+  still going when the budget expires fails as a transport error instead of
+  spending the timeout again on each hop.
+
+### How to update an HTTP handler
+
+- Fix a rejected endpoint or header before upgrading. The error names the
+  endpoint or the header field, never its value.
+- If a collector answered a 300 or a POST 307/308 in a way the handler treated
+  as delivered, make that route answer 2xx directly, or use a 301, 302 or 303.
+- A connection waits for at most the smaller of `connect_timeout` and
+  `write_timeout`, so `write_timeout` caps connection establishment as well. To
+  allow a connection to establish for a required duration, raise
+  `write_timeout` to at least that duration, and raise `connect_timeout` too if
+  the duration exceeds it.
+
+For the full transport contract, see
+[the Rust extension guide](rust-extension.md#http-transport-and-tls).
+
+______________________________________________________________________
+
 ## What does not need to change
 
 Reading and assigning the five declared fields (`level`, `filename`, `stream`,
@@ -649,6 +800,11 @@ Each item carries the same obligation label as the matching row in
       attributes.
 - [ ] **Required if called:** Check dynamically built logger names against the
       shape and registry limits.
+- [ ] **Required if called:** Rename structured fields that use a built-in
+      record name, whether they arrive through `extra=`, `log_context(...)`,
+      Rust `push_log_context`, or `RecordMetadata::key_values` passed to
+      `log_with_metadata`, and update any `with_record_fields` selection that
+      named the old key.
 - [ ] **Review if enabled:** Move handler state that relied on a per-logger
       thread to `contextvars` or into the handler itself.
 - [ ] **Review if enabled:** Review `StdlibHandlerAdapter` levels, filters, and
@@ -664,6 +820,9 @@ Each item carries the same obligation label as the matching row in
 - [ ] **Review if enabled:** Call `flush()` before `close()` on socket and HTTP
       handlers, and accept that a stalled worker drops queued records at the
       single shutdown deadline.
+- [ ] **Review if enabled:** Update HTTP handlers for build-time endpoint and
+      header validation, the four-redirect limit, and credential stripping on
+      redirects.
 - [ ] **Optional:** Adopt `extra=` and the exception-payload limits.
 - [ ] **Optional:** Watch `wait_diagnostics()` and, where the crate is built
       with `tracing-compat`, the `femtologging::internal` wait events to

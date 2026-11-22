@@ -88,7 +88,10 @@ your process exits.
   writes its own name: the name is rendered into every formatted record, and
   Python's `str.splitlines()` splits on all of these characters, not only on
   `\n`, so a name carrying any of them could split one record into two lines of
-  output.
+  output. This validation applies to names passed through the logger API. A
+  direct `FemtoFileHandler.handle(logger, level, message)` call takes the
+  logger string as given and does not validate it, so pass a name that already
+  satisfies the rule when its framing matters.
 - Name loggers after stable components — a module, subsystem, or service — not
   after the data flowing through them. A registry that maps one logger per
   request, tenant, user, or plug-in identifier grows for the life of the
@@ -146,7 +149,9 @@ it.
 - `log()` and the `debug`, `info`, `warning`, `error`, and `critical`
   convenience methods accept the keyword-only argument `extra` for validated
   inline structured fields. `extra` must be a mapping with string keys and
-  `str`, `int`, `float`, `bool`, or `None` values.
+  `str`, `int`, `float`, `bool`, or `None` values. Reserved names that collide
+  with built-in record fields raise `ValueError`; see
+  [Scoped structured context](#scoped-structured-context) for the reserved sets.
 - `log()` accepts the keyword-only arguments `exc_info` and `stack_info` for
   capturing exception tracebacks and call stacks alongside the log message.
   `exc_info` accepts any of the following forms:
@@ -175,6 +180,20 @@ it.
   level is filtered out.
 - `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
   compatibility with code written against `logging.getLogger`.
+- The default formatter keeps the message field on the record's first physical
+  line. It escapes the line separators that Python's `str.splitlines()`
+  recognizes in the message — LF, CR, VT, FF, U+001C, U+001D, U+001E, NEL,
+  U+2028, and U+2029 — using their `char::escape_debug` forms, such as `\n` and
+  `\u{2028}`. Every other character, including a backslash and a horizontal
+  tab, is unchanged. A literal `\n` in the message therefore looks the same as
+  an escaped LF, so the transformation cannot be reversed. Stack and exception
+  diagnostics are not escaped and keep their own multiline structure; that
+  includes the exception message, so a separator inside an exception message
+  can still add a forged line. Only the default formatter escapes:
+  percent-style and Python callable formatters, and structured `handle_record`
+  handlers, receive the raw message. Escaping can lengthen a record, so
+  size-based rotation counts the escaped bytes and may roll over sooner than
+  the unescaped message length suggests.
 - There is no lazy formatting. Build the final message string before calling
   `log()`.
 
@@ -190,9 +209,11 @@ calls its `flush()` when it defines one and treats a missing or non-callable
 `flush` as success. A `flush()` that returns `None` — as
 `logging.Handler.flush()` does — counts as success, and any other falsy return
 value counts as failure. An exception, or an error other than a missing or
-non-callable `flush` attribute, also counts as failure. Enqueueing the flush
-marker and waiting for its acknowledgement share a two-second timeout. Flushing
-attached handlers can take additional time. The method returns `True` when the
+non-callable `flush` attribute, also counts as failure. One two-second deadline
+covers the whole barrier — resolving dispatch state, enqueueing the marker,
+waiting for its acknowledgement, and flushing every attached handler. A
+synchronous handler callback can overrun its own wait, but the caller does not
+get a separate budget for handler flushing. The method returns `True` when the
 worker acknowledges the marker in time and every handler flush succeeds; it
 returns `False` if the marker cannot be enqueued or acknowledged in time, or
 any handler flush fails. A failing handler does not stop the remaining handlers
@@ -325,6 +346,12 @@ fields with safe defaults does not require a version bump.
 - Use `logger.get_context_capture_failures()` to inspect failed producer-context
   snapshots. This counter is separate from `get_dropped()` and does not include
   dispatch-admission refusals.
+- Use `logger.get_flush_diagnostics()` to poll fixed-cardinality flush-barrier
+  counters for attempts, confirmations, failure stages and elapsed-time
+  buckets. The keys remain stable and include no logger names, paths, messages
+  or payloads. Values are a best-effort snapshot read from relaxed atomics, so
+  concurrent updates may appear at different instants. Exporting these values
+  through a shared metrics adapter remains the application's responsibility.
 - Use `logger.get_context_dropped()` to inspect records discarded when Rust
   scoped context or explicit Rust key-values fail validation. This counter is
   separate from queue-capacity drops.
@@ -339,6 +366,44 @@ fields with safe defaults does not require a version bump.
   record never reaches the level check, filters, formatter, or dispatch, so
   this counter is separate from `get_dropped()`. A later configuration that
   names the logger re-enables it and stops the counter rising.
+
+### Flushing logger handlers
+
+`logger.flush_handlers()` queues a marker behind records the logger has already
+accepted when handlers are attached, then snapshots the handlers before
+allowing the worker to run their flush callbacks. With no handlers but records
+in flight, it queues a shard-wide drain marker instead; that marker sits behind
+work other loggers have already queued on the same shard, so that work can
+delay the flush. Handler additions and removals completed before that snapshot
+are reflected in this barrier; a handler removed afterwards remains alive in
+the snapshot until the worker releases it, and later additions participate in
+the next barrier. One two-second deadline covers dispatch resolution, marker
+insertion, handler-list locking, worker acknowledgement and every handler
+flush. Built-in handlers keep their own shorter flush limits, whether fixed or
+configurable: the file handlers stop waiting after a fixed second, while the
+stream handler has a configurable `flush_timeout`. The Python method releases
+the GIL while waiting so Python handlers can run.
+
+The method returns `False` when a stage is not confirmed by the deadline, the
+worker has exited, or a handler reports failure or lacks deadline support. A
+user-defined Python handler is asked to flush itself: the barrier calls its
+callable `flush` method. A handler with no callable `flush` has nothing to
+drain, so it is confirmed once the record reaches it; one whose `flush` raises
+or returns a falsy value other than `None` reports failure, and its exception
+text is never printed. `None` counts as success, as Python's flush protocol
+reports success that way. The timeout bounds the caller's Rust barrier wait; it
+cannot stop a synchronous handler callback that is still running. In normal
+builds, logger drop waits for its own in-flight records only, up to the bounded
+drain timeout, and does not join the shared process-wide worker. A callback
+that violates its deadline may keep that worker occupied after the flush returns
+`False`. PyO3 must reacquire the interpreter before returning to Python, so
+interpreter contention can delay the Python return beyond the barrier deadline.
+
+Custom Rust handlers that should participate must implement the deadline-aware
+`FemtoHandlerTrait::flush_until(context)` contract. Its default fails closed
+without invoking legacy synchronous `flush()` code. See the
+[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
+for the compatibility rules.
 
 ## Built-in handlers
 
@@ -375,6 +440,15 @@ fields with safe defaults does not require a version bump.
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
   `.build()`.
+
+A direct `flush()` shares one configured `flush_timeout` between queue
+admission and the acknowledgement, so admission that spends part of that budget
+leaves less of it for the worker's answer. Under load, `flush()` can therefore
+return `False` even though the handler is healthy: admission may spend the
+budget while the queue is full, or the worker may not acknowledge what is left.
+The logger's `flush_handlers()` does not change this: it gives the handler the
+barrier's deadline, and the handler still caps its own wait at its configured
+`flush_timeout`.
 
 ### FemtoFileHandler
 
@@ -581,9 +655,12 @@ socket_handler = (
   timeout covers both the wait for queue space and the acknowledgement, so a
   flush returns `False` once that single budget is spent rather than waiting a
   second full timeout for the worker to answer. It returns `False` when the
-  handler is closed, the worker channel is gone, or the budget expires. Python
-  `flush()` releases the GIL while it waits, so other Python threads keep
-  running during a flush that blocks on a full queue or a slow collector.
+  handler is closed, the worker channel is gone, the connection fails to flush
+  with an I/O error, the marker is discarded during shutdown, or the budget
+  expires. An acknowledgement therefore has to report a successful flush to
+  count, not merely arrive. Python `flush()` releases the GIL while it waits,
+  so other Python threads keep running during a flush that blocks on a full
+  queue or a slow collector.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -622,8 +699,42 @@ socket_handler = (
   `.with_basic_auth()` and `.with_bearer_token()` setters remain available for
   compatibility.
 - `with_headers(...)`, `with_capacity(...)`, timeout setters, and
-  `.with_json_format()` mirror the socket/file builder style. Validation
-  failures raise `ValueError` before the handler is built.
+  `.with_json_format()` mirror the socket/file builder style.
+  `HTTPHandlerBuilder` rejects an invalid header name, header value, or bearer
+  token at build time with `HandlerConfigError`. The message never echoes a
+  header value.
+- The endpoint must be an absolute `http` or `https` URL. A malformed endpoint,
+  another scheme, or an endpoint the transport cannot send is rejected with
+  `HandlerConfigError` when the handler is built, instead of failing on every
+  record. A path that needs percent-encoding is accepted and encoded on the
+  wire, so `http://host/log ingest` reaches the collector as `/log%20ingest`.
+- Certificates are validated against the WebPKI roots bundled with the
+  extension, not the platform trust store. A private certificate authority is
+  not supported, and there is no setting that weakens verification.
+- `connect_timeout_ms` bounds connection establishment, including the TLS
+  handshake. `write_timeout_ms` bounds the whole attempt, so it also caps the
+  connect phase: a connection may wait for at most the smaller of the two.
+- A redirect chain is followed for at most four redirects. A 301, 302 or 303 is
+  re-requested as a GET, and a 307 or 308 only for a GET. `Authorization` and
+  `Cookie` are never replayed at the redirect target. These redirects fail
+  permanently: a 300 or any other status with no replay rule, a 307 or 308
+  answering a POST, and a redirect whose `Location` is missing or not valid
+  UTF-8. A fifth redirect is a transport failure, so the record follows the
+  normal retry policy.
+- Authoritative fields (`name`, `levelname`, `msg`, `created`, `filename`,
+  `lineno`, `module`, `thread`, and the optional `threadName`, `exc_info`, and
+  `stack_info`) stay at the top level in both JSON and URL-encoded payloads.
+  Legitimate custom structured fields are flat, string-valued top-level members
+  alongside them.
+- Reserved structured names are omitted from custom metadata in every HTTP
+  format, so lower-trust metadata cannot replace an authoritative value even
+  when a record is constructed without admission validation.
+  `.with_record_fields([...])` selects built-in fields by name and projects
+  permitted custom fields by their top-level name. A reserved name in that list
+  selects only the built-in field, and unknown names are omitted.
+- These builder and transport rules are new in v0.2.0. See
+  [the migration guide](v0-2-0-migration-guide.md#http-handler-endpoint-validation-and-redirects)
+  before upgrading an HTTP handler.
 - `handler.close()` waits for the worker for at most the handler's write
   timeout. During that window, each pending record gets at most one best-effort
   attempt, without retries. A worker that acknowledges the shutdown in time is
@@ -641,6 +752,26 @@ socket_handler = (
   `True` only when the worker acknowledges within the handler's flush timeout.
   Python `flush()` releases the GIL while it waits, so other Python threads
   keep running during a flush that blocks on a full queue or a slow endpoint.
+- A handler's worker marks its thread as HTTP transport while it delivers.
+  `ureq` reports its progress at `DEBUG` through the Rust `log` and `tracing`
+  facades, using targets such as `ureq.run`, `ureq.pool`, and
+  `ureq.unversioned.resolver`. When a Rust bridge is installed, those records
+  carry a transport-origin marker. Every `FemtoHTTPHandler` silently ignores a
+  marked record after its closed-handler check, so a delivery cannot
+  manufacture the next request. The ignored record is not counted as a drop.
+  Non-HTTP handlers still receive it, and records emitted by application code
+  on other threads are unaffected even while a worker is sending. To see what
+  an endpoint suppresses, put a non-HTTP sink in place and raise the worker's
+  targets (`ureq.run`, `ureq.pool`, `ureq.unversioned.resolver`) to `DEBUG`. A
+  record that reaches that sink and never reaches the endpoint is evidence of
+  suppression, not an exact count: a filter or a failed delivery can also
+  account for an absence.
+- The marker is narrow on purpose. A record that Python code rebuilds from a
+  marked record is a new application record, records passed directly to the
+  three-argument `handler.handle(logger, level, message)` Python method carry
+  no marker, and socket handlers do not suppress marked records. Those paths
+  remain the caller's responsibility when they could loop back into the same
+  HTTP endpoint.
 
 ### Custom Python handlers
 
@@ -664,17 +795,23 @@ avoid raising from `handle`.
 
 `FemtoLogger.flush_handlers()` also calls the handler's `flush` method when it
 has one, so a custom handler that buffers records can persist them. The call
-runs on the thread that called `flush_handlers()`, after the logger's queued
-records have been dispatched, and every registered handler is flushed even when
-an earlier one fails. A missing or non-callable `flush` counts as success, so
-handlers without one need no change. A `flush` that returns `None`, as
-`logging.Handler.flush` does, has flushed without complaint; every other result
-succeeds only when it is truthy, so `False` or `0` reports failure. An
-exception raised by `flush` logs a bounded warning that omits the exception
-text and makes `flush_handlers()` return `False`. The calling thread releases
-the GIL while it waits for queued records and native handlers. A custom `flush`
-runs with the interpreter attached. Whether other Python threads can run while
-it blocks depends on the blocking operation.
+queues a barrier behind any records already queued for the logger's shard, and
+blocks the invoking thread while the dispatch worker handles those records and
+then runs `flush` on the registered handlers, up to the flush deadline. The
+handler callbacks themselves run on the dispatch worker, not on the invoking
+thread, so a custom `flush` must not rely on caller-thread state such as a
+thread-local or an enclosing interpreter frame. Handlers are attempted while
+budget remains: a handler that fails does not stop the ones after it, but
+handlers left when the deadline expires are not flushed, and the caller can
+return `False` while a callback is still running. A missing or non-callable
+`flush` counts as success, so handlers without one need no change. A `flush`
+that returns `None`, as `logging.Handler.flush` does, has flushed without
+complaint; every other result succeeds only when it is truthy, so `False` or
+`0` reports failure. An exception raised by `flush` logs a bounded warning that
+omits the exception text and makes `flush_handlers()` return `False`. The
+calling thread releases the GIL while it waits for queued records and native
+handlers. A custom `flush` runs with the interpreter attached. Whether other
+Python threads can run while it blocks depends on the blocking operation.
 
 #### Handler stability contract
 
@@ -1079,6 +1216,50 @@ def enrich_request(record: logging.LogRecord) -> bool:
 callback_filter = PythonCallbackFilterBuilder(enrich_request)
 ```
 
+### Default formatter line framing
+
+The default formatter inserts the message into a line-oriented record,
+`"{logger} [LEVEL] message"`. To stop message content from impersonating
+another record, it escapes the line separators listed under
+[Emitting records](#emitting-records). The logger name and level, and the
+diagnostic payloads, are generated by the formatter and are not escaped. The
+exception message belongs to those payloads, so a separator inside an exception
+message can still add a forged line. A direct `FemtoFileHandler.handle` call
+also passes its logger string through unvalidated and unescaped.
+
+Before — the message contains a real LF, so the record spans two physical lines
+and the second looks like a separate event:
+
+<!-- tested-example: default-formatter-framing-before -->
+```text
+core [INFO] first
+core [CRITICAL] forged
+```
+
+After — the message LF is escaped, so the message occupies one physical line:
+
+<!-- tested-example: default-formatter-framing-after -->
+```text
+core [INFO] first\ncore [CRITICAL] forged
+```
+
+Stack and traceback payloads still follow the message on their own lines, so a
+diagnostic record remains multiline:
+
+<!-- tested-example: default-formatter-framing-diagnostic -->
+```text
+core [ERROR] request failed\ncore [CRITICAL] forged
+Stack (most recent call last):
+  File "app.py", line 12, in handle
+Traceback (most recent call last):
+  File "app.py", line 9, in main
+ValueError: bad input
+```
+
+A formatted diagnostic already ends with a newline, and the file handler adds
+one line terminator for the record, so file output after a diagnostic can end
+with a blank line.
+
 ### Filtering frames from Python payloads
 
 `filter_frames()` returns a filtered copy of a stack or exception payload. Its
@@ -1271,7 +1452,17 @@ them. Arguments for a target held below the process-wide maximum are therefore
 still evaluated. Add a `log::log_enabled!` guard for the target when an
 argument is expensive. The target check does not inspect filters or handlers:
 an enabled record can still be rejected or dropped during dispatch. It does not
-create a logger or enter Python while checking the threshold. See the
+create a logger or enter Python while checking the threshold.
+
+The bridge also carries an HTTP transport-origin marker. While an HTTP worker
+is delivering a record, `ureq` diagnostics such as the DEBUG records under
+`ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver` are bridge records
+too. The bridge marks the records produced during that work, and HTTP handlers
+silently ignore them, so the transport cannot feed itself. The bridge suspends
+the marker before running filters, formatters, or handlers, so a callback that
+logs during dispatch still produces an ordinary record. Records from
+application threads, records rebuilt by Python code, and records passed
+directly to `FemtoHTTPHandler.handle` are not marked. See the
 [Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
 behaviour and build-feature details.
 
@@ -1321,8 +1512,20 @@ Behavioural guarantees:
 - Callback-filter enrichment uses the same scalar contract: keys must be
   non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
   `None`.
-- Keys must not collide with stdlib `logging.LogRecord` attributes or
-  femtologging-reserved metadata names.
+- Keys must not collide with built-in record fields. Matching is exact and
+  case-sensitive. The reserved stdlib `logging.LogRecord` names are `name`,
+  `msg`, `args`, `levelname`, `levelno`, `pathname`, `filename`, `module`,
+  `exc_info`, `exc_text`, `stack_info`, `lineno`, `funcName`, `created`,
+  `msecs`, `relativeCreated`, `thread`, `threadName`, `process`, `processName`,
+  `message`, `asctime`, and `taskName`. The reserved femtologging names are
+  `logger`, `level`, `metadata`, `module_path`, `line_number`, `timestamp`,
+  `thread_id`, `thread_name`, and `key_values`. Names such as `Name`,
+  `logger_name`, `msg_id`, and `request_id` are not reserved.
+- Python `extra` and `log_context(...)` raise `ValueError` when given a
+  reserved name. Rust `push_log_context` returns
+  `LogContextError::ReservedKey`, and `log_with_metadata` drops the record and
+  increments `get_context_dropped()`. Validation runs before the logger's level
+  gate, so a reserved name is rejected even when the level is disabled.
 - Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
   1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
   enrichment per record.
@@ -1354,8 +1557,10 @@ Accepted enrichment must satisfy all of the following:
 
 - Keys are non-empty `str` instances.
 - Values are limited to `str`, `int`, `float`, `bool`, or `None`.
-- Keys do not overwrite built-in `logging.LogRecord` fields such as `name`,
-  `msg`, `levelname`, `created`, or femtologging-reserved metadata fields.
+- Keys are not in the reserved sets listed under
+  [Scoped structured context](#scoped-structured-context). Unlike `extra` and
+  `log_context(...)`, a callback addition that uses a reserved name is ignored
+  with a warning rather than raising.
 - The serialized payload stays within 64 keys, 64 UTF-8 bytes per key,
   1,024 UTF-8 bytes per value, and 16 KiB total.
 

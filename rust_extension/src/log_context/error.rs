@@ -1,4 +1,14 @@
 //! Public error type for structured logging context operations.
+//!
+//! `LogContextError` is the single error the `log_context` module returns when
+//! it validates or mutates a context payload: popping an empty stack, too many
+//! keys, a key or value past its byte-length limit, or an aggregate payload past
+//! the total budget. Deriving `thiserror` gives every variant a message for the
+//! caller, naming the offending key, count or total and the limit that was
+//! broken wherever the variant carries one; `EmptyContextStack` carries neither,
+//! so its message states only that the stack was empty. The payload details are
+//! structured fields rather than a flattened string, so the Python bindings can
+//! convert the error without parsing it.
 
 use thiserror::Error;
 
@@ -25,6 +35,12 @@ pub enum LogContextError {
         len: usize,
         /// Maximum permitted UTF-8 byte length of a key.
         max: usize,
+    },
+    /// A context key collided with a reserved record or metadata field.
+    #[error("context key '{key}' is reserved and cannot be used for structured fields")]
+    ReservedKey {
+        /// The reserved key that was supplied.
+        key: String,
     },
     /// A context value exceeded the byte-length limit.
     #[error("context value for key '{key}' is {len} bytes; maximum is {max}")]

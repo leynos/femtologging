@@ -198,6 +198,155 @@ The logging process will follow these steps:
 8. **Output:** The formatted string is written to the target destination (e.g.,
    file, socket, console) by the consumer thread.
 
+#### Flush barrier states
+
+`FemtoLogger.flush_handlers()` is a barrier over the same queue. It queues a
+marker behind every record the logger has already accepted, then snapshots the
+attached handlers before allowing the worker to run their callbacks. Because
+the marker travels through the bounded queue, the call can fail before the
+worker ever sees it, and the states below distinguish that from a worker that
+saw the marker but did not answer.
+
+For screen readers: the following state diagram shows a `flush_handlers()` call
+resolving its dispatch state and checking the handler list. With handlers, it
+queues a marker before taking the flush snapshot, then waits for the worker to
+drain earlier records and flush that snapshot. With no handlers but records in
+flight, it queues a shard-wide drain marker instead, so work another logger has
+already queued on the same shard can delay it. The Python path then reacquires
+the interpreter. It succeeds only when the worker and every deadline-aware
+handler confirm before the shared deadline. It fails if dispatch-state
+resolution, snapshot-lock acquisition, marker enqueue, worker flush,
+acknowledgement or interpreter reacquisition is not confirmed by the shared
+deadline, if the worker has exited, or if a handler reports failure or does not
+implement the deadline-aware contract. PyO3 must reacquire the interpreter
+before returning to Python; CPython controls that handoff, so it can delay the
+Python return beyond the Rust barrier deadline.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ResolveDispatchState
+    ResolveDispatchState --> CheckHandlers: state available before deadline
+    ResolveDispatchState --> Failed: worker unavailable or deadline expired
+    CheckHandlers --> EnqueueMarker: handler attached
+    CheckHandlers --> WaitForShardDrain: no handlers, work in flight
+    CheckHandlers --> ReacquireInterpreter: no handlers, no in-flight work, Python caller
+    CheckHandlers --> Succeeded: no handlers and no in-flight work, Rust caller
+    WaitForShardDrain --> ReacquireInterpreter: drain acknowledged, Python caller
+    WaitForShardDrain --> Succeeded: shard drain marker acknowledged, Rust caller
+    WaitForShardDrain --> Failed: drain deadline expires
+    EnqueueMarker --> SnapshotHandlers: marker admitted
+    EnqueueMarker --> Failed: queue full until deadline or worker exited
+    SnapshotHandlers --> DrainEarlierRecords: read lock acquired before deadline
+    SnapshotHandlers --> Failed: lock unavailable at deadline
+    DrainEarlierRecords --> FlushHandlers: earlier records complete
+    DrainEarlierRecords --> Failed: worker does not reach marker in time
+    FlushHandlers --> AwaitAcknowledgement: every opted-in handler confirms
+    FlushHandlers --> Failed: unsupported, failed, or late handler flush
+    AwaitAcknowledgement --> ReacquireInterpreter: worker confirms in time, Python caller
+    AwaitAcknowledgement --> Succeeded: worker confirms in time, Rust caller
+    AwaitAcknowledgement --> Failed: acknowledgement deadline expires
+    ReacquireInterpreter --> Succeeded: interpreter reacquired by deadline
+    ReacquireInterpreter --> Failed: interpreter reacquired after deadline
+    Succeeded --> [*]
+    Failed --> [*]
+```
+
+_Figure 1: States of a `flush_handlers()` barrier, from resolving the dispatch
+state through marker admission, snapshotting, worker-side flushing and
+acknowledgement to reacquiring the interpreter, with the transitions on which
+it fails._
+
+One absolute deadline begins before dispatch-state resolution. Resolving that
+state, marker enqueue, handler-list lock acquisition, worker acknowledgement,
+and every handler flush consume the same budget. Built-in handlers also cap
+their waits at their shorter configured timeout. An empty registry skips the
+handler marker. If that logger still has records in flight, it queues a
+shard-wide drain marker instead; because that marker is ordered behind every
+job already on the shard, another logger's queued work delays it and can make
+the flush time out. Otherwise, the handler marker is enqueued before the
+handler list is cloned under a deadline-bounded read lock, so queue
+backpressure never holds the registry lock or an unqueued handler snapshot. The
+caller that clones the snapshot owns that read lock and drops it before it
+signals a start gate, which the worker waits on, so the worker cannot begin
+callbacks while the registry lock is still held. Handler changes completed
+before the snapshot are reflected in this barrier; a removal after the snapshot
+does not cancel it. The marker keeps the handler alive until the worker
+releases it. A late handler destructor runs on the worker, not on the flush
+caller. Additions after the snapshot participate in the next barrier.
+Concurrent calls each use their own deadline and bounded queue marker; the
+logger creates no helper threads or unbounded task queue. Once the worker
+exits, marker insertion fails and the barrier returns `false`.
+
+In a normal build, workers belong to the process-wide dispatch pool. Dropping a
+logger waits only for its own in-flight records, up to the bounded drain
+timeout, and does not join the shared worker. If an opted-in handler violates
+its deadline, its callback may keep that worker occupied after the flush caller
+returns `false` and after the logger is dropped; the queued snapshot retains
+the handler until the callback returns. Synchronous arbitrary code cannot be
+preempted. Loom models use logger-owned workers and join them during cleanup.
+
+Python-facing `flush_handlers()` releases the GIL across marker admission,
+snapshot acquisition, worker processing, and acknowledgement. The Rust method
+itself does not acquire or release the GIL; native callers that already hold it
+must release it if queued Python work needs the interpreter. PyO3 must
+reacquire the interpreter before returning to Python. CPython controls that
+handoff, so interpreter contention can delay the Python return beyond the Rust
+barrier deadline. If the handoff completes late, the result is `false`,
+although the Python call itself cannot return until CPython makes the
+interpreter available.
+
+Built-in handler workers can log synchronous warnings around their own flush
+acknowledgements. The drop count a flush marker carried is reported before the
+marker is acknowledged, in every handler, so a caller that observes the flush
+succeed cannot return before the report it carried has been emitted. Other
+worker warnings keep their existing order: file-handler flush failures are
+logged before the handler acknowledges, while socket connection warnings and
+stream flush-error warnings follow their acknowledgements. A
+pre-acknowledgement callback is part of the handler's deadline-bounded flush
+and can make the logger barrier return `false`; a logging backend slow enough
+to consume the remaining budget turns the acknowledgement into a timeout. If
+one of those callbacks takes the interpreter, PyO3 may wait to reacquire it
+before returning to Python; a late handoff changes the result to `false`,
+though CPython does not bound the Python return itself.
+
+Each logger also keeps fixed-cardinality counters for flush attempts,
+confirmations, terminal failure stages and five elapsed-time buckets. Recording
+uses relaxed atomics and does not invoke a logging or warning callback on the
+caller path. Python callers can poll the per-logger snapshot with
+`FemtoLogger.get_flush_diagnostics()`; its stable keys contain no logger name,
+path or message dimensions. The snapshot is best-effort because its counters
+are read independently, and callers remain responsible for exporting them to a
+shared metrics backend. The exporter work remains in
+[#551 telemetry](https://github.com/leynos/femtologging/issues/551).
+
+The barrier carries one purpose-shaped deadline context from dispatch
+resolution through marker enqueue, handler snapshotting, acknowledgement and
+handler flushes. The production clock samples `Instant`; each controllable lock
+or channel wait receives only the remaining duration. This also bounds waiting
+for a concurrent fork/rebind reservation. Tests inject clock samples into the
+same orchestration path; real locks and channels remain real and receive the
+durations sampled from that clock.
+
+The `FemtoHandlerTrait::flush_until()` default fails closed: it returns `false`
+without calling legacy synchronous `flush()`. Existing custom handlers that
+implement only `flush()` therefore never block the `flush_handlers()` caller;
+they must explicitly opt in by overriding `flush_until()`. An opted-in handler
+is required to honour the supplied deadline and return `false` if completion is
+not confirmed. The logger runs that callback on its existing worker, so even a
+misbehaving synchronous override cannot hold the `flush_handlers()` caller past
+its deadline. Synchronous arbitrary code still cannot be preempted: a handler
+that violates the contract can occupy the shared worker after the caller
+returns. Logger drop waits only for the logger's own in-flight records for the
+bounded drain timeout; it does not join the process-wide worker. Loom models
+join their logger-owned workers. The logger creates no helper threads or
+detached flush tasks, and concurrent markers remain bounded by the existing
+queue capacity. A built-in handler is flushed through its native
+implementation. A user-defined Python handler is called back into Python, and
+its own `flush` confirms it when it returns `None` or a truthy value. A handler
+with no callable `flush` opts out and is treated as successfully flushed, as a
+handler with nothing to flush; any other falsy return reports failure. A
+handler that buffers must drain that buffer in `flush`.
+
 ### 3.3 `FemtoLogRecord` Structure
 
 A `FemtoLogRecord` will contain at least the following fields:
@@ -391,15 +540,17 @@ balances the three drivers listed above.
 
 <!-- markdownlint-disable MD056 -->
 
-| Question                           | Decision                                                        | Rationale                                                                                                                                                                                                         |
-| ---------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Serialization format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                      |
-| **HTTP client library**            | `ureq` 2.x with `native-tls` feature                            | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency.                                                                                                      |
-| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                  |
-| **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                               |
-| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms. |
-| **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.         |
-| **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults match `ureq` library defaults when not specified.                                                                 |
+| Question                           | Decision                                                        | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Serialization format**           | URL-encoded (default), JSON via `.with_json_format()`           | URL-encoded matches CPython `logging.HTTPHandler` for migration parity. JSON is opt-in for modern HTTP APIs via the builder.                                                                                                                                                                                                                                                                                                                  |
+| **HTTP client library**            | `ureq` 3.4 with its default `rustls` and `gzip` features        | Blocking model matches `FemtoSocketHandler` worker-thread pattern. Lightweight, no async runtime dependency. Rustls with bundled WebPKI roots is what the handler already used under ureq 2.                                                                                                                                                                                                                                                  |
+| **Connection management**          | `ureq::Agent` with keep-alive pooling                           | Agent maintains the connection pool across requests and is created once per worker thread and reused for the handler's lifetime.                                                                                                                                                                                                                                                                                                              |
+| **Retry semantics by status code** | 2xx success, 429/5xx retryable, 4xx permanent failure           | Follows HTTP semantics. 429 (rate limit) and 5xx (server error) trigger backoff retry. 4xx (client error) drops record without retry. Network errors are retryable.                                                                                                                                                                                                                                                                           |
+| **`mapLogRecord` equivalent**      | Field filtering via `.with_record_fields(["name", "msg", ...])` | Configuration-driven approach is simplest and covers the common use case. The full record is serialized by default; specifying fields limits output. Future work may add a Python callable for custom transforms.                                                                                                                                                                                                                             |
+| **Authentication methods**         | Basic, Bearer, and custom headers                               | `.with_basic_auth(user, password)`, `.with_bearer_token(token)`, and `.with_headers(dict)` cover CPython parity (Basic) and modern APIs (Bearer). Custom headers allow arbitrary `Authorization` schemes.                                                                                                                                                                                                                                     |
+| **Timeout granularity**            | Split connect/write (mirrors `FemtoSocketHandler`)              | `.with_connect_timeout_ms()` and `.with_write_timeout_ms()` provide per-phase control. Defaults are 5 seconds to connect and 30 seconds per attempt, set by the handler. ureq 3 checks its global timeout in every phase, so connection establishment is bounded by `write_timeout` as well: a `connect_timeout` larger than `write_timeout` fails sooner than under ureq 2, and the verdict is unchanged.                                    |
+| **Redirect handling**              | `max_redirects(0)` with an in-crate chain                       | ureq 3's follower reads the redirect body before it decides, which turned a stalled 307/308 body into a retryable transport error. The transport walks the chain itself, applying the ureq 2 rules: four redirects are followed, the fifth is a transport failure, and no response body is ever read. Each hop gets only the time left in the attempt's timeout, so a chain cannot multiply it, and the pooled agent is reused for every hop. |
+| **Endpoint handling**              | Stored as configured, parsed per request target                 | `url::Url` parses and percent-encodes the endpoint when each request is built, which is what ureq 2 did. The builder validates the endpoint once, so an unparsable URL fails at build time rather than on every attempt.                                                                                                                                                                                                                      |
 
 <!-- markdownlint-enable MD056 -->
 
@@ -413,6 +564,9 @@ The handler follows this structure:
 - **Backoff and retry**: Reuse `BackoffPolicy` from `FemtoSocketHandler` for
   transient failures (network errors, 5xx responses). Permanent failures (4xx)
   do not trigger retry.
+- **Redirects and bodies**: The agent runs with `max_redirects(0)` and
+  `max_redirects_will_error(false)`; `redirect::next_hop` walks the chain
+  in-crate, and the worker never reads a response body, redirect or final.
 - **TLS/HTTPS**: Support secure connections with optional certificate
   verification bypass for testing, mirroring `FemtoSocketHandler`'s TLS options.
 - **Builder pattern**: `HTTPHandlerBuilder` implementing `HandlerBuilderTrait`,
@@ -539,7 +693,7 @@ classDiagram
     StackTracePayload --> StackFrame : frames
 ```
 
-_Figure 1: `FemtoLogRecord` structure with optional exception and stack
+_Figure 2: `FemtoLogRecord` structure with optional exception and stack
 payloads aligned to Python 3.12-3.14 traceback data._
 
 ### 3.4 Handler Implementation Strategy
@@ -553,14 +707,14 @@ benefits of the producer-consumer model are consistently applied.
 
 **Table 1: Core CPython Handlers and** `femtologging` **Equivalents**
 
-| CPython `logging` Handler  | `femtologging` Equivalent       | Brief Description                                                                                                                                     | Key CPython Features to Replicate                                                                          |
-| -------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `StreamHandler`            | `FemtoStreamHandler`            | Logs to an I/O stream (e.g., `stdout`, `stderr`). The consumer thread writes formatted records to the stream.                                         | Stream selection (default `stderr`), terminator customization.                                             |
-| `FileHandler`              | `FemtoFileHandler`              | Logs to a disk file. The consumer thread manages file I/O.                                                                                            | Filename, mode (append/overwrite), encoding, delayed open.                                                 |
-| `RotatingFileHandler`      | `FemtoRotatingFileHandler`      | Logs to a file, with rotation based on size. The consumer thread handles the rotation logic.                                                          | `maxBytes`, `backupCount`, file renaming scheme.                                                           |
-| `TimedRotatingFileHandler` | `FemtoTimedRotatingFileHandler` | Logs to a file, with rotation based on time intervals. The consumer thread handles timed rotation.                                                    | `when`, `interval`, `backupCount`, `utc`, `atTime`.                                                        |
-| `SocketHandler`            | `FemtoSocketHandler`            | Sends log records over a TCP or Unix domain socket. The consumer thread manages socket connection and data transmission (pickled/serialized records). | Host, port, TCP/Unix socket, reconnection logic, pickling/serialization of `FemtoLogRecord`.               |
-| `HTTPHandler`              | `FemtoHTTPHandler`              | Sends log records to an HTTP server (GET or POST). The consumer thread makes HTTP requests.                                                           | Host, URL, method (GET/POST), secure (HTTPS), credentials, `mapLogRecord` equivalent for data preparation. |
+| CPython `logging` Handler  | `femtologging` Equivalent       | Brief Description                                                                                                                                                                    | Key CPython Features to Replicate                                                                          |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `StreamHandler`            | `FemtoStreamHandler`            | Logs to an I/O stream (e.g., `stdout`, `stderr`). The consumer thread writes formatted records to the stream.                                                                        | Stream selection (default `stderr`), terminator customization.                                             |
+| `FileHandler`              | `FemtoFileHandler`              | Logs to a disk file. The consumer thread manages file I/O.                                                                                                                           | Filename, mode (append/overwrite), encoding, delayed open.                                                 |
+| `RotatingFileHandler`      | `FemtoRotatingFileHandler`      | Logs to a file, with rotation based on size. The consumer thread handles the rotation logic.                                                                                         | `maxBytes`, `backupCount`, file renaming scheme.                                                           |
+| `TimedRotatingFileHandler` | `FemtoTimedRotatingFileHandler` | Logs to a file, with rotation based on time intervals. The consumer thread delegates each rollover to `TimedFileRotationStrategy`, which owns the deadline and the filesystem steps. | `when`, `interval`, `backupCount`, `utc`, `atTime`.                                                        |
+| `SocketHandler`            | `FemtoSocketHandler`            | Sends log records over a TCP or Unix domain socket. The consumer thread manages socket connection and data transmission (pickled/serialized records).                                | Host, port, TCP/Unix socket, reconnection logic, pickling/serialization of `FemtoLogRecord`.               |
+| `HTTPHandler`              | `FemtoHTTPHandler`              | Sends log records to an HTTP server (GET or POST). The consumer thread makes HTTP requests.                                                                                          | Host, URL, method (GET/POST), secure (HTTPS), credentials, `mapLogRecord` equivalent for data preparation. |
 
 <!-- markdownlint-enable MD056 -->
 
@@ -579,15 +733,37 @@ against unbounded memory growth when producers outpace the consumer thread.
 Later versions may expose the channel type and capacity as configuration
 options.
 
+#### Timed rotation boundary
+
+`FemtoTimedRotatingFileHandler` keeps only the handler in
+`rust_extension/src/handlers/timed_rotating/handler.rs`: the writer the worker
+owns, the handler's lifecycle, and the seeding decisions that need the active
+file. About 258 lines of rotation logic moved out of that module into
+`rotation_strategy.rs`, with `rollover_schedule.rs` (the injectable
+`RotationClock` and the single deadline), `schedule.rs` (the cadence rules),
+`rotation_steps.rs` (rename, writer swap and unwinding), `rotation_store.rs`
+(the filesystem seam) and `backup_retention.rs` (pruning) alongside it.
+`core.rs` keeps only the `TimedRotationConfig` the handler constructor takes,
+so every module is well inside the repository's 400-line per-module cap. The
+extraction is structural rather than cosmetic: each module has one reason to
+change, and a rotation can be driven at a chosen instant through a scripted
+clock and file store instead of by arranging a directory that fails a rename at
+the right moment.
+
 ### 3.5 Handler flush at the Python boundary
 
 `FemtoLogger.flush_handlers()` reaches the handler behind the Python wrapper,
-not only the dispatch shard. The calling thread first waits for its records to
-drain, then flushes every configured handler on that same thread. A built-in
-handler is flushed through its native implementation with the GIL detached; a
-user-defined handler is asked to flush through its own `flush` method, which
-lets a buffering handler persist its records. Every handler is flushed even
-when an earlier one fails, and the results are combined. A missing or
+not only the dispatch shard. The calling thread enqueues a barrier job behind
+the records already queued for its shard, then waits for the worker's
+acknowledgement; the worker flushes every configured handler as part of that
+job. The handler callbacks therefore run on the shard worker, not on the
+calling thread. A built-in handler is flushed through its native
+implementation; a user-defined handler is asked to flush through its own
+`flush` method, which lets a buffering handler persist its records and runs on
+the worker with the interpreter attached. Handlers are attempted while budget
+remains: an earlier failure does not stop the ones after it, but handlers left
+when the deadline expires are not flushed, and a callback still running at the
+deadline completes on the worker after the caller has returned. A missing or
 non-callable `flush` counts as success, a `None` return counts as success, any
 other return value is read for its truthiness, and a raised exception is
 reported as failure. The warning gives a bounded failure category and, except
@@ -1245,6 +1421,25 @@ registry commits, and manager reset. The level update and maximum publication
 are serialized; registry updates take the manager lock before the index lock,
 while maximum refresh reads the index without taking the manager lock.
 
+**HTTP Transport Origin:**
+
+HTTP handlers deliver on a dedicated worker thread. `ureq` reports DEBUG
+diagnostics under `ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver`;
+with the bridge installed those records would otherwise route back to an HTTP
+handler, and every delivery would manufacture more requests. The worker
+therefore marks its OS thread as HTTP transport for the whole delivery
+lifetime. The bridge captures that marker once at entry and attaches it to the
+`FemtoLogRecord`. The marker survives filtering, handler-selection snapshots,
+cloning, and parent propagation. Every HTTP handler silently discards a marked
+record after its closed-handler check, so the record is not queued, warned
+about, or counted as a drop, while non-HTTP handlers still receive it. The
+bridge suspends the marker for the rest of its entry call, so filters,
+formatters, and handler callbacks that log during dispatch emit application
+records instead of inheriting the transport origin. The mechanism covers
+bridge-produced records on a marked worker thread; it does not mark records
+rebuilt in Python, records passed directly to the three-argument `handle`
+method, or records delivered by socket handlers.
+
 **GIL Acquisition and Error Handling:**
 
 Only `log()` and `flush()` need Python access. `log()` attaches to Python after
@@ -1425,18 +1620,23 @@ still return `True`. A logger with no work in flight skips the marker and does
 not wait for unrelated shard work. Its Python wrapper releases the GIL across
 the blocking wait so Python handlers can run.
 
-Enqueueing the flush marker and waiting for its acknowledgement share a
-two-second timeout. Flushing attached handlers can take additional time. The
-method returns `True` when the worker acknowledges the marker in time and every
-handler flush succeeds, and `False` when marker enqueue or acknowledgement
-fails or a handler flush fails.
+Resolving the dispatch, enqueueing the flush marker, waiting for its
+acknowledgement, and flushing each attached handler are all measured against
+one two-second deadline, so a slow stage leaves less budget for the rest rather
+than restarting a timeout. A synchronous Python `flush` callback runs to
+completion on the shard worker, so it can overrun that deadline; it does not
+extend it, and the caller reports the failure rather than waiting for a later
+stage. The method returns `True` when the worker acknowledges the marker in
+time and every handler flush succeeds, and `False` when dispatch resolution,
+marker enqueue, acknowledgement, or a handler flush fails.
 
-`flush_configured_handlers()` copies the handler list under the read guard,
-releases the guard, and then calls `flush()` on every entry. A failing handler
-does not short-circuit the loop: later handlers are still flushed, and the
-method returns the conjunction of the individual results. The snapshot
-preserves attachment order, and because one handler's `flush()` can change
-state a later handler observes, the aggregate result can depend on that order.
+`send_handler_snapshot_until()` copies the handler list under the read guard
+and releases the guard before the snapshot is sent to the worker, which then
+calls `flush_until()` on every entry. A failing handler does not short-circuit
+the loop: later handlers are still flushed, and the sequence reports the first
+failure. The snapshot preserves attachment order, and because one handler's
+`flush()` can change state a later handler observes, the aggregate result can
+depend on that order.
 
 For `log::Log::flush`, `FemtoLogAdapter` snapshots the registered logger
 references under the `MANAGER` read guard, releases the guard, then detaches
@@ -1723,7 +1923,26 @@ Implement `log::Log` first for immediate ecosystem compatibility; a
 
   The bridge also applies an explicit loop-prevention rule: targets that
   normalize to `femtologging` or start with `femtologging.` are ignored so
-  femtologging's own internal diagnostics do not recurse back through the layer.
+  femtologging's own internal diagnostics do not recurse back through the
+  layer. An HTTP transport-origin rule complements it. An event emitted on an
+  HTTP worker thread while that worker delivers a record is marked; every HTTP
+  handler silently ignores marked records after its closed-handler check, while
+  non-HTTP handlers still receive them. `on_event` captures the marker before
+  field capture and suspends it for the rest of the call, so user code reached
+  during dispatch emits application records rather than inheriting the
+  transport origin. The marker is named `RecordOrigin::SelfDiagnostic` on the
+  record, which describes the logger reporting on its own work instead of the
+  adapter it came from, so the core record type stays free of transport terms.
+
+  Suppression is deliberately unobservable through this library. The handler
+  suppresses marked records and does not count them as drops: such a record is
+  the logging system reporting on its own work, not a loss, and this handler
+  exposes no outcome counters; bounded handler telemetry is a separate line of
+  work. A maintainer who needs to see suppression raises the worker's `ureq`
+  targets to DEBUG and watches a non-HTTP sink. The marker follows the worker
+  thread rather than any target or level, so a record absent from the endpoint
+  is evidence of suppression rather than an exact count: a filter or a failed
+  delivery can also account for the absence.
 
   For Python-first hybrid applications, the package exposes
   `femtologging.setup_rust_tracing()` as an explicit convenience helper that

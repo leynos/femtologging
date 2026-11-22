@@ -12,6 +12,7 @@ use pyo3::{Bound, prelude::*, types::PyDict};
 
 use crate::http_handler::{
     AuthConfig, FemtoHTTPHandler, HTTPHandlerConfig, HTTPMethod, SerializationFormat,
+    validate_request_headers,
 };
 
 #[cfg(feature = "python")]
@@ -192,7 +193,7 @@ impl HTTPHandlerBuilder {
     /// Checks all builder values before creating worker-owned HTTP state.
     fn validate(&self) -> Result<(), HandlerBuildError> {
         ensure_filter_ids_resolved(&self.filters)?;
-        self.validate_url()?;
+        self.validate_endpoint()?;
         self.validate_capacity()?;
         self.validate_timeouts()?;
         self.validate_method_format_combination()?;
@@ -208,19 +209,6 @@ impl HTTPHandlerBuilder {
             ));
         }
         Ok(())
-    }
-
-    /// Ensures a non-empty URL is available before the worker starts.
-    fn validate_url(&self) -> Result<(), HandlerBuildError> {
-        match &self.url {
-            None => Err(HandlerBuildError::InvalidConfig(
-                "HTTP handler requires a URL".into(),
-            )),
-            Some(url) if url.trim().is_empty() => Err(HandlerBuildError::InvalidConfig(
-                "URL must not be empty".into(),
-            )),
-            _ => Ok(()),
-        }
     }
 
     /// Rejects a zero queue capacity, which would prevent channel construction.
@@ -247,8 +235,14 @@ impl HTTPHandlerBuilder {
         self.validate()?;
 
         let defaults = HTTPHandlerConfig::default();
+        // Validation has already rejected a missing endpoint; the same error is
+        // returned here so the value is never taken on trust.
+        let url = self
+            .url
+            .clone()
+            .ok_or_else(|| HandlerBuildError::InvalidConfig(validation::MISSING_ENDPOINT.into()))?;
         let mut config = HTTPHandlerConfig {
-            url: self.url.clone().unwrap_or_default(),
+            url,
             method: self.method.clone().unwrap_or(defaults.method),
             auth: self.auth.clone().unwrap_or(defaults.auth),
             headers: self.headers.clone(),
@@ -265,6 +259,11 @@ impl HTTPHandlerBuilder {
             warn_interval: defaults.warn_interval,
         };
 
+        // ureq 3 rejects header names and values that ureq 2 wrote to the wire
+        // verbatim. Without this check an unencodable header would fail every
+        // attempt at send time and retry each record until the backoff
+        // deadline, so reject the configuration once, before a worker starts.
+        validate_request_headers(&config).map_err(HandlerBuildError::InvalidConfig)?;
         self.backoff.apply(&mut config.backoff)?;
         Ok(config)
     }
@@ -371,6 +370,10 @@ impl HandlerBuilderTrait for HTTPHandlerBuilder {
 
 #[cfg(feature = "python")]
 mod python_bindings;
+
+// Endpoint validation, which has to agree with the transport's own parser.
+#[path = "http_builder/validation.rs"]
+mod validation;
 
 #[cfg(test)]
 #[path = "http_builder/tests.rs"]

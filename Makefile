@@ -1,7 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
-        check-api-boundary test typecheck makeutil skylos skylos-allow
+        check-lock check-api-boundary test typecheck makeutil skylos skylos-allow
 
 CARGO ?= cargo
 RUST_MANIFEST ?= rust_extension/Cargo.toml
@@ -102,9 +102,9 @@ all: release spelling ## Build the release artifact and enforce spelling
 
 build: ## Build dev artifact and install into venv
 	UV_VENV_CLEAR=1 uv venv
-	UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml $(CARGO_BUILD_ENV) uv sync --group dev
+	UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml $(CARGO_BUILD_ENV) uv sync --locked --group dev
 	# Install the mixed Rust/Python package into the venv for tests/tools
-	$(CARGO_BUILD_ENV) uv run maturin develop --manifest-path $(RUST_MANIFEST) --features python,test-util
+	$(CARGO_BUILD_ENV) uv run --locked maturin develop --manifest-path $(RUST_MANIFEST) --features python,test-util
 
 release: ## Build release artifact
 	$(CARGO_BUILD_ENV) $(CARGO) build $(BUILD_JOBS) --manifest-path $(RUST_MANIFEST) --release
@@ -117,6 +117,19 @@ define ensure_tool
 $(if $(shell command -v $(1) >/dev/null 2>&1 && echo y),,\
 $(error $(1) is required but not installed))
 endef
+
+check-lock: ## Verify uv.lock is tracked, not ignored, and matches pyproject.toml
+	uv lock --check
+	git ls-files --error-unmatch uv.lock
+	@git check-ignore --no-index -q uv.lock; status=$$?; \
+	if [ $$status -eq 0 ]; then \
+		echo "uv.lock is ignored; remove the ignore rule from .gitignore" >&2; \
+		exit 1; \
+	fi; \
+	if [ $$status -ne 1 ]; then \
+		echo "git check-ignore failed with status $$status" >&2; \
+		exit $$status; \
+	fi
 
 tools:
 	$(call ensure_tool,$(MDLINT))
@@ -305,7 +318,7 @@ test: build makeutil lint-rust-clippy loom-runner-test ## Run tests
 	# Nothing executed them before, and three test-helper examples named
 	# variables that were never bound. An example nobody runs is a comment
 	# that looks like evidence.
-	FEMTOLOGGING_EXPECT_TEST_UTIL=1 UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml uv run pytest -v --doctest-modules
+	FEMTOLOGGING_EXPECT_TEST_UTIL=1 UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml uv run --locked pytest -v --doctest-modules
 
 check-api-boundary: build ## Verify production builds withhold test-only APIs
 	# The release wheel under test is built from the production maturin

@@ -27,6 +27,13 @@ pub struct RecordMetadata {
     /// Name of the thread that created the record (if any).
     pub thread_name: Option<String>,
     /// Structured key-value pairs attached to the record.
+    ///
+    /// Keys that collide with a built-in record or metadata field are rejected
+    /// when this map enters through structured-field admission, such as
+    /// [`crate::FemtoLogger::log_with_metadata`] or scoped context. Metadata
+    /// constructed directly with [`FemtoLogRecord::with_metadata`] bypasses
+    /// that admission; HTTP serialization silently omits reserved keys from
+    /// such records rather than letting them override authoritative fields.
     pub key_values: BTreeMap<String, String>,
 }
 
@@ -57,6 +64,24 @@ impl Default for RecordMetadata {
     }
 }
 
+/// Where a record came from, for keeping the logger's own reports out of them.
+///
+/// The marker is carried on the record rather than read from the dispatching
+/// thread because dispatch is asynchronous: a record accepted by a handler's
+/// queue is delivered by a different thread, which cannot describe where the
+/// record came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RecordOrigin {
+    /// Application code, or an ordinary bridge or logger entry point.
+    #[default]
+    Application,
+    /// A diagnostic the logging system produced about its own work.
+    ///
+    /// Named for the relationship rather than for the component that emits it,
+    /// so this core type stays independent of any one adapter.
+    SelfDiagnostic,
+}
+
 /// A single log event: its logger, level, message, metadata, and any exception or stack payload.
 ///
 /// Loggers create records and pass them to handlers and formatters.
@@ -74,6 +99,8 @@ pub struct FemtoLogRecord {
     exception_payload: Option<ExceptionPayload>,
     /// Structured stack trace payload (when `stack_info=True`).
     stack_payload: Option<StackTracePayload>,
+    /// Where this record came from, for keeping self-reports out of handlers.
+    origin: RecordOrigin,
 }
 
 impl FemtoLogRecord {
@@ -132,6 +159,24 @@ impl FemtoLogRecord {
     pub(crate) fn set_stack_payload(&mut self, payload: StackTracePayload) {
         self.stack_payload = Some(payload);
     }
+
+    /// Returns where this record was produced.
+    #[inline]
+    pub(crate) fn origin(&self) -> RecordOrigin {
+        self.origin
+    }
+
+    /// Attach an origin, replacing the application default.
+    ///
+    /// Only the bridges attach one; a library build with neither bridge and no
+    /// tests would otherwise carry this as dead code under `-D warnings`.
+    #[inline]
+    #[must_use]
+    #[cfg(any(feature = "log-compat", feature = "tracing-compat", test))]
+    pub(crate) fn with_origin(mut self, origin: RecordOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
 }
 
 impl FemtoLogRecord {
@@ -144,10 +189,16 @@ impl FemtoLogRecord {
             metadata: RecordMetadata::default(),
             exception_payload: None,
             stack_payload: None,
+            origin: RecordOrigin::Application,
         }
     }
 
     /// Construct a log record with explicit source location and key-values.
+    ///
+    /// This constructor does not validate [`RecordMetadata::key_values`].
+    /// Entries that collide with built-in fields are preserved on the record,
+    /// but HTTP serialization omits them so they cannot override the
+    /// authoritative wire fields.
     pub fn with_metadata(
         logger: &str,
         level: FemtoLevel,
@@ -165,6 +216,7 @@ impl FemtoLogRecord {
             metadata,
             exception_payload: None,
             stack_payload: None,
+            origin: RecordOrigin::Application,
         }
     }
 

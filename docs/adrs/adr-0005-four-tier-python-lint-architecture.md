@@ -215,6 +215,24 @@ because interrogate rounds its percentage to one decimal and `--fail-under 100`
 alone can pass a lone gap. `.pyi` stubs are not scanned. The previous
 production-only scope above is the historical decision this addendum replaces.
 
+## Addendum: step-module docstring coverage (2026-11-17)
+
+The 2026-08-28 addendum exempted `tests/steps/*.py` from Ruff's
+`undocumented-public-function` (D103) on the argument that pytest-bdd step
+function names are self-documenting. That rationale is superseded: the
+interrogate tier now requires docstrings on every step, fixture and helper, so
+a Ruff exemption would let the two gates disagree about what "documented"
+means. Pinned Ruff 0.16.4 reported zero D103 findings in `tests/steps` without
+the exemption, and the per-file ignore is removed.
+
+Configuring `ignore-decorators` for the pytest-bdd decorators was rejected
+because it also suppresses D400, D403 and D415 on steps that do carry
+docstrings. Step docstrings describe their scenario-context effect or assertion
+contract rather than restating the decorator text.
+
+Rust doc-comment coverage remains out of scope for this ADR and is tracked
+separately.
+
 ## Addendum: plain Pylint on PyPy 3.12 (2026-09-25)
 
 The Pylint tier no longer runs through `leynos/pylint-pypy-shim`. PyPy 8

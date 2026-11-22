@@ -1,11 +1,10 @@
 //! One shard's queue, its in-flight permits, and the worker that drains it.
 //!
-//! The queue carries two kinds of job and knows nothing about handlers:
+//! The queue carries record, drain-barrier, and handler-flush jobs:
 //! [`Job::Record`] hands a queued record to the handler set the logger captured
-//! with it, and [`Job::Barrier`] asks for an acknowledgement once everything
-//! queued ahead of it has been handled. Sharing the queue is what lets a
-//! logger's flush travel the same path as its records, so an acknowledgement
-//! cannot overtake one.
+//! with it, [`Job::Barrier`] acknowledges a drain, and [`Job::Flush`] flushes a
+//! captured handler snapshot after earlier records. Sharing the queue is what
+//! keeps a flush behind the work it covers.
 //!
 //! Work is bounded three times, and the third bound is the one that keeps a
 //! shard shared rather than merely multiplexed. The queue is bounded, so a
@@ -22,6 +21,7 @@
 //! admission and barrier operations a producer calls.
 
 mod budget;
+mod drain;
 #[cfg(all(test, not(loom)))]
 mod test_support;
 mod worker;
@@ -29,24 +29,23 @@ mod worker;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::handler::FemtoHandlerTrait;
 use crate::logger::QueuedRecord;
-#[cfg(all(test, not(loom)))]
+use crate::logger::flush_clock::FlushDeadline;
+use crate::logger::flush_diagnostics::FlushFailureStage;
 use crate::sync::Receiver;
 #[cfg(loom)]
 use crate::sync::{JoinHandle, Mutex};
-use crate::sync::{RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout};
+use crate::sync::{Sender, bounded};
 
 pub(crate) use budget::LoggerBudget;
 use budget::{Permit, Permits};
 use worker::run_worker;
 
-/// How long a barrier waits for the shard to acknowledge it.
+/// How long a drain-on-drop barrier waits for the shard to acknowledge it.
 ///
-/// Bounded because a barrier is waited on from `Drop` and from
-/// `flush_handlers`: a handler that never returns must delay those calls, not
-/// hang them. A timed-out barrier loses the queued records, which is what the
-/// per-logger worker did when its own flush timed out. The bound is ignored
-/// under Loom, so no model depends on it firing.
+/// Flush calls supply their own deadline through [`Self::flush_handlers_until`].
+/// The bound is ignored under Loom, so no model depends on it firing.
 const BARRIER_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 /// A job for a shard.
@@ -67,6 +66,20 @@ enum Job {
     Barrier {
         /// The channel used to acknowledge the completed barrier.
         ack: Sender<()>,
+    },
+    /// Flush a handler snapshot after all jobs queued before this marker.
+    Flush {
+        /// Receives the handler snapshot after the marker is admitted.
+        handlers: Receiver<Vec<Arc<dyn FemtoHandlerTrait>>>,
+        /// Deadline shared by queue insertion, acknowledgement, and callbacks.
+        deadline: FlushDeadline,
+        /// Gate opened after the logger registry lock has been released.
+        start: Receiver<()>,
+        /// Reports handler success or its first unconfirmed deadline stage.
+        ack: Sender<Result<(), FlushFailureStage>>,
+        /// Time admission began, so the worker's reported queue wait covers
+        /// waiting for room in the bounded queue as well as time behind it.
+        enqueued_at: Instant,
     },
     /// Finish the jobs already queued and stop the worker.
     ///
@@ -113,6 +126,14 @@ pub(crate) struct Shard {
     /// join that model thread before the run ends.
     #[cfg(loom)]
     worker: Mutex<Option<JoinHandle<()>>>,
+    /// Flush callers currently waiting for room in the bounded queue.
+    ///
+    /// A test that needs to know a flush caller is blocked in admission — not
+    /// merely scheduled, or still on its way there — polls this. Without it the
+    /// only way to tell is to sleep and hope, which passes whether or not the
+    /// caller ever reached the queue.
+    #[cfg(all(test, not(loom)))]
+    marker_waiters: std::sync::atomic::AtomicUsize,
 }
 
 impl Shard {
@@ -138,6 +159,8 @@ impl Shard {
             depth,
             #[cfg(loom)]
             worker: Mutex::new(Some(_worker)),
+            #[cfg(all(test, not(loom)))]
+            marker_waiters: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -193,6 +216,8 @@ impl Shard {
             queue,
             permits: Arc::new(Permits::new(depth)),
             depth,
+            #[cfg(all(test, not(loom)))]
+            marker_waiters: std::sync::atomic::AtomicUsize::new(0),
         };
         (shard, jobs)
     }
@@ -229,6 +254,7 @@ impl Shard {
             Err(error) => match error.into_inner() {
                 Job::Record { queued, .. } => Err(queued),
                 Job::Barrier { .. } => unreachable!("only a record job is admitted here"),
+                Job::Flush { .. } => unreachable!("only a record job is admitted here"),
                 // `admit` sends nothing but records, so neither of these can
                 // come back. The arm exists only because a `--cfg loom` build
                 // adds `Job::Stop`, and a match over the full enum must name
@@ -239,64 +265,22 @@ impl Shard {
         }
     }
 
-    /// Wait for the shard to finish the work queued ahead of this call.
-    ///
-    /// Returns `false` when the shard is gone or does not answer within
-    /// [`BARRIER_TIMEOUT`], which the caller reports as a failed flush or an
-    /// incomplete drain.
-    ///
-    /// The barrier is queued with `send_timeout` rather than `try_send`: a
-    /// shard at the end of a burst has a full queue but a working worker, and
-    /// refusing the barrier then would report a drain that did happen as a
-    /// flush that failed. Waiting for room makes the answer mean "everything
-    /// ahead of this call was handled", which is what a flush promises.
-    ///
-    /// Both waits share one deadline, so a call is bounded by
-    /// [`BARRIER_TIMEOUT`] in total rather than by twice it. Queueing the
-    /// barrier and hearing its answer are two halves of one wait, and a
-    /// caller that was promised a two-second drain would otherwise block for
-    /// four when the queue is full and the worker is slow.
-    ///
-    /// Only the non-Loom shutdown path and its unit tests ask the yes-or-no
-    /// question; the flush path needs the cause, so a Loom build would
-    /// otherwise carry this method unused.
-    #[cfg(not(loom))]
-    pub(crate) fn wait_for_drain(&self) -> bool {
-        matches!(self.wait_for_drain_outcome(), DrainOutcome::Drained)
+    /// Return the queued job count so tests can prove a flush marker occupies
+    /// the bounded queue before exercising a second flush.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn queued_jobs_for_test(&self) -> usize {
+        self.queue.len()
     }
 
-    /// Wait for the shard to finish the work queued ahead of this call,
-    /// reporting *why* the wait ended.
+    /// Count flush callers waiting for room in the bounded queue right now.
     ///
-    /// `wait_for_drain` answers only success or failure, which is all a
-    /// barrier's callers need to decide whether to keep waiting. The flush path
-    /// also counts its failures by cause, so it needs the close-or-timeout
-    /// distinction the channel error variants already carry.
-    ///
-    /// The two waits share one deadline, exactly as `wait_for_drain`
-    /// documents: queueing the barrier and hearing its answer are two halves of
-    /// a single [`BARRIER_TIMEOUT`] budget.
-    pub(crate) fn wait_for_drain_outcome(&self) -> DrainOutcome {
-        let deadline = Instant::now() + BARRIER_TIMEOUT;
-        let (ack, acked) = bounded::<()>(1);
-        match self
-            .queue
-            .send_timeout(Job::Barrier { ack }, BARRIER_TIMEOUT)
-        {
-            Ok(()) => {}
-            Err(SendTimeoutError::Disconnected(_)) => return DrainOutcome::QueueClosed,
-            Err(SendTimeoutError::Timeout(_)) => return DrainOutcome::TimedOut,
-        }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        match recv_timeout(&acked, remaining) {
-            Ok(()) => DrainOutcome::Drained,
-            // The acknowledgement channel can only disconnect when its sender
-            // is dropped without answering, and the worker owns that sender
-            // for as long as it lives. A disconnect therefore means the worker
-            // is gone, not that it was slow.
-            Err(RecvTimeoutError::Disconnected) => DrainOutcome::QueueClosed,
-            Err(RecvTimeoutError::Timeout) => DrainOutcome::TimedOut,
-        }
+    /// A test uses this to prove a caller really is blocked in admission: a
+    /// thread that has merely been spawned, or that has not reached the queue
+    /// yet, is not counted, so a wait on this figure cannot pass by accident.
+    #[cfg(all(test, not(loom)))]
+    pub(crate) fn marker_waiters_for_test(&self) -> usize {
+        self.marker_waiters
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Finish the queued work and join the worker, which only a Loom run has.

@@ -22,25 +22,139 @@ install Ruff directly; it picks up the version from the Makefile's
 `uvx ruff==$(RUFF_VERSION)` invocation. See [Python linting](#python-linting)
 for the complete five-tier lint pipeline.
 
+## Python lockfile policy
+
+`uv.lock` is tracked. It records the complete resolution of `pyproject.toml`
+for every supported Python version, so a developer machine and CI's project
+installs resolve the same dependency graph. Package builds are the exception:
+the isolated build backend resolves its own `[build-system]` requirements, so
+the wheel build of maturin is not read from `uv.lock`. The lock is committed
+beside the manifest, and `.gitignore` must never exclude it: `make check-lock`
+fails if an ignore rule matches the file, if Git does not track it, or if
+`uv lock --check` finds the manifest ahead of the lock.
+
+Update the lock after any change to `[project]` dependencies,
+`[dependency-groups]`, `requires-python`, `[tool.uv]` or `[build-system]`:
+
+```shell
+uv lock
+make check-lock
+```
+
+`uv lock` resolves the changed manifest and rewrites `uv.lock`; commit the
+manifest and the lock together, because a commit that moves one without the
+other fails every locked install. To move a single dependency, use its explicit
+upgrade rather than an unpinned refresh:
+
+```shell
+uv lock --upgrade-package <name>
+```
+
+`make check-lock` runs `uv lock --check`, requires
+`git ls-files --error-unmatch uv.lock` to succeed, and requires
+`git check-ignore --no-index` to report that no ignore rule matches, so it
+fails when the lock is stale, untracked or hidden. Run it before pushing; CI
+runs the same target in `build-test` before formatting or type checking.
+
+`make build`, `make test`, the scheduled heavy-tests workflow and the coverage
+action install in locked mode. The Makefile and heavy workflow pass `--locked`;
+the coverage action reads `UV_LOCKED=1` for its project `uv sync`. Locked mode
+fails when `pyproject.toml` and `uv.lock` diverge, and it never repairs the
+drift for you. Do not replace `--locked` with `--frozen`: `--frozen` reuses the
+lock without checking it against the manifest, so a stale lock installs
+silently. It is only appropriate where no manifest is available to check, which
+is not the case in this repository.
+
+The coverage tooling is a documented exception. The pinned `generate-coverage`
+action installs `slipcover`, `pytest`, `pytest-xdist` and `coverage` with
+`uv pip install` after its locked project sync, so those versions are not read
+from `uv.lock`. The action is pinned by commit digest and its tool list is the
+only control; when changing that digest, read its install list as part of the
+coverage environment rather than assuming the lock covers it.
+
+Some other environments are deliberately independent of the project lock. Each
+controls its dependencies at the call site; the list names where that control
+is a pin, a bound, or a deliberate fresh resolution:
+
+- `uvx` and `uv tool run` invocations pin the tool version in the Makefile
+  (`RUFF_VERSION`, `TY_VERSION`, `TYPOS_VERSION`, `PYLINT_VERSION`).
+- PEP 723 scripts declare their own inline dependency block.
+- Most `uv run --no-project` helper tests pass every `--with` pin explicitly.
+  The `lint-lanes-test` and `loom-runner-test` targets leave `cyclopts` and
+  `plumbum` unpinned, so those two resolve fresh on each run; add pins there
+  when their releases start affecting those tests.
+- The isolated build backend resolves `maturin>=1.13.3,<2.0.0` from
+  `[build-system]`, separately from the project environment.
+
+The Python 3.15 lane is an allowed-failure early-warning lane. It enables
+interpreter prereleases only (`allow-prereleases` in `setup-python`) and uses
+the same universal `uv.lock` as every other lane; it does not enable
+prereleases for dependencies. Do not fix a 3.15 failure by turning on global
+dependency prereleases. When a dependency has no 3.15-compatible release, keep
+the lane experimental and record the failure; when a specific dependency
+prerelease is genuinely required, name that package explicitly and regenerate
+the lock so the exception is visible in review. See the
+[CI compatibility matrix](dev-workflow.md#ci-compatibility-matrix) for the lane
+list.
+
 ## Python test toolchain
 
-The local development group in `pyproject.toml` and the scheduled
-`.github/workflows/heavy-tests.yml` job define the same test toolchain. The
-heavy job repeats the install explicitly because it builds its own virtualenv
-outside `uv sync --group dev`. Keep both sources aligned when changing a
-dependency or its version policy:
+The local development group in `pyproject.toml` is the single source of the
+test toolchain, and the scheduled `.github/workflows/heavy-tests.yml` job
+installs that group from `uv.lock` with `uv sync --locked --group dev` rather
+than repeating the pins. The sync reads `.github/uv-test-util.toml` through
+`UV_CONFIG_FILE`, so the project build receives the `test-util` hooks, and the
+job then runs `maturin develop` against the synced environment. A dependency or
+version-policy change therefore belongs in the development group, followed by
+regenerating the lock as described in
+[Python lockfile policy](#python-lockfile-policy):
 
-- `maturin[patchelf]` is pinned to `1.13.3` in both sources for the editable
-  Rust extension build.
-- `pytest` is pinned to `9.1.1` in both sources.
-- `pytest-bdd` is pinned to `8.1.0` in both sources.
-- `pytest-timeout`, `pytest-xdist`, and `syrupy` are currently unpinned in
-  both sources; they follow the resolver's latest compatible releases.
-- `hypothesis` is bounded to `>=6.135,<7` in both sources, so
-  property-based and generated-input coverage only shifts with a deliberate
-  compatible-version change.
-- `pyyaml` is bounded to `>=6.0.3,<7` in both sources because the lint
-  contract tests parse the CI workflow files.
+- `maturin[patchelf]` is pinned to `1.13.3` for the editable Rust extension
+  build, matching the build-system lower bound.
+- `pytest` is pinned to `9.1.1`.
+- `pytest-bdd` is pinned to `9.0.0`.
+- `pytest-timeout`, `pytest-xdist`, and `syrupy` are currently unpinned; they
+  follow the resolver's latest compatible releases, which the lock records.
+- `hypothesis` is bounded to `>=6.135,<7`, so property-based and
+  generated-input coverage only shifts with a deliberate compatible-version
+  change.
+- `pyyaml` is bounded to `>=6.0.3,<7` because the lint contract tests parse
+  the CI workflow files.
+
+### Stack-info snapshot normalization
+
+`stack_info=True` records capture the whole Python call stack, so a snapshot
+would otherwise record pytest, pluggy and interpreter frames alongside this
+project's. `normalize_traceback_output()` alone cannot make that stable: it
+masks paths and line numbers but keeps each frame's source text, and an
+upstream release may wrap a call across lines. The snapshot step therefore calls
+`strip_external_stack_frames()` in `tests/steps/stack_frames.py` first.
+
+Stripping has a deliberately narrow scope. It acts only inside a
+`Stack (most recent call last):` section, up to the next
+`Traceback (most recent call last):` heading or the end of the output, so an
+exception traceback is never edited. A frame is external when its filename is a
+`<frozen …>` pseudo-file or resolves beneath one of the `stdlib`, `platstdlib`,
+`purelib`, `platlib` or `scripts` entries of `sysconfig.get_paths()`. A removed
+frame takes its whole block with it: every source line of a wrapped statement
+and every caret line. Relative and unrecognized filenames are kept, because
+they cannot be attributed to installed code reliably.
+
+The function is pure and idempotent, and it deletes whole lines only: each
+surviving line keeps the terminator it already had. An output that uses `\r\n`
+is returned with `\r\n`, so a traceback stays byte-identical. The
+launcher-frame rule in `tests/steps/traceback_normalization.py` is separate and
+runs after stripping; a `runpy.py` counts as launcher code only when its own
+directory is an interpreter directory inside `lib` or `lib64`, or a `Lib`
+directory one level above one, so a project's own `runpy.py` keeps its frame.
+
+`tests/steps/test_external_stack_frames.py` pins the named cases, including
+CRLF preservation, and `tests/steps/test_stack_frames_properties.py` states the
+invariants as Hypothesis properties: stripping removes only whole lines, is
+idempotent, preserves an exception tail byte for byte, removes a frame beneath
+any supplied root and keeps a relative frame. The stack-info feature scenario
+also asserts that the raw output contains the `log_with_stack_info` frame, so a
+stripping rule that emptied the snapshot could not pass silently.
 
 ### Docstring examples
 
@@ -172,8 +286,10 @@ compatibility tests validate the same maturin and PyO3 releases:
   Cargo commands run from the repository root select that toolchain
   automatically. `make check-fmt` and `make lint` use its formatter and linter;
   editor integrations use the installed language server.
-- maturin is pinned to `1.13.3` in the development dependencies and CI build
-  workflows, with the build-system requirement bounded as `>=1.13.3,<2.0.0`.
+- maturin is pinned to `1.13.3` in the development group and recorded in
+  `uv.lock`; the heavy workflow installs it from that lock, and the release
+  wheel workflow keeps its own literal pin. The build-system requirement is
+  bounded as `>=1.13.3,<2.0.0`.
 - PyO3 is pinned to `0.30.1` in `rust_extension/Cargo.toml`.
 - The `rust_extension` crate sets `publish = false`: it ships as a wheel built
   by maturin, never through `cargo publish`, so `cargo publish` refuses it and
@@ -193,11 +309,13 @@ parses test-support source and requires Rustdoc on helper types and their named
 fields. It is part of `lint-rust`; compiler UI fixtures remain intentionally
 minimal and are excluded from that source-level scan.
 
-When updating either dependency, change the pin in the source manifest, update
-the matching CI install step where applicable, and run the maturin/PyO3
-compatibility checks through the normal `make test` gate. The synchronization
-test in `tests/test_maturin_build.py` verifies that the maturin pins stay
-aligned across `pyproject.toml`, `.github/workflows/heavy-tests.yml`, and
+When updating either dependency, change the pin in the source manifest,
+regenerate `uv.lock` as described in
+[Python lockfile policy](#python-lockfile-policy), and run the maturin/PyO3
+compatibility checks through the normal `make test` gate. The heavy workflow
+installs the locked development group and needs no pin edit. The
+synchronization test in `tests/test_maturin_build.py` verifies that the maturin
+pins stay aligned across `pyproject.toml`, `uv.lock`, and
 `.github/workflows/build-wheels.yml`. The isolated sdist builders read the same
 pin from `.github/maturin-build-constraints.txt` through `UV_BUILD_CONSTRAINT`;
 update that file alongside the other pins.
@@ -231,6 +349,34 @@ action uses `.github/uv-test-util.toml` through `UV_CONFIG_FILE` so its source
 install receives the same features without changing `pyproject.toml`. Coverage
 and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
 then fails before tests start if the extension omitted the hooks.
+
+### Clean-wheel import smoke test
+
+`pyproject.toml` declares no runtime dependencies, so every import that
+`import femtologging` performs must resolve from the standard library, the
+package itself, or the native extension. `tests/clean_wheel_env.py` guards that
+contract by installing the already-built wheel into a fresh virtual environment
+and importing the package there.
+
+The helper creates the environment with `python -m venv` (without
+`--system-site-packages`) and installs the wheel with
+`pip --isolated install --no-index --no-deps`. `--isolated` ignores pip
+environment variables and per-user configuration, and `PIP_CONFIG_FILE` points
+at `os.devnull` so global and site-wide configuration files are skipped too. No
+development dependency is reachable from the child interpreter.
+
+A stdlib-only probe then runs with `-I` from outside the checkout. It asserts
+that `typing_extensions` is not importable and never enters `sys.modules`, that
+only the `femtologging` and `pip` distributions are installed, that the
+package, native extension and lazy configuration modules import, and that both
+the package and the extension load from the environment's `purelib` or
+`platlib` directory.
+
+`tests/test_maturin_build.py::test_maturin_wheel_build_snapshot` calls the
+helper with the wheel it already builds, so the check adds no second release
+build and runs as part of `make test` and CI. The test skips before building
+when the Rust toolchain, `venv`, or `ensurepip` is unavailable, and the
+existing Python 3.15 and newer version gate still applies.
 
 `make check-api-boundary` enforces the boundary. It builds a release wheel from
 the production configuration, installs it into a fresh virtual environment, and
@@ -358,6 +504,145 @@ wait durations and outcome counters that would support alerting remain the
 bounded telemetry specified by issue #551, which this handler does not yet
 export.
 
+### HTTP transport-origin suppression
+
+An HTTP handler delivers on a dedicated worker thread, and `ureq` reports its
+own progress through the `log` and `tracing` facades as DEBUG records under
+`ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver`. With either bridge
+installed those records are ordinary records that a target route can send back
+to the handler that produced them, so each successful delivery would
+manufacture the next one. `rust_extension/src/http_handler/transport_origin.rs`
+is the guard that stops the loop. It lives under the HTTP adapter, because the
+worker is its only producer.
+
+The module holds a thread-local `Cell<bool>` rather than process-wide state:
+two HTTP handlers on different threads must not hide each other's ordinary
+records, and a record emitted from an application thread stays deliverable
+while some other thread is inside a request. Callers reach the state only
+through three crate-private functions and one guard:
+
+- `enter_http_transport()` marks the rest of the thread's work.
+- `suspend_http_transport()` suspends marking for nested work.
+- `capture_record_origin()` turns the current state into a `RecordOrigin`.
+- `TransportScope` is the `#[must_use]` RAII guard both entries return. Its
+  drop restores whatever state was current before the scope began, which also
+  covers a panic unwinding through a suspended bridge call. Its
+  `PhantomData<Rc<()>>` keeps it out of `Send` and `Sync`, because the state it
+  restores belongs to one OS thread. `transport_origin_tests.rs` pins that with
+  a compile-time assertion and with a property over arbitrary enter, suspend
+  and drop sequences.
+
+`spawn_worker` enters the transport scope once and holds the guard for the
+whole worker lifetime, so agent construction, requests, retries, drain and
+destruction all run marked. The bridges use the opposite ordering: each
+captures the origin at entry, attaches it to the record, and then suspends the
+scope for the rest of the call. A filter, formatter, or handler callback that
+logs during dispatch therefore emits an application record instead of
+inheriting the transport origin.
+
+`RecordOrigin` (`rust_extension/src/log_record.rs`) is a crate-private
+`Application`/`SelfDiagnostic` field on `FemtoLogRecord`. The variant names the
+relationship — the logger reporting on its own work — rather than the component
+that emits it, so the core record type carries no HTTP vocabulary and the
+adapter keeps that vocabulary to itself. `Clone`, the handler-filter snapshot,
+and parent propagation all preserve it, and no other consumer reads it, so it
+never reaches the Python record view, formatted output or an HTTP payload.
+
+The producer path only carries the value. The ordinary entry points attach
+`RecordOrigin::Application`, and `log_prebuilt` accepts a record a bridge
+assembled and returns it to the producer unchanged, so no core logger API names
+an origin. A bridge therefore builds its record, attaches the origin it
+captured at entry, and hands it over; nothing downstream rewrites it.
+
+`FemtoHTTPHandler::handle` checks the origin after its closed-handler check and
+returns `Ok(())` for a self-diagnostic record. The record is not queued, warned
+about, nor counted as a drop: it never entered this handler's queue, so
+reporting it as a loss would misdescribe a healthy worker. Non-HTTP handlers
+still receive the record, which keeps independent diagnostics available.
+
+Suppression is silent and has no counter or summary of its own. Most of the
+records it discards are the transport library's own DEBUG output, so a
+maintainer who needs to see them raises the `ureq` targets (`ureq.run`,
+`ureq.pool`, `ureq.unversioned.resolver`) to DEBUG and watches a non-HTTP sink.
+A record that appears there and never arrives at the endpoint is evidence of
+suppression rather than an exact count, because a filter or a failed delivery
+can also account for an absence; comparing the two sinks is the route
+`tests/http_transport_feedback_tests.rs` takes. A counter would need a
+diagnostics surface this handler does not have. Its only existing signal is the
+drop warner, and a suppressed record is deliberately not a drop; bounded
+handler telemetry is tracked separately by #551.
+
+The behavioural regression is `tests/http_transport_feedback_tests.rs`. Each
+variant runs in a fresh child process under a watchdog against a local TCP
+collector, enables real `ureq` DEBUG diagnostics, and requires delivery to stop
+after the initiating records: two application requests arrive, the `ureq.run`
+diagnostics reach a non-HTTP file sink, and a quiet window then passes with no
+further request and no overflow. The child, its assertions, and the process
+supervisor live in `tests/http_transport_feedback/`, where Cargo treats them as
+modules rather than as separate test crates.
+
+The marker is deliberately narrow. A record that Python code rebuilds from a
+marked record is a new application record, records passed directly to the
+three-argument `handle` method carry no marker, and socket handlers do not
+suppress marked records.
+
+### HTTP transport module boundaries
+
+`rust_extension/src/http_handler/transport.rs` owns one HTTP attempt. The
+worker in `http_handler/worker.rs` builds its agent through
+`transport::build_agent` and delegates each request to `transport::execute`,
+which resolves the headers, builds the first request, sends it, follows what
+the redirect chain permits, and classifies the response. Keep the retry
+deadline and the shutdown budget in `worker.rs`; they are not transport
+decisions. `transport::validate_request_headers` is the builder-facing
+validation seam. `HTTPHandlerBuilder::build_config` calls it before it applies
+the backoff overrides, so a header name, value, or credential the client cannot
+send is reported as a configuration error instead of failing on every attempt.
+
+Two decisions are deliberately not ureq's.
+
+- `http_handler/redirect.rs` decides whether a 3xx response is followed, using
+  ureq 2's rules. ureq 3 follows every 3xx with a `Location` and raises an
+  error for a redirect it will not replay, so the agent runs with
+  `max_redirects(0)` and `max_redirects_will_error(false)` and the chain is
+  walked here. The decision is a pure function of the current URL, method,
+  status, `Location` header and the number of responses already seen, which is
+  why its unit tests need no listener.
+- Each request target is parsed with `url::Url` immediately before it is sent,
+  rather than with ureq 3's `http::Uri`. ureq 2 parsed every request that way,
+  so this keeps a percent-encoded path and a GET payload's position in the
+  query identical to what the handler sent before. The builder validates the
+  configured endpoint with the same parser, in
+  `handlers/http_builder/validation.rs`, and stores it as configured.
+
+The agent also pins the settings whose ureq 3 defaults differ from the ureq 2
+behaviour the handler had: Rustls with the bundled WebPKI roots, no proxy
+discovery, status codes left to the classifier, and
+`RedirectAuthHeaders::Never` as the statement of the credential policy the
+chain applies. Each has a contract test in `request_shape_tests.rs`,
+`redirect_tests.rs` or `tls_tests.rs` that fails when the setting is dropped,
+not merely when the module stops compiling.
+
+The dependencies follow that split. `ureq` is version 3.4 with its default
+`rustls` and `gzip` features, which replace ureq 2's `native-tls` option;
+`native-tls` remains a dev-dependency, used only by the TLS fixture server.
+`ureq-proto` is no longer a direct dependency: the chain is walked in-crate, so
+no ureq protocol error variant has to be named. `rcgen` is a dev-dependency
+that only the TLS fixture uses to mint its throwaway certificate.
+
+The TLS tests are gated with `#[cfg(all(test, not(target_os = "windows")))]`
+because the fixture's rcgen ECDSA PKCS#8 identity cannot be loaded by
+native-tls's Schannel backend. The limit applies to the fixture only. The
+production client uses Rustls with the bundled roots on every platform, which
+is what `the_production_agent_trusts_the_bundled_webpki_roots` asserts.
+
+`scripts/release_wheel_probe.py` proves the installed wheel can deliver a
+record, because the location and test-hook checks cannot.
+`http_behaviour_errors` runs only after those checks pass. It starts a loopback
+collector, builds a handler through the installed extension, sends one record,
+and waits up to ten seconds. A failure means no request arrived, the request
+used the wrong path, or its body did not contain the probe message.
+
 ### Handler shutdown signal, clock and condition-variable seams
 
 `ShutdownSignal` (`rust_extension/src/shutdown_signal.rs`) is the second
@@ -383,7 +668,12 @@ than at whatever instant the host's scheduler supplies.
 `monotonic_clock::MonotonicClock` (`rust_extension/src/monotonic_clock.rs`)
 supplies "now" to the deadline queries. Production uses `SystemClock`, which is
 `Instant::now`; tests construct a `ShutdownSignal::with_clock` around a
-`ManualClock`, which moves only when told to. This is deliberately not
+`ManualClock`, which moves only when told to. Both `MonotonicClock` and
+`SharedClock` are public API, `pub` and re-exported from
+`rust_extension/src/lib.rs`, because the injection point is the public
+`FlushContext::with_clock`: a test or an embedder outside the crate implements
+the trait to drive a custom handler across a deadline transition
+deterministically instead of waiting on the real clock. This is deliberately not
 `rate_limited_warner::Clock`: that trait reports milliseconds since its own
 construction and so cannot express an absolute `Instant` deadline. The stream
 handler's flush deadline is a relative budget expressed in milliseconds, so it
@@ -414,12 +704,27 @@ and TCP hostname resolution. `close()` stays bounded regardless because it
 detaches a worker that misses the deadline; worker termination itself carries
 no such promise.
 
-`discard_rest` in each worker's module is the record of what that bound costs.
-Records still queued at the deadline are dropped and counted rather than sent,
-and `warn_discarded` emits one rate-limited warning naming the count. The same
-accounting covers the write path, where a frame that runs out of budget
-mid-write reports how many of its bytes were sent, so a collector that is slow
-can be told apart from one that has stopped reading.
+`rust_extension/src/socket_handler/worker_drain.rs`, included by the worker as
+its `drain` module, owns the shutdown-drain helpers `discard_rest`,
+`warn_discarded` and `acknowledge_shutdown`. They work on the command queue
+alone and never touch the transport, so a backlog can be discarded without
+writing to a collector that stopped reading. Records still queued at the
+deadline are dropped and counted rather than sent, and `warn_discarded` emits
+one warning naming the count. The same accounting covers the write path, where
+a frame that runs out of budget mid-write reports how many of its bytes were
+sent, so a collector that is slow can be told apart from one that has stopped
+reading.
+
+`rust_extension/src/http_handler/request.rs` owns request construction: the
+URL, authentication header and custom headers are built from the handler
+configuration, apart from `worker.rs`, the loop that owns retries and timing.
+The split keeps the wire shape reviewable on its own and keeps the worker
+module within the repository's file-size limit. The Python builder's
+`with_auth` mapping is validated earlier, in
+`rust_extension/src/handlers/http_builder/python_bindings/auth.rs`:
+`parse_auth_spec` turns it into an `AuthSpec` naming either a bearer token or a
+user name and password pair, and rejects a mapping that mixes the two shapes or
+leaves one of them incomplete.
 
 Detaching is not draining to completion. `abandon_worker`
 (`rust_extension/src/http_handler/handler.rs`, and the socket handler's
@@ -469,15 +774,52 @@ otherwise separate, and this ordering is a shared contract rather than an
 incidental similarity; the protocol concerns crossbeam channels, not either
 transport. A change to the helper affects both handlers.
 
-### Timed-rotation module boundary
+### Timed rotation boundary
 
-`FemtoTimedRotatingFileHandler` lives in
-`rust_extension/src/handlers/timed_rotating/handler.rs` and `mod.rs` re-exports
-it, so the `timed_rotating::FemtoTimedRotatingFileHandler` path is unchanged;
-code that reached it through `timed_rotating::core` must follow it. `core.rs`
-keeps the rotation mechanics and `TimedRotationConfig`, which `mod.rs`
-re-exports for the crate, and no longer defines the handler. Both files stay
-under the 400-line module cap.
+`TimedFileRotationStrategy`
+(`rust_extension/src/handlers/timed_rotating/rotation_strategy.rs`) is the
+`RotationStrategy` that `FemtoTimedRotatingFileHandler` installs. The handler's
+worker calls it before each write, and it answers whether the active file has
+reached the deadline the cadence set and, if so, performs one rotation.
+
+Two seams are injected. `RotationClock` in
+`rust_extension/src/handlers/timed_rotating/clock.rs` reports the current
+`DateTime<Utc>`; production uses `SystemClock`, while tests supply a scripted
+sequence so a rollover can be driven at a chosen instant without sleeping.
+`RotationFileStore` in
+`rust_extension/src/handlers/timed_rotating/rotation_store.rs` names the
+filesystem steps the rotation needs, so a test substitutes a store that fails a
+chosen step instead of arranging a real directory that refuses a rename at the
+right moment.
+
+The single rollover deadline lives in `RolloverSchedule` in
+`rust_extension/src/handlers/timed_rotating/rollover_schedule.rs`, which owns
+the clock and the next instant. It is seeded from the clock when the handler is
+built, re-seeded from an existing log file's modification time when that
+predates the construction reading, and advanced from the observation instant
+after a completed rotation.
+
+`rust_extension/src/handlers/timed_rotating/rotation_steps.rs` performs the
+rename and writer swap. A failure restores the original writer before
+attempting anything else; if the fresh open fails, the writer is restored
+before the rename is undone, so the handler stays usable even when the rollback
+rename also fails. `BackupRetention` in
+`rust_extension/src/handlers/timed_rotating/backup_retention.rs` prunes
+timestamped siblings after a completed rotation, keeping at most the configured
+count. The cadence supplies the `is_valid_suffix` predicate, so an unrelated
+file that shares the prefix is left alone; ordering is by path, which is
+chronological because each suffix leads with its timestamp, and a backup count
+of zero disables pruning.
+
+The extraction is structural.
+`rust_extension/src/handlers/timed_rotating/handler.rs` keeps the public
+handler wrapper: the writer the worker owns, its lifecycle, and the seeding
+decisions that need the active file. `core.rs` keeps only the
+`TimedRotationConfig` the constructor takes. Rotation orchestration, the
+deadline, the filesystem steps, the store and retention each have one reason to
+change and each live in their own module, which also keeps every module inside
+the repository's 400-line cap. `rotation_strategy.rs` remains the only place
+that knows the order the steps take and which handler state each one updates.
 
 ### Flush clock and observer seam
 
@@ -527,8 +869,8 @@ that key on an entry that joins a group), puts the available updates for the
 pair into one pull request. When both have one, a single CI run builds them
 together; a bump is not held back when only one of the two has an update, and a
 group cannot choose compatible versions or rewrite a pinned literal, so the
-maturin pin in `.github/workflows/heavy-tests.yml` is still kept aligned by
-`tests/test_maturin_build.py`.
+maturin pin in `pyproject.toml` and its resolution in `uv.lock` are still kept
+aligned with the release wheel workflow by `tests/test_maturin_build.py`.
 
 An entry that joins a group runs only that group, over the dependencies its
 `patterns` take: its own groups, ignore rules and every other dependency are
@@ -585,6 +927,19 @@ linker itself:
   is the isolation boundary: it takes none of the development standard (no
   `mold` flag and no inherited `RUSTFLAGS`).
 
+### Whitaker duplicate dylint registration
+
+The installer revision this repository previously pinned registered the
+`string_continuation_style` dylint library twice, so every consumer's
+`build-test` failed while loading the lint suite. A branch-local CI step
+deleted the duplicate shared library before linting. Main now pins the
+installer at `0.2.12` (`c77fca64`, PR #605), whose `build-test` job runs
+`make lint` and passes on Python 3.12, 3.13 and 3.14, so the duplicate
+registration is fixed upstream. `.github/workflows/ci.yml` on this branch is
+byte-identical to main: no workaround remains. Reinstate one only if the pinned
+revision regresses to an installer that registers the lint library twice; the
+upstream issue is leynos/whitaker#565.
+
 ### Locked dependency fetch before tests
 
 A test that starts its own Cargo build (the trybuild compile-time UI tests, for
@@ -624,6 +979,36 @@ configures a compiler wrapper in its own Cargo configuration would otherwise
 queue the one-file build behind that wrapper, and the measurement would
 describe the host instead of this repository. The fixture also builds with a
 private `CARGO_HOME`, so it reads no host configuration at all.
+
+### Native backoff randomness
+
+The socket and HTTP workers share the backoff state machine in
+`rust_extension/src/socket_handler/backoff.rs`. Jitter uses `rand` directly at
+version 0.10; it is the only production use of that crate in the extension.
+
+The move from rand 0.8 to 0.10 crossed two releases. rand 0.9 renamed
+`SeedableRng::from_entropy` to `from_os_rng` and `Rng::gen_range` to
+`random_range`; rand 0.10 then removed `from_os_rng`, moved `random_range` to
+`RngExt`, and added `make_rng`. The state machine seeds the standard generator
+with `rand::make_rng`. With rand's default `thread_rng` feature that draws a
+seed from a thread-local `ThreadRng`, which is lazily seeded from the operating
+system and reseeded after 64 KiB of output. A fresh OS request therefore
+happens when the thread-local is first used or reseeded, not on every call; an
+already-seeded `ThreadRng` can supply a seed without one. When an OS request
+does fail, that path panics, preserving the infallible `from_entropy` contract.
+Handling the error was rejected because every caller constructs the worker
+without a fallible path, and a fixed-seed fallback would make every process
+that cannot read entropy retry in lockstep. Both handlers construct the state
+inside their worker thread, so each worker owns its thread-local generator.
+Jitter still samples the inclusive range `MIN_SLEEP_MS..=max_ms`, so the floor,
+cap, saturation, and reset behaviour are unchanged.
+
+Seeded construction is `#[cfg(test)]`-only (`BackoffState::with_seed`). It is
+not exposed through the `test-util` feature, the Python bindings, or
+`BackoffConfig`, whose keys remain `base_ms`, `cap_ms`, `reset_after_ms`, and
+`deadline_ms`. Tests assert application invariants (bounds, caps, deadlines,
+and reset transitions) rather than literal `StdRng` streams, because rand does
+not promise that a seed produces the same stream across versions.
 
 ### Cranelift
 
@@ -857,7 +1242,15 @@ The checker fails the step unless every model named in `loom-models.txt` is
 reported as passed and nothing else is. `cargo test` alone passes with zero
 tests when `--cfg loom` is dropped, when the filter matches nothing, when
 `--ignored` replaces `--include-ignored`, and when `--no-run` is restored; the
-checker fails each. `make loom-runner-test` tests it.
+checker fails each. `make loom-runner-test` tests it. A scheduled failure is
+not left silent: the workflow's `notify-failure` job comments on, or opens, the
+`heavy-tests nightly failure` issue with the run URL, commit and run date.
+`tests/test_heavy_workflow_contract.py`, with its rules in
+`tests/heavy_workflow_contract_helpers.py` and its document accessors in
+`tests/heavy_workflow_document.py`, pins that the job installs from `uv.lock`
+before building, keeps the Loom step last, and runs only for a scheduled
+failure. Every rule is also applied to a deliberately broken copy of the
+workflow, so a check that reports nothing cannot pass by accident.
 
 Both steps build into `target/loom` under their own cache key, which names the
 toolchain, the lockfile, the feature selection and the flags, apart from the
@@ -919,25 +1312,38 @@ rate-limited warning without waiting. One logger's records remain FIFO on its
 shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
-`flush_handlers()` queues a barrier only when that logger has work in flight.
-The barrier drains records ahead of it on the same shard; an idle logger does
-not consume a queue slot or wait for unrelated work. The Python wrapper
-releases the GIL while the worker acknowledges the barrier and attached
-handlers flush, so Python handlers can run. That includes a built-in handler
-flushed through its native implementation: a Python formatter on its worker
-thread needs the same GIL the flush would otherwise hold while waiting for the
-acknowledgement. Enqueueing the flush marker and waiting for its
-acknowledgement share a two-second timeout. Flushing attached handlers can take
-additional time. The method returns `True` only when the worker acknowledges
-the marker in time and every handler flush succeeds; it returns `False` if the
-marker cannot be enqueued or acknowledged in time, or a handler flush fails.
+`flush_handlers()` queues a flush marker when the logger has handlers. With no
+handlers it skips that marker, but when the logger still has records in flight
+it queues a shard-wide drain marker on the same dispatch queue. That marker is
+ordered behind every job already queued, so work from other loggers on the
+shard delays it and can make the flush time out; only a logger with no handlers
+and no in-flight records returns without queueing anything. One absolute
+two-second deadline spans dispatch resolution, the marker's admission, the
+handler snapshot, the worker's acknowledgement, and each handler's flush, so
+the call is bounded once rather than once per stage. Built-in handlers keep
+their shorter per-handler timeouts, and a handler that fails does not stop the
+ones after it: the sequence continues while budget remains, so one broken
+handler does not leave records buffered in the handlers after it. A failure
+that consumes the last of the budget ends the sequence, and the remaining
+handlers keep whatever they had buffered. The
+[flush barrier](#logger-handler-flush-barrier) section describes the handshake
+in more detail.
+
+The Python wrapper releases the GIL while the barrier runs, so Python handlers
+can run. That includes a built-in handler flushed through its native
+implementation: a Python formatter on its worker thread needs the same GIL the
+flush would otherwise hold while waiting for the acknowledgement. The method
+returns `True` only when every stage completes within the deadline and every
+handler flush is confirmed; it returns `False` if the deadline expires, the
+shard is gone, or a handler does not confirm its flush.
 
 The Rust `log::Log::flush` bridge snapshots logger references under the
 `MANAGER` read guard, releases the guard, then detaches each logger's blocking
 flush. This avoids a lock cycle: a Python manager writer can hold the GIL while
 waiting for the write lock, while the detached flush waits for a Python
 callback to acquire the GIL. The bridge ignores each logger's boolean result
-because `log::Log::flush` returns `()`.
+because `log::Log::flush` returns `()`, and counts a failed logger flush in a
+separate bridge-failure counter.
 
 Builds with `python,test-util` also expose `wait_for_flush_entry_for_test()`,
 `drain_flush_signals_for_test()`, and `cancel_flush_wait_for_test()` for
@@ -952,10 +1358,11 @@ only while a detached wait is in flight and reports whether it counted,
 stub is the published contract of a production wheel. The tests bind the hooks
 through `getattr` and skip when `test-util` is absent.
 
-Dropping a logger follows the same per-logger in-flight check. The pool itself
-lives for the process lifetime. If the operating system refuses to start a
-worker, construction returns `DispatcherError` in Rust or `RuntimeError`
-through Python. The pool is not marked failed, so a later construction retries.
+Dropping a logger follows the same per-logger in-flight check and does not
+queue a flush marker. The pool itself lives for the process lifetime. If the
+operating system refuses to start a worker, construction returns
+`DispatcherError` in Rust or `RuntimeError` through Python. The pool is not
+marked failed, so a later construction retries.
 
 The production pool is outside the Loom model. Each Loom run owns and stops its
 own shard so worker threads do not survive between model iterations; the
@@ -1126,6 +1533,13 @@ captured producer context, as does formatting performed during that call. A
 handler that defers formatting or emission to another thread or process needs
 separate context propagation.
 
+The HTTP transport origin travels through the same path at no extra cost. The
+origin is a field on the queued `FemtoLogRecord` itself, so the handler-filter
+snapshot, the `QueuedRecord`, parent propagation, and each handler's own clone
+all carry it without a second thread-local read. Nothing after bridge entry
+consults thread state to recover it, which is why a record marked there stays
+marked as far as the HTTP handler's admission check.
+
 ### Standard-library handler adapter
 
 The private `femtologging._adapter_record` module owns the adapter record
@@ -1146,9 +1560,13 @@ events report `accepted`, `rejected`, or `callback_failed`. If all attached
 handler filters reject a record, the producer emits `producer_handler_dispatch`
 with `handler_kind=none` and `dispatch_outcome=no_handlers_accepted`. Events
 use bounded operation, handler-kind, and outcome fields; filter-chain events
-also include elapsed microseconds. Record payloads and context values are never
-included. They target `femtologging::internal`, which `FemtoTracingLayer`
-ignores to prevent tracing from recursively logging its own instrumentation.
+also include elapsed microseconds. A flush barrier opens its own span and
+reports two linked events: `worker_complete` from the worker, with the elapsed
+microseconds it spent flushing plus the queue wait it absorbed, and
+`caller_complete` with the outcome the caller finally returned after any
+interpreter hand-off. Record payloads and context values are never included.
+They target `femtologging::internal`, which `FemtoTracingLayer` ignores to
+prevent tracing from recursively logging its own instrumentation.
 
 ### Flush observability
 
@@ -1218,22 +1636,26 @@ through `PyHandler::flush()`. A built-in handler is flushed through its native
 implementation with the GIL detached, and a user-defined handler is asked to
 flush through its own `flush` method, which runs with the interpreter attached,
 so whether other Python threads run while it blocks depends on the operation it
-blocks on. Those calls run on the thread that called `flush_handlers()`, after
-the dispatch worker has drained the logger's queue, not on the dispatch worker
-itself.
+blocks on. Those calls run on the dispatch worker, as part of the barrier job
+the shard runs after the work queued ahead of it, not on the thread that called
+`flush_handlers()`. The barrier snapshots the handlers on the caller's behalf
+and sends that snapshot to the worker, so a custom `flush` must not rely on
+caller-thread state.
 
-Every handler is flushed even when an earlier one fails, and the results are
-combined afterwards; one handler's failure must not leave the records buffered
-in the handlers after it. `flush_configured_handlers` snapshots the attached
-handlers under the handler read guard and drops the guard before it calls any
-of them. That ordering is the invariant, not an implementation detail: a Python
-`flush` may call back into the logger, and a guard held across the callback
-would leave a writer waiting for a lock the callback cannot release. A missing
-or non-callable `flush` method counts as success. A `flush` that returns `None`
-also succeeds, because Python's flush protocol reports failure by raising; any
-other falsy return value, `False` and `0` included, reports failure, and so
-does a `flush` that raises. A failed flush reports only a bounded category; the
-handler's exception text is never printed or logged, for the reason given under
+Handlers are attempted while budget remains, so one handler's failure must not
+leave the records buffered in the handlers after it; the deadline, not a
+failure, ends the sequence, and handlers left at that point are not flushed.
+`send_handler_snapshot_until` snapshots the attached handlers under the handler
+read guard and drops the guard before the snapshot is sent, and only the worker
+calls `flush_until` on the entries. That ordering is the invariant, not an
+implementation detail: a Python `flush` may call back into the logger, and a
+guard held across the callback would leave a writer waiting for a lock the
+callback cannot release. A missing or non-callable `flush` method counts as
+success. A `flush` that returns `None` also succeeds, because Python's flush
+protocol reports failure by raising; any other falsy return value, `False` and
+`0` included, reports failure, and so does a `flush` that raises. A failed
+flush reports only a bounded category; the handler's exception text is never
+printed or logged, for the reason given under
 [Flush observability](#flush-observability).
 
 The one path outside that rule is not a flush failure at all: when an attached
@@ -1377,6 +1799,201 @@ The counters are diagnostic signals, not error rates:
 new outcome is a single match arm plus one key, and the fixed-key test fails
 until the Python surface and its stub agree.
 
+## Logger handler flush barrier
+
+`FemtoLogger::flush_handlers_blocking()` creates one absolute deadline for the
+marker insertion, handler snapshot, worker acknowledgement and all handler
+flushes. The barrier takes a brief handler-list read lock only to answer
+whether any handler is attached, and releases it before the marker is admitted.
+After admission, a second snapshot read is held only long enough to clone the
+handler owners, and it is released before the worker's start gate opens, so no
+handler callback runs while the lock is held. The snapshot lock and all channel
+waits consume the remaining time. A handler removed after the snapshot remains
+alive until the worker releases it. Built-in handlers retain their shorter
+configured timeouts.
+
+`rust_extension/src/logger/dispatcher/shard/drain.rs` owns the shard side of
+the barrier. `flush_handlers_until` inserts the flush marker behind the work
+already queued, transfers the handler snapshot, and waits on the queue and the
+acknowledgement against the barrier's one deadline.
+`rust_extension/src/logger/flush_snapshot.rs` owns the handler half:
+`clone_handler_snapshot` clones the handler owners while the registry read lock
+is held, so the lock is released before the wait and no handler callback runs
+under it, and `flush_handler_snapshot_until` flushes the snapshot in order
+against that same deadline.
+
+Dispatch-state resolution has the same deadline. `Dispatcher::shared_until` in
+`rust_extension/src/logger/dispatcher.rs` serves the dispatcher-resolution
+step: it returns the process-wide dispatcher without waiting past the caller's
+deadline, and `None` once that deadline has passed.
+`Dispatcher::start_or_wait_until` in
+`rust_extension/src/logger/dispatcher/pool_start.rs` serves pool startup: it
+starts the pool or yields to the thread already starting it, but only while the
+deadline remains. `PidReservation::wait_or_clear_stale_until` in
+`rust_extension/src/logger/pid_reservation.rs` serves the process-local
+reservation wait used by pool startup and inherited-logger rebinding: it waits
+for a same-process owner only while the deadline remains, and clears a
+reservation inherited across `fork`. All three belong to the barrier's
+pre-enqueue stage: the logger must find or start the shard worker that will
+accept the flush marker before it can queue anything, and none of those steps
+may block past the barrier's absolute deadline.
+
+The default `FemtoHandlerTrait::flush_until(&FlushContext)` returns `false`
+without calling legacy synchronous `flush()`. Custom handlers must override
+this method and honour the deadline; the logger cannot pre-empt arbitrary
+synchronous code.
+
+Concurrent flush calls keep separate deadlines and use the existing bounded
+queue. In normal builds, logger drop waits for its own in-flight records only,
+up to the bounded drain timeout; it does not join the shared process-wide
+worker. A violating callback may keep that worker occupied and retain its
+handler after the caller returns `false`. Loom models join their logger-owned
+worker during cleanup.
+
+Python-facing calls release the GIL across the barrier. Native Rust callers do
+not acquire or release it, so callers that already hold the interpreter must
+release it when queued Python work needs to run. PyO3 reacquires the
+interpreter before returning to Python; that hand-off may delay the Python
+return beyond the Rust barrier deadline, in which case the result is `false`.
+
+### Flush command transport
+
+`rust_extension/src/handler/flush_command.rs` owns the shared enqueue and
+acknowledgement accounting for every queue-owning handler. `FlushCap::new`
+pairs the caller's deadline with the handler's own configured budget, and
+`effective()` samples the injected clock once and returns the earlier of the
+two, so both independent bounds apply to the same flush. `flush_command_until`
+admits a flush command and waits for its acknowledgement, charging both waits
+to that one budget: the acknowledgement receives what remains after admission,
+not a fresh copy. It samples the clock once more after the acknowledgement, so
+an answer received after the deadline is reported as
+`QueueFlushFailure::Acknowledgement` rather than success. `QueueFlushFailure`
+has exactly two variants, `Enqueue` and `Acknowledgement`, which separate a
+queue that never accepted the command from a worker that never answered it.
+
+`flush_handler_until` wraps that sequence for a handler with drops to report
+and a channel of its own type. It takes the handler's cap, a `prepare` closure
+that yields the queue, and a `PendingDrops` pairing the count's destructive
+`take` with the `restore` that hands it back. It forms nothing else of its own:
+it reads the cap, calls `prepare`, and runs `flush_command_until`. `prepare`
+runs after the cap deliberately: the stream handler's sender sits behind a
+mutex, and sampling the clock while holding it would make one flush wait on
+another thread's flush. The stream, socket and HTTP handlers call
+`flush_handler_until`; the file handler composes `flush_command_until` directly
+because its budget is fixed and it has no drops to carry. Production passes
+`Instant::now` as the clock, while tests pass a scripted source so the budget
+handed to each wait can be shown to shrink deterministically.
+
+The file handler's composition is `rust_extension/src/handlers/file/flush.rs`.
+A file-handler flush travels the same queue as a record, so its acknowledgement
+proves the worker handled everything buffered ahead of it. `flush_outcome()`
+forms a deadline from the handler's fixed one-second budget, `flush_by` caps
+the barrier's deadline at that budget instead, and both classify the attempt as
+a `FlushOutcome` the Python binding records, so a timed-out flush is
+distinguishable from the flush of an already-closed handler.
+
+`PendingDrops` groups the two halves of the drop hand-off for the same reason
+the rotation strategy groups its clock and store: they describe one thing — a
+count that must not be lost — and a handler that passes them as separate
+arguments spends two of the four parameter slots the house style allows on data
+that always travels together.
+
+### Worker hand-off
+
+A flush marker carries [`FlushDeadline`], which captures the caller's tracing
+span and dispatcher when the barrier starts. The shard worker installs that
+dispatcher with `tracing::dispatcher::with_default` around the marker's job, so
+a subscriber installed only on the caller's thread still receives the worker's
+`worker_complete` event, and the caller's `caller_complete` event shares its
+span. Installing the dispatcher per job rather than once per worker also stops
+one caller's subscriber leaking into the next flush on that shard. An enqueue
+that never reaches the worker fails before a marker exists, so that flush emits
+the caller event alone; the failure stage names the refused wait.
+
+`tracing` delivers events synchronously, so a subscriber that blocks delays
+whichever thread recorded the event. The barrier deadline covers the barrier's
+own waits — the snapshot lock, the queue, the acknowledgement and the handler
+flushes — and not the application's subscriber. The caller samples the clock
+and decides the outcome before it emits `caller_complete`, so a slow subscriber
+can delay the Python return but cannot change what the flush reports, exactly
+as it cannot for a record the application emits itself.
+
+### Deferred drop warnings
+
+Rate-limit policy and flush transport are separate concerns.
+`rust_extension/src/rate_limited_warner.rs` owns only the policy: which drops
+are due (`take_due` for ordinary warnings, `take_pending` for an explicit
+flush), when the next warning may fire, and the retry bookkeeping
+(`restore_drops`, and the internal `retry_drops` counter) that restarts the
+interval when a restored count is reported. Both takes are destructive, so a
+caller that cannot deliver its count must hand it back.
+
+The two takes answer different questions. `take_due` is the ordinary warning
+path, so the interval decides whether it returns anything. `take_pending` backs
+an explicit flush: a flush asks for the records the handler itself refused
+since the last report, so it must not withhold a handler-side drop recorded
+inside the interval, and it reports restored and freshly recorded counts as one
+figure. The figure covers drops the handler counted. A worker that keeps its
+own warner, as the HTTP and socket workers do, records and reports the drops it
+causes through that warner, not through this marker.
+
+The transport is `handler::flush_command::flush_handler_until`, which puts the
+pending count on the flush marker so the worker, not the flush caller, invokes
+the logging callback. The worker reports the count before it acknowledges the
+marker, so a flush that returns success has already emitted the report it
+carried; a logging backend slow enough to consume the caller's remaining budget
+instead makes the flush report an acknowledgement timeout. The count is taken
+only after a queue was found, because taking it is destructive: a handler whose
+worker has gone must leave the drops pending for the next flush. If the marker
+never entered the queue, `flush_handler_until` hands the count back through the
+`PendingDrops` restore half. `warn_if_due` keeps suppressed drops pending until
+the interval expires, and `RateLimitedWarner::flush` reports every pending
+count immediately, so neither path loses a drop.
+
+The warner's `Clock` trait reports milliseconds since the warner was
+constructed, an opaque counter used only to decide whether an interval has
+elapsed. `crate::monotonic_clock::MonotonicClock` reports an absolute `Instant`
+for deadline comparisons. The two answer different questions: a counter whose
+epoch belongs to one object cannot express an absolute deadline, and two
+counters started at different moments would disagree about the same `Instant`
+by the difference in their epochs. They therefore stay separate; the module
+documentation in `rate_limited_warner.rs` and `monotonic_clock.rs` states the
+same reasoning.
+
+### Python-defined handlers
+
+`PyHandler` flushes a recognized built-in handler through its native
+implementation. Any other Python object is asked to flush itself, exactly as
+the legacy `flush()` path does, because only the handler knows where it buffers.
+`flush_until` therefore calls the handler's callable `flush` and maps the
+answer onto the barrier: a missing or non-callable `flush` is an opt-out; a
+call that raises, or returns a falsy value other than `None`, is a failure; and
+`None` counts as success, because Python's flush protocol reports success that
+way. An exception is never printed, in case it quotes a record. The call runs
+synchronously on the worker, so the barrier's deadline bounds the wait for the
+answer, not the duration of the handler's own `flush`.
+
+The `log` bridge's flush sweep calls each registered logger's detached barrier
+in turn and returns `true` only when every logger confirmed. Each logger gets
+its own two-second deadline; the sweep does not share one aggregate deadline,
+so a slow logger cannot consume another's budget. The `log::Log::flush()`
+adapter keeps its unit-return contract and discards the confirmation result.
+
+Each logger records fixed-cardinality flush diagnostics through
+`FlushDiagnostics` in `rust_extension/src/logger/flush_diagnostics.rs`: attempt
+and confirmation counts, terminal failures by `FlushFailureStage`, and five
+elapsed-time buckets. Those buckets are disjoint ranges — up to 10 ms, over 10
+to 100 ms, over 100 to 500 ms, over 500 ms to 2 s, and over 2 s — so each
+attempt increments exactly one; they are not cumulative. Recording touches only
+relaxed atomics, so a snapshot may observe concurrent updates at different
+instants. `FemtoLogger.get_flush_diagnostics()` exposes that snapshot to
+Python; exporting it through a shared metrics backend remains tracked by issue
+`#551`.
+
+See the [Rust extension guide](rust-extension.md) and the
+[multithreaded logging design](rust-multithreaded-logging-framework-for-python-design.md#flush-barrier-states)
+for the queue state machine and deadline transitions.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` splits into a fallible preparation step and a
@@ -1471,6 +2088,13 @@ assertions reusable without expanding the runtime API:
 - `traceback_test_helpers.rs` builds Python-like frame and exception objects,
   arranges extraction cases, and re-exports the frame assertion helpers. It is
   also limited to Python-enabled unit tests.
+- `flush_budget.rs` provides the scripted clocks for handler flush-deadline
+  tests: `ScriptedClock` and the lock-backed `SharedScriptedClock` return a
+  fixed sequence of samples, and `WarningClock` is advanced by hand so a
+  rate-limited warning interval can expire without sleeping.
+- `test_worker.rs` provides `TestWorker`, a worker thread paired with the
+  `ShutdownSignal` that reaches it, for handler tests that supply their own
+  worker.
 
 The reusable integration-test support is owned by
 `rust_extension/tests/test_utils/`. It consists of four focused components:
@@ -1531,11 +2155,24 @@ file run too and do emit, which is why the assertions name their records.
 Python logging captures the active task-local `ContextVar` fields and any
 explicit `extra` fields when `FemtoLogger.py_log` creates a record. The
 `rust_extension/src/python_context.rs` adapter converts Python mappings and
-scalar values, then `ContextBudget` in `rust_extension/src/log_context.rs`
-validates keys, values, and aggregate size. The resulting fields are stored in
-record metadata; this path does not read or merge Rust thread-local context.
+scalar values, then `ContextBudget` in
+`rust_extension/src/log_context/budget.rs` validates keys, values, and
+aggregate size; `rust_extension/src/log_context.rs` re-exports it alongside the
+scoped-context API. Budget validation checks key length, then the reserved-name
+contract, then key count, value length, and aggregate size, and commits state
+only after every check passes. The resulting fields are stored in record
+metadata; this path does not read or merge Rust thread-local context.
 Conversion failures are reported to Python as type errors, and invalid context
 values as `ValueError`.
+
+Reserved names are defined once, in
+`rust_extension/src/log_context/reserved.rs`. Context admission, Python
+callback enrichment, and HTTP serialization all call the same predicate, so a
+name that cannot enter through `extra` or `log_context(...)` also cannot
+replace an authoritative field later in the pipeline. Because
+`RecordMetadata::key_values` is public and direct construction bypasses
+admission, HTTP serialization omits reserved names at the output boundary as
+well; that omission is defence in depth, not a second policy.
 
 Rust logging uses `merge_context_values` at the producer boundary. It combines
 active Rust thread-local context with explicit record fields, with explicit
@@ -1568,6 +2205,27 @@ not a package module. `traceback_capture_tests` embeds it with `include_str!`;
 the fixture raises a nested `ValueError`, preserves its explicit traceback, and
 clears the exception object's `__traceback__` so tuple-based traceback capture
 is exercised.
+
+### Default formatter message framing
+
+`DefaultFormatter` keeps the message field on the record's first physical line.
+The crate-private helper `formatter::escape::escape_message_line_separators`
+escapes the ten separators that Python's `str.splitlines()` recognizes: LF, CR,
+VT, FF, U+001C, U+001D, U+001E, NEL, U+2028, and U+2029. Each becomes its
+`char::escape_debug` form, and the helper returns a borrowed `Cow` when the
+message contains no separator.
+
+Only the message is escaped. Stack and exception payloads are appended
+unescaped and may span lines, so an exception message carrying application data
+can still forge a line. Percent-style and callable formatters, and structured
+`handle_record` handlers, receive the raw message. A direct
+`FemtoFileHandler.handle` call still sends the message through the default
+formatter, so its message is escaped; only the logger string it supplies
+bypasses the logger API's validation and escaping. The tests that pin this
+behaviour are `rust_extension/src/formatter/escape.rs` for the helper,
+`rust_extension/tests/formatter_tests.rs` for the formatted record,
+`rust_extension/tests/file_handler_tests.rs` for file bytes, and
+`tests/test_default_formatter_framing.py` for the Python-visible workflow.
 
 ## Toolchain Boundaries
 
@@ -1606,7 +2264,10 @@ its addendum records the addition of the docstring-coverage tier below.
    the threshold alone can pass a lone gap. `INTERROGATE_IGNORE_REGEX`
    (`^basicConfig$`) skips every definition named `basicConfig`, which is how
    the overload stubs are exempt; Ruff still checks the implementation's
-   docstring.
+   docstring. Ruff's `undocumented-public-function` (D103) also applies to
+   `tests/steps/` without a per-file exemption. A step's docstring describes
+   its scenario-context effect or assertion contract rather than repeating the
+   `@given`/`@when`/`@then` decorator text.
 3. **Pylint** (`4.0.7`) — runs as a uv tool on managed PyPy 3.12
    (`PYLINT_PYTHON ?= pypy@3.12`), isolated from the project virtual
    environment. `syntax-error` stays enabled, so a module PyPy cannot parse
@@ -1779,6 +2440,67 @@ item-scoped `#[expect(clippy::disallowed_methods, reason = "...")]`. Use
 contract. See
 [adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
 for the decision and its rationale.
+
+### The policy contract test
+
+`tests/test_env_access_policy_contract.py` judges the target's wiring from
+outside: it runs the real `make lint-env-policy` target, so Make, `uv` and the
+lane driver all execute. It then checks that a failing lane fails the target,
+that the driver names that lane, that every lane's diagnostic reaches the
+caller on standard error, and that Cargo receives the exact argument vector the
+Makefile's defaults imply, lane by lane and in order. Cargo itself is the one
+part replaced: `tests/fake_cargo.py` writes a recording fake `cargo`, which
+`run_policy_target` in `tests/env_policy_lane_support.py` puts first on the
+child's `PATH`; its `cargo_runner.py` companion does the recording and rejects
+only the lane a test names.
+
+The fake compiles nothing, so the contract never takes Cargo's package-cache
+lock and cannot wait on another job's resolve
+([#537](https://github.com/leynos/femtologging/issues/537)). Each run
+therefore has 120 seconds (`MAKE_TIMEOUT_SECONDS`) for provisioning through
+`uv` and the real Make run, and each test carries the
+`CONTRACT_TIMEOUT_SECONDS` marker above that budget. Real compilation and
+policy enforcement stay with `rust_extension/tests/` and `make lint`.
+
+The child inherits this process's environment so that `uv` and Make work, but
+the helper removes every Make variable the Makefile assigns with `?=` before
+running the target: such a variable takes the environment's value over the
+Makefile's default, so an exported `ENV_POLICY_FEATURE_LANES` would change
+which lanes run and an exported `ENV_POLICY_LINT_ARGS` would change what Clippy
+is asked to do. `CARGO` is in that list because it is assigned with `?=` as
+well, but the target never expands it into a recipe, so the fake is selected by
+`PATH` either way. The list is read from the Makefile rather than written out,
+so a new `?=` variable is covered when it is added. It also removes Make's own
+controls, `MAKEFLAGS`, `GNUMAKEFLAGS` and `MAKEFILES`: `MAKEFLAGS=-i` would
+make the target ignore a rejected lane's exit status, and either variable can
+carry assignments the Makefile parse cannot see. The helper removes
+`FAKE_CARGO_REJECT` before setting its own value too, since an inherited
+rejection would fail a lane the test expects to accept, and the failure would
+read as a wiring defect. The general rule is the one above — where an inherited
+variable could change the outcome, the child's environment is built explicitly.
+`run_policy_target` takes the parent environment as an argument for the same
+reason, so those contracts inject one instead of editing this process's
+environment, and it runs the target in its own process group so a timed-out or
+interrupted run cannot leave `uv` and the driver behind.
+
+These invariants are checked with named examples and one parameterized table
+rather than generated ones, deliberately. Each example runs the real target, so
+a property test would multiply whole `uv` and driver runs to sample an input
+space that is not open-ended: the inherited names are exactly the variables the
+Makefile assigns with `?=` plus Make's three control variables, and
+`environment_overridable_variables()` already enumerates that list in full. A
+generated value adds nothing a case over that list does not already assert, and
+a generated subset of lanes would re-test the driver's loop rather than the
+contract, which pins the loop at its stop-at-first-failure boundary. The
+relative and empty `PATH` entries are covered by a parameterized table for the
+same reason: the interesting cases are two, and both are named.
+
+See
+[adrs/adr-0006-environment-seam-taxonomy.md](./adrs/adr-0006-environment-seam-taxonomy.md)
+for the decision, and the
+[2026-09-08 debugging plan revision](./debugging/debugging-plan-2026-09-08-env-policy-timeout.md)
+for the measurements that led to the fake and the alternatives that were
+rejected.
 
 ### The source scan
 

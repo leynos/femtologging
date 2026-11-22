@@ -311,6 +311,11 @@ pub(crate) fn replace_runtime_state(
 
 /// Flush every registered logger for the Rust `log` bridge.
 ///
+/// Returns whether every logger confirmed its handler barrier. Each logger
+/// gets its own two-second deadline; the sweep does not share one aggregate
+/// deadline. The `log::Log::flush()` adapter keeps its unit-return contract
+/// and therefore discards this confirmation result.
+///
 /// Snapshot under lock, then flush outside it: a GIL-holding `get_logger`
 /// writer could otherwise starve the queued handler a flush barrier awaits.
 /// `reset_manager` also drops loggers outside the lock.
@@ -321,8 +326,8 @@ pub(crate) fn replace_runtime_state(
 /// only evidence an operator gets that a handler is not draining. The counter
 /// is not yet exported; issue #551 tracks the telemetry interface.
 #[cfg(feature = "log-compat")]
-pub(crate) fn flush_all_handlers(py: Python<'_>) {
-    flush_all_handlers_with_metrics(py, crate::logger::process_flush_metrics());
+pub(crate) fn flush_all_handlers(py: Python<'_>) -> bool {
+    flush_all_handlers_with_metrics(py, crate::logger::process_flush_metrics())
 }
 
 /// Sweep every registered logger, counting bridge failures in `metrics`.
@@ -330,11 +335,14 @@ pub(crate) fn flush_all_handlers(py: Python<'_>) {
 /// The target is a parameter so a test can drive a real sweep against counters
 /// it owns. Every logger's own flush still reports through its production
 /// observer; only the bridge-level failure counter is redirected here.
+///
+/// Returns whether every logger confirmed; see [`flush_all_handlers`] for what
+/// that confirmation covers.
 #[cfg(feature = "log-compat")]
 pub(crate) fn flush_all_handlers_with_metrics(
     py: Python<'_>,
     metrics: &crate::logger::FlushMetrics,
-) {
+) -> bool {
     let loggers: Vec<Py<FemtoLogger>> = {
         let manager = MANAGER.read();
         manager
@@ -343,13 +351,14 @@ pub(crate) fn flush_all_handlers_with_metrics(
             .map(|logger| logger.clone_ref(py))
             .collect()
     };
+    let mut all_confirmed = true;
     for logger in loggers {
-        let borrowed_logger = logger.borrow(py);
-        let logger_ref: &FemtoLogger = &borrowed_logger;
-        if !py.detach(|| logger_ref.flush_handlers()) {
+        if !logger.borrow(py).flush_handlers_detached(py) {
             crate::logger::record_bridge_flush_failure(metrics);
+            all_confirmed = false;
         }
     }
+    all_confirmed
 }
 
 /// Drop every logger and all attached runtime state.

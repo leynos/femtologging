@@ -6,6 +6,8 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::logger::flush_clock::FlushDeadline;
+
 /// A process-local reservation released when its owner leaves scope.
 pub(crate) struct PidReservation<'a> {
     /// Atomic word this reservation releases when it is dropped.
@@ -34,6 +36,27 @@ impl<'a> PidReservation<'a> {
             // fork. Its child may clear it because the parent thread is gone.
             let _ = reservation.compare_exchange(owner, 0, Ordering::AcqRel, Ordering::Acquire);
         }
+    }
+
+    /// Wait for a same-process owner only while the caller's deadline remains.
+    pub(crate) fn wait_or_clear_stale_until(
+        reservation: &AtomicU32,
+        process_id: u32,
+        owner: u32,
+        deadline: &FlushDeadline,
+    ) -> bool {
+        if owner != process_id {
+            let _ = reservation.compare_exchange(owner, 0, Ordering::AcqRel, Ordering::Acquire);
+            return !deadline.is_expired();
+        }
+
+        while reservation.load(Ordering::Acquire) == process_id {
+            if deadline.is_expired() {
+                return false;
+            }
+            std::thread::yield_now();
+        }
+        !deadline.is_expired()
     }
 }
 

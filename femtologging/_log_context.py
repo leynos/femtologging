@@ -45,6 +45,9 @@ if typ.TYPE_CHECKING:
 
 @contextmanager
 def log_context(**fields: object) -> cabc.Iterator[None]:
+    # ruff: ignore[docstring-extraneous-exception] _normalise_context_fields
+    # and _validate_log_context raise these directly below; documenting them
+    # here keeps the public contract accurate.
     """Temporarily attach structured key-values to records in this task.
 
     Parameters
@@ -54,12 +57,22 @@ def log_context(**fields: object) -> cabc.Iterator[None]:
         records emitted in the current Python task while this context is active.
         Keys must be valid Python identifiers. Values must be `str`, `int`,
         `float`, `bool`, or `None`. Duplicate keys override outer context values.
+        Names reserved for built-in record fields, such as `name`, `msg`,
+        `levelname`, `logger`, or `metadata`, are rejected.
 
     Yields
     ------
     None
         Context manager that makes the provided fields active for the current
         `contextvars` context and restores the previous value on exit.
+
+    Raises
+    ------
+    TypeError
+        If a value is not one of the supported scalar types.
+    ValueError
+        If a key is reserved for a built-in record field, or the merged context
+        exceeds its key-count or byte limits.
 
     Notes
     -----

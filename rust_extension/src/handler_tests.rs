@@ -1,0 +1,321 @@
+//! Deterministic deadline tests for the shared handler flush queue wait.
+//!
+//! Each test stalls one half of a real bounded channel — a full queue for
+//! admission, an unanswered marker for acknowledgement — and scripts the clock
+//! so the supplied deadline, not the wall clock, decides how long the wait can
+//! last.
+
+use std::cell::RefCell;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use super::{
+    FlushCap, PendingDrops, QueueFlushFailure, flush_command_until, flush_handler_until,
+    report_drops_then_acknowledge,
+};
+use crate::rate_limited_warner::RateLimitedWarner;
+use crate::sync::{Sender, bounded};
+use crate::test_utils::flush_budget::ScriptedClock;
+
+/// Command shape used to exercise the helper's two queue waits.
+enum TestCommand {
+    /// Carries the acknowledgement channel answered by the test worker.
+    Flush(Sender<()>),
+}
+
+/// Send one `TestCommand::Flush` through `flush_command_until`.
+///
+/// The helper owns the acknowledgement channel because each handler's queue
+/// type differs; this mirrors how a handler hands the helper its queue.
+fn flush_test_command(
+    tx: &Sender<TestCommand>,
+    deadline: Instant,
+    now: &mut dyn FnMut() -> Instant,
+) -> Result<(), QueueFlushFailure> {
+    flush_command_until(deadline, now, |budget| {
+        let (ack_tx, ack_rx) = bounded(1);
+        tx.send_timeout(TestCommand::Flush(ack_tx), budget).ok()?;
+        Some(move |budget| ack_rx.recv_timeout(budget).ok())
+    })
+}
+
+/// A full queue must refuse the marker once the deadline has no budget left.
+#[test]
+fn a_full_queue_is_bounded_by_the_supplied_deadline() {
+    let (tx, _rx) = bounded::<TestCommand>(1);
+    let (filler, _filler_ack) = bounded(1);
+    tx.try_send(TestCommand::Flush(filler))
+        .expect("the single queue slot should start empty");
+
+    let mut clock = ScriptedClock::new(&[30_000]);
+    let deadline = clock.deadline();
+    let started = Instant::now();
+    let outcome = {
+        let mut now = || clock.now();
+        flush_test_command(&tx, deadline, &mut now)
+    };
+
+    assert_eq!(outcome, Err(QueueFlushFailure::Enqueue));
+    assert_eq!(
+        clock.samples(),
+        1,
+        "a refused admission must not sample the clock for an acknowledgement it never sent"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "queue admission must stop at the supplied deadline, not wait for room"
+    );
+}
+
+/// A worker that never answers must not extend the caller past the deadline.
+#[test]
+fn a_stalled_acknowledgement_is_bounded_by_the_supplied_deadline() {
+    // The receiver stays alive but is never read, so the worker is stalled.
+    let (tx, _rx) = bounded::<TestCommand>(1);
+    let mut clock = ScriptedClock::new(&[0, 30_000]);
+    let deadline = clock.deadline();
+    let started = Instant::now();
+    let outcome = {
+        let mut now = || clock.now();
+        flush_test_command(&tx, deadline, &mut now)
+    };
+
+    assert_eq!(outcome, Err(QueueFlushFailure::Acknowledgement));
+    assert_eq!(
+        clock.samples(),
+        2,
+        "admission and acknowledgement must each take the budget left when they begin"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "acknowledgement must stop at the supplied deadline, not the handler timeout"
+    );
+}
+
+/// A worker that answers before the deadline confirms the flush.
+#[test]
+fn a_confirmed_flush_returns_its_acknowledgement() {
+    let (tx, rx) = bounded::<TestCommand>(1);
+    let worker = thread::spawn(move || {
+        if let Ok(TestCommand::Flush(ack)) = rx.recv() {
+            let _ = ack.send(());
+        }
+    });
+
+    let mut clock = ScriptedClock::new(&[0, 0]);
+    let deadline = clock.deadline();
+    let outcome = {
+        let mut now = || clock.now();
+        flush_test_command(&tx, deadline, &mut now)
+    };
+
+    assert_eq!(outcome, Ok(()));
+    worker.join().expect("the test worker should exit cleanly");
+}
+
+/// A partially consumed admission budget leaves only its remainder for the
+/// acknowledgement wait.
+///
+/// The clock jumps 20 of the 30 supplied seconds between the two samples, so
+/// the acknowledgement must be handed the remaining 10 rather than a fresh
+/// copy of the deadline or the handler's own timeout.
+#[test]
+fn a_partial_admission_leaves_the_remainder_for_the_acknowledgement() {
+    let mut clock = ScriptedClock::new(&[0, 20_000]);
+    let deadline = clock.deadline();
+    let mut budgets = Vec::new();
+    let outcome = {
+        let budgets = &mut budgets;
+        flush_command_until(deadline, &mut || clock.now(), |enqueue_budget| {
+            budgets.push(enqueue_budget);
+            Some(move |ack_budget: Duration| {
+                budgets.push(ack_budget);
+                Some(())
+            })
+        })
+    };
+
+    assert_eq!(outcome, Ok(()), "the recorded acknowledgement confirms");
+    assert_eq!(
+        budgets,
+        [Duration::from_secs(30), Duration::from_secs(10)],
+        "the acknowledgement must receive the budget admission left behind"
+    );
+}
+
+/// An answer that was only observed after the deadline must not confirm.
+///
+/// A receive with no budget left still takes a message that is already
+/// queued, and a descheduled waiter can observe a ready answer late, so a
+/// returned answer is not by itself a timely one. The helper samples the clock
+/// once more and rejects the confirmation on its own account.
+#[test]
+fn an_answer_observed_after_the_deadline_does_not_confirm() {
+    // The third sample is one millisecond past the thirty-second deadline.
+    let mut clock = ScriptedClock::new(&[0, 0, 30_001]);
+    let deadline = clock.deadline();
+    // The return type is written out because the outcome is only ever
+    // asserted as an error, which would leave the success type uninferred.
+    let acknowledge = |_ack_budget: Duration| -> Option<()> { Some(()) };
+    let outcome = flush_command_until(deadline, &mut || clock.now(), |_enqueue_budget| {
+        Some(acknowledge)
+    });
+
+    assert_eq!(outcome, Err(QueueFlushFailure::Acknowledgement));
+    assert_eq!(
+        clock.samples(),
+        3,
+        "admission, acknowledgement and the lateness check must each sample the clock"
+    );
+}
+
+/// An answer that is ready before the receive starts, and is still received
+/// under a zero budget, must not confirm a flush whose deadline has passed.
+///
+/// This is the case the handler tests cannot schedule: there, a live worker puts
+/// the answer on a channel whenever it is descheduled to, so the receive may find
+/// an empty queue. Supplying the acknowledgement from the test itself makes the
+/// answer ready by construction, and the budget the receive is handed is recorded
+/// rather than inferred, so both halves of the rule are observed directly.
+#[test]
+fn a_ready_answer_received_with_no_budget_left_does_not_confirm() {
+    // Admission sees the clock at the start; the acknowledgement budget sample is
+    // one millisecond past the thirty-second deadline, so it leaves nothing.
+    let mut clock = ScriptedClock::new(&[0, 30_001]);
+    let deadline = clock.deadline();
+    let mut budgets = Vec::new();
+    let outcome = {
+        let budgets = &mut budgets;
+        flush_command_until(deadline, &mut || clock.now(), |_enqueue_budget| {
+            // The answer is a value the receive already holds, which is what a
+            // message queued before the wait begins looks like.
+            Some(move |ack_budget: Duration| {
+                budgets.push(ack_budget);
+                Some(())
+            })
+        })
+    };
+
+    assert_eq!(
+        budgets,
+        [Duration::ZERO],
+        "the acknowledgement must be offered the zero budget the deadline left it"
+    );
+    assert_eq!(
+        outcome,
+        Err(QueueFlushFailure::Acknowledgement),
+        "a ready answer does not confirm a flush whose deadline has passed"
+    );
+    assert_eq!(
+        clock.samples(),
+        3,
+        "admission, acknowledgement and the lateness check must each sample the clock"
+    );
+}
+
+/// A flush whose command never enters a saturated queue must hand its taken
+/// drop count back, so the next warning still reports those records.
+///
+/// An explicit flush takes every pending count, so the take is destructive even
+/// when no warning was due; the restore half is what stops a saturated queue
+/// from swallowing the figure.
+#[test]
+fn failed_flush_enqueue_restores_the_taken_drop_count() {
+    let warner = RateLimitedWarner::new(Duration::from_secs(5));
+    for _ in 0..3 {
+        warner.record_drop();
+    }
+    let (tx, _rx) = bounded::<()>(1);
+    tx.try_send(())
+        .expect("the queue should accept its one item");
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(50);
+    let mut now = || start;
+    let mut cap = FlushCap::new(deadline, Duration::from_millis(50), &mut now);
+    let outcome: Option<Result<(), QueueFlushFailure>> = flush_handler_until(
+        PendingDrops::new(
+            || warner.take_pending(),
+            |count| warner.restore_drops(count),
+        ),
+        &mut cap,
+        || Some(tx.clone()),
+        |tx, pending_drops, budget| {
+            assert_eq!(
+                pending_drops,
+                Some(3),
+                "the flush must carry the count it took"
+            );
+            tx.send_timeout((), budget).ok()?;
+            Some(|_: Duration| Some(()))
+        },
+    );
+
+    assert_eq!(
+        outcome,
+        Some(Err(QueueFlushFailure::Enqueue)),
+        "a full queue refuses the flush command"
+    );
+    assert_eq!(
+        warner.take_due(),
+        Some(3),
+        "the restored count must be the next warning's figure"
+    );
+}
+
+/// The drop report a marker carries must reach the log before the marker is
+/// acknowledged, so a caller that observes success cannot outrun the report.
+///
+/// The checking closure reads the acknowledgement channel while the report is
+/// being emitted: an empty channel there is what proves the order, because the
+/// acknowledgement is the only event that can race the report.
+#[test]
+fn flush_report_precedes_the_acknowledgement() {
+    let (ack_tx, ack_rx) = bounded::<()>(1);
+    let observed = RefCell::new(Vec::new());
+
+    report_drops_then_acknowledge(
+        Some(4),
+        |count| {
+            let acknowledged = ack_rx.try_recv().is_ok();
+            observed.borrow_mut().push((count, acknowledged));
+        },
+        || {
+            let _ = ack_tx.send(());
+        },
+    );
+
+    assert_eq!(
+        observed.into_inner(),
+        vec![(4, false)],
+        "the drop report must be emitted before the acknowledgement"
+    );
+    assert!(
+        ack_rx.try_recv().is_ok(),
+        "the marker must still be acknowledged after its report"
+    );
+}
+
+/// A marker that carries no count must still be acknowledged.
+#[test]
+fn flush_without_drops_still_acknowledges() {
+    let (ack_tx, ack_rx) = bounded::<()>(1);
+    let mut reported = false;
+
+    report_drops_then_acknowledge(
+        None,
+        |_| reported = true,
+        || {
+            let _ = ack_tx.send(());
+        },
+    );
+
+    assert!(
+        !reported,
+        "a marker without a count must not report a warning"
+    );
+    assert!(
+        ack_rx.try_recv().is_ok(),
+        "the marker must be acknowledged even without a count"
+    );
+}

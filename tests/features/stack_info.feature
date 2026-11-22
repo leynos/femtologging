@@ -5,6 +5,7 @@ Feature: Stack info logging
     Given a logger named "test"
     When I log at INFO with message "debug" and stack_info=True
     Then the formatted output contains "Stack (most recent call last)"
+    And the raw formatted output contains a log_with_stack_info frame
     And the formatted output matches snapshot
 
   Scenario: Log without stack_info excludes stack

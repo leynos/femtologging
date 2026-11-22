@@ -1,4 +1,14 @@
 //! Regression tests for flushing Python handlers through the Rust `log` bridge.
+//!
+//! The `log` adapter in the parent `log_compat` module forwards records to a
+//! `FemtoLogger`, and a Python handler attached to that logger may need the
+//! manager lock in order to run its own `flush`. The scenario installs a gated
+//! handler that blocks until the test releases it, then proves the adapter's
+//! flush completes instead of deadlocking on the manager write lock.
+//! `create_gated_handler` builds the handler, `spawn_manager_lock_probe`
+//! watches for the lock, and
+//! `adapter_flush_releases_manager_for_python_handlers` drives the case;
+//! `unique_logger_name` keeps concurrent runs from sharing a logger.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

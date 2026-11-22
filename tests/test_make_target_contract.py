@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+import typing as typ
 
 from tests.make_contract_helpers import (
     recipe_tokens,
@@ -10,6 +11,9 @@ from tests.make_contract_helpers import (
     sole_recipe_rule,
     text_sequence,
 )
+
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
 
 type Tokens = tuple[str, ...]
 
@@ -138,6 +142,25 @@ def _prerequisites(target: str) -> Tokens:
     """Return parsed prerequisites for the Makefile *target*."""
     rule = sole_recipe_rule(target)
     return text_sequence(rule.get("prerequisites"), subject=f"{target} prerequisites")
+
+
+def test_build_recipe_installs_from_the_committed_lock(
+    snapshot: SnapshotAssertion,
+) -> None:
+    """`build` syncs the dev group and runs maturin in locked mode."""
+    assert _commands("build") == snapshot, (
+        "build must resolve dependencies from uv.lock and refuse drift"
+    )
+
+
+def test_test_recipe_runs_pytest_in_locked_mode(
+    snapshot: SnapshotAssertion,
+) -> None:
+    """`test` runs pytest through uv in locked mode."""
+    pytest_commands = [command for command in _commands("test") if "pytest" in command]
+    assert pytest_commands == snapshot, (
+        "the pytest run must refuse a lockfile that diverges from the manifest"
+    )
 
 
 def test_typecheck_recipe_uses_the_project_extension_environment() -> None:

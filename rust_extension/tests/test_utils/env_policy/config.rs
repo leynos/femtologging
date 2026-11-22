@@ -5,7 +5,7 @@
 //! test reads the filesystem to find them.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use toml::Value;
@@ -208,23 +208,32 @@ fn host_path() -> Fallible<OsString> {
 
 /// Return the policy violations Clippy reports for the fixture.
 pub(crate) fn probe_violations() -> Fallible<Vec<Violation>> {
-    let fixture = crate_dir().join("tests/fixtures/env_policy_probe.rs");
-    let out_dir = tempfile::tempdir()?;
-    let rendered = run_clippy_probe(&fixture, out_dir.path())?;
-    Ok(collect_violations(&rendered))
+    let rendered = run_probe()?;
+    Ok(parse_violations(&rendered))
 }
 
-/// Run the policy probe over `fixture`, returning the diagnostics it rendered.
-fn run_clippy_probe(fixture: &Path, out_dir: &Path) -> Fallible<String> {
-    // Build the child's environment rather than inheriting one. A probe for
-    // the environment-access policy that reads host state would be testing
-    // this machine as much as the policy: an inherited CLIPPY_CONF_DIR would
-    // point the lint at another configuration, and RUSTFLAGS or CLIPPY_ARGS
-    // would change the diagnostics it counts. PATH is forwarded because it is
-    // how `clippy-driver` is found at all, which is the one ambient input this
-    // cannot remove; the ADR's own rule is to clear and then add back what the
-    // child legitimately needs.
-    let output = Command::new("clippy-driver")
+/// Run the probe fixture through `clippy-driver` and return its JSON output.
+fn run_probe() -> Fallible<String> {
+    let fixture = crate_dir().join("tests/fixtures/env_policy_probe.rs");
+    let out_dir = tempfile::tempdir()?;
+    let output = probe_command(&fixture, out_dir.path())?
+        .output()
+        .map_err(|error| format!("run clippy-driver on {}: {error}", fixture.display()))?;
+    Ok(String::from_utf8(output.stderr)?)
+}
+
+/// Build the probe command with an environment built rather than inherited.
+///
+/// A probe for the environment-access policy that read host state would be
+/// testing this machine as much as the policy: an inherited `CLIPPY_CONF_DIR`
+/// would point the lint at another configuration, and `RUSTFLAGS` or
+/// `CLIPPY_ARGS` would change the diagnostics it counts. `PATH` is forwarded
+/// because it is how `clippy-driver` is found at all, which is the one ambient
+/// input this cannot remove; the ADR's own rule is to clear and then add back
+/// what the child legitimately needs.
+fn probe_command(fixture: &std::path::Path, out_dir: &std::path::Path) -> Fallible<Command> {
+    let mut command = Command::new("clippy-driver");
+    command
         .env_clear()
         .env("PATH", host_path()?)
         .env("CLIPPY_CONF_DIR", crate_dir())
@@ -236,57 +245,42 @@ fn run_clippy_probe(fixture: &Path, out_dir: &Path) -> Fallible<String> {
         .arg(out_dir)
         .arg("-D")
         .arg(DISALLOWED_METHODS_LINT)
-        .arg(fixture)
-        .output()
-        .map_err(|error| format!("run clippy-driver on {}: {error}", fixture.display()))?;
-    Ok(String::from_utf8(output.stderr)?)
+        .arg(fixture);
+    Ok(command)
 }
 
-/// Collect every policy violation from the rendered Clippy diagnostics.
-fn collect_violations(rendered: &str) -> Vec<Violation> {
-    let mut found = Vec::new();
-    for line in rendered.lines() {
-        let Ok(diagnostic) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        found.extend(policy_violation(&diagnostic));
-    }
-    found
+/// Parse the probe's JSON diagnostic lines into violations.
+fn parse_violations(rendered: &str) -> Vec<Violation> {
+    rendered
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .flat_map(|diagnostic| policy_violation(&diagnostic))
+        .collect()
 }
 
 /// Return one diagnostic as a violation, if it is one.
 fn policy_violation(diagnostic: &serde_json::Value) -> Option<Violation> {
-    let message = policy_message(diagnostic)?;
-    let method = quoted_method(message)?;
+    if diagnostic_code(diagnostic)? != DISALLOWED_METHODS_LINT {
+        return None;
+    }
     Some(Violation {
-        method,
+        method: violated_method(diagnostic)?,
         notes: violation_notes(diagnostic),
     })
 }
 
-/// Return a diagnostic's message, if it reports this policy's lint.
-fn policy_message(diagnostic: &serde_json::Value) -> Option<&str> {
-    if !reports_policy_lint(diagnostic) {
-        return None;
-    }
-    diagnostic.get("message")?.as_str()
+/// Read the lint code a diagnostic reports.
+fn diagnostic_code(diagnostic: &serde_json::Value) -> Option<&str> {
+    diagnostic.get("code")?.get("code")?.as_str()
 }
 
-/// Report whether a diagnostic's code names this policy's lint.
-fn reports_policy_lint(diagnostic: &serde_json::Value) -> bool {
-    diagnostic
-        .get("code")
-        .and_then(|code| code.get("code"))
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|code| code == DISALLOWED_METHODS_LINT)
+/// Read the method name the lint message quotes.
+fn violated_method(diagnostic: &serde_json::Value) -> Option<String> {
+    let message = diagnostic.get("message")?.as_str()?;
+    Some(message.split('`').nth(1)?.to_owned())
 }
 
-/// Return the backticked method name a lint message carries, if any.
-fn quoted_method(message: &str) -> Option<String> {
-    message.split('`').nth(1).map(str::to_owned)
-}
-
-/// Return the notes attached to one Clippy diagnostic.
+/// Collect the note messages attached to a diagnostic.
 fn violation_notes(diagnostic: &serde_json::Value) -> Vec<String> {
     diagnostic
         .get("children")

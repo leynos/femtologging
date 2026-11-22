@@ -9,8 +9,11 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoLogger
-
-from .conftest import normalize_traceback_output
+from tests.steps.stack_frames import (
+    parse_frames,
+    strip_external_stack_frames,
+)
+from tests.steps.traceback_normalization import normalize_traceback_output
 
 if typ.TYPE_CHECKING:
     from syrupy import SnapshotAssertion
@@ -141,14 +144,32 @@ def output_equals(logger_fixture: LoggerState, expected: str) -> None:
     assert output == expected, f"Expected '{expected}' but got '{output}'"
 
 
+@then("the raw formatted output contains a log_with_stack_info frame")
+def raw_output_contains_log_with_stack_info_frame(logger_fixture: LoggerState) -> None:
+    """Assert the unnormalized stack names this module's logging frame.
+
+    The snapshot drops frames from installed code, so without this check a
+    helper that discarded every frame would still match a snapshot of nothing.
+    """
+    output = logger_fixture["output"]
+    assert output is not None, "Expected stack output but got None"
+    expected_file = Path(__file__).resolve()
+    frames = parse_frames(output)
+    assert (expected_file, "log_with_stack_info") in frames, (
+        "raw stack output must name the log_with_stack_info frame in "
+        f"{expected_file}, found {frames!r}"
+    )
+
+
 @then("the formatted output matches snapshot")
 def output_matches_snapshot(
     logger_fixture: LoggerState, snapshot: SnapshotAssertion
 ) -> None:
     """Assert the normalized stack or exception output matches the snapshot."""
     output = logger_fixture["output"]
-    # Normalize paths and line numbers for snapshot stability
-    normalized = normalize_traceback_output(output)
+    # Drop frames owned by installed code before normalizing paths and line
+    # numbers, so upstream source text cannot change the snapshot.
+    normalized = normalize_traceback_output(strip_external_stack_frames(output))
     assert normalized == snapshot, (
         "normalized stack/exception output must match the recorded snapshot; "
         f"got {normalized!r}"

@@ -13,6 +13,7 @@ use _femtologging_rs::{
     DefaultFormatter, FemtoFileHandler, FemtoHandlerTrait, FemtoLevel, FemtoLogRecord,
     HandlerConfig, HandlerError, OverflowPolicy, TestConfig,
 };
+use rstest::rstest;
 use tempfile::NamedTempFile;
 
 #[path = "test_utils/handle_expect.rs"]
@@ -73,6 +74,32 @@ where
     with_temp_file_handler_generic(capacity, flush_interval, f)
 }
 
+/// Run `f` against a temporary-file handler and return the exact bytes written.
+///
+/// The handler is dropped after `f` runs and the worker is joined by that drop,
+/// so the file is complete before it is read. A failed flush is propagated as
+/// an I/O error rather than silently returning partial output.
+fn with_temp_file_handler_bytes<F>(f: F) -> io::Result<Vec<u8>>
+where
+    F: FnOnce(&FemtoFileHandler),
+{
+    let tmp = NamedTempFile::new()?;
+    let path = tmp.path().to_path_buf();
+    {
+        let cfg = HandlerConfig {
+            capacity: 8,
+            flush_interval: 1,
+            overflow_policy: OverflowPolicy::Drop,
+        };
+        let handler = FemtoFileHandler::with_capacity_flush_policy(&path, DefaultFormatter, cfg)?;
+        f(&handler);
+        if !handler.flush() {
+            return Err(io::Error::other("handler flush failed"));
+        }
+    }
+    fs::read(&path)
+}
+
 /// A handler wired to an in-memory buffer whose worker thread is gated on a
 /// barrier, so a test can saturate the queue before any record is drained.
 ///
@@ -120,6 +147,42 @@ fn file_handler_writes_to_file() {
     .expect("temporary file handler setup failed");
 
     assert_eq!(output, "core [INFO] hello\n");
+}
+
+#[rstest]
+#[case(
+    "forged\nother [ERROR] second",
+    "core [INFO] forged\\nother [ERROR] second\n"
+)]
+#[case(
+    "forged\rother [ERROR] second",
+    "core [INFO] forged\\rother [ERROR] second\n"
+)]
+#[case(
+    "forged\r\nother [ERROR] second",
+    "core [INFO] forged\\r\\nother [ERROR] second\n"
+)]
+#[case("trailing\n", "core [INFO] trailing\\n\n")]
+fn file_handler_escapes_message_line_separators(#[case] message: &str, #[case] expected: &str) {
+    let bytes = with_temp_file_handler_bytes(|handler| {
+        handler.expect_handle(FemtoLogRecord::new("core", FemtoLevel::Info, message));
+    })
+    .expect("temporary file handler setup failed");
+
+    assert_eq!(
+        bytes,
+        expected.as_bytes(),
+        "file output must escape the message before adding its record terminator",
+    );
+    assert_eq!(
+        bytes.iter().filter(|&&byte| byte == b'\n').count(),
+        1,
+        "the record must occupy exactly one physical line",
+    );
+    assert!(
+        !bytes.contains(&b'\r'),
+        "file output must not preserve a carriage return",
+    );
 }
 
 #[test]
@@ -175,36 +238,35 @@ fn file_handler_concurrent_usage() {
     let tmp = NamedTempFile::new().expect("failed to create temp file");
     let path = tmp.path().to_path_buf();
     let handler = Arc::new(FemtoFileHandler::new(&path).expect("Failed to create file handler"));
-    spawn_concurrent_writers(&handler, 10).expect("writer threads must finish cleanly");
+    write_concurrently(&handler, 10).expect("concurrent writers failed");
     drop(handler);
-    let output = fs::read_to_string(&path).expect("failed to read log output");
-    assert_every_message_written(&output, 10);
+    assert_all_messages_written(&path, 10);
 }
 
-/// Write one record from each of `count` threads sharing `handler`.
-///
-/// Fallible rather than panicking because it is a fixture, not a test: a
-/// failed join is reported to the test body, which owns the verdict.
-fn spawn_concurrent_writers(handler: &Arc<FemtoFileHandler>, count: usize) -> Result<(), String> {
+/// Write `count` records through one shared handler from `count` threads.
+fn write_concurrently(handler: &Arc<FemtoFileHandler>, count: usize) -> Result<(), &'static str> {
     let mut handles = Vec::with_capacity(count);
     for i in 0..count {
-        let h = Arc::clone(handler);
+        let shared = Arc::clone(handler);
         handles.push(thread::spawn(move || {
-            h.expect_handle(FemtoLogRecord::new(
+            shared.expect_handle(FemtoLogRecord::new(
                 "core",
                 FemtoLevel::Info,
                 &format!("msg{}", i),
             ));
         }));
     }
-    for h in handles {
-        h.join().map_err(|_| "writer thread panicked".to_string())?;
+    for handle in handles {
+        handle.join().map_err(|_| "writer thread panicked")?;
     }
     Ok(())
 }
 
-/// Assert the log holds a line for each of `count` concurrent messages.
-fn assert_every_message_written(output: &str, count: usize) {
+/// Assert every message `write_concurrently` produced reached the file.
+fn assert_all_messages_written(path: &std::path::Path, count: usize) {
+    let Ok(output) = fs::read_to_string(path) else {
+        panic!("failed to read log output");
+    };
     for i in 0..count {
         assert!(output.contains(&format!("core [INFO] msg{}", i)));
     }

@@ -79,7 +79,8 @@ class FemtoLogger:
             If ``True``, capture the current call stack.
         extra
             Optional structured fields. These override active scoped context
-            fields with the same key.
+            fields with the same key. Reserved names that collide with built-in
+            record fields raise ``ValueError``.
 
         Returns
         -------
@@ -87,6 +88,14 @@ class FemtoLogger:
             The formatted log message if the logger is enabled and the record
             passes level and filter checks, otherwise ``None``. A disabled
             logger returns ``None`` without processing or propagating the record.
+
+        Raises
+        ------
+        TypeError
+            If *extra* is not a mapping or a value is not a supported scalar.
+        ValueError
+            If *extra* contains a reserved name or exceeds the structured-field
+            size limits.
 
         """
         ...
@@ -119,15 +128,75 @@ class FemtoLogger:
 
         """
         ...
+    def get_flush_diagnostics(self) -> dict[str, int]:
+        """Return this logger's fixed-cardinality flush barrier counters.
+
+        The result always has the same attempt, confirmation, failure-stage,
+        and elapsed-time keys. Values are best-effort snapshots read from
+        relaxed atomics, so concurrent updates may be observed at different
+        instants. Keys contain no logger names, paths, messages, or payloads.
+        Applications can poll these values from a metrics adapter; exporting
+        them to a shared backend remains the application's responsibility.
+        """
+        ...
     def flush_handlers(self) -> bool:
         """Flush all handlers, returning ``True`` on success.
 
-        Releases the GIL while waiting for the worker acknowledgement and
-        flushing attached handlers, so Python handlers can run. Enqueueing
-        the flush marker and waiting for its acknowledgement share a two-second
-        timeout. Flushing attached handlers can take additional time. Returns
-        ``False`` when the worker does not acknowledge the marker or any
-        handler flush fails.
+        Resolves dispatch state and checks the handler list. With handlers, it
+        queues a marker behind accepted records and snapshots the handlers
+        before allowing the worker to run their callbacks. With no handlers, it
+        checks only this logger's in-flight work. One absolute 2 s deadline
+        covers dispatch resolution, marker enqueue, the handler-list lock,
+        worker acknowledgement, and all handler flushes.
+        Built-in handlers retain their shorter configured timeouts. The
+        interpreter is released across the barrier so a worker blocked on a
+        Python handler can make progress. PyO3 reacquires it before returning
+        to Python. CPython controls that handoff, so interpreter contention
+        can delay the Python return beyond the Rust barrier deadline. If the
+        handoff completes late, the result is ``False`` even though the Python
+        call cannot return until CPython makes the interpreter available.
+
+        A custom Rust handler must override ``flush_until()`` and honour its
+        deadline. The default returns ``False`` without calling legacy
+        synchronous ``flush()``, because arbitrary synchronous code cannot be
+        preempted. A user-defined Python handler is asked to flush itself: the
+        barrier calls its callable ``flush`` method. A handler with no callable
+        ``flush`` opts out and is confirmed once the record reaches it, while
+        one whose ``flush`` raises or returns a falsy value other than
+        ``None`` reports failure; ``None`` counts as success, as
+        Python's flush protocol reports success that way. The exception
+        text is never printed in case it quotes a record. The call runs
+        synchronously on the worker, so the deadline bounds the wait for
+        the answer rather than the duration of the handler's own flush.
+        Flush callbacks run on the worker without the handler-list
+        lock. Every handler in the snapshot is offered the budget that remains
+        even after an earlier one reports failure, so one broken handler does
+        not leave records buffered in the handlers after it. A removed handler
+        stays alive in the queued snapshot until the worker releases it; its
+        destructor does not run on the flush caller. Later additions
+        participate in the next call. In normal builds, logger drop waits only
+        for its own in-flight records, with the existing bounded drain
+        timeout; it does not join the process-wide worker. A callback that
+        violates its deadline can keep that worker occupied and retain the
+        handler after this call returns ``False``. Loom models join their
+        logger-owned worker.
+        Concurrent flush calls use independent deadlines and the existing
+        bounded queue. The barrier starts no helper threads or tasks, so
+        repeated failures do not leave detached work. Shutdown that closes
+        the queue before acknowledgement returns ``False``.
+        Handler changes completed before the snapshot are reflected in this
+        barrier. A handler removed after the snapshot remains alive until the
+        worker releases it; additions after the snapshot participate in the
+        next call.
+
+        Returns ``False`` when the snapshot, marker enqueue, acknowledgement,
+        or any built-in or custom Rust handler flush is not confirmed by the
+        shared deadline; when the worker has exited; or when a handler reports
+        failure or does not implement the deadline-aware contract. A
+        user-defined Python handler is confirmed when its callable ``flush``
+        returns ``None`` or a truthy value; a handler with no callable
+        ``flush`` is confirmed once the record reaches it; a ``flush`` that
+        raises or returns another falsy value reports failure.
 
         """
         ...

@@ -1,4 +1,12 @@
 //! Shared field collection and assertions for producer tracing tests.
+//!
+//! The helpers here back `producer_tracing_tests`. `CapturedEvent`,
+//! `EventFieldCollector` and `collect_fields` turn a `tracing` event into
+//! inspectable fields; `ExpectedEvent`, `EXPECTED_EVENTS` and
+//! `EXPECTED_FILTER_OUTCOMES` describe the outcomes that `assert_event`,
+//! `assert_events` and `assert_filter_events` compare. The `emit_*` family
+//! includes `emit_python_handler_dispatch`, `emit_capture_failure` and
+//! `emit_rejected_native_dispatch`, which drive `FemtoLogger` per outcome.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -216,7 +224,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
         FemtoLevel::Info,
         "mixed-dispatch-payload-is-not-traced",
     ));
-    assert!(mixed_logger.flush_handlers_blocking());
+    assert!(mixed_logger.flush_handlers());
     assert_eq!(accepted.collected().len(), 1);
     assert!(rejected.collected().is_empty());
 
@@ -233,7 +241,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
         FemtoLevel::Info,
         "rejected-dispatch-payload-is-not-traced",
     ));
-    assert!(all_rejected_logger.flush_handlers_blocking());
+    assert!(all_rejected_logger.flush_handlers());
     assert!(all_rejected.collected().is_empty());
 
     let no_handler_logger = FemtoLogger::new("trace-filter-no-handlers".to_owned())?;
@@ -242,7 +250,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
         FemtoLevel::Info,
         "no-handler-payload-is-not-traced",
     ));
-    assert!(no_handler_logger.flush_handlers_blocking());
+    assert!(no_handler_logger.flush_handlers());
 
     Python::attach(|py| {
         manager::reset_manager();
@@ -261,7 +269,7 @@ pub(super) fn emit_real_handler_filter_dispatches() -> PyResult<()> {
             FemtoLevel::Info,
             "propagated-payload-is-not-traced",
         ));
-        assert!(root.borrow(py).flush_handlers_blocking());
+        assert!(root.borrow(py).flush_handlers());
         assert_eq!(propagated.collected().len(), 1);
         manager::reset_manager();
         Ok(())

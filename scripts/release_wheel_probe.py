@@ -1,16 +1,29 @@
-"""Check that an installed wheel is production-built and imports in isolation."""
+"""Check that an installed wheel is production-built and delivers records.
+
+The location checks prove that the interpreter has loaded this environment's
+native extension rather than the development build. They say nothing about
+whether that extension works, so the probe also sends one record through the
+native HTTP worker to a loopback endpoint. A wheel whose dependencies or TLS
+or transport configuration are wrong passes the location checks and fails the
+delivery check.
+"""
 
 from __future__ import annotations
 
 import ast
+import http.server
 import importlib
 import importlib.machinery
+import queue
 import sys
+import threading
 import typing as typ
 from pathlib import Path
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+    from femtologging import FemtoHTTPHandler
 
 # Test-only names that follow none of the shapes below.
 _TEST_ONLY_EXACT_NAMES = frozenset({"_stream_waiter_count", "AttachmentIdentity"})
@@ -43,6 +56,14 @@ def _is_test_only_name(name: str) -> bool:
         or name.endswith(_TEST_ONLY_NAME_SUFFIX)
         or name.startswith(_TEST_ONLY_NAME_PREFIXES)
     )
+
+
+# The record whose delivery proves the installed native HTTP worker runs.
+_PROBE_MESSAGE = "release-wheel-probe"
+# The path the loopback collector expects the handler to post to.
+_PROBE_PATH = "/probe"
+# How long the delivered record may take to reach the loopback collector.
+_DELIVERY_TIMEOUT_SECONDS = 10.0
 
 
 def _native_location_errors(native_location: object) -> list[str]:
@@ -263,6 +284,102 @@ def _resolve_probe_inputs(
     return native, package
 
 
+class _RecordCollector(http.server.ThreadingHTTPServer):
+    """Loopback endpoint that records the record the handler delivers.
+
+    The native handler posts on its own worker thread, so the probe needs a
+    live endpoint to receive the request and a queue to wait on for it.
+    """
+
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self) -> None:
+        """Bind an ephemeral loopback port and create the request queue."""
+        super().__init__(("127.0.0.1", 0), _RecordRequestHandler)
+        self.requests: queue.Queue[tuple[str, bytes]] = queue.Queue()
+
+
+class _RecordRequestHandler(http.server.BaseHTTPRequestHandler):
+    """Record each delivered POST body and answer with a success status."""
+
+    def do_POST(self) -> None:
+        """Store the delivered request, then reply 204 No Content."""
+        collector = typ.cast("_RecordCollector", self.server)
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        collector.requests.put((self.path, body))
+        self.send_response(http.HTTPStatus.NO_CONTENT)
+        self.end_headers()
+
+    @typ.override
+    def log_message(
+        self,
+        format: str,
+        *arguments: object,
+    ) -> None:
+        """Silence the default per-request stderr logging."""
+        _ = (format, arguments)
+
+
+def _collector_endpoint(collector: _RecordCollector) -> str:
+    """Return the endpoint URL a handler should post probe records to."""
+    host, port = collector.server_address[:2]
+    return f"http://{host}:{port}{_PROBE_PATH}"
+
+
+def _collect_delivery(collector: _RecordCollector, endpoint: str) -> list[str]:
+    """Wait for the probe record and report a missing or malformed delivery."""
+    try:
+        path, body = collector.requests.get(timeout=_DELIVERY_TIMEOUT_SECONDS)
+    except queue.Empty:
+        return [f"no HTTP delivery reached {endpoint}"]
+    errors: list[str] = []
+    if path != _PROBE_PATH:
+        errors.append(f"the record used the wrong request path: {path}")
+    if _PROBE_MESSAGE.encode() not in body:
+        errors.append("the delivered body did not contain the record message")
+    return errors
+
+
+def http_behaviour_errors() -> list[str]:
+    """Deliver one record through the installed wheel's native HTTP worker.
+
+    Returns
+    -------
+    list[str]
+        Human-readable violations. An empty list means the handler built from
+        this installation reached a loopback endpoint and delivered its record,
+        which the location checks alone cannot show.
+
+    Examples
+    --------
+    Run after installing a wheel built without ``test-util``:
+
+    >>> http_behaviour_errors()  # doctest: +SKIP
+    []
+    """
+    import femtologging
+
+    collector = _RecordCollector()
+    thread = threading.Thread(target=collector.serve_forever, daemon=True)
+    thread.start()
+    endpoint = _collector_endpoint(collector)
+    handler: FemtoHTTPHandler | None = None
+    try:
+        handler = femtologging.HTTPHandlerBuilder().with_endpoint(endpoint).build()
+        handler.handle("release.wheel.probe", "INFO", _PROBE_MESSAGE)
+        handler.flush()
+        errors = _collect_delivery(collector, endpoint)
+    finally:
+        if handler is not None:
+            handler.close()
+        collector.shutdown()
+        collector.server_close()
+        thread.join(timeout=1)
+    return errors
+
+
 def release_wheel_errors(
     *, native: object | None = None, package: object | None = None
 ) -> list[str]:
@@ -281,8 +398,8 @@ def release_wheel_errors(
     -------
     list[str]
         Human-readable violations. An empty list means that the imported
-        extension belongs to this environment and contains no test hooks, and
-        that its stub declares only the production API.
+        extension belongs to this environment, contains no test hooks, delivered
+        a record over HTTP, and that its stub declares only the production API.
     """
     native, package = _resolve_probe_inputs(native, package)
     errors = _native_location_errors(getattr(native, "__file__", None))
@@ -290,6 +407,8 @@ def release_wheel_errors(
     errors.extend(_stub_surface_errors(package))
     if getattr(package, "_has_test_util", None) is not False:
         errors.append("femtologging._has_test_util must be False")
+    if not errors:
+        errors.extend(http_behaviour_errors())
     return errors
 
 

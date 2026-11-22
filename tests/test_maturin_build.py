@@ -11,6 +11,7 @@ import tomllib
 
 import pytest
 
+from tests import clean_wheel_env
 from tests.maturin_compat import (
     build_native_wheel_artifact,
     install_wheel_into_fresh_venv,
@@ -27,6 +28,27 @@ _EXPECTED_WHEEL_SNAPSHOT = pth.Path(__file__).with_name("data") / (
     "expected_wheel_snapshot.json"
 )
 _GENERATOR_PLACEHOLDER = "<maturin-version>"
+
+# The probe imports this module in a child interpreter that pretends the
+# standard-library venv and ensurepip modules are absent. It fails if a
+# module-level import would break collection before the fixture can skip.
+_VENV_BLOCKED_IMPORT_PROBE = """\
+import os
+import sys
+
+
+class BlockStdlibVenv:
+    def find_spec(self, name, path=None, target=None):
+        if name in {"venv", "ensurepip"}:
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
+sys.meta_path.insert(0, BlockStdlibVenv())
+sys.path.insert(0, os.getcwd())
+import tests.test_maturin_build
+print("imported")
+"""
 
 
 def repo_root() -> pth.Path:
@@ -64,15 +86,61 @@ def production_wheel(tmp_path_factory: pytest.TempPathFactory) -> pth.Path:
         pytest.skip("Rust toolchain and maturin are required to build a wheel")
     if sys.version_info >= (3, 15):
         pytest.skip("maturin compatibility snapshot stops at Python 3.14")
+    # The clean-environment smoke test needs a stdlib venv, so skip before
+    # paying for the release build when the interpreter cannot provide one.
+    # Importing ``venv`` at module scope would instead break collection.
+    skip_reason = clean_wheel_env.clean_venv_skip_reason()
+    if skip_reason is not None:
+        pytest.skip(skip_reason)
     return build_native_wheel_artifact(
         repo_root(), tmp_path_factory.mktemp("production-wheel")
     )
 
 
+def test_clean_venv_skip_reason_names_missing_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing venv or ensurepip produces a skip reason naming both modules."""
+    monkeypatch.setattr(clean_wheel_env, "_find_spec", lambda name: None)
+    assert clean_wheel_env.clean_venv_available() is False, (
+        "simulated absent stdlib modules must make the clean venv unavailable"
+    )
+    assert clean_wheel_env.clean_venv_skip_reason() == (
+        "clean wheel smoke test requires missing stdlib modules: venv, ensurepip"
+    ), "the skip reason must name every missing stdlib module"
+
+
+def test_packaging_tests_import_without_stdlib_venv() -> None:
+    """The module imports, and so collects, without venv or ensurepip."""
+    # ruff: ignore[subprocess-without-shell-equals-true] fixed probe of the
+    # running interpreter against a repository-local module path.
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", _VENV_BLOCKED_IMPORT_PROBE],
+        check=False,
+        capture_output=True,
+        cwd=repo_root(),
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        "importing the packaging tests must not require the stdlib venv module:\n"
+        f"{result.stdout}{result.stderr}"
+    )
+
+
 def test_maturin_pins_are_synchronized() -> None:
-    """Maturin version pins stay aligned across build entrypoints."""
+    """Maturin pins stay aligned across the manifest, lock, and build entrypoints."""
     pins = read_maturin_pins(repo_root())
-    assert len(set(pins.values())) == 1, f"Expected one maturin pin, found {pins!r}"
+    manifest_pins = {
+        name: pins[name] for name in ("dev-dependency", "build-system", "uv-lock")
+    }
+    assert len(set(manifest_pins.values())) == 1, (
+        f"maturin versions diverged across {manifest_pins!r}"
+    )
+    assert pins["build-wheels"] == pins["dev-dependency"], (
+        f"the release wheel workflow pins maturin {pins['build-wheels']}, "
+        f"not {pins['dev-dependency']}"
+    )
 
 
 def test_persistent_maturin_configuration_is_production_safe() -> None:
@@ -110,11 +178,12 @@ def test_installed_maturin_matches_expected_pin() -> None:
     )
 
 
-@pytest.mark.timeout(3620)
+@pytest.mark.timeout(0)
 def test_maturin_wheel_build_snapshot(
     production_wheel: pth.Path,
+    tmp_path: pth.Path,
 ) -> None:
-    """Native wheel metadata and layout match expected maturin output."""
+    """The wheel matches the recorded layout and imports in a clean environment."""
     root = repo_root()
     expected = read_expected_maturin_version(root)
     if not toolchain_available():
@@ -134,6 +203,9 @@ def test_maturin_wheel_build_snapshot(
         "built wheel metadata and layout must match the recorded manifest in "
         f"{_EXPECTED_WHEEL_SNAPSHOT.name}"
     )
+    clean_wheel_env.assert_wheel_imports_in_clean_env(
+        production_wheel, tmp_path / "clean-env"
+    )
 
 
 @pytest.mark.timeout(3620)
@@ -142,6 +214,12 @@ def test_release_wheel_does_not_expose_timed_rotation_hooks(
     tmp_path: pth.Path,
 ) -> None:
     """A fresh environment imports a production wheel without test hooks."""
+    pytest.importorskip(
+        "venv", reason="the release wheel probe needs the stdlib venv module"
+    )
+    pytest.importorskip(
+        "ensurepip", reason="the release wheel probe needs pip in the new environment"
+    )
     python = install_wheel_into_fresh_venv(tmp_path / "venv", production_wheel)
     probe = repo_root() / "scripts/release_wheel_probe.py"
     # ruff: ignore[subprocess-without-shell-equals-true] fixed local probe and interpreter paths.

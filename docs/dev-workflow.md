@@ -12,6 +12,9 @@ across Python and Rust code.
 - `make lint` – run the pinned Ruff checker and `cargo clippy` with
   `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0`.
 
+- `make check-lock` – verify that `uv.lock` matches `pyproject.toml`, is
+  tracked by Git and is not ignored.
+
 - `make typecheck` – run the pinned `ty` command
 
   ```shell
@@ -24,9 +27,8 @@ across Python and Rust code.
   by the Makefile; use this target rather than an independently installed `ty`
   version.
 
-- `make build` – create `./.venv`, sync the development dependencies, and
-  install the editable Rust extension with
-  `maturin develop --features python,test-util`.
+- `make build` – install the locked development group and build the extension
+  with `maturin develop --features python,test-util`.
 
 - `make check-api-boundary` – build the extension, then build a release wheel
   from the production maturin configuration and compile three default-feature
@@ -63,6 +65,11 @@ All lanes run the same gates: `make check-fmt`, `make lint`, `make spelling`,
 `make typecheck`, the default and `log-compat` Cargo test lanes, and pytest
 with coverage. The Python `3.12` lane also runs `make check-api-boundary`,
 because that target builds and inspects its own release wheel.
+
+Every lane installs from the same universal `uv.lock`. The 3.15 lane enables
+interpreter prereleases only and does not enable dependency prereleases. See
+[Python lockfile policy](developers-guide.md#python-lockfile-policy) for the
+lock update and prerelease procedure.
 
 Ruff is pinned in the root `Makefile` with `RUFF_VERSION`; the `RUFF` variable
 uses `uvx ruff==$(RUFF_VERSION)` so formatting and linting use the same Ruff
