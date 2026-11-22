@@ -259,6 +259,34 @@ install receives the same features without changing `pyproject.toml`. Coverage
 and heavy-test runs set `FEMTOLOGGING_EXPECT_TEST_UTIL=1`; `tests/conftest.py`
 then fails before tests start if the extension omitted the hooks.
 
+### Clean-wheel import smoke test
+
+`pyproject.toml` declares no runtime dependencies, so every import that
+`import femtologging` performs must resolve from the standard library, the
+package itself, or the native extension. `tests/clean_wheel_env.py` guards that
+contract by installing the already-built wheel into a fresh virtual environment
+and importing the package there.
+
+The helper creates the environment with `python -m venv` (without
+`--system-site-packages`) and installs the wheel with
+`pip --isolated install --no-index --no-deps`. `--isolated` ignores pip
+environment variables and per-user configuration, and `PIP_CONFIG_FILE` points
+at `os.devnull` so global and site-wide configuration files are skipped too. No
+development dependency is reachable from the child interpreter.
+
+A stdlib-only probe then runs with `-I` from outside the checkout. It asserts
+that `typing_extensions` is not importable and never enters `sys.modules`, that
+only the `femtologging` and `pip` distributions are installed, that the
+package, native extension and lazy configuration modules import, and that both
+the package and the extension load from the environment's `purelib` or
+`platlib` directory.
+
+`tests/test_maturin_build.py::test_maturin_wheel_build_snapshot` calls the
+helper with the wheel it already builds, so the check adds no second release
+build and runs as part of `make test` and CI. The test skips before building
+when the Rust toolchain, `venv`, or `ensurepip` is unavailable, and the
+existing Python 3.15 and newer version gate still applies.
+
 ### Documentation example loader
 
 `docs/documentation-style-guide.md` requires user-facing examples to be
