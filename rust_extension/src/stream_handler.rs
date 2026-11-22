@@ -297,22 +297,15 @@ impl FemtoStreamHandler {
         // of inferring that from elapsed time.
         let _waiting = WaitGuard::enter();
         // Cap first, then read the sender: the guard is taken and released
-        // here, so no lock outlives the deadline sample.
+        // inside the closure, so no lock outlives the deadline sample.
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
-        let Some(tx) = self.tx.lock().clone() else {
-            // No worker is left to carry a flush marker, but an explicit flush
-            // still says what the handler has refused: records refused after
-            // close are counted, and no later warning is due.
-            self.warner.flush(warn_dropped);
-            return false;
-        };
         let outcome = flush_handler_until(
             PendingDrops::new(
                 || self.warner.take_pending(),
                 |count| self.warner.restore_drops(count),
             ),
             &mut cap,
-            || Some(tx),
+            || self.tx.lock().clone(),
             |tx, pending_drops, budget| {
                 let (ack_tx, ack_rx) = bounded(1);
                 tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)

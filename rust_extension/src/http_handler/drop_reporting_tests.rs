@@ -3,11 +3,14 @@
 //! One warner counts drops from several causes, and a suppression can make a
 //! count span more than one interval. These tests pin the two consequences: a
 //! cumulative warning names only the cause that triggered it, and a report that
-//! arrives on flush, close or destruction still accounts for drops the interval
-//! was holding back.
+//! arrives on close or destruction still accounts for drops the interval was
+//! holding back. An open handler's flush reports through its worker, which
+//! reports its own suppressed count as well.
 //!
 //! Included with `#[path]` from `tests.rs`, like `close_tests.rs`, so the
-//! fixture and helpers in that file stay in scope.
+//! fixture and helpers in that file stay in scope. The worker-side half of an
+//! open handler's flush report lives in `worker_flush_reporting_tests.rs`
+//! instead, so both files stay clear of the size limit.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -299,27 +302,25 @@ fn assert_held_back_drop_reported(context: &str) {
     assert_eq!(reported.len(), 1, "{context}");
 }
 
-/// The handler's own flush reports drops refused after close.
+/// A closed handler's flush is deadline-bound and reports nothing.
 ///
-/// A closed handler still records refused `handle()` calls. The first refused
-/// record warns and opens the interval; the second is held back. `flush()` must
-/// report that held-back count even though it returns `false` for a closed
-/// handler, and a second flush must have nothing left to say.
+/// A closed handler still records refused `handle()` calls. The first refusal
+/// warns and opens the interval; the second is held back. That count must not
+/// be written through the process-wide sink here: a blocking sink would hold
+/// the caller past the deadline the flush was given. The count stays pending
+/// for the next `close()` or destruction, which are outside that bound.
 #[test]
 #[serial_test::serial]
-fn flush_reports_drops_refused_after_close() {
+fn a_closed_handler_flush_leaves_the_pending_count_for_close() {
     install_test_logger();
-    let handler = closed_handler_holding_one_drop();
+    let mut handler = closed_handler_holding_one_drop();
 
     assert!(!handler.flush(), "a closed handler's flush reports false");
-    assert_held_back_drop_reported(
-        "the flush should report the count the interval was holding back",
+    assert_eq!(
+        handler.warner.pending_drops(),
+        1,
+        "the flush must leave the held-back count pending"
     );
-
-    assert!(!handler.flush());
-    // A detached worker from an earlier test can still log after this test
-    // cleared the buffer, so only a second matching report proves the flush
-    // had nothing to say; an empty global buffer would not.
     let messages: Vec<_> = take_logged_messages()
         .into_iter()
         .map(|entry| entry.message)
@@ -327,8 +328,12 @@ fn flush_reports_drops_refused_after_close() {
     assert_eq!(
         occurrences(&messages, &neutral_drop_report(1)),
         0,
-        "a second flush has nothing left to report: {messages:?}"
+        "a deadline-bound flush must not report the count: {messages:?}"
     );
+
+    handler.close();
+
+    assert_held_back_drop_reported("close must report the count the flush left pending");
 }
 
 /// A close that finds the worker already gone still reports pending drops.

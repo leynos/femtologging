@@ -129,10 +129,6 @@ impl FemtoSocketHandler {
         // must not consume any of the caller's budget deciding it has nowhere
         // to send.
         let Some(tx) = self.sender() else {
-            // No worker is left to carry a flush marker, but an explicit flush
-            // still says what the handler has refused: records refused after
-            // close are counted, and no later warning is due.
-            flush_drops(&self.warner);
             return false;
         };
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);

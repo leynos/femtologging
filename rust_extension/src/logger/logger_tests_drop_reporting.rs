@@ -21,9 +21,10 @@ impl Clock for FixedClock {
 
 /// A drop reports a count the warning interval is holding back.
 ///
-/// `Drop` runs the same flush the explicit path does, because after the drop
-/// nothing is left to warn on the logger's behalf: a suppressed interval would
-/// take its final count with it. The second drop below warns nothing, so
+/// Destruction is the only path that reports the logger's own warners, because
+/// it is the only one without a caller deadline to overrun. After the drop
+/// nothing is left to warn on the logger's behalf, so a suppressed interval
+/// would take its final count with it. The second drop below warns nothing, so
 /// without that flush the count would never be reported.
 #[test]
 #[serial]

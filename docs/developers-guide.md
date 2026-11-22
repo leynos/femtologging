@@ -1958,10 +1958,12 @@ count immediately, so neither path loses a drop.
 Every consumer reports a cumulative figure. The handlers word it "since the
 last report" rather than "in the last interval": a suppressed interval carries
 its drops into the next report, so one report can cover several intervals. The
-logger's flush and destruction messages carry no interval wording, but their
-counts are cumulative on the same terms. The figure is the count still in the
-warner when the report is made, so a count another caller has already taken is
-not included even if that caller has not reported it yet.
+logger's destruction message carries no interval wording, but its count is
+cumulative on the same terms. The figure is the count the reporting path took
+when it claimed it, which for a worker-side report precedes the sink write; a
+drop recorded after that take, and before the callback runs, belongs to the
+next report. A count another caller has already taken is not included even if
+that caller has not reported it yet.
 
 `http_handler/queue.rs` owns `warn_drops_naming_cause`, `flush_drops`,
 `flush_drops_naming_cause` and `warn_cumulative_drops`;
@@ -1973,23 +1975,35 @@ may still include earlier drops from other causes, so the name is not a claim
 about every drop in the number. An explicit flush report is cause-neutral
 because the flush may not have been triggered by a refusal at all; the flush
 variant used when a shutdown abandons a retry names
-`abandoned retry during shutdown`, because that path knows its cause. An
-explicit `flush()` reports pending counts even inside the interval, and a flush
-on a handler that has already closed reports the drops it refused after close,
-because no worker remains to carry a marker. `close()` and destruction report
-pending counts because no later warning comes. For the HTTP and socket
-handlers, that report runs before the bounded shutdown wait and is outside
-`flush_timeout`, so a blocking log sink can delay `close()` past its budget. A
-logger's `flush_handlers()` and destruction emit the same pending counts through
+`abandoned retry during shutdown`, because that path knows its cause.
+
+An explicit `flush()` on an open handler carries the handler-side count on the
+flush marker, and the worker reports it (together with its own suppressed
+count) before acknowledging, so the report happens inside the interval rather
+than at the next due warning. That is a report on the worker's thread, not on
+the caller's, and it is conditional: if the marker never enters a queue,
+`flush_handler_until` restores the count and the flush leaves it pending.
+`flush_until` is deadline-bound, so a closed handler's flush reports nothing
+and returns `false`; the count it refused after close is reported by the next
+`close()` or by destruction, neither of which is covered by a caller deadline.
+For the HTTP and socket handlers, that close-time report runs before the
+bounded shutdown wait and is outside `flush_timeout`, so a blocking log sink
+can delay `close()` past its budget.
+
+A logger's destruction emits the same pending counts through
 `flush_drop_warners`: dispatch-admission drops as
 `FemtoLogger: dropped {count} records; reported by flush`, and context-capture
-drops as `FemtoLogger: dropped {count} records after context capture failed`.
+drops as `FemtoLogger: dropped {count} records after context capture failed`. A
+logger flush does not add a report of its own: the marker carries the
+handler-side count, and a second synchronous write of the logger's own counts
+would let a blocking sink push `flush_handlers()` past the deadline that bounds
+the whole call.
 
-Not every count is reported. One that no later due call, flush or close reaches
-stays pending and is never reported; one whose callback panics before writing
-is abandoned; a count pending at `fork` is copied into the child, so both
-processes can report it; and a caller that takes a count and then delays still
-emits it late, so reports can appear out of recording order.
+Not every count is reported. One that no later due call, flush, close or
+destruction reaches stays pending and is never reported; one whose callback
+panics before writing is abandoned; a count pending at `fork` is copied into
+the child, so both processes can report it; and a caller that takes a count and
+then delays still emits it late, so reports can appear out of recording order.
 
 The warner's `Clock` trait reports milliseconds since the warner was
 constructed, an opaque counter used only to decide whether an interval has

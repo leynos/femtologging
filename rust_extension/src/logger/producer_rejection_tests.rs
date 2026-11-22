@@ -7,8 +7,8 @@
 //! serialised `refused_shard_admission_counts_and_warns_about_the_drop` drives
 //! a full `Shard` to show a refused record reaching `get_dropped` and emitting
 //! one rate-limited capacity warning, while
-//! `flush_reports_drops_held_back_by_the_warning_interval` pins the flush that
-//! reports a suppressed count.
+//! `destruction_reports_drops_held_back_by_the_warning_interval` pins the
+//! destruction report for a suppressed count.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -24,6 +24,16 @@ use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
 use crate::handler::HandlerError;
 use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 use crate::logger::dispatcher::Shard;
+use crate::rate_limited_warner::{Clock, DEFAULT_WARN_INTERVAL, RateLimitedWarner};
+
+/// A clock that never advances, so a warning cannot become due by elapsed time.
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now_millis(&self) -> u64 {
+        0
+    }
+}
 
 /// Filter fixture that rejects every record without enriching it.
 struct RejectingFilter;
@@ -179,19 +189,23 @@ fn refused_shard_admission_counts_and_warns_about_the_drop() {
     );
 }
 
-/// A flush reports drops that the warning interval is holding back.
+/// Destruction reports drops that the warning interval is holding back.
 ///
 /// The first refusal warns immediately and starts the interval, so the second
-/// refusal is suppressed and stays pending. A flush must say that pending
-/// count now: on a logger being shut down there may be no due moment left.
+/// refusal is suppressed and stays pending. A flush must not report it - the
+/// barrier is deadline-bound - but destruction has no caller deadline and must
+/// say the count before the logger goes quiet for good.
 #[test]
 #[serial]
-fn flush_reports_drops_held_back_by_the_warning_interval() {
+fn destruction_reports_drops_held_back_by_the_warning_interval() {
     install_test_logger();
     let shard: &'static Shard = Box::leak(Box::new(
         Shard::start(0, 1).expect("a one-record test shard should start"),
     ));
-    let logger = FemtoLogger::assembled_for_test("producer-flush".to_string(), shard);
+    let mut logger = FemtoLogger::assembled_for_test("producer-flush".to_string(), shard);
+    // A fixed clock keeps the second refusal inside the interval; with the real
+    // one, a pause longer than five seconds would let it report itself.
+    logger.drop_warner = RateLimitedWarner::with_clock(DEFAULT_WARN_INTERVAL, Arc::new(FixedClock));
     let (started_tx, started_rx) = bounded(1);
     let (release_tx, release_rx) = bounded(1);
     logger
@@ -240,8 +254,8 @@ fn flush_reports_drops_held_back_by_the_warning_interval() {
     );
     assert_eq!(
         logger.drop_warner.pending_drops(),
-        0,
-        "the flush must drain the pending count",
+        1,
+        "the deadline-bound flush must leave the count pending",
     );
     let flush_warnings = take_logged_messages()
         .into_iter()
@@ -251,7 +265,21 @@ fn flush_reports_drops_held_back_by_the_warning_interval() {
         })
         .count();
     assert_eq!(
-        flush_warnings, 1,
-        "the flush should report the suppressed drop exactly once",
+        flush_warnings, 0,
+        "the flush must not report the count synchronously",
+    );
+
+    drop(logger);
+
+    let destruction_warnings = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.level == log::Level::Warn
+                && warning.message == "FemtoLogger: dropped 1 records; reported by flush"
+        })
+        .count();
+    assert_eq!(
+        destruction_warnings, 1,
+        "destruction should report the suppressed drop exactly once",
     );
 }

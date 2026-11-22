@@ -25,7 +25,7 @@ use super::{
     frame_write::FrameWriter,
     serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
-    warning::{flush_drops_naming_cause, warn_drops_naming_cause, warn_pending_drops},
+    warning::{flush_drops, flush_drops_naming_cause, warn_drops_naming_cause, warn_pending_drops},
 };
 
 #[path = "worker_drain.rs"]
@@ -214,6 +214,9 @@ impl Worker {
     /// The drop count the handler moved here is reported before the
     /// acknowledgement is sent, so a caller that observes the flush succeed
     /// cannot do so before the report it carried has been emitted. The
+    /// worker's own suppressed count is reported first, for the same reason:
+    /// it is a drop the handler-side warner never saw, so a normal flush is
+    /// the only report it will get while the interval holds it back. The
     /// acknowledgement itself carries the flush outcome: an I/O failure is
     /// reported to the caller rather than acknowledged as a successful flush.
     /// The connection warning stays after the acknowledgement because it
@@ -223,6 +226,7 @@ impl Worker {
         let had_connection = self.connection.is_some();
         let flush_result = self.flush_connection();
         let flush_failed = flush_result.is_err();
+        flush_drops(&self.warner);
         report_drops_then_acknowledge(pending_drops, warn_pending_drops, || {
             // Ignore send error: a caller that stopped waiting has nothing
             // left to learn from the outcome.

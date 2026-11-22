@@ -126,10 +126,6 @@ impl FemtoHTTPHandler {
         // must not consume any of the caller's budget deciding it has nowhere
         // to send.
         let Some(tx) = self.sender() else {
-            // Records refused after close are recorded by the handler, so a
-            // flush that returned early would leave their count pending on a
-            // handler that is never going to warn again.
-            flush_drops(&self.warner);
             return false;
         };
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);

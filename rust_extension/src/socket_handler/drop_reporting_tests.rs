@@ -3,10 +3,14 @@
 //! One warner counts drops from several causes, and a suppression can make a
 //! count span more than one interval. These tests pin the two consequences: a
 //! cumulative warning names only the cause that triggered it, and a report that
-//! arrives on flush, close or destruction still accounts for drops the interval
-//! was holding back.
+//! arrives on close or destruction still accounts for drops the interval was
+//! holding back. An open handler's flush reports through its worker, which
+//! reports its own suppressed count as well.
 //!
-//! Declared with `#[path]` from `tests.rs`, like `close_tests.rs`.
+//! Declared with `#[path]` from `tests.rs`, like `close_tests.rs`. The
+//! worker-side half of an open handler's flush report lives in
+//! `worker_flush_reporting_tests.rs` instead, so both files stay clear of the
+//! size limit.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -276,16 +280,19 @@ fn assert_held_back_drop_reported(context: &str) {
     assert_eq!(reported.len(), 1, "{context}");
 }
 
-/// The handler's own flush reports drops refused after close.
+/// A closed handler's flush is deadline-bound and reports nothing.
 ///
-/// A closed handler still records refused `handle()` calls. The first refused
-/// record warns and opens the interval; the second is held back. `flush()` must
-/// report that held-back count even though it returns `false` for a closed
-/// handler, and a second flush must have nothing left to say.
+/// A closed handler still records refused `handle()` calls. The first refusal
+/// warns and opens the interval; the second is held back. That count must not
+/// be written through the process-wide sink here: a blocking sink would hold
+/// the caller past the deadline the flush was given. The count stays pending
+/// for the next `close()` or destruction, which are outside that bound.
 #[rstest]
 #[serial_test::serial]
-fn flush_reports_drops_refused_after_close(closed_handler_holding_one_drop: FemtoSocketHandler) {
-    let handler = closed_handler_holding_one_drop;
+fn a_closed_handler_flush_leaves_the_pending_count_for_close(
+    closed_handler_holding_one_drop: FemtoSocketHandler,
+) {
+    let mut handler = closed_handler_holding_one_drop;
     let warned: Vec<_> = take_logged_messages()
         .into_iter()
         .filter(|entry| entry.message.contains("triggering cause: handler closed"))
@@ -297,30 +304,25 @@ fn flush_reports_drops_refused_after_close(closed_handler_holding_one_drop: Femt
     );
 
     assert!(!handler.flush(), "a closed handler's flush reports false");
-    assert_held_back_drop_reported(
-        "the flush should report the count the interval was holding back",
+    assert_eq!(
+        handler.pending_drops_for_test(),
+        1,
+        "the flush must leave the held-back count pending"
     );
-
-    assert!(!handler.flush());
-    // The buffer is shared with every other test in this binary, so a single
-    // neighbour's warning says nothing about this flush. A second copy of
-    // *this* report is the only thing that would prove the first flush left the
-    // batch behind.
-    let repeated: Vec<_> = take_logged_messages()
+    let reported: Vec<_> = take_logged_messages()
         .into_iter()
         .filter(|entry| {
             entry.message == "FemtoSocketHandler dropped 1 records since the last report"
         })
         .collect();
     assert!(
-        repeated.is_empty(),
-        "a second flush must not repeat the report: {repeated:?}"
+        reported.is_empty(),
+        "a deadline-bound flush must not report the count: {reported:?}"
     );
-    assert_eq!(
-        handler.pending_drops_for_test(),
-        0,
-        "the first flush must swap the pending count out, not merely read it"
-    );
+
+    handler.close();
+
+    assert_held_back_drop_reported("close must report the count the flush left pending");
 }
 
 /// A close that finds the worker already gone still reports pending drops.

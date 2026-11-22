@@ -284,8 +284,12 @@ impl Worker {
     ///
     /// The drop count the handler moved here is reported before the
     /// acknowledgement is sent, so a caller that observes the flush succeed
-    /// cannot do so before the report it carried has been emitted.
+    /// cannot do so before the report it carried has been emitted. The
+    /// worker's own suppressed count is reported first, for the same reason:
+    /// it is a drop the handler-side warner never saw, so a normal flush is
+    /// the only report it will get while the interval holds it back.
     fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
+        flush_drops(&self.warner);
         report_drops_then_acknowledge(
             pending_drops,
             |count| warn_cumulative_drops(count, None),

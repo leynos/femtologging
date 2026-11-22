@@ -19,10 +19,14 @@ covers:
 - A warning that was triggered by a refusal names only that refusal's cause.
   The count may include earlier drops from other causes, so the message says
   "triggering cause", never "latest cause".
-- An explicit flush, a close, and destruction report any count still pending,
-  because on those paths no later warning will come.
-- A logger flush and logger destruction report pending dispatch-admission and
-  context-capture drops with their own wordings.
+- An explicit flush reports a pending count inside the interval by carrying it
+  on the worker's flush marker, together with the worker's own suppressed
+  count; a marker that never enters a queue leaves the count pending. A close
+  and destruction report a pending count directly, because on those paths no
+  later warning will come and no caller deadline applies.
+- Logger destruction reports pending dispatch-admission and context-capture
+  drops with their own wordings. A logger flush adds no report of its own,
+  because the barrier it runs under is deadline-bound.
 
 An operator reading the warnings therefore sees the whole loss the handler can
 still account for, and can tell which refusal asked for the report.
@@ -68,6 +72,13 @@ still account for, and can tell which refusal asked for the report.
       passes on the ported tree.
 - [x] (2026-11-21) Documentation updated in the users guide, developers guide,
       Rust extension guide and migration guide.
+- [x] (2026-11-22) Review fixes for `71badd37`: the closed-handler branch of
+      each `flush_until` path and the logger barrier no longer report drops
+      synchronously; both workers report their own suppressed count before
+      acknowledging; the context-capture fixture and the dispatch-admission
+      fixture inject a fixed clock. Tests renamed or replaced accordingly, with
+      worker-side regressions in `worker_flush_reporting_tests.rs` (HTTP and
+      socket) and `worker_tests.rs`.
 - [ ] (2026-11-21) Full deterministic gates on the ported candidate.
 - [ ] (2026-11-22) Publish the candidate, obtain review, merge.
 
@@ -81,11 +92,12 @@ still account for, and can tell which refusal asked for the report.
   `refs/backup/issue440-2ab341fd` for its evidence and review history.
   Date/Author: 2026-11-21, agent.
 - Decision: keep `main`'s flush-marker transport for open handlers and add the
-  synchronous report only where no worker exists (closed-handler flush) or
-  where the handler is about to disappear (`close`, `Drop`). Rationale: the
-  marker keeps a slow `log` sink off the flush caller's thread; the new reports
-  are exactly the cases where no marker can be sent. Date/Author: 2026-11-21,
-  agent.
+  synchronous report only on `close` and `Drop`, where the handler is about to
+  disappear and no caller deadline applies. Rationale: the marker keeps a slow
+  `log` sink off the flush caller's thread, and the deadline-bound
+  `flush_until` contract forbids an unbounded write there, so a closed
+  handler's flush leaves its count for the next `close()` or destruction
+  instead of reporting it. Date/Author: 2026-11-21, agent.
 - Decision: name only the triggering cause. Rationale: one warner counts drops
   from several causes and nothing records which was most recent, so naming a
   "latest cause" would be an unsupported claim. Date/Author: 2026-11-21, agent.
@@ -93,8 +105,12 @@ still account for, and can tell which refusal asked for the report.
 ## Verification plan
 
 - Unit tests per boundary: HTTP and socket `drop_reporting_tests.rs` (cumulative
-  cause, cause-neutral flush, closed-handler flush, close and Drop reports),
-  stream shutdown/Drop reports, logger flush and destruction reports.
+  cause, cause-neutral flush, close and Drop reports), the worker-side flush
+  reports in `worker_flush_reporting_tests.rs` (end to end through the handler)
+  and `worker_tests.rs` (ordering against the acknowledgement), stream
+  shutdown/Drop reports, and the logger destruction report. A closed handler's
+  flush is covered too, and asserts the opposite of the first draft: it leaves
+  the count pending.
 - Existing message-matching tests updated to the new wording.
 - Deterministic gates on the candidate: `make fmt`, `make check-fmt`,
   `make lint`, `make typecheck`, `make test`, `make markdownlint`, `make nixie`.
@@ -111,8 +127,9 @@ still account for, and can tell which refusal asked for the report.
 
 Acceptance for this reduced scope: the messages listed in the migration guide
 are the ones the code emits; a suppressed count appears in the next report; an
-explicit flush, a close and a destruction each report a pending count; and the
-full deterministic gate suite passes on the published candidate.
+open handler's explicit flush, a close and a destruction each report a pending
+count; deadline-bound paths add no report of their own; and the full
+deterministic gate suite passes on the published candidate.
 
 ## Idempotence and recovery
 
@@ -140,3 +157,16 @@ backup ref.
 This plan now covers only the consumer contract, and the old series is retained
 as evidence rather than replayed. The rationale and the port decisions are in
 the decision log above.
+
+2026-11-22: the review of `71badd37` found the first port draft had broken a
+deadline contract and missed two reports. A closed handler's `flush_until`
+called the process-wide `log` sink synchronously, which an arbitrary sink can
+block past the context deadline the trait promises, and the logger's barrier
+did the same. Both reports are removed from deadline-bound paths: a closed
+handler's count stays pending for the next `close()` or destruction, and the
+logger reports only at destruction. The review also showed the flush marker
+carries only the handler-side count, so a worker-side suppressed drop survived
+a normal flush unreported; both workers now flush their own warner before
+acknowledging. The context-capture fixture's warner used the system clock, so
+its suppression window depended on wall-clock timing; it now takes a fixed
+clock injection.

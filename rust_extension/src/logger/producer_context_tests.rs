@@ -7,8 +7,8 @@
 //! proves captured context reaches the queue, while
 //! `context_capture_failures_have_a_separate_counter_from_queue_drops` keeps
 //! capture failures out of `get_dropped` and
-//! `flush_reports_context_capture_drops_held_back_by_the_interval` pins their
-//! report on an explicit flush.
+//! `destruction_reports_context_capture_drops_held_back_by_the_interval` pins
+//! their report at destruction.
 
 use std::sync::{
     Arc,
@@ -18,6 +18,18 @@ use std::sync::{
 use super::context_snapshot::ContextSnapshotProvider;
 use super::*;
 use crate::handler::FemtoHandlerTrait;
+use crate::rate_limited_warner::{Clock, DEFAULT_WARN_INTERVAL, RateLimitedWarner};
+
+/// A clock that never advances, so a warning cannot become due by elapsed time.
+#[cfg(feature = "python")]
+struct FixedClock;
+
+#[cfg(feature = "python")]
+impl Clock for FixedClock {
+    fn now_millis(&self) -> u64 {
+        0
+    }
+}
 
 /// Injectable context source that counts captures and can return a Python error.
 #[cfg(feature = "python")]
@@ -110,8 +122,15 @@ impl ContextCaptureFixture {
             captures: Arc::clone(&captures),
             fail,
         });
+        // The interval decides whether a second failed capture is suppressed,
+        // so the clock is fixed rather than left to the scheduler: a pause
+        // longer than five seconds would let the second failure report itself.
         let logger =
-            FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider);
+            FemtoLogger::with_context_snapshot_provider("producer".to_owned(), None, provider)
+                .with_context_capture_warner_for_test(RateLimitedWarner::with_clock(
+                    DEFAULT_WARN_INTERVAL,
+                    Arc::new(FixedClock),
+                ));
         logger.add_handler(Arc::new(ContextAwareTestHandler {
             handled_records: Arc::clone(&handled_records),
             records_with_context: Arc::clone(&records_with_context),
@@ -168,17 +187,18 @@ fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
     assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 0);
 }
 
-/// A flush reports context-capture drops the warning interval was holding back.
+/// Destruction reports context-capture drops the warning interval held back.
 ///
 /// Scenario: two captures fail inside one interval, so the first warns and the
-/// second is suppressed, then the logger is flushed. Invariant: the flush
-/// reports that suppressed count once and leaves the warner empty - a logger
-/// being shut down may have no due moment left, so a count left pending here
-/// would never be reported at all.
+/// second is suppressed, the logger is flushed, then it is destroyed.
+/// Invariant: the deadline-bound flush reports nothing and leaves the count
+/// pending, and destruction - which has no caller deadline - reports it once. A
+/// blocking `log` sink must not be able to push `flush_handlers()` past its
+/// timeout, so the count waits for the path that can afford the write.
 #[cfg(feature = "python")]
 #[test]
 #[serial_test::serial]
-fn flush_reports_context_capture_drops_held_back_by_the_interval() {
+fn destruction_reports_context_capture_drops_held_back_by_the_interval() {
     use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
 
     install_test_logger();
@@ -213,8 +233,8 @@ fn flush_reports_context_capture_drops_held_back_by_the_interval() {
     );
     assert_eq!(
         fixture.logger.context_capture_warner.pending_drops(),
-        0,
-        "the flush must drain the pending context-capture count"
+        1,
+        "the deadline-bound flush must leave the count pending"
     );
     let flush_warnings = take_logged_messages()
         .into_iter()
@@ -223,7 +243,20 @@ fn flush_reports_context_capture_drops_held_back_by_the_interval() {
         })
         .count();
     assert_eq!(
-        flush_warnings, 1,
-        "the flush should report the suppressed failure exactly once"
+        flush_warnings, 0,
+        "the flush must not report the count synchronously"
+    );
+
+    drop(fixture.logger);
+
+    let destruction_warnings = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.message == "FemtoLogger: dropped 1 records after context capture failed"
+        })
+        .count();
+    assert_eq!(
+        destruction_warnings, 1,
+        "destruction should report the suppressed failure exactly once"
     );
 }

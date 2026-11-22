@@ -225,11 +225,13 @@ impl FemtoLogger {
 
     /// Report any drops this logger has recorded but not yet warned about.
     ///
-    /// The warners are rate limited, so a flush that is suppressed by an active
-    /// interval would otherwise leave the counts pending until the next due
-    /// moment — possibly never, on a logger being shut down. Reporting here
-    /// makes an explicit flush mean "say now what has been lost", which is what
-    /// a caller inspecting a quiet system needs.
+    /// Called at destruction only. The warners are rate limited, so a suppressed
+    /// interval would otherwise leave the counts pending until a due moment that
+    /// a logger about to disappear may never reach; reporting here makes the
+    /// destruction mean "say what has been lost". An explicit flush cannot do
+    /// this: it is deadline-bound, and the process-wide `log` sink invoked here
+    /// writes synchronously, so a blocking sink would hold the caller past the
+    /// deadline that bounds the whole call.
     pub(super) fn flush_drop_warners(&self) {
         self.drop_warner.flush(|count| {
             warn!("FemtoLogger: dropped {count} records; reported by flush");
@@ -258,12 +260,10 @@ impl FemtoLogger {
             Err(FlushFailureStage::DeadlineUnrepresentable)
         };
         let barrier_completed_at = timing.now();
-        // Reported after the barrier's own timestamps, so a slow warning sink
-        // is charged to the caller's return rather than to a barrier that met
-        // its deadline. Reporting last also includes a record refused while
-        // the queue drained: recorded first, its count would be left pending
-        // on a flush documented to say what has been lost.
-        self.flush_drop_warners();
+        // The logger-side warners are deliberately not flushed here: this path
+        // is deadline-bound, and a synchronous sink can hold it past the whole
+        // call's timeout. Those counts are reported at destruction, which has
+        // no caller deadline to overrun.
         BarrierOutcome {
             result,
             timing,

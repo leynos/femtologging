@@ -2,6 +2,8 @@
 //!
 //! Response classification has its own file, `response_classification_tests.rs`,
 //! and request construction has `transport_tests.rs`; neither is repeated here.
+//! `a_flush_reports_the_workers_suppressed_drop_before_acknowledging` pins the
+//! worker-side count a normal flush reports before acknowledging.
 
 use super::*;
 use std::{
@@ -12,7 +14,21 @@ use std::{
     time::Duration,
 };
 
-use crate::{level::FemtoLevel, shutdown_signal::ShutdownSignal};
+use crate::{
+    handlers::file::test_support::{install_test_logger, take_logged_messages, wait_for_message},
+    level::FemtoLevel,
+    rate_limited_warner::Clock,
+    shutdown_signal::ShutdownSignal,
+};
+
+/// A clock that never advances, so the warning interval cannot elapse.
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now_millis(&self) -> u64 {
+        0
+    }
+}
 
 #[test]
 #[serial_test::serial]
@@ -94,6 +110,51 @@ fn aborted_request_counts_the_current_record_as_a_shutdown_drop() {
             .message
             .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
+}
+
+/// The worker's own suppressed count is reported before it acknowledges.
+///
+/// The handler and the worker keep separate warners, and the flush marker
+/// carries only the handler-side count, so a worker-side drop that the interval
+/// suppresses reaches the caller only if the worker reports its own warner when
+/// it handles the marker.
+///
+/// The acknowledgement is sent on a rendezvous channel, so its send cannot
+/// complete until this test receives. A worker that acknowledged before
+/// reporting would therefore sit in the send with no report in the buffer, and
+/// the wait below would time out; only a report made first lets it be found.
+#[test]
+#[serial_test::serial]
+fn a_flush_reports_the_workers_suppressed_drop_before_acknowledging() {
+    install_test_logger();
+    let mut worker = Worker::new(
+        HTTPHandlerConfig::default(),
+        Arc::new(ShutdownSignal::new()),
+    );
+    worker.warner = RateLimitedWarner::with_clock(Duration::from_secs(5), Arc::new(FixedClock));
+    // Two delivery failures inside one interval: the first warns, the second is
+    // suppressed and stays pending, which is the count a flush has to report.
+    worker.warn_permanent_drops();
+    worker.warn_permanent_drops();
+    let _ = take_logged_messages();
+
+    let (ack_tx, ack_rx) = bounded(0);
+    let flush = thread::spawn(move || worker.handle_flush_command(ack_tx, None));
+
+    let reported = wait_for_message(
+        "FemtoHTTPHandler dropped 1 records since the last report",
+        Duration::from_secs(2),
+    );
+    assert!(
+        reported.iter().any(
+            |entry| entry.message == "FemtoHTTPHandler dropped 1 records since the last report"
+        ),
+        "the worker's suppressed drop must be reported before the acknowledgement: {reported:?}"
+    );
+    ack_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the flush must still acknowledge");
+    flush.join().expect("the worker flush should return");
 }
 
 #[test]
