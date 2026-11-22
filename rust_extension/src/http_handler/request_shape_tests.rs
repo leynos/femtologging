@@ -39,7 +39,7 @@ fn execute(
     config: &HTTPHandlerConfig,
     agent: &ureq::Agent,
     payload: &str,
-) -> Result<ResponseClass, String> {
+) -> Result<ResponseClass, &'static str> {
     let budget = agent
         .config()
         .timeouts()
@@ -331,3 +331,8 @@ mod redirect_responses;
 #[cfg(test)]
 #[path = "request_shape_tests/endpoint.rs"]
 mod endpoint;
+
+// Transport failure labels the send path decides, through `execute`.
+#[cfg(test)]
+#[path = "request_shape_tests/failure_labels.rs"]
+mod failure_labels;

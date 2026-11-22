@@ -368,3 +368,7 @@ mod origin_tests;
 #[cfg(all(test, not(loom), feature = "python"))]
 #[path = "log_compat/cardinality_tests.rs"]
 mod cardinality_tests;
+
+#[cfg(all(test, not(loom)))]
+#[path = "log_compat/http_redaction_tests.rs"]
+mod http_redaction_tests;

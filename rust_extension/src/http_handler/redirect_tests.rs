@@ -119,7 +119,22 @@ fn the_chain_limit_is_checked_first(#[case] location: Option<HeaderValue>) {
     ));
 
     assert!(
-        matches!(hop, NextHop::Failed(ref message) if message.contains("max redirects")),
+        matches!(hop, NextHop::Failed("reached max redirects")),
+        "{hop:?}"
+    );
+}
+
+/// Scenario: a `Location` value that cannot be resolved against the base.
+///
+/// Invariant: the attempt fails with the fixed `invalid redirect location`
+/// label, and the server-supplied value is never part of that diagnostic.
+#[test]
+fn an_unresolvable_location_is_reported_without_its_value() {
+    let bad = location("http://[::1");
+    let hop = next_hop(attempt(&HTTPMethod::GET, 302, Some(&bad), 1));
+
+    assert!(
+        matches!(hop, NextHop::Failed("invalid redirect location")),
         "{hop:?}"
     );
 }

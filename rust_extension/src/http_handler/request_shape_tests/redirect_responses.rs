@@ -22,7 +22,7 @@ use super::{
 fn execute_against_raw_response(
     listener: TcpListener,
     response: Vec<u8>,
-) -> Result<ResponseClass, String> {
+) -> Result<ResponseClass, &'static str> {
     let (addr, requests) =
         spawn_raw_response(listener, response).expect("spawn raw response server");
     let config = post_config(format!("http://{addr}/log"), AuthConfig::None, &[]);

@@ -670,6 +670,21 @@ chain applies. Each has a contract test in `request_shape_tests.rs`,
 `redirect_tests.rs` or `tls_tests.rs` that fails when the setting is dropped,
 not merely when the module stops compiling.
 
+`http_handler/transport/failure.rs` owns the transport-failure vocabulary.
+`transport::execute` and `worker.rs` return `&'static str`, never `String`, so
+the retry warning cannot borrow a dependency's runtime text;
+`failure::classification` is the single mapping from a `ureq::Error` to that
+text, its arms return literals, and it never formats the dependency's error.
+Keeping the type narrow is the barrier: a change that reintroduces
+`err.to_string()` at the warning fails to compile instead of quietly logging a
+URL's userinfo. The type alone is not a provenance proof, because `Box::leak`
+can manufacture a static reference, so the literal arms carry the rest.
+`ureq::Error` is `#[non_exhaustive]`, so the mapping names the unconditional
+variants and ends with a wildcard for one the dependency adds later.
+`failure.rs` carries a table-driven test asserting each constructible variant's
+exact label, because a swapped or collapsed arm would otherwise pass every
+other test.
+
 The dependencies follow that split. `ureq` is version 3.4 with its default
 `rustls` and `gzip` features, which replace ureq 2's `native-tls` option;
 `native-tls` remains a dev-dependency, used only by the TLS fixture server.

@@ -871,6 +871,12 @@ HTTP client.
 - A whole redirect chain shares one `write_timeout` budget. A chain that is
   still going when the budget expires fails as a transport error instead of
   spending the timeout again on each hop.
+- A transport failure now logs one fixed classification, such as
+  `transport error (invalid URL)` or `transport error (DNS lookup failed)`,
+  instead of the HTTP client's own error text. The configured endpoint is no
+  longer included in that warning, so URL userinfo, query values, rejected
+  header values, and redirect targets cannot reach the diagnostic output. See
+  [the users' guide](users-guide.md#femtohttphandler).
 
 ### How to update an HTTP handler
 
@@ -883,6 +889,10 @@ HTTP client.
   allow a connection to establish for a required duration, raise
   `write_timeout` to at least that duration, and raise `connect_timeout` too if
   the duration exceeds it.
+- If a filter or monitoring rule matches the old transport-error text, or relies
+  on the endpoint appearing in that warning, match the fixed classification
+  instead. Each handler has exactly one configured endpoint, so identify the
+  handler rather than the URL when correlating the warning.
 
 For the full transport contract, see
 [the Rust extension guide](rust-extension.md#http-transport-and-tls).

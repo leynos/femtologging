@@ -186,7 +186,7 @@ impl Worker {
                     self.warn_permanent_drops();
                     return;
                 }
-                Err(err) => match self.should_retry(&err, now) {
+                Err(err) => match self.should_retry(err, now) {
                     true => continue,
                     false => return,
                 },
@@ -220,7 +220,15 @@ impl Worker {
     }
 
     /// Execute one request; HTTP 503 is classified as retryable.
-    fn execute_request(&self, payload: &str, attempt: &Attempt) -> Result<ResponseClass, String> {
+    ///
+    /// A transport failure is reported as an application-owned classification
+    /// rather than `ureq`'s formatted error text: that text can repeat the
+    /// failed URI with its userinfo and query values, so it is never logged.
+    fn execute_request(
+        &self,
+        payload: &str,
+        attempt: &Attempt,
+    ) -> Result<ResponseClass, &'static str> {
         execute(&self.config, &attempt.agent, payload, attempt.budget)
     }
 
@@ -235,7 +243,12 @@ impl Worker {
     ///
     /// The backoff sleep is the signal's, not `thread::sleep`'s, so a close
     /// that lands mid-delay is observed now rather than after it.
-    fn should_retry(&mut self, err: &str, now: Instant) -> bool {
+    ///
+    /// `err` is always application-owned static text: a transport
+    /// classification, or the fixed retryable-status message. It is never a
+    /// dependency's formatted error, which can carry the configured URL's
+    /// userinfo, its query values, or a rejected header's value.
+    fn should_retry(&mut self, err: &'static str, now: Instant) -> bool {
         warn!("FemtoHTTPHandler request failed: {err}");
         if self.signal.is_shutting_down() {
             self.warn_shutdown_drops();
@@ -378,3 +391,7 @@ impl Worker {
 #[cfg(test)]
 #[path = "worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "worker_classification_tests.rs"]
+mod classification_tests;

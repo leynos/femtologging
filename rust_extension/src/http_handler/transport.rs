@@ -28,6 +28,8 @@ use super::{
     response::{ResponseClass, classify_status},
 };
 
+mod failure;
+
 /// A response whose body the worker deliberately never reads.
 pub(super) type HttpResponse = Response<Body>;
 
@@ -111,8 +113,8 @@ pub(super) fn execute(
     agent: &Agent,
     payload: &str,
     budget: Duration,
-) -> Result<ResponseClass, String> {
-    let mut headers = resolve_headers(config)?;
+) -> Result<ResponseClass, &'static str> {
+    let mut headers = resolve_headers(config).map_err(|_| "transport error (invalid header)")?;
     let mut hop = first_hop(config, payload)?;
     let mut responses_seen = 1;
     // `None` only if the budget is too large for the platform's clock to
@@ -159,7 +161,7 @@ pub(super) fn execute(
 /// expired. Parsing here keeps the accepted endpoints and the bytes on the wire
 /// unchanged. A GET payload is appended before the parse, because ureq 2
 /// appended it to the configured endpoint before ureq parsed the result.
-fn first_hop<'a>(config: &HTTPHandlerConfig, payload: &'a str) -> Result<Hop<'a>, String> {
+fn first_hop<'a>(config: &HTTPHandlerConfig, payload: &'a str) -> Result<Hop<'a>, &'static str> {
     // Note: GET+JSON combination is rejected at build time by HTTPHandlerBuilder.
     let (target, body) = match config.method {
         HTTPMethod::GET => {
@@ -168,7 +170,7 @@ fn first_hop<'a>(config: &HTTPHandlerConfig, payload: &'a str) -> Result<Hop<'a>
         }
         HTTPMethod::POST => (config.url.clone(), Some(payload)),
     };
-    let url = Url::parse(&target).map_err(|err| format!("invalid HTTP endpoint: {err}"))?;
+    let url = Url::parse(&target).map_err(|_| "transport error (invalid URL)")?;
     Ok(Hop {
         url,
         method: config.method.clone(),
@@ -203,13 +205,13 @@ fn send_hop(
 /// reported an expired global timeout: the record is retried outside a drain
 /// and counted as a shutdown drop inside one, because the worker refuses to
 /// retry while shutting down.
-fn remaining_before_hop(deadline: Option<Instant>) -> Result<Option<Duration>, String> {
+fn remaining_before_hop(deadline: Option<Instant>) -> Result<Option<Duration>, &'static str> {
     let Some(deadline) = deadline else {
         return Ok(None);
     };
     match deadline.checked_duration_since(Instant::now()) {
         Some(remaining) if !remaining.is_zero() => Ok(Some(remaining)),
-        _ => Err("the attempt ran out of time before the next request could be sent".to_owned()),
+        _ => Err("transport error (attempt ran out of time)"),
     }
 }
 
@@ -235,10 +237,15 @@ fn apply_budget<State>(
 /// that path equivalent. Every other error is a transport failure, including a
 /// redirect that exceeded the chain limit: ureq 2 raised that one as an error
 /// too, so it is not a verdict.
-fn classify_error(err: ureq::Error) -> Result<ResponseClass, String> {
+///
+/// The failure is described by [`failure::classification`] rather than by
+/// `Display`: dependency error text is not part of this application's
+/// diagnostic contract, and one variant repeats the failed URI with its
+/// userinfo and query values.
+fn classify_error(err: ureq::Error) -> Result<ResponseClass, &'static str> {
     match err {
         ureq::Error::StatusCode(code) => Ok(classify_status(code)),
-        other => Err(other.to_string()),
+        other => Err(failure::classification(&other)),
     }
 }
 
@@ -376,7 +383,7 @@ pub(super) fn execute_with_roots(
     config: &HTTPHandlerConfig,
     root_certs: RootCerts,
     payload: &str,
-) -> Result<ResponseClass, String> {
+) -> Result<ResponseClass, &'static str> {
     let agent = build_agent_with_roots(config.connect_timeout, config.write_timeout, root_certs);
     execute(config, &agent, payload, config.write_timeout)
 }
