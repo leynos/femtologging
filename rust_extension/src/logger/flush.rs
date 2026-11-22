@@ -18,6 +18,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use log::warn;
+
 use crate::handler::FemtoHandlerTrait;
 #[cfg(all(test, not(loom)))]
 use crate::monotonic_clock::MonotonicClock;
@@ -221,6 +223,23 @@ impl FemtoLogger {
         })
     }
 
+    /// Report any drops this logger has recorded but not yet warned about.
+    ///
+    /// The warners are rate limited, so a flush that is suppressed by an active
+    /// interval would otherwise leave the counts pending until the next due
+    /// moment — possibly never, on a logger being shut down. Reporting here
+    /// makes an explicit flush mean "say now what has been lost", which is what
+    /// a caller inspecting a quiet system needs.
+    pub(super) fn flush_drop_warners(&self) {
+        self.drop_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records; reported by flush");
+        });
+        #[cfg(feature = "python")]
+        self.context_capture_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records after context capture failed");
+        });
+    }
+
     /// Run the real barrier with a supplied clock for deterministic stage tests.
     #[cfg(all(test, not(loom)))]
     pub(super) fn flush_handlers_with_clock(
@@ -239,6 +258,12 @@ impl FemtoLogger {
             Err(FlushFailureStage::DeadlineUnrepresentable)
         };
         let barrier_completed_at = timing.now();
+        // Reported after the barrier's own timestamps, so a slow warning sink
+        // is charged to the caller's return rather than to a barrier that met
+        // its deadline. Reporting last also includes a record refused while
+        // the queue drained: recorded first, its count would be left pending
+        // on a flush documented to say what has been lost.
+        self.flush_drop_warners();
         BarrierOutcome {
             result,
             timing,

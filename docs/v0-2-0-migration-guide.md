@@ -278,12 +278,12 @@ ______________________________________________________________________
 
 `FemtoSocketHandler.close()` and `FemtoHTTPHandler.close()` now run on one
 deadline, taken from the handler's write timeout, that covers the whole
-shutdown: signalling the worker, queueing the acknowledgement request, waiting
-for the acknowledgement, and joining the worker. Previously the acknowledgement
-wait and the join each had their own or no bound, so a worker stuck in a
-blocking network call could hold `close()` for far longer than the timeout
-suggested. `Drop` calls `close()`, so the same bound applies to a handler that
-is simply dropped.
+shutdown wait: signalling the worker, queueing the acknowledgement request,
+waiting for the acknowledgement, and joining the worker. Previously the
+acknowledgement wait and the join each had their own or no bound, so a worker
+stuck in a blocking network call could hold `close()` for far longer than the
+timeout suggested. `Drop` calls `close()`, so the same bound applies to a
+handler that is simply dropped.
 
 A worker that does not acknowledge within the budget is abandoned rather than
 joined. Until the deadline, a worker draining its queue makes one best-effort
@@ -292,9 +292,9 @@ worker finishes only the network call it was already in, discards whatever is
 still queued, and exits on its own with nothing left to join it. This changes
 three observable behaviours:
 
-- **`close()` returns on time.** Code that relied on `close()` blocking until
-  every queued record had been sent must call `flush()` first, and must accept
-  that a flush is best-effort under the same timeout.
+- **`close()` does not wait past the budget.** Code that relied on `close()`
+  blocking until every queued record had been sent must call `flush()` first,
+  and must accept that a flush is best-effort under the same timeout.
 - **Records can be dropped at the deadline.** Whatever is still queued when the
   drain deadline passes is discarded rather than sent, and one rate-limited
   warning reports how many records went that way. A collector that cannot keep
@@ -319,8 +319,8 @@ return `False` sooner than before. The logger's `flush_handlers()` does not
 change this: it gives the handler the barrier's deadline, and the handler still
 caps its wait at its own configured timeout.
 
-The bound on `close()` itself is the budget: a worker that misses the deadline
-is detached, so the caller is never held past it. The bound on the worker's own
+The bound on the shutdown wait is the budget: a worker that misses the deadline
+is detached, so that wait never runs past it. The bound on the worker's own
 exit is looser, because it is on what the worker _starts_: no standard-library
 API cancels a blocking `connect`, `write`, or TLS handshake, so the worker may
 live on for up to one network call already in flight when the deadline fell.
@@ -328,6 +328,38 @@ Nothing new starts after the deadline.
 
 No API changed. The contract is unchanged for callers that already treat
 `close()` as best-effort, and `flush()` keeps its existing boolean return.
+
+______________________________________________________________________
+
+## Dropped-record warning messages are cumulative
+
+The handler drop warnings now count every drop since the previous report
+instead of only the drops in one rate-limit interval, and a flush, close or
+destruction reports a count that is still pending.
+
+| Component | Before                                                                             | After                                                                                                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stream    | `FemtoStreamHandler: {count} log records dropped in the last interval`             | `FemtoStreamHandler: {count} log records dropped since the last report`                                                                                                                   |
+| HTTP      | `FemtoHTTPHandler dropped {count} records in the last interval`                    | `FemtoHTTPHandler dropped {count} records since the last report`, with `; triggering cause: {cause}` appended when a specific drop triggered the report                                   |
+| Socket    | `FemtoSocketHandler dropped {count} records in the last interval`                  | `FemtoSocketHandler dropped {count} records since the last report`, with `; triggering cause: {cause}` appended when a specific drop triggered the report                                 |
+| Logger    | No flush or destruction report; a suppressed count waited for the next due warning | `FemtoLogger: dropped {count} records; reported by flush` for dispatch-admission drops, and `FemtoLogger: dropped {count} records after context capture failed` for context-capture drops |
+
+The old wording also had a separate sentence per failure cause — for example
+`FemtoHTTPHandler queue full; dropped {count} records` or
+`FemtoSocketHandler dropped {count} records due to write errors`. Those are
+replaced by the single cumulative form plus the `triggering cause` suffix, so
+code matching a cause-specific sentence must match the new form instead.
+
+A suppressed interval now carries its drops into the next report, so one report
+can cover several intervals. The count is what remains in the component's
+counter when the report is made, so a count another caller has already taken is
+not included even if that caller has not reported it yet. The
+`triggering cause` label names only the cause that triggered the report; the
+count may include earlier drops from other causes. `flush()`, `close()` and
+destruction all report pending counts even inside the interval. For the HTTP
+and socket handlers the close-time report runs before the bounded shutdown wait
+and is outside `flush_timeout`, so a blocking log sink can delay `close()` past
+its budget.
 
 ______________________________________________________________________
 

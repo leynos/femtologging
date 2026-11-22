@@ -415,6 +415,15 @@ fields with safe defaults does not require a version bump.
   this counter is separate from `get_dropped()`. A later configuration that
   names the logger re-enables it and stops the counter rising.
 
+`flush_handlers()` and logger destruction report a pending count that the
+warning interval is still holding back. At either point, the dispatch-admission
+drops counted by `get_dropped()` use
+`FemtoLogger: dropped {count} records; reported by flush`, and the
+context-capture failures counted by `get_context_capture_failures()` use
+`FemtoLogger: dropped {count} records after context capture failed`. Both
+figures are cumulative since the last report, so a suppressed interval's drops
+are carried into the next one.
+
 ### Flushing logger handlers
 
 `logger.flush_handlers()` queues a marker behind records the logger has already
@@ -484,6 +493,12 @@ for the compatibility rules.
   not guarantee delivery, because a worker panic still signals completion with
   records queued, and write errors are logged rather than reported to the
   caller.
+- A dropped record is reported as
+  `FemtoStreamHandler: {count} log records dropped since the last report`. The
+  count is cumulative, so a suppressed warning interval carries its drops into
+  the next report. `flush()`, `close()` and destruction each report a pending
+  count immediately, even inside the interval; `close()` reports before it
+  waits for the worker, and destruction reports before it closes.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
@@ -734,6 +749,16 @@ socket_handler = (
   same limitation for the same reason. In both cases `close()` still returns
   inside its budget, and the detached worker leaves as soon as its blocking
   call returns or fails.
+- Dropped records are reported as
+  `FemtoSocketHandler dropped {count} records since the last report`, with
+  `; triggering cause: {cause}` appended when a specific drop triggered the
+  warning. The count is cumulative, so it can cover several suppressed
+  intervals and earlier drops from other causes; only the cause that triggered
+  this report is named. An explicit `flush()` reports a pending count
+  immediately, even inside the interval, and `close()` and destruction do the
+  same because no later warning will come. The close-time report runs before
+  the bounded shutdown wait and is outside `flush_timeout` (the handler's write
+  timeout), so a blocking log sink can delay `close()` past its budget.
 
 ### FemtoHTTPHandler
 
@@ -796,6 +821,16 @@ socket_handler = (
   hostname resolution has no interruptible timeout. The same bound applies when
   the handler is dropped without an explicit `close()`, and the wait runs with
   the GIL released.
+- Dropped records are reported as
+  `FemtoHTTPHandler dropped {count} records since the last report`, with
+  `; triggering cause: {cause}` appended when a specific drop triggered the
+  warning. The count is cumulative, so it can cover several suppressed
+  intervals and earlier drops from other causes; only the cause that triggered
+  this report is named. An explicit `flush()` reports a pending count
+  immediately, even inside the interval, and `close()` and destruction do the
+  same because no later warning will come. The close-time report runs before
+  the bounded shutdown wait and is outside `flush_timeout` (the handler's write
+  timeout), so a blocking log sink can delay `close()` past its budget.
 - `handler.flush()` forces the worker to flush what it has queued, and returns
   `True` only when the worker acknowledges within the handler's flush timeout.
   Python `flush()` releases the GIL while it waits, so other Python threads

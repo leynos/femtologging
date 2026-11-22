@@ -6,7 +6,9 @@
 //! counters so `injected_context_snapshot_provider_supplies_queued_context`
 //! proves captured context reaches the queue, while
 //! `context_capture_failures_have_a_separate_counter_from_queue_drops` keeps
-//! capture failures out of `get_dropped`.
+//! capture failures out of `get_dropped` and
+//! `flush_reports_context_capture_drops_held_back_by_the_interval` pins their
+//! report on an explicit flush.
 
 use std::sync::{
     Arc,
@@ -143,8 +145,12 @@ fn injected_context_snapshot_provider_supplies_queued_context() {
 }
 
 /// Context capture failures do not increment the queue-drop counter.
+///
+/// `#[serial]` because the first failure warns through the process-wide log
+/// capture that the neighbouring flush test asserts on.
 #[cfg(feature = "python")]
 #[test]
+#[serial_test::serial]
 fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
     let fixture =
         ContextCaptureFixture::new(true).expect("context-aware test handler should register");
@@ -160,4 +166,64 @@ fn context_capture_failures_have_a_separate_counter_from_queue_drops() {
         "logger worker did not flush"
     );
     assert_eq!(fixture.handled_records.load(Ordering::Relaxed), 0);
+}
+
+/// A flush reports context-capture drops the warning interval was holding back.
+///
+/// Scenario: two captures fail inside one interval, so the first warns and the
+/// second is suppressed, then the logger is flushed. Invariant: the flush
+/// reports that suppressed count once and leaves the warner empty - a logger
+/// being shut down may have no due moment left, so a count left pending here
+/// would never be reported at all.
+#[cfg(feature = "python")]
+#[test]
+#[serial_test::serial]
+fn flush_reports_context_capture_drops_held_back_by_the_interval() {
+    use crate::handlers::file::test_support::{install_test_logger, take_logged_messages};
+
+    install_test_logger();
+    let fixture =
+        ContextCaptureFixture::new(true).expect("context-aware test handler should register");
+
+    fixture.logger.log(FemtoLevel::Info, "first failed capture");
+    fixture
+        .logger
+        .log(FemtoLevel::Info, "second failed capture");
+    assert_eq!(fixture.captures.load(Ordering::Relaxed), 2);
+    assert_eq!(fixture.logger.get_context_capture_failures(), 2);
+    let suppression_warnings = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.message == "FemtoLogger: dropped 1 records after context capture failed"
+        })
+        .count();
+    assert_eq!(
+        suppression_warnings, 1,
+        "only the first failed capture should warn inside the interval"
+    );
+    assert_eq!(
+        fixture.logger.context_capture_warner.pending_drops(),
+        1,
+        "the suppressed failure must stay pending rather than be discarded",
+    );
+
+    assert!(
+        fixture.logger.flush_handlers(),
+        "logger worker did not flush"
+    );
+    assert_eq!(
+        fixture.logger.context_capture_warner.pending_drops(),
+        0,
+        "the flush must drain the pending context-capture count"
+    );
+    let flush_warnings = take_logged_messages()
+        .into_iter()
+        .filter(|warning| {
+            warning.message == "FemtoLogger: dropped 1 records after context capture failed"
+        })
+        .count();
+    assert_eq!(
+        flush_warnings, 1,
+        "the flush should report the suppressed failure exactly once"
+    );
 }

@@ -24,6 +24,16 @@ use crate::{
     socket_handler::transport::{SocketTransport, TcpTransport, TlsOptions},
 };
 
+/// The warning a record abandoned by the shutdown budget emits.
+///
+/// The worker counts into the same cumulative warner as the handler, and a
+/// refusal at the shutdown deadline is the last chance to report its count, so
+/// the wording names the cause that triggered the flush.
+const SHUTDOWN_DROP: &str = concat!(
+    "FemtoSocketHandler dropped 1 records since the last report; ",
+    "triggering cause: abandoned retry during shutdown"
+);
+
 #[test]
 #[serial_test::serial]
 fn queued_shutdown_ack_waits_for_records_after_it() {
@@ -110,11 +120,11 @@ fn expired_connect_budget_counts_the_current_record_as_a_shutdown_drop() {
     ));
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(messages.iter().any(|entry| {
-        entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
-    }));
+    assert!(
+        messages
+            .iter()
+            .any(|entry| entry.message.contains(SHUTDOWN_DROP))
+    );
 }
 
 #[test]
@@ -133,11 +143,11 @@ fn expired_write_budget_counts_the_current_record_as_a_shutdown_drop() {
     worker.send_frame_to_connection(b"frame", Instant::now());
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(messages.iter().any(|entry| {
-        entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
-    }));
+    assert!(
+        messages
+            .iter()
+            .any(|entry| entry.message.contains(SHUTDOWN_DROP))
+    );
 }
 
 #[test]
@@ -154,9 +164,9 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
     worker.warn_shutdown_drops();
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(messages.iter().any(|entry| {
-        entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
-    }));
+    assert!(
+        messages
+            .iter()
+            .any(|entry| entry.message.contains(SHUTDOWN_DROP))
+    );
 }

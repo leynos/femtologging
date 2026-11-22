@@ -14,6 +14,8 @@ mod trait_impl;
 
 mod waiter;
 
+mod warning;
+
 mod worker;
 
 use std::{
@@ -41,6 +43,7 @@ use shutdown::StreamShutdown;
 use waiter::WaitGuard;
 #[cfg(feature = "test-util")]
 pub use waiter::waiting_count;
+use warning::warn_dropped;
 use worker::run_stream_worker;
 
 /// Commands the worker thread takes from the queue, in order.
@@ -294,15 +297,22 @@ impl FemtoStreamHandler {
         // of inferring that from elapsed time.
         let _waiting = WaitGuard::enter();
         // Cap first, then read the sender: the guard is taken and released
-        // inside the closure, so no lock outlives the deadline sample.
+        // here, so no lock outlives the deadline sample.
         let mut cap = FlushCap::new(deadline, self.flush_timeout, now);
+        let Some(tx) = self.tx.lock().clone() else {
+            // No worker is left to carry a flush marker, but an explicit flush
+            // still says what the handler has refused: records refused after
+            // close are counted, and no later warning is due.
+            self.warner.flush(warn_dropped);
+            return false;
+        };
         let outcome = flush_handler_until(
             PendingDrops::new(
                 || self.warner.take_pending(),
                 |count| self.warner.restore_drops(count),
             ),
             &mut cap,
-            || self.tx.lock().clone(),
+            || Some(tx),
             |tx, pending_drops, budget| {
                 let (ack_tx, ack_rx) = bounded(1);
                 tx.send_timeout(StreamCommand::Flush(ack_tx, pending_drops), budget)
@@ -322,7 +332,12 @@ impl FemtoStreamHandler {
 
     /// Marks the handler closed and transfers worker state to a shutdown
     /// operation that can wait after the Python object borrow is released.
+    ///
+    /// Pending drops are reported here rather than in [`Self::close`], because
+    /// the Python `close()` path calls this directly and the object stays alive
+    /// afterwards, so `Drop` never runs to report them.
     fn take_shutdown(&self) -> StreamShutdown {
+        self.warner.flush(warn_dropped);
         let tx = self.tx.lock().take();
         drop(tx);
         let handle = self.handle.lock().take();

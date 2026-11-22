@@ -18,8 +18,9 @@ use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 
 use super::{FemtoSocketHandler, SocketCommand};
-use crate::rate_limited_warner::RateLimitedWarner;
+use crate::rate_limited_warner::{Clock, RateLimitedWarner};
 use crate::shutdown_signal::ShutdownSignal;
+use crate::socket_handler::{config::SocketHandlerConfig, worker::spawn_worker};
 use crate::test_utils::test_worker::TestWorker;
 
 #[cfg(test)]
@@ -27,6 +28,49 @@ use crate::test_utils::test_worker::TestWorker;
 mod flush_deadline_tests;
 
 impl FemtoSocketHandler {
+    /// Construct a handler whose drop warner reads `clock`.
+    ///
+    /// A test that asserts a suppression window has to decide when that window
+    /// closes; the production constructor always samples the system clock. The
+    /// construction is mirrored here rather than widened in `handler.rs`, which
+    /// is at its file-size limit.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let clock = Arc::new(ManualClock::default());
+    /// let handler = FemtoSocketHandler::with_clock(SocketHandlerConfig::default(), clock);
+    /// ```
+    pub(crate) fn with_clock(config: SocketHandlerConfig, clock: Arc<dyn Clock>) -> Self {
+        let warner = RateLimitedWarner::with_clock(config.warn_interval, clock);
+        let flush_timeout = config.write_timeout;
+        let signal = Arc::new(ShutdownSignal::new());
+        let (tx, handle) = spawn_worker(config, Arc::clone(&signal));
+        Self {
+            tx: Some(tx),
+            handle: Mutex::new(Some(handle)),
+            warner,
+            signal: Some(signal),
+            flush_timeout,
+            abandoned: Mutex::new(None),
+        }
+    }
+
+    /// Report the drops the handler's warner is still holding.
+    ///
+    /// The drop-reporting fixtures must prove that a suppression window left
+    /// exactly the intended batch pending rather than infer it from whichever
+    /// warnings happen to be in the process-wide buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(handler.pending_drops_for_test(), 1);
+    /// ```
+    pub(crate) fn pending_drops_for_test(&self) -> u64 {
+        self.warner.pending_drops()
+    }
+
     /// Build a handler around a worker the caller supplies.
     ///
     /// The flush and close contracts are about what happens when the worker

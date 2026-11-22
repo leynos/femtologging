@@ -341,6 +341,11 @@ fn spawn_retry_server(
 #[path = "close_tests.rs"]
 mod close;
 
+// What the handler reports when it drops records, including the drops it
+// refuses after close.
+#[path = "drop_reporting_tests.rs"]
+mod drop_reporting;
+
 #[path = "retry_tests.rs"]
 mod retry;
 // Contracts for what the worker does with the shutdown signal, as opposed to

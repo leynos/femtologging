@@ -92,7 +92,7 @@ fn aborted_request_counts_the_current_record_as_a_shutdown_drop() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoHTTPHandler dropped 1 records during shutdown")
+            .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
 }
 
@@ -113,6 +113,6 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
     assert!(messages.iter().any(|entry| {
         entry
             .message
-            .contains("FemtoHTTPHandler dropped 1 records during shutdown")
+            .contains("FemtoHTTPHandler dropped 1 records since the last report; triggering cause: abandoned retry during shutdown")
     }));
 }

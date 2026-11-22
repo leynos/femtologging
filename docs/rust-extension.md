@@ -494,6 +494,13 @@ bounded by `flush_timeout`, which the handler takes from `write_timeout`.
 `Drop` calls `close`, so the same bound applies to a handler that is simply
 dropped.
 
+Pending handler-side drops are reported through the process-wide `log` adapter
+before the bounded shutdown wait begins. That report is not covered by
+`flush_timeout`: the adapter's sink belongs to the embedding process, so a sink
+that blocks delays `close()` past the budget rather than costing the count. The
+same applies when the handler is dropped without an explicit `close()`, because
+`Drop` runs the same close path.
+
 `request_shutdown` returns a `ShutdownOutcome` rather than discarding the
 result, and one deadline, computed once from `flush_timeout`, covers both of
 its steps: queueing `HTTPCommand::Shutdown` on the bounded command channel with

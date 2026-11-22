@@ -143,7 +143,7 @@ fn stream_handler_reports_dropped_records() {
 /// The capture logger is process-wide, so counting warnings by level alone
 /// would count any other warning the binary emits as a dropped record. This
 /// names the one message under test.
-const DROPPED_RECORD_WARNING: &str = "log records dropped in the last interval";
+const DROPPED_RECORD_WARNING: &str = "log records dropped since the last report";
 
 /// A clock the test moves by hand.
 ///

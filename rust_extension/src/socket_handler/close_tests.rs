@@ -135,14 +135,18 @@ fn close_returns_within_its_budget_when_the_worker_never_acknowledges(
     release_peer
         .send(())
         .expect("release the stalled TLS peer after close");
+    let shutdown_drop = concat!(
+        "FemtoSocketHandler dropped 1 records since the last report; ",
+        "triggering cause: abandoned retry during shutdown"
+    );
     let worker_logs = crate::handlers::file::test_support::wait_for_message(
-        "FemtoSocketHandler dropped 1 records during shutdown",
+        shutdown_drop,
         Duration::from_secs(2),
     );
     assert!(
-        worker_logs.iter().any(|entry| entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")),
+        worker_logs
+            .iter()
+            .any(|entry| entry.message.contains(shutdown_drop)),
         "the stalled handshake should report its in-flight record as a shutdown drop; got {worker_logs:?}"
     );
 }

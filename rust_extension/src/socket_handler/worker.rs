@@ -25,6 +25,7 @@ use super::{
     frame_write::FrameWriter,
     serialize::{frame_payload, serialize_record},
     transport::{ActiveConnection, connect_transport},
+    warning::{flush_drops_naming_cause, warn_drops_naming_cause, warn_pending_drops},
 };
 
 #[path = "worker_drain.rs"]
@@ -106,11 +107,7 @@ impl Worker {
             Ok(frame) => frame,
             Err(err) => {
                 warn!("FemtoSocketHandler serialization error: {err}");
-                warn_drops(&self.warner, |count| {
-                    warn!(
-                        "FemtoSocketHandler dropped {count} records due to serialization failures"
-                    );
-                });
+                warn_drops_naming_cause(&self.warner, "serialization failure");
                 return;
             }
         };
@@ -131,9 +128,7 @@ impl Worker {
             self.warn_shutdown_drops();
             warn!("FemtoSocketHandler failed to connect during shutdown: {err}");
         } else {
-            warn_drops(&self.warner, |count| {
-                warn!("FemtoSocketHandler failed to connect: {err}; dropped {count} records");
-            });
+            warn_drops_naming_cause(&self.warner, &format!("connect failure: {err}"));
         }
         self.sleep_if_backing_off(now);
     }
@@ -142,18 +137,17 @@ impl Worker {
     fn handle_write_error(&mut self, err: io::Error, now: Instant) {
         warn!("FemtoSocketHandler write failed: {err}");
         self.connection = None;
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoSocketHandler dropped {count} records due to write errors");
-        });
+        warn_drops_naming_cause(&self.warner, "write error");
         self.sleep_if_backing_off(now);
     }
 
     /// Count a record refused by an exhausted shutdown budget.
+    ///
+    /// This is the last chance to report the refusal, so the count is flushed
+    /// without waiting for the warning interval.
     fn warn_shutdown_drops(&self) {
         self.warner.record_drop();
-        self.warner.flush(|count| {
-            warn!("FemtoSocketHandler dropped {count} records during shutdown");
-        });
+        flush_drops_naming_cause(&self.warner, "abandoned retry during shutdown");
     }
 
     /// Reuse or connect; an expired shutdown budget returns `false` without I/O.
@@ -229,15 +223,11 @@ impl Worker {
         let had_connection = self.connection.is_some();
         let flush_result = self.flush_connection();
         let flush_failed = flush_result.is_err();
-        report_drops_then_acknowledge(
-            pending_drops,
-            |count| warn!("FemtoSocketHandler dropped {count} records in the last interval"),
-            || {
-                // Ignore send error: a caller that stopped waiting has nothing
-                // left to learn from the outcome.
-                let _ = ack.send(flush_result);
-            },
-        );
+        report_drops_then_acknowledge(pending_drops, warn_pending_drops, || {
+            // Ignore send error: a caller that stopped waiting has nothing
+            // left to learn from the outcome.
+            let _ = ack.send(flush_result);
+        });
         if flush_failed {
             warn!("FemtoSocketHandler flush failed; the connection was dropped");
         } else if !had_connection {
@@ -280,9 +270,7 @@ impl Worker {
     fn drain_pending(&mut self, rx: &Receiver<SocketCommand>, shutdown_ack: Option<Sender<()>>) {
         let (discarded, shutdown_acks) = self.discard_queued_commands(rx);
         warn_discarded(discarded);
-        self.warner.flush(|count| {
-            warn!("FemtoSocketHandler dropped {count} records during shutdown");
-        });
+        self.warner.flush(warn_pending_drops);
         self.flush_silently();
         // Keep every shutdown acknowledgement behind the last request and
         // cleanup. The final send is the worker's final action.
@@ -359,12 +347,6 @@ fn prepare_frame(record: &FemtoLogRecord, config: &SocketHandlerConfig) -> io::R
     })
 }
 
-/// Count a failed record; repeated failures warn when the rate limit expires.
-fn warn_drops(warner: &RateLimitedWarner, log: impl FnMut(u64)) {
-    warner.record_drop();
-    warner.warn_if_due(log);
-}
-
 /// Enqueue one record; a full queue returns `HandlerError::QueueFull` and counts a drop.
 pub fn enqueue_record(
     tx: &Sender<SocketCommand>,
@@ -374,17 +356,11 @@ pub fn enqueue_record(
     match tx.try_send(SocketCommand::Record(record)) {
         Ok(()) => Ok(()),
         Err(TrySendError::Full(_)) => {
-            warner.record_drop();
-            warner.warn_if_due(|count| {
-                warn!("FemtoSocketHandler queue full; dropped {count} records");
-            });
+            warn_drops_naming_cause(warner, "queue full");
             Err(HandlerError::QueueFull)
         }
         Err(TrySendError::Disconnected(_)) => {
-            warner.record_drop();
-            warner.warn_if_due(|count| {
-                warn!("FemtoSocketHandler disconnected; dropped {count} records");
-            });
+            warn_drops_naming_cause(warner, "worker disconnected");
             Err(HandlerError::Closed)
         }
     }

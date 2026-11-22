@@ -364,6 +364,11 @@ fn a_handler_flush_may_attach_another_handler() {
 #[path = "logger_tests_drop.rs"]
 mod logger_tests_drop;
 
+// What a destroyed logger reports is split from the drop-order tests above so
+// both modules stay within the 400-line limit.
+#[path = "logger_tests_drop_reporting.rs"]
+mod logger_tests_drop_reporting;
+
 // Drain-on-drop and pool-shape tests are in a separate module to respect
 // the 400-line limit.
 #[path = "logger_tests_shutdown.rs"]
