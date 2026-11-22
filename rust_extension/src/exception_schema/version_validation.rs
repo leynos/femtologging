@@ -109,71 +109,78 @@ fn push_segment(path: &mut String, segment: PathSegment) {
 ///
 /// [`SchemaVersioned::validate_version`]: super::SchemaVersioned::validate_version
 pub(super) fn validate_payload_tree(payload: &ExceptionPayload) -> Result<(), SchemaVersionError> {
-    let mut path = Vec::new();
-    let mut visited = 0;
-    visit(payload, 0, &mut visited, &mut path).map_err(Failure::into_error)
+    Walk::default()
+        .validate(payload)
+        .map_err(Failure::into_error)
 }
 
-/// Visit `payload` and, unless a limit stops the walk, its descendants.
+/// Traversal state for one bounded walk.
 ///
-/// `depth` is the distance from the root, which is at depth 0. `visited`
-/// counts payloads accepted into the walk so far, and `path` holds the
-/// segments from the root to `payload`.
-fn visit(
-    payload: &ExceptionPayload,
-    depth: usize,
-    visited: &mut usize,
-    path: &mut Vec<PathSegment>,
-) -> Result<(), Failure> {
-    if depth > MAX_EXCEPTION_PAYLOAD_DEPTH {
-        return Err(Failure::TooDeep { path: path.clone() });
-    }
-
-    *visited += 1;
-    if *visited > MAX_EXCEPTION_PAYLOAD_NODES {
-        return Err(Failure::TooLarge);
-    }
-
-    validate_schema_version(payload.schema_version).map_err(|error| Failure::Version {
-        error,
-        path: path.clone(),
-    })?;
-
-    if let Some(cause) = payload.cause.as_deref() {
-        visit_child(cause, PathSegment::Cause, depth, visited, path)?;
-    }
-    if let Some(context) = payload.context.as_deref() {
-        visit_child(context, PathSegment::Context, depth, visited, path)?;
-    }
-    for (index, exception) in payload.exceptions.iter().enumerate() {
-        visit_child(
-            exception,
-            PathSegment::Exception(index),
-            depth,
-            visited,
-            path,
-        )?;
-    }
-
-    Ok(())
+/// Keeping the visited-node count and the current path together avoids
+/// threading the same pair through every recursive call.
+#[derive(Default)]
+struct Walk {
+    /// Payloads accepted into the walk so far.
+    visited: usize,
+    /// Segments from the root to the payload currently being visited.
+    path: Vec<PathSegment>,
 }
 
-/// Visit one child of the current payload, recording the edge in `path`.
-///
-/// The segment is popped again after a successful visit. A failed visit keeps
-/// it in place: the failure has already captured the path that names the
-/// offending payload, and the walk abandons `path` as it unwinds.
-fn visit_child(
-    child: &ExceptionPayload,
-    segment: PathSegment,
-    depth: usize,
-    visited: &mut usize,
-    path: &mut Vec<PathSegment>,
-) -> Result<(), Failure> {
-    path.push(segment);
-    let outcome = visit(child, depth + 1, visited, path);
-    if outcome.is_ok() {
-        path.pop();
+impl Walk {
+    /// Validate `payload` and its descendants, starting at the root.
+    fn validate(mut self, payload: &ExceptionPayload) -> Result<(), Failure> {
+        self.visit(payload, 0)
     }
-    outcome
+
+    /// Visit `payload` and, unless a limit stops the walk, its descendants.
+    ///
+    /// `depth` is the distance from the root, which is at depth 0.
+    fn visit(&mut self, payload: &ExceptionPayload, depth: usize) -> Result<(), Failure> {
+        if depth > MAX_EXCEPTION_PAYLOAD_DEPTH {
+            return Err(Failure::TooDeep {
+                path: self.path.clone(),
+            });
+        }
+
+        self.visited += 1;
+        if self.visited > MAX_EXCEPTION_PAYLOAD_NODES {
+            return Err(Failure::TooLarge);
+        }
+
+        validate_schema_version(payload.schema_version).map_err(|error| Failure::Version {
+            error,
+            path: self.path.clone(),
+        })?;
+
+        if let Some(cause) = payload.cause.as_deref() {
+            self.visit_child(cause, PathSegment::Cause, depth)?;
+        }
+        if let Some(context) = payload.context.as_deref() {
+            self.visit_child(context, PathSegment::Context, depth)?;
+        }
+        for (index, exception) in payload.exceptions.iter().enumerate() {
+            self.visit_child(exception, PathSegment::Exception(index), depth)?;
+        }
+
+        Ok(())
+    }
+
+    /// Visit one child of the current payload, recording the edge in the path.
+    ///
+    /// The segment is popped again after a successful visit. A failed visit
+    /// keeps it in place: the failure has already captured the path that names
+    /// the offending payload, and the walk abandons the path as it unwinds.
+    fn visit_child(
+        &mut self,
+        child: &ExceptionPayload,
+        segment: PathSegment,
+        depth: usize,
+    ) -> Result<(), Failure> {
+        self.path.push(segment);
+        let outcome = self.visit(child, depth + 1);
+        if outcome.is_ok() {
+            self.path.pop();
+        }
+        outcome
+    }
 }
