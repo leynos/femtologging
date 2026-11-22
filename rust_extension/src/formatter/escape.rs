@@ -64,9 +64,10 @@ mod tests {
 
     use std::borrow::Cow;
 
+    use proptest::prelude::*;
     use rstest::rstest;
 
-    use super::escape_message_line_separators;
+    use super::{escape_message_line_separators, is_line_separator};
 
     #[test]
     fn borrows_message_without_separators() {
@@ -131,5 +132,37 @@ mod tests {
         let escaped = escape_message_line_separators("");
 
         assert_eq!(escaped, "");
+    }
+
+    /// Apply the escaping rule directly, as an independent reference.
+    fn reference_escape(message: &str) -> String {
+        let mut escaped = String::with_capacity(message.len());
+        for character in message.chars() {
+            if is_line_separator(character) {
+                escaped.extend(character.escape_debug());
+            } else {
+                escaped.push(character);
+            }
+        }
+        escaped
+    }
+
+    proptest! {
+        #[test]
+        fn escaping_matches_the_character_rule(message in any::<String>()) {
+            let escaped = escape_message_line_separators(&message);
+
+            prop_assert_eq!(&*escaped, reference_escape(&message));
+            prop_assert!(
+                !escaped.chars().any(is_line_separator),
+                "escaped output must not contain a line separator",
+            );
+            let borrowed = matches!(escaped, Cow::Borrowed(_));
+            prop_assert_eq!(
+                borrowed,
+                !message.chars().any(is_line_separator),
+                "only a message without separators may borrow",
+            );
+        }
     }
 }
