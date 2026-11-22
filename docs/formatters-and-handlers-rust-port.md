@@ -39,7 +39,10 @@ pub struct DefaultFormatter;
 
 impl FemtoFormatter for DefaultFormatter {
     fn format(&self, record: &FemtoLogRecord) -> String {
-        format!("{} [{}] {}", record.logger, record.level, record.message)
+        let message = escape_message_line_separators(record.message());
+        let mut output = format!("{} [{}] {}", record.logger(), record.level_str(), message);
+        // Stack and exception payloads follow on new lines, unescaped.
+        output
     }
 }
 ```
@@ -48,6 +51,14 @@ Formatters are `Send + Sync` so a handler thread can hold them without
 synchronization. Custom formatters may store additional configuration, such as
 timestamp layouts. Future extensions can include structured output with `serde`
 when network handlers are introduced.
+
+> **Update (2026-11-22):** `DefaultFormatter` now escapes the ten
+> `str.splitlines()` separators in the message field, using
+> `char::escape_debug`,
+> so message text cannot start a line that looks like another record. Stack and
+> exception payloads, and every other formatter path, still receive the raw
+> text; see
+> [Default formatter message framing](developers-guide.md#default-formatter-message-framing).
 
 ## FemtoHandler Trait and Implementations
 
