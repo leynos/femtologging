@@ -114,7 +114,7 @@ def clean_venv_skip_reason() -> str | None:
     Examples
     --------
     >>> reason = clean_venv_skip_reason()
-    >>> reason is None or "venv" in reason
+    >>> reason is None or any(name in reason for name in ("venv", "ensurepip"))
     True
 
     """
