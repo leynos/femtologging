@@ -70,7 +70,7 @@ def install_problems(found: Job) -> list[str]:
     )
     if sync_at is None:
         return [*problems, f"the job must have a {SYNC_STEP!r} step"]
-    problems.extend(_sync_problems(found_steps[sync_at]))
+    problems.extend(_sync_problems(found, found_steps[sync_at]))
     build_at = next(
         (at for at, step in enumerate(found_steps) if step.get("name") == BUILD_STEP),
         None,
@@ -84,14 +84,30 @@ def install_problems(found: Job) -> list[str]:
     return problems
 
 
-def _sync_problems(sync: Step) -> list[str]:
-    """Return the complaints about the locked dependency sync."""
+def _sync_problems(found: Job, sync: Step) -> list[str]:
+    """Return the complaints about the locked dependency sync.
+
+    The configuration may sit on the sync step or on the job that runs it;
+    both put ``UV_CONFIG_FILE`` in effect for the sync.
+
+    Parameters
+    ----------
+    found : Job
+        The parsed heavy job, which supplies any inherited environment.
+    sync : Step
+        The locked dependency sync step.
+
+    Returns
+    -------
+    list[str]
+        One complaint per requirement the sync fails to impose.
+    """
     problems: list[str] = []
     if "if" in sync:
         problems.append("the sync step must run unconditionally")
     if tuple(run_text(sync).split()) != SYNC_COMMAND:
         problems.append(f"the sync must run exactly `{' '.join(SYNC_COMMAND)}`")
-    environment = env(sync)
+    environment = {**env(found), **env(sync)}
     if not str(environment.get("UV_CONFIG_FILE", "")).endswith(TEST_UTIL_CONFIG):
         problems.append(f"the sync must use {TEST_UTIL_CONFIG}")
     if "env.pythonLocation" not in str(environment.get("UV_PYTHON", "")):

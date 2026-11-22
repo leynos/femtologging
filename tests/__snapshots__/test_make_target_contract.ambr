@@ -1,0 +1,45 @@
+# serializer version: 1
+# name: test_build_recipe_installs_from_the_committed_lock
+  tuple(
+    tuple(
+      'UV_VENV_CLEAR=1',
+      'uv',
+      'venv',
+    ),
+    tuple(
+      'UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml',
+      '$(CARGO_BUILD_ENV)',
+      'uv',
+      'sync',
+      '--locked',
+      '--group',
+      'dev',
+    ),
+    tuple(
+      '$(CARGO_BUILD_ENV)',
+      'uv',
+      'run',
+      '--locked',
+      'maturin',
+      'develop',
+      '--manifest-path',
+      '$(RUST_MANIFEST)',
+      '--features',
+      'python,test-util',
+    ),
+  )
+# ---
+# name: test_test_recipe_runs_pytest_in_locked_mode
+  list([
+    tuple(
+      'FEMTOLOGGING_EXPECT_TEST_UTIL=1',
+      'UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml',
+      'uv',
+      'run',
+      '--locked',
+      'pytest',
+      '-v',
+      '--doctest-modules',
+    ),
+  ])
+# ---

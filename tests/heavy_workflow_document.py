@@ -24,7 +24,7 @@ LOOM_STEP: typ.Final[str] = "Run Loom models"
 SYNC_COMMAND: typ.Final[tuple[str, ...]] = (
     "uv",
     "sync",
-    "--frozen",
+    "--locked",
     "--group",
     "dev",
 )

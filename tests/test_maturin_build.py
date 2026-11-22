@@ -128,9 +128,18 @@ def test_packaging_tests_import_without_stdlib_venv() -> None:
 
 
 def test_maturin_pins_are_synchronized() -> None:
-    """Maturin version pins stay aligned across build entrypoints."""
+    """Maturin pins stay aligned across the manifest, lock, and build entrypoints."""
     pins = read_maturin_pins(repo_root())
-    assert len(set(pins.values())) == 1, f"Expected one maturin pin, found {pins!r}"
+    manifest_pins = {
+        name: pins[name] for name in ("dev-dependency", "build-system", "uv-lock")
+    }
+    assert len(set(manifest_pins.values())) == 1, (
+        f"maturin versions diverged across {manifest_pins!r}"
+    )
+    assert pins["build-wheels"] == pins["dev-dependency"], (
+        f"the release wheel workflow pins maturin {pins['build-wheels']}, "
+        f"not {pins['dev-dependency']}"
+    )
 
 
 def test_persistent_maturin_configuration_is_production_safe() -> None:

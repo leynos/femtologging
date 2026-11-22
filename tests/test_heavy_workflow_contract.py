@@ -43,8 +43,8 @@ if typ.TYPE_CHECKING:
     from tests.heavy_workflow_document import Document
 
 
-def _unfrozen_sync(document: Document) -> None:
-    """Remove ``--frozen`` from the sync."""
+def _unlocked_sync(document: Document) -> None:
+    """Remove ``--locked`` from the sync."""
     replace_run(document, SYNC_STEP, "uv sync --group dev")
 
 
@@ -72,8 +72,9 @@ def _sync_after_build(document: Document) -> None:
 
 
 def _sync_without_test_util_config(document: Document) -> None:
-    """Drop the coverage configuration from the sync step."""
+    """Drop the coverage configuration from the job and the sync step."""
     found = job(document, HEAVY_JOB)
+    env(found).pop("UV_CONFIG_FILE", None)
     env(named_step(found, SYNC_STEP, subject=HEAVY_JOB)).pop("UV_CONFIG_FILE", None)
 
 
@@ -175,7 +176,7 @@ def _loom_step_no_longer_last(document: Document) -> None:
 
 
 _MUTATIONS = (
-    pytest.param(_unfrozen_sync, id="unfrozen-sync"),
+    pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
     pytest.param(_sync_after_build, id="sync-after-build"),
     pytest.param(_sync_without_test_util_config, id="sync-without-test-util"),
