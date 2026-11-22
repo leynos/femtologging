@@ -303,19 +303,28 @@ def _untracked_check_removed(commands: list[str]) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "mutate",
+    ("mutate", "mutant"),
     [
-        pytest.param(_unquiet_probe, id="unquiet-probe"),
-        pytest.param(_inverted_match_branch, id="inverted-match-branch"),
-        pytest.param(_dropped_error_branch, id="dropped-error-branch"),
-        pytest.param(_masked_probe, id="masked-probe"),
-        pytest.param(_untracked_check_removed, id="untracked-check-removed"),
+        pytest.param(_unquiet_probe, "unquiet-probe", id="unquiet-probe"),
+        pytest.param(
+            _inverted_match_branch, "inverted-match-branch", id="inverted-match-branch"
+        ),
+        pytest.param(
+            _dropped_error_branch, "dropped-error-branch", id="dropped-error-branch"
+        ),
+        pytest.param(_masked_probe, "masked-probe", id="masked-probe"),
+        pytest.param(
+            _untracked_check_removed,
+            "untracked-check-removed",
+            id="untracked-check-removed",
+        ),
     ],
 )
 def test_each_mutant_draws_a_complaint(
     mutate: cabc.Callable[[list[str]], list[str]],
+    mutant: str,
 ) -> None:
     """A recipe that weakens any branch of the gate must be rejected."""
     mutated = mutate(_recipe_commands(_CHECK_LOCK_TARGET))
 
-    assert _recipe_problems(mutated), f"mutant {mutate.__name__} was not detected"
+    assert _recipe_problems(mutated), f"mutant {mutant} was not detected"
