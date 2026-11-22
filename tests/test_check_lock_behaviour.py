@@ -108,8 +108,9 @@ def _run_commands(
     commands: list[str],
     *,
     uv_exit_code: int = 0,
+    git_script: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run `commands` in `root` as make would, with a stubbed `uv` on `PATH`.
+    """Run `commands` in `root` as make would, with stubbed tools on `PATH`.
 
     Each command gets its own shell, and the first failure stops the run, so
     a later command cannot mask an earlier one.
@@ -122,6 +123,8 @@ def _run_commands(
         The recipe commands, in order.
     uv_exit_code
         The exit status the stubbed ``uv`` should report.
+    git_script
+        A stub ``git`` to put first on ``PATH``, or ``None`` for the real one.
 
     Returns
     -------
@@ -136,6 +139,10 @@ def _run_commands(
         encoding="utf-8",
     )
     stub.chmod(0o755)
+    if git_script is not None:
+        git_stub = stub_dir / "git"
+        git_stub.write_text(git_script, encoding="utf-8")
+        git_stub.chmod(0o755)
     environment = {
         "PATH": f"{stub_dir}:/usr/bin:/bin",
         "HOME": str(root),
@@ -328,3 +335,47 @@ def test_each_mutant_draws_a_complaint(
     mutated = mutate(_recipe_commands(_CHECK_LOCK_TARGET))
 
     assert _recipe_problems(mutated), f"mutant {mutant} was not detected"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
+    """A probe failure other than 'not ignored' keeps its own status and message."""
+    _write_repository(tmp_path, ignore=False, tracked=True)
+    git_stub = (
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        "  check-ignore) exit 2 ;;\n"
+        '  *) exec /usr/bin/git "$@" ;;\n'
+        "esac\n"
+    )
+
+    completed = _run_commands(
+        tmp_path,
+        _recipe_commands(_CHECK_LOCK_TARGET),
+        git_script=git_stub,
+    )
+
+    assert completed.returncode == 2, (
+        f"an unexpected probe status must propagate, got {completed.returncode}"
+    )
+    assert "git check-ignore failed with status 2" in completed.stderr, (
+        f"the gate must name the probe failure: {completed.stderr}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_git_does_not_run_after_a_failed_lock_check(tmp_path: Path) -> None:
+    """A stale lock stops the recipe before any Git command runs."""
+    _write_repository(tmp_path, ignore=False, tracked=True)
+    marker = tmp_path / "git-ran"
+    git_stub = f"#!/bin/sh\ntouch {marker}\nexit 0\n"
+
+    completed = _run_commands(
+        tmp_path,
+        _recipe_commands(_CHECK_LOCK_TARGET),
+        uv_exit_code=1,
+        git_script=git_stub,
+    )
+
+    assert completed.returncode != 0, "a failing uv lock --check passed the gate"
+    assert not marker.exists(), "Git ran even though uv lock --check failed"
