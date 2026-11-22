@@ -46,8 +46,8 @@ fn backoff_overrides_from_dict(config: &Bound<'_, PyDict>) -> PyResult<BackoffOv
 fn reject_unknown_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
     const ALLOWED_KEYS: [&str; 4] = ["base_ms", "cap_ms", "reset_after_ms", "deadline_ms"];
     for (key_obj, _) in config.iter() {
-        let key: &str = key_obj.extract()?;
-        if !ALLOWED_KEYS.contains(&key) {
+        let key_name: &str = key_obj.extract()?;
+        if !ALLOWED_KEYS.contains(&key_name) {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "unknown BackoffConfig key {key_name:?}",
             )));
