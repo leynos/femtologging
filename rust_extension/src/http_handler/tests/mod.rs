@@ -366,7 +366,7 @@ mod channel_property;
 #[path = "../response_classification_tests.rs"]
 mod response_classification;
 // Contracts for the bytes one request puts on the wire.
-#[path = "request_shape_tests.rs"]
+#[path = "../request_shape_tests.rs"]
 mod request_shape;
 
 // Transport-origin admission tests: marked records never enter the queue.

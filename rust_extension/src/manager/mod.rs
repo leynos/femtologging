@@ -119,5 +119,5 @@ pub(crate) fn registered_logger_names_for_test() -> Vec<String> {
 }
 
 #[cfg(all(test, feature = "python", feature = "log-compat", not(loom)))]
-#[path = "manager/manager_tests_flush.rs"]
+#[path = "manager_tests_flush.rs"]
 mod manager_tests_flush;
