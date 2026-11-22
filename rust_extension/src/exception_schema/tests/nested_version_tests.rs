@@ -1,18 +1,17 @@
 //! Tests for recursive schema version validation.
 //!
 //! These tests cover every nested location that validation reaches, the
-//! depth-first pre-order in which failures are reported, both traversal
-//! bounds, and the path-bearing errors that locate a nested mismatch. The
-//! root-level tests in `schema_tests` are left unchanged so they keep pinning
-//! the behaviour that predates recursive validation.
+//! depth-first pre-order in which failures are reported, and the path-bearing
+//! errors that locate a nested mismatch. The traversal bounds live in
+//! `nested_version_limit_tests`, and the root-level tests in `schema_tests`
+//! are left unchanged so they keep pinning the behaviour that predates
+//! recursive validation.
 
 use crate::exception_schema::{
-    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, MAX_EXCEPTION_PAYLOAD_DEPTH,
-    MAX_EXCEPTION_PAYLOAD_NODES, MIN_EXCEPTION_SCHEMA_VERSION, SchemaVersionError, SchemaVersioned,
+    EXCEPTION_SCHEMA_VERSION, ExceptionPayload, MIN_EXCEPTION_SCHEMA_VERSION, SchemaVersionError,
+    SchemaVersioned,
 };
 use rstest::rstest;
-
-use super::deep_chain_tests::{ChainKind, build_exception_chain};
 
 /// A schema version one newer than this build supports.
 const TOO_NEW_VERSION: u16 = EXCEPTION_SCHEMA_VERSION + 1;
@@ -301,96 +300,5 @@ fn earlier_group_members_are_reported_first() {
         payload.validate_version(),
         "exceptions[1]",
         expected_mismatch(0),
-    );
-}
-
-/// A chain one node longer than the depth limit still validates.
-#[rstest]
-fn a_chain_at_the_depth_limit_validates() {
-    let payload = build_exception_chain(ChainKind::Cause, MAX_EXCEPTION_PAYLOAD_DEPTH + 1);
-
-    payload
-        .validate_version()
-        .expect("the deepest payload sits exactly at the depth limit");
-}
-
-/// A chain past the depth limit reports the limit and the offending path.
-#[rstest]
-fn a_chain_past_the_depth_limit_reports_the_limit() {
-    let payload = build_exception_chain(ChainKind::Cause, MAX_EXCEPTION_PAYLOAD_DEPTH + 2);
-
-    let error = payload
-        .validate_version()
-        .expect_err("the chain is deeper than the limit");
-
-    match error {
-        SchemaVersionError::TreeTooDeep { path, max_depth } => {
-            assert_eq!(max_depth, MAX_EXCEPTION_PAYLOAD_DEPTH);
-            let segments: Vec<&str> = path.split('.').collect();
-            assert_eq!(
-                segments.len(),
-                MAX_EXCEPTION_PAYLOAD_DEPTH + 1,
-                "the path should name the first payload past the limit"
-            );
-            assert!(
-                segments.iter().all(|segment| *segment == "cause"),
-                "unexpected path: {path}"
-            );
-        }
-        other => panic!("expected TreeTooDeep, got {other:?}"),
-    }
-}
-
-/// Build a group payload with `total` nodes: the group plus its members.
-fn group_with_nodes(total: usize) -> ExceptionPayload {
-    assert!(total >= 1, "a payload tree holds at least the root");
-
-    ExceptionPayload {
-        exceptions: (1..total)
-            .map(|index| ExceptionPayload::new(format!("Member{index}"), "member"))
-            .collect(),
-        ..ExceptionPayload::new("Group", "group")
-    }
-}
-
-/// A tree holding exactly the node limit validates.
-#[rstest]
-fn a_tree_at_the_node_limit_validates() {
-    group_with_nodes(MAX_EXCEPTION_PAYLOAD_NODES)
-        .validate_version()
-        .expect("the tree holds exactly the node limit");
-}
-
-/// A tree holding one node more than the limit reports the limit.
-#[rstest]
-fn a_tree_past_the_node_limit_reports_the_limit() {
-    let error = group_with_nodes(MAX_EXCEPTION_PAYLOAD_NODES + 1)
-        .validate_version()
-        .expect_err("the tree exceeds the node limit");
-
-    match error {
-        SchemaVersionError::TreeTooLarge { max_nodes } => {
-            assert_eq!(max_nodes, MAX_EXCEPTION_PAYLOAD_NODES);
-        }
-        other => panic!("expected TreeTooLarge, got {other:?}"),
-    }
-}
-
-/// Validation and recursive frame filtering must agree on their bounds.
-///
-/// A payload the frame filter processes should not be rejected by schema
-/// validation for exceeding a traversal limit the filter would allow.
-#[cfg(feature = "python")]
-#[rstest]
-fn limits_match_recursive_frame_processing() {
-    use crate::frame_filter_py::{DEFAULT_MAX_EXCEPTION_DEPTH, DEFAULT_MAX_EXCEPTION_NODES};
-
-    assert_eq!(
-        MAX_EXCEPTION_PAYLOAD_DEPTH, DEFAULT_MAX_EXCEPTION_DEPTH,
-        "validation depth and frame-filter depth must stay aligned"
-    );
-    assert_eq!(
-        MAX_EXCEPTION_PAYLOAD_NODES, DEFAULT_MAX_EXCEPTION_NODES,
-        "validation and frame-filter node limits must stay aligned"
     );
 }
