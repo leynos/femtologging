@@ -64,6 +64,7 @@ pub(super) fn capture_exception_payload(
     py: Python<'_>,
     exception: &Bound<'_, PyAny>,
     traceback: Option<&Bound<'_, PyAny>>,
+    traceback_read_failed: bool,
     limits: &CaptureLimits,
 ) -> ExceptionPayload {
     let mut walker = Walker {
@@ -75,7 +76,12 @@ pub(super) fn capture_exception_payload(
     };
     let root_has_budget = walker.budget.charge_node();
     let mut payload = if root_has_budget {
-        walker.visit(exception, traceback, false, Recursion::root())
+        walker.visit(
+            exception,
+            traceback,
+            traceback_read_failed,
+            Recursion::root(),
+        )
     } else {
         walker.exhausted = true;
         minimal_payload(exception, limits)
@@ -305,17 +311,17 @@ impl Walker<'_> {
         if link.is_duplicate_context(retained_cause, &linked) {
             return (None, None);
         }
+        // A chain back to an exception on the active path is a cycle in the
+        // object graph, not a spent allowance, so the edge is dropped without
+        // charging the budget. Checking first means a self-referential edge is
+        // never misreported as depth exhaustion, whatever the depth ceiling.
+        if self.active.contains(&identity(&linked)) {
+            link.mark_omitted(marker);
+            return (None, None);
+        }
         if at.chain_depth >= self.limits.max_chain_depth {
             link.mark_omitted(marker);
             self.exhausted = true;
-            return (None, None);
-        }
-        // A chain that points back at an exception on the active path would
-        // otherwise be followed forever, so the edge is simply dropped. That is a
-        // cycle in the object graph rather than a spent allowance, so the budget is
-        // left as it was found.
-        if self.active.contains(&identity(&linked)) {
-            link.mark_omitted(marker);
             return (None, None);
         }
         if !self.budget.charge_node() {

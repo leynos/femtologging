@@ -259,11 +259,15 @@ fn capture_with_fallback(
 ) -> ExceptionPayload {
     note_capture();
     let captured = catch_unwind(AssertUnwindSafe(|| {
-        let traceback = match traceback {
-            Traceback::Explicit(traceback) => traceback,
-            Traceback::FromException => optional_attr(exc_value, "__traceback__"),
+        // An absent traceback and a raising getter read differently: the
+        // former is normal, the latter is a loss the payload must report. An
+        // explicit `None` from the caller means "no traceback" and must not be
+        // replaced by the exception's own attribute.
+        let (traceback, read_failed) = match traceback {
+            Traceback::Explicit(traceback) => (traceback, false),
+            Traceback::FromException => attrs::traceback_attribute(exc_value),
         };
-        walker::capture_exception_payload(py, exc_value, traceback.as_ref(), limits)
+        walker::capture_exception_payload(py, exc_value, traceback.as_ref(), read_failed, limits)
     }));
     match captured {
         Ok(payload) => payload,
@@ -344,11 +348,6 @@ fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<Ex
 /// consults a `__class__` property that an ordinary object can fake.
 fn is_exception_instance(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     Ok(types::is_exception(py, obj))
-}
-
-/// Read an attribute, treating a missing attribute or `None` as absent.
-fn optional_attr<'py>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<Bound<'py, PyAny>> {
-    obj.getattr(attr).ok().filter(|value| !value.is_none())
 }
 
 #[cfg(test)]

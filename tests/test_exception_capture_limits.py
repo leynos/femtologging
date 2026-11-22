@@ -184,6 +184,18 @@ def test_many_arguments_are_capped_and_counted() -> None:
     assert len(output) < 40_000, "the formatted output must stay bounded"
 
 
+def test_a_shortened_argument_marks_the_message_as_truncated() -> None:
+    """A message assembled from a shortened argument is itself shortened."""
+    logger = FemtoLogger("limits.short-arg-message")
+
+    output = logger.log("INFO", "joined", exc_info=ValueError("a" * 600, "b"))
+
+    assert output is not None, "an accepted record must produce formatted output"
+    assert "message truncated" in output, (
+        "a message built from a shortened argument must report the cut"
+    )
+
+
 def test_many_notes_are_capped_and_counted() -> None:
     """A thousand notes must be bounded to the note ceiling."""
     logger = FemtoLogger("limits.many-notes")

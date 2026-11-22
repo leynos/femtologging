@@ -100,6 +100,14 @@ impl RenderedArgs {
         self.texts.len() < self.total
     }
 
+    /// Return `true` when the rendered tuple does not represent every argument.
+    ///
+    /// A gap, a dropped tail or a shortened representation all mean the
+    /// assembled message is a prefix rather than the whole tuple.
+    fn has_omissions(&self) -> bool {
+        self.is_incomplete() || self.first_failed.is_some() || self.truncated
+    }
+
     /// Record that the argument at `index` produced no representation.
     fn record_failure(&mut self, index: usize) {
         self.failed += 1;

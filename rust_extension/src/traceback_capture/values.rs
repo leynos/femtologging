@@ -23,6 +23,7 @@ use pyo3::types::{PySlice, PyString, PyStringMethods};
 
 use super::limits::{TRUNCATION_SUFFIX_LEN, truncate_to_limit};
 
+mod container;
 mod literal;
 use literal::{bounded_rendered, force_truncate, render_byte_like};
 
@@ -92,12 +93,28 @@ pub(super) fn stringify(value: &Bound<'_, PyAny>, limit: usize, placeholder: &st
 /// Returns `None` when the value has no usable representation; callers treat
 /// that as an element to skip and count.
 pub(super) fn repr_bounded(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    repr_bounded_at(value, limit, 0)
+}
+
+/// Render `value` at container nesting `depth`.
+///
+/// Containers are rendered element by element so a huge or group-heavy element
+/// cannot build the whole representation first. The depth counter bounds that
+/// recursion; [`container::render`] summarises anything nested too deeply.
+pub(super) fn repr_bounded_at(
+    value: &Bound<'_, PyAny>,
+    limit: usize,
+    depth: usize,
+) -> Option<BoundedText> {
+    if let Some(rendered) = container::render(value, limit, depth) {
+        return Some(rendered);
+    }
     // CPython's exception-group repr reproduces its whole subtree, and a group
     // that shares child groups multiplies that work at every level. The group
     // walker captures the members separately, so the textual representation is
     // replaced by a fixed placeholder instead of being built here.
     if super::types::is_exception_group(value.py(), value) {
-        return Some(BoundedText::ok("<exception group>".to_string(), false));
+        return Some(clamp("<exception group>".to_string(), limit));
     }
     if let Some(rendered) = render_builtin(value, limit) {
         return Some(rendered);
@@ -153,6 +170,11 @@ pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> Boun
         && let Ok(text) = value.cast::<PyString>()
     {
         return bounded_string(text, limit);
+    }
+    // `str` of an exact built-in container is its `repr`, so the same bounded
+    // element rendering applies without going through Python.
+    if let Some(rendered) = container::render(value, limit, 0) {
+        return rendered;
     }
     if let Some((rendered, truncated)) = render_byte_like(value) {
         return bounded_rendered(rendered, truncated, limit);

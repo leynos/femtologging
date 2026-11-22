@@ -261,6 +261,43 @@ raise error
 }
 
 #[rstest]
+fn a_failing_root_traceback_read_is_recorded() {
+    Python::attach(|py| {
+        let globals = PyDict::new(py);
+        py.run(
+            c"
+class Bad(Exception):
+    @property
+    def __traceback__(self):
+        raise RuntimeError('no traceback')
+
+result = Bad('x')
+",
+            Some(&globals),
+            None,
+        )
+        .expect("source should run");
+        let value = globals
+            .get_item("result")
+            .expect("binding lookup should succeed")
+            .expect("binding should be defined");
+        let payload = capture_exception(py, &value)
+            .expect("capture should not fail")
+            .expect("payload should be present");
+
+        assert!(payload.frames.is_empty());
+        assert_eq!(
+            payload
+                .truncation
+                .as_ref()
+                .map_or(0, |marker| marker.failed_elements),
+            1,
+            "a raising root traceback getter must be reported"
+        );
+    });
+}
+
+#[rstest]
 fn a_lookalike_traceback_yields_no_frames() {
     Python::attach(|py| {
         let error = py

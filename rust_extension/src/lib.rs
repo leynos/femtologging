@@ -79,6 +79,8 @@ pub mod tracing_compat;
 #[cfg(test)]
 mod test_utils;
 #[cfg(all(test, feature = "python"))]
+mod traceback_capture_argument_repr_tests;
+#[cfg(all(test, feature = "python"))]
 mod traceback_capture_budget_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_containment_tests;

@@ -53,7 +53,7 @@ pub(in crate::traceback_capture) fn build_message(
 /// reported as shortened rather than complete.
 fn multi_argument_message(args: &RenderedArgs, limit: usize) -> BoundedText {
     let mut message = values::clamp(joined_args(args), limit);
-    if args.is_incomplete() || args.first_failed.is_some() {
+    if args.has_omissions() {
         message.truncated = true;
     }
     message
