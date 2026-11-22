@@ -89,6 +89,18 @@ def _sync_problems(found: Job, sync: Step) -> list[str]:
 
     The configuration may sit on the sync step or on the job that runs it;
     both put ``UV_CONFIG_FILE`` in effect for the sync.
+
+    Parameters
+    ----------
+    found : Job
+        The parsed heavy job, which supplies any inherited environment.
+    sync : Step
+        The locked dependency sync step.
+
+    Returns
+    -------
+    list[str]
+        One complaint per requirement the sync fails to impose.
     """
     problems: list[str] = []
     if "if" in sync:
