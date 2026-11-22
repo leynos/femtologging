@@ -428,6 +428,16 @@ finding is disclosed rather than suppressed, and
 [ADR 0011](adrs/adr-0011-builder-setter-const-contract.md) records the
 disposition and its deferral to the `harden-lint-config` layer.
 
+The same contract covers the configuration builders. `ConfigBuilder`'s
+`with_version`, `with_disable_existing_loggers` and `with_default_level`
+setters, and its `version` and `default_level` getters, are `const fn`;
+`LoggerConfigBuilder`'s `with_level` and `with_propagate` setters and its
+`level_opt` and `propagate_opt` getters are `const fn`; and
+`LoggerMutationBuilder`'s `with_level` and `with_propagate` setters are
+`const fn`. Every setter on those builders, and on `FormatterBuilder` and
+`RuntimeConfigBuilder`, is `#[must_use]`, because each consumes the builder and
+returns the only copy carrying the change.
+
 Neither quality is visible to the run-time tests, so both are pinned at compile
 time:
 
@@ -435,9 +445,17 @@ time:
   externally nameable `const` chain to a builder passed in as a parameter. The
   chains cannot start from `new(..)` because every builder constructor
   allocates.
-- `rust_extension/tests/ui/fail/unused_socket_http_setters.rs` and
-  `rust_extension/tests/ui/fail/unused_overflow_policy.rs` discard a setter
-  result under `#![deny(unused_must_use)]`.
+- `rust_extension/tests/ui/pass/config_builder_const_setters.rs` applies the
+  config builders' `const` setters and getters to builders passed in as
+  parameters, for the same reason.
+- `rust_extension/tests/ui/fail/unused_socket_http_setters.rs`,
+  `rust_extension/tests/ui/fail/unused_overflow_policy.rs`,
+  `rust_extension/tests/ui/fail/unused_rotation_setter.rs`,
+  `rust_extension/tests/ui/fail/unused_must_use_config_builder.rs`,
+  `rust_extension/tests/ui/fail/unused_must_use_formatter_builder.rs`,
+  `rust_extension/tests/ui/fail/unused_must_use_logger_mutation.rs` and
+  `rust_extension/tests/ui/fail/unused_must_use_runtime_mutation.rs` discard a
+  setter result under `#![deny(unused_must_use)]`.
 - `rust_extension/src/handlers/socket_builder/const_eval_tests.rs` and
   `rust_extension/src/handlers/formatter_id.rs` pin, in-crate, the `const`
   accessors and setters whose types are not re-exported (`BackoffOverrides` and
@@ -451,6 +469,26 @@ The `BackoffOverrides` internal fields are named `base_delay`, `max_delay`,
 `reset_after` and `deadline`, without the `_ms` suffix their Python-facing
 dictionary keys keep. The Python dictionary keys and keyword arguments are
 unchanged; only the Rust field names differ.
+
+### Config test support and module layout
+
+The configuration tests share a manager-reset convention. The manager is a
+process-wide singleton, so a test that builds a configuration starts from a
+pristine one: `configured_core_logger_after_reset` in
+`rust_extension/src/config/test_utils.rs` calls `gil_and_clean_manager()` and
+then builds the stderr-handler baseline, and suites that need a reset without
+that baseline call `gil_and_clean_manager()` directly as their first statement.
+`install_baseline_after_reset` in `runtime_transaction_tests.rs` follows the
+same rule. The reset is visible at the call site rather than hidden in a
+fixture parameter, so a reader can see which tests depend on a clean manager.
+
+Production modules stay under the 400-line cap by moving their test modules to
+sibling files: the module declares `#[path = "..."] mod tests;` and the tests
+live in `*_tests.rs` beside it. `frame_filter_py.rs` and
+`frame_filter_py_tests.rs` are the pattern to copy. The same pressure split
+`python_module.rs`'s registration into helpers, leaving
+`register_python_bindings` as the single entry point that the module
+initializer calls.
 
 ### Maturin build features
 
