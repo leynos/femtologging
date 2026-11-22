@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rstest::rstest;
 
-use crate::test_utils::capture_limit_helpers::{capture_raised, tiny_limits};
+use crate::test_utils::capture_limit_helpers::{capture_raised, marker, tiny_limits};
 use crate::test_utils::traceback_test_helpers::create_value_error;
 use crate::traceback_capture::capture_exception;
 
@@ -122,5 +122,44 @@ raise error
         assert_eq!(payload.notes, vec!["first", "second"]);
         let omitted = payload.truncation.map_or(0, |marker| marker.notes_omitted);
         assert_eq!(omitted, 0, "both string notes were retained");
+    });
+}
+
+#[rstest]
+fn a_failing_note_iterator_is_not_reported_as_a_ceiling_omission() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+class Noted:
+    def __init__(self):
+        self.step = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.step += 1
+        if self.step == 1:
+            return 'first note'
+        raise RuntimeError('iterator failed')
+
+error = ValueError('note')
+error.__notes__ = Noted()
+raise error
+",
+            &tiny_limits(),
+        );
+
+        assert_eq!(payload.notes, vec!["first note"]);
+        let marker = marker(&payload);
+        assert_eq!(
+            marker.notes_omitted, 0,
+            "an iterator failure is not a drop caused by the note ceiling"
+        );
+        assert_eq!(
+            marker.failed_elements, 1,
+            "the failed iterator read must still be reported"
+        );
     });
 }

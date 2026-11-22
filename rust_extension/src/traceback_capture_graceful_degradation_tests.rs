@@ -8,8 +8,9 @@ use pyo3::types::{PyDict, PyTuple};
 use rstest::rstest;
 
 use crate::exception_schema::ExceptionPayload;
+use crate::test_utils::capture_limit_helpers::capture_raised;
 use crate::test_utils::traceback_test_helpers::{create_base_exception, create_value_error};
-use crate::traceback_capture::capture_exception;
+use crate::traceback_capture::{CaptureLimits, capture_exception};
 
 // --------------------------------
 // Helper functions for common setup
@@ -221,6 +222,40 @@ class BadRepr:
         assert_eq!(
             marker.args_omitted, 0,
             "a failed conversion is not also an argument dropped by the ceiling"
+        );
+    });
+}
+
+#[rstest]
+fn a_failing_descendant_traceback_read_is_recorded() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+class BadCause(Exception):
+    @property
+    def __traceback__(self):
+        raise RuntimeError('no traceback')
+
+error = ValueError('outer')
+error.__cause__ = BadCause('inner')
+raise error
+",
+            &CaptureLimits::default(),
+        );
+
+        let cause = payload
+            .cause
+            .as_ref()
+            .expect("the assigned cause should be retained");
+        assert_eq!(cause.type_name, "BadCause");
+        assert_eq!(
+            cause
+                .truncation
+                .as_ref()
+                .map_or(0, |marker| marker.failed_elements),
+            1,
+            "a descendant whose traceback read failed must report the loss"
         );
     });
 }

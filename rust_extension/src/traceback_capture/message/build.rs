@@ -36,13 +36,27 @@ pub(in crate::traceback_capture) fn build_message(
     }
     if uses_default_str(exception).unwrap_or(false) {
         if args.total > 1 {
-            return values::clamp(joined_args(args), limit);
+            return multi_argument_message(args, limit);
         }
         if let Some(argument) = args.first_arg.as_ref() {
             return values::stringify_argument(argument.bind(exception.py()), limit);
         }
     }
     values::stringify(exception, limit, STR_FAILURE_SENTINEL)
+}
+
+/// Assemble the multi-argument message and mark it when arguments are missing.
+///
+/// `joined_args` renders a `...` marker for arguments the count ceiling dropped
+/// or a failed representation left as a gap. That marker is part of the message
+/// even when the assembled text fits its byte ceiling, so the message is
+/// reported as shortened rather than complete.
+fn multi_argument_message(args: &RenderedArgs, limit: usize) -> BoundedText {
+    let mut message = values::clamp(joined_args(args), limit);
+    if args.is_incomplete() || args.first_failed.is_some() {
+        message.truncated = true;
+    }
+    message
 }
 
 /// Preserve the message field exposed by `TracebackException` for syntax errors.
@@ -126,7 +140,7 @@ fn key_error_message(
         return None;
     }
     if args.total > 1 {
-        return Some(values::clamp(joined_args(args), limit));
+        return Some(multi_argument_message(args, limit));
     }
     match args.texts.first() {
         Some(text) => {

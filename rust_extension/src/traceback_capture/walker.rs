@@ -45,7 +45,7 @@ use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, Payloa
 use pyo3::prelude::*;
 
 use super::attrs::{
-    Link, as_u32, bool_attr, bounded_sequence, identity, optional_attr, type_identity,
+    Link, as_u32, bool_attr, bounded_sequence, identity, traceback_attribute, type_identity,
 };
 use super::fallback::minimal_payload;
 use super::frames::collect_traceback_frames;
@@ -75,7 +75,7 @@ pub(super) fn capture_exception_payload(
     };
     let root_has_budget = walker.budget.charge_node();
     let mut payload = if root_has_budget {
-        walker.visit(exception, traceback, Recursion::root())
+        walker.visit(exception, traceback, false, Recursion::root())
     } else {
         walker.exhausted = true;
         minimal_payload(exception, limits)
@@ -111,6 +111,7 @@ impl Walker<'_> {
         &mut self,
         exception: &Bound<'_, PyAny>,
         traceback: Option<&Bound<'_, PyAny>>,
+        traceback_read_failed: bool,
         at: Recursion,
     ) -> ExceptionPayload {
         // Identity is tracked for the active descent path only, so a group that
@@ -119,6 +120,12 @@ impl Walker<'_> {
         let identity = identity(exception);
         self.active.insert(identity);
         let mut marker = PayloadTruncation::default();
+        if traceback_read_failed {
+            // The exception has a traceback attribute that raised, so its
+            // frames are missing because the read failed, not because it had
+            // none. Record the loss on this node and keep its other fields.
+            marker.failed_elements = marker.failed_elements.saturating_add(1);
+        }
         let (type_name, module) = type_identity(exception, self.limits);
         let (type_name, type_was_shortened) = self.budget.retain_text(type_name);
         self.exhausted |= type_was_shortened;
@@ -205,7 +212,7 @@ impl Walker<'_> {
         // shortened message means the budget ran out even though the clipped
         // text now fits the bytes that remain. `retain_text` cannot report that
         // second clipping, so the comparison is made here.
-        if text.truncated && message_limit < self.limits.max_message_bytes {
+        if text.clipped && message_limit < self.limits.max_message_bytes {
             self.exhausted = true;
         }
         let (retained, aggregate_truncated) = self.budget.retain_text(text.text);
@@ -316,8 +323,8 @@ impl Walker<'_> {
             self.exhausted = true;
             return (None, None);
         }
-        let traceback = optional_attr(&linked, "__traceback__");
-        let payload = self.visit(&linked, traceback.as_ref(), at.through_link());
+        let (traceback, read_failed) = traceback_attribute(&linked);
+        let payload = self.visit(&linked, traceback.as_ref(), read_failed, at.through_link());
         (Some(Box::new(payload)), Some(linked))
     }
 
@@ -333,8 +340,7 @@ impl Walker<'_> {
         }
         let children = match exception.getattr("exceptions") {
             Ok(children) if !children.is_none() => children,
-            Ok(_) => return Vec::new(),
-            Err(_) => {
+            Ok(_) | Err(_) => {
                 marker.failed_elements = marker.failed_elements.saturating_add(1);
                 marker.exceptions_omitted = 1;
                 marker.members_truncated = true;
@@ -372,8 +378,8 @@ impl Walker<'_> {
                 self.exhausted |= self.budget.is_exhausted();
                 continue;
             }
-            let traceback = optional_attr(child, "__traceback__");
-            let payload = self.visit(child, traceback.as_ref(), at.through_group());
+            let (traceback, read_failed) = traceback_attribute(child);
+            let payload = self.visit(child, traceback.as_ref(), read_failed, at.through_group());
             member_cut |= payload.truncation.is_some();
             retained.push(payload);
         }

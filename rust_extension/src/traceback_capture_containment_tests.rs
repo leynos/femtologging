@@ -153,6 +153,44 @@ fn large_binary_arguments_are_bounded_before_stringification(
 }
 
 #[test]
+fn an_exception_group_argument_uses_a_placeholder_representation() {
+    Python::attach(|py| {
+        let globals = PyDict::new(py);
+        let payload = capture_raised_in(
+            py,
+            c"
+repr_calls = 0
+
+class Counted(Exception):
+    def __repr__(self):
+        global repr_calls
+        repr_calls += 1
+        return 'x' * 1000
+
+raise ValueError(ExceptionGroup('g', [Counted()]))
+",
+            &CaptureLimits::default(),
+            &globals,
+        );
+
+        let calls: usize = globals
+            .get_item("repr_calls")
+            .expect("counter lookup should succeed")
+            .expect("counter should be defined")
+            .extract()
+            .expect("counter should be an integer");
+        assert_eq!(
+            payload.args_repr[0], "<exception group>",
+            "a group argument must not be represented through its subtree"
+        );
+        assert_eq!(
+            calls, 0,
+            "representing a group must not run a member's repr"
+        );
+    });
+}
+
+#[test]
 fn an_exception_group_does_not_repr_every_member() {
     Python::attach(|py| {
         let globals = PyDict::new(py);

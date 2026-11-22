@@ -117,3 +117,35 @@ raise ExceptionGroup('outer', [middle])
         assert!(marker(&payload).budget_exhausted);
     });
 }
+
+#[rstest]
+fn a_group_whose_exceptions_property_returns_none_is_reported() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+class Sneaky(ExceptionGroup):
+    @property
+    def exceptions(self):
+        return None
+
+raise Sneaky('g', [ValueError('child')])
+",
+            &tiny_limits(),
+        );
+
+        let marker = marker(&payload);
+        assert!(
+            payload.exceptions.is_empty(),
+            "an unreadable child collection yields no members"
+        );
+        assert_eq!(
+            marker.failed_elements, 1,
+            "the invalid child collection must be reported as a failed read"
+        );
+        assert_eq!(
+            marker.exceptions_omitted, 1,
+            "the native group's children must not disappear unmarked"
+        );
+    });
+}

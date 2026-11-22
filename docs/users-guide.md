@@ -275,10 +275,11 @@ retained frames. When a walk stopped before the end of its chain — a live stac
 at its frame ceiling, or a traceback whose visit allowance expired before the
 throw site — the count is only a minimum, `frames_omitted_is_lower_bound` is
 set, and formatters say `... at least 2 frames omitted ...` instead. The
-mapping is absent only when every marker field is at its default: a message
+mapping is absent only when every marker field is at its default. A message
 that was shortened without dropping any component still carries
-`message_truncated`, as does a capture cut short by the aggregate budget with
-no positive omission count. Existing formatted output is unchanged.
+`message_truncated`; a capture that exhausted the aggregate budget carries
+`budget_exhausted`, even when no omission count is positive. Existing formatted
+output is unchanged.
 
 The logger threshold is checked before record construction or exception/stack
 capture. Native level and name filters can also reject without capture when

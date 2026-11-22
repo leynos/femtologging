@@ -146,6 +146,21 @@ fn bounded_leaf(value: &Bound<'_, PyString>, limit: usize) -> Option<String> {
     Some(values::bounded_string(&leaf, limit).text)
 }
 
+/// Read an exception's `__traceback__`, preserving read failures.
+///
+/// An absent traceback is normal, but an attribute that raises is a loss: the
+/// caller records it rather than treating it as "no frames". The error is
+/// dropped here so the rest of the node's fields can still be captured.
+pub(super) fn traceback_attribute<'py>(
+    value: &Bound<'py, PyAny>,
+) -> (Option<Bound<'py, PyAny>>, bool) {
+    match value.getattr("__traceback__") {
+        Ok(traceback) if traceback.is_none() => (None, false),
+        Ok(traceback) => (Some(traceback), false),
+        Err(_) => (None, true),
+    }
+}
+
 /// Read a string attribute, without converting it to Rust.
 fn string_attr<'py>(obj: &Bound<'py, PyAny>, attr: &str) -> Option<Bound<'py, PyString>> {
     optional_attr(obj, attr)?.cast_into::<PyString>().ok()

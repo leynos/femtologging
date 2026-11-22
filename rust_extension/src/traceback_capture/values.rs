@@ -35,6 +35,13 @@ pub(super) struct BoundedText {
     /// `true` when converting the value raised and [`BoundedText::text`] holds
     /// a placeholder instead of the real value.
     pub failed: bool,
+    /// `true` when this call's own byte ceiling cut the text.
+    ///
+    /// Distinct from [`Self::truncated`], which can also be inherited from an
+    /// input that was already shortened: a message built from a shortened
+    /// `KeyError` key is marked truncated, but its text was not cut by the
+    /// message ceiling.
+    pub clipped: bool,
 }
 
 impl BoundedText {
@@ -46,6 +53,7 @@ impl BoundedText {
             text,
             truncated,
             failed: true,
+            clipped: truncated,
         }
     }
 
@@ -54,6 +62,7 @@ impl BoundedText {
         Self {
             text,
             truncated,
+            clipped: truncated,
             failed: false,
         }
     }
@@ -83,6 +92,13 @@ pub(super) fn stringify(value: &Bound<'_, PyAny>, limit: usize, placeholder: &st
 /// Returns `None` when the value has no usable representation; callers treat
 /// that as an element to skip and count.
 pub(super) fn repr_bounded(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    // CPython's exception-group repr reproduces its whole subtree, and a group
+    // that shares child groups multiplies that work at every level. The group
+    // walker captures the members separately, so the textual representation is
+    // replaced by a fixed placeholder instead of being built here.
+    if super::types::is_exception_group(value.py(), value) {
+        return Some(BoundedText::ok("<exception group>".to_string(), false));
+    }
     if let Some(rendered) = render_builtin(value, limit) {
         return Some(rendered);
     }
@@ -157,15 +173,14 @@ fn render_builtin(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText>
 
 /// Render an oversized `str` from a bounded prefix.
 ///
-/// Returns `None` when the value is not an exact `str`, still fits the ceiling,
-/// or is not exposed as UTF-8 — a string holding lone surrogates — leaving the
-/// caller to take the general path. A `str` subclass is excluded because it may
-/// override `__repr__`, which this bounded prefix would bypass.
+/// Returns `None` when the value is not an exact `str` or is not exposed as
+/// UTF-8 — a string holding lone surrogates — leaving the caller to take the
+/// general path. A `str` subclass is excluded because it may override
+/// `__repr__`, which this bounded prefix would bypass.
 ///
-/// The prefix leaves room for the two quotes and the truncation marker, so the
-/// assembled literal lands inside the ceiling rather than being cut a second
-/// time; escapes that expand the prefix past that allowance are still caught by
-/// [`truncate_literal`], which keeps the literal's closing quote.
+/// A source that itself fits is still rendered through `repr`, because escapes
+/// can expand it past the ceiling; a longer source is sliced first. Both cases
+/// end in the literal-aware clipping that keeps the closing quote.
 fn render_long_string(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
     if !value.is_exact_instance_of::<PyString>() {
         return None;

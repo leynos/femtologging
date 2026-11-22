@@ -60,14 +60,12 @@ pub(super) fn retain_notes(
     let mut retained = Vec::with_capacity(scan_limit.min(limits.max_notes));
     let mut visited = 0usize;
     let mut exhausted = false;
-    let mut failed = false;
     let mut tail_after_retention = false;
     for item in iterator.take(scan_limit) {
         visited += 1;
         let item = match item {
             Ok(item) => item,
             Err(_) => {
-                failed = true;
                 marker.failed_elements = marker.failed_elements.saturating_add(1);
                 break;
             }
@@ -100,12 +98,15 @@ pub(super) fn retain_notes(
             // A tail is only proven when retention stopped because the ceiling
             // was already full. An extra position consumed by a non-note, or
             // by the last retained note, shows no missing note.
-            usize::from(tail_after_retention || failed || exhausted)
+            usize::from(tail_after_retention || exhausted)
         },
         |length| {
+            // Unvisited positions are exact omissions; a failed conversion is
+            // reported through `failed_elements` and is not a ceiling drop, and
+            // a budget stop leaves the current position unretained.
             length
                 .saturating_sub(visited)
-                .saturating_add(usize::from(failed || exhausted))
+                .saturating_add(usize::from(exhausted))
         },
     );
     marker.notes_omitted = marker.notes_omitted.saturating_add(as_u32(omitted));

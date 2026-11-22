@@ -148,7 +148,7 @@ fn truncate_literal(rendered: &str, limit: usize) -> String {
     if fixed > limit {
         return force_truncate(rendered, limit);
     }
-    if limit <= fixed + TRUNCATION_SUFFIX_LEN {
+    if limit < fixed + TRUNCATION_SUFFIX_LEN {
         let budget = limit - fixed;
         return format!("{head}{}{quote}{tail}", truncated_body(body, budget));
     }
@@ -253,5 +253,34 @@ fn push_escaped_byte(rendered: &mut String, byte: u8, quote: char) {
             rendered.push(char::from_digit(u32::from(other) >> 4, 16).unwrap_or('0'));
             rendered.push(char::from_digit(u32::from(other) & 0xf, 16).unwrap_or('0'));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Literal clipping at its boundaries.
+
+    use super::*;
+
+    #[test]
+    fn an_exact_fit_still_shows_the_marker() {
+        // Two quotes and the marker fill five bytes exactly; dropping the
+        // marker here would make a truncated value look complete.
+        assert_eq!(truncate_literal("'abcd'", 5), "'...'");
+    }
+
+    #[test]
+    fn a_wrapper_and_opening_quote_survive_clipping() {
+        let clipped = truncate_literal("bytearray(b'<binary blob>')", 16);
+
+        assert!(clipped.len() <= 16, "clipping must respect the ceiling");
+        assert!(
+            clipped.starts_with("bytearray(b'"),
+            "the wrapper and opening quote must survive: {clipped:?}"
+        );
+        assert!(
+            clipped.ends_with("')"),
+            "the closing quote and wrapper must survive: {clipped:?}"
+        );
     }
 }

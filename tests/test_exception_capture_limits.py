@@ -27,6 +27,8 @@ from femtologging import (
 if typ.TYPE_CHECKING:
     import logging
 
+    from femtologging._adapter_record import ExcInfo
+
 _HUGE_LEN = 2 * 1024 * 1024
 """Length of the oversized strings and byte strings used below."""
 
@@ -328,13 +330,13 @@ def test_rejecting_callback_sees_a_bounded_payload() -> None:
 
     def reject(record: logging.LogRecord) -> bool:
         """Record the payload's marker and sizes, then reject the record."""
-        payload = typ.cast("dict[str, typ.Any]", record.exc_info)
-        marker = typ.cast("dict[str, typ.Any]", payload.get("truncation", {}))
-        seen["message_truncated"] = bool(marker.get("message_truncated"))
-        seen["args_truncated"] = bool(marker.get("args_truncated"))
-        message = typ.cast("str", payload.get("message", ""))
+        payload = typ.cast("ExcInfo", record.exc_info)
+        marker = payload.get("truncation", {})
+        seen["message_truncated"] = marker.get("message_truncated", False)
+        seen["args_truncated"] = marker.get("args_truncated", False)
+        message = payload.get("message", "")
         seen["message_bytes"] = len(message.encode("utf-8"))
-        args_repr = typ.cast("list[str]", payload.get("args_repr", []))
+        args_repr = payload.get("args_repr", [])
         seen["arg_bytes"] = len(args_repr[0].encode("utf-8")) if args_repr else 0
         return False
 
