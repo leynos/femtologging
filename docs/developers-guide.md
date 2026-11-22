@@ -1554,10 +1554,12 @@ message contains no separator.
 
 Only the message is escaped. Stack and exception payloads are appended
 unescaped and may span lines, so an exception message carrying application data
-can still forge a line. Percent-style and callable formatters, structured
-`handle_record` handlers, and a direct `FemtoFileHandler.handle` call also keep
-their text unchanged. The tests that pin this behaviour are
-`rust_extension/src/formatter/escape.rs` for the helper,
+can still forge a line. Percent-style and callable formatters, and structured
+`handle_record` handlers, receive the raw message. A direct
+`FemtoFileHandler.handle` call still sends the message through the default
+formatter, so its message is escaped; only the logger string it supplies
+bypasses the logger API's validation and escaping. The tests that pin this
+behaviour are `rust_extension/src/formatter/escape.rs` for the helper,
 `rust_extension/tests/formatter_tests.rs` for the formatted record,
 `rust_extension/tests/file_handler_tests.rs` for file bytes, and
 `tests/test_default_formatter_framing.py` for the Python-visible workflow.
