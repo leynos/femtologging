@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests run fixed recipe commands
 import typing as typ
+from pathlib import Path
 
 import pytest
 
@@ -33,7 +34,6 @@ _MASKED_PROBE: typ.Final[re.Pattern[str]] = re.compile(r"check-ignore[^\n]*\|\|\
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    from pathlib import Path
 
 
 def _recipe_commands(target: str) -> list[str]:
@@ -143,8 +143,14 @@ def _run_commands(
         git_stub = stub_dir / "git"
         git_stub.write_text(git_script, encoding="utf-8")
         git_stub.chmod(0o755)
+    # The recipe runs `git` by name, so the resolved executable's directory
+    # must stay reachable even when it lives outside /usr/bin.
+    git_dir = str(Path(GIT).parent) if GIT else ""
+    search_path = f"{stub_dir}:/usr/bin:/bin"
+    if git_dir and git_dir not in search_path.split(":"):
+        search_path = f"{stub_dir}:{git_dir}:/usr/bin:/bin"
     environment = {
-        "PATH": f"{stub_dir}:/usr/bin:/bin",
+        "PATH": search_path,
         "HOME": str(root),
         "GIT_CONFIG_NOSYSTEM": "1",
     }
@@ -353,7 +359,7 @@ def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
         "#!/bin/sh\n"
         'case "$1" in\n'
         "  check-ignore) exit 2 ;;\n"
-        f'  *) exec {GIT} "$@" ;;\n'
+        f'  *) exec "{GIT}" "$@" ;;\n'
         "esac\n"
     )
 
