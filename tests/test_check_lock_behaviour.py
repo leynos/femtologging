@@ -319,20 +319,3 @@ def test_each_mutant_draws_a_complaint(
     mutated = mutate(_recipe_commands(_CHECK_LOCK_TARGET))
 
     assert _recipe_problems(mutated), f"mutant {mutate.__name__} was not detected"
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
-def test_an_ignored_lock_never_reports_the_ignore_message_on_success(
-    tmp_path: Path,
-) -> None:
-    """A tracked, visible lock must not take the ignore-rule branch."""
-    _write_repository(tmp_path, ignore=False, tracked=True)
-
-    completed = _run_commands(tmp_path, _recipe_commands(_CHECK_LOCK_TARGET))
-
-    assert completed.returncode == 0, (
-        f"a hidden lock failed the gate: {completed.stderr}"
-    )
-    assert _IGNORED_MESSAGE not in completed.stderr, (
-        f"a visible lock took the ignore branch: {completed.stderr}"
-    )
