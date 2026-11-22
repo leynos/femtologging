@@ -115,6 +115,23 @@ def test_ci_runs_the_lock_gate_once_in_build_test() -> None:
     )
 
 
+def test_the_coverage_step_installs_the_project_in_locked_mode() -> None:
+    """The coverage action's project install must refuse an unlocked manifest."""
+    steps = load_documents()["ci.yml"]["jobs"]["build-test"]["steps"]
+    coverage = [
+        step
+        for step in steps
+        if isinstance(step, dict) and "generate-coverage" in str(step.get("uses", ""))
+    ]
+    assert len(coverage) == 1, f"expected one coverage step, found {len(coverage)}"
+    environment = coverage[0].get("env", {})
+    locked = str(environment.get("UV_LOCKED", ""))
+    assert locked == "1", (
+        "the coverage action runs `uv sync` for the project, so it must read "
+        f"UV_LOCKED=1; got {locked!r}"
+    )
+
+
 def test_heavy_workflow_builds_the_project_with_the_test_util_config() -> None:
     """Heavy CI's uv project builds carry the feature its tests assert."""
     job = load_documents()["heavy-tests.yml"]["jobs"]["heavy"]

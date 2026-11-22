@@ -81,7 +81,7 @@ def _git(root: Path, *arguments: str) -> None:
         The Git subcommand and its fixed arguments.
     """
     subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] fixed git invocation
-        ["/usr/bin/git", *arguments],
+        [GIT, *arguments],
         cwd=root,
         check=True,
         capture_output=True,
@@ -175,7 +175,11 @@ def _run_commands(
     )
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+GIT: typ.Final = shutil.which("git") or ""
+_NEEDS_GIT: typ.Final = pytest.mark.skipif(not GIT, reason="git is required")
+
+
+@_NEEDS_GIT
 def test_a_tracked_unignored_lock_passes(tmp_path: Path) -> None:
     """A fresh, tracked and visible lock satisfies every branch of the gate."""
     _write_repository(tmp_path, ignore=False, tracked=True)
@@ -190,7 +194,7 @@ def test_a_tracked_unignored_lock_passes(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@_NEEDS_GIT
 def test_an_untracked_lock_fails(tmp_path: Path) -> None:
     """Git must track the lock, so an untracked file fails the gate."""
     _write_repository(tmp_path, ignore=False, tracked=False)
@@ -203,7 +207,7 @@ def test_an_untracked_lock_fails(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@_NEEDS_GIT
 def test_an_ignored_lock_fails_with_the_explanation(tmp_path: Path) -> None:
     """An ignore rule hides the lock, so the gate names the rule to remove."""
     _write_repository(tmp_path, ignore=True, tracked=True)
@@ -218,7 +222,7 @@ def test_an_ignored_lock_fails_with_the_explanation(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@_NEEDS_GIT
 def test_a_failing_lock_check_stops_the_gate(tmp_path: Path) -> None:
     """A stale lock is refused by `uv lock --check`, before the Git checks run."""
     _write_repository(tmp_path, ignore=False, tracked=True)
@@ -286,7 +290,7 @@ def _inverted_match_branch(commands: list[str]) -> list[str]:
 def _dropped_error_branch(commands: list[str]) -> list[str]:
     """Remove the branch that propagates an unexpected status."""
     return [
-        re.sub(r"if \[ \$status -ne 1 \]; then.*?\nfi", "", command, flags=re.DOTALL)
+        re.sub(r"if \[ \$status -ne 1 \]; then.*?\n\s*fi", "", command, flags=re.DOTALL)
         for command in commands
     ]
 
@@ -332,12 +336,16 @@ def test_each_mutant_draws_a_complaint(
     mutant: str,
 ) -> None:
     """A recipe that weakens any branch of the gate must be rejected."""
-    mutated = mutate(_recipe_commands(_CHECK_LOCK_TARGET))
+    original = _recipe_commands(_CHECK_LOCK_TARGET)
+    mutated = mutate(original)
 
+    assert mutated != original, (
+        f"mutant {mutant} changed nothing, so it cannot detect the defect"
+    )
     assert _recipe_problems(mutated), f"mutant {mutant} was not detected"
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@_NEEDS_GIT
 def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
     """A probe failure other than 'not ignored' keeps its own status and message."""
     _write_repository(tmp_path, ignore=False, tracked=True)
@@ -345,7 +353,7 @@ def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
         "#!/bin/sh\n"
         'case "$1" in\n'
         "  check-ignore) exit 2 ;;\n"
-        '  *) exec /usr/bin/git "$@" ;;\n'
+        f'  *) exec {GIT} "$@" ;;\n'
         "esac\n"
     )
 
@@ -363,7 +371,7 @@ def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+@_NEEDS_GIT
 def test_git_does_not_run_after_a_failed_lock_check(tmp_path: Path) -> None:
     """A stale lock stops the recipe before any Git command runs."""
     _write_repository(tmp_path, ignore=False, tracked=True)
