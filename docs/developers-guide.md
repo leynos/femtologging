@@ -1031,6 +1031,37 @@ boundaries.
 [python-graph-tests]: ../tests/frame_filter/test_exception_graph_limits.py
 [python-graph-property-tests]: ../tests/frame_filter/test_exception_graph_properties.py
 
+## Exception schema version validation
+
+`ExceptionPayload::validate_version()` validates the root payload and every
+payload nested beneath it. `exception_schema/version_validation.rs` holds a
+depth-first pre-order walk that checks each payload's `schema_version` before
+visiting its `cause`, `context`, and exception-group members in index order.
+Path segments are collected only while an error unwinds, so a successful walk
+allocates neither a path vector nor a path string; a nested mismatch is
+reported as `SchemaVersionError::Nested` with a dot-separated path such as
+`cause.exceptions[3].context`.
+
+The walk is bounded by `MAX_EXCEPTION_PAYLOAD_DEPTH` and
+`MAX_EXCEPTION_PAYLOAD_NODES`. A Python-lane test pins both to the frame
+filter's defaults (`max_exception_depth` and `max_exception_nodes`), so the two
+traversals start from the same shape budgets. The limits are not equivalent
+gates: schema validation also rejects unsupported `schema_version` values,
+which frame filtering never inspects, and a caller can raise the filter's
+limits per call without changing validation's. Limit failures report
+`TreeTooDeep` or `TreeTooLarge`.
+
+`exception_schema/versioning.rs` holds the version constants' consumers: the
+`SchemaVersionError` enum, `validate_schema_version`, and the `SchemaVersioned`
+trait. `SchemaVersionError` is `#[non_exhaustive]`; the
+`tests/ui/pass/schema_version_error_wildcard.rs` trybuild case pins the
+wildcard-arm contract that downstream matches need. Root mismatches keep the
+`VersionTooNew` and `VersionTooOld` variants unchanged.
+
+The [users guide](users-guide.md#exception-schema-versioning) documents the
+public contract, and the [v0.2.0 migration guide](v0-2-0-migration-guide.md)
+records the `#[non_exhaustive]` migration for Rust consumers.
+
 ## Publishing a release
 
 The first release has not yet been published. Before creating its tag,

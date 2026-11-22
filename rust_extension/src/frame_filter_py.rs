@@ -31,10 +31,18 @@ struct FilterOptions<'a> {
 }
 
 /// Default maximum depth for exception-payload graph traversal.
-const DEFAULT_MAX_EXCEPTION_DEPTH: usize = 1_000;
+///
+/// Kept equal to `exception_schema::MAX_EXCEPTION_PAYLOAD_DEPTH` so schema
+/// validation accepts by depth every payload this traversal accepts; a test in
+/// `exception_schema` pins the equality.
+pub(crate) const DEFAULT_MAX_EXCEPTION_DEPTH: usize = 1_000;
 
 /// Default maximum number of exception-payload occurrences to filter.
-const DEFAULT_MAX_EXCEPTION_NODES: usize = 10_000;
+///
+/// Kept equal to `exception_schema::MAX_EXCEPTION_PAYLOAD_NODES` so schema
+/// validation accepts every payload this traversal accepts by node count; a
+/// test in `exception_schema` pins the equality.
+pub(crate) const DEFAULT_MAX_EXCEPTION_NODES: usize = 10_000;
 
 /// Limits for walking nested exception payloads.
 #[derive(Clone, Copy)]
