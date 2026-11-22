@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import threading
 import time
@@ -17,7 +18,7 @@ from femtologging import (
     StdlibHandlerAdapter,
     get_logger,
 )
-from tests.documentation_examples import documented_example
+from tests.documentation_examples import documented_example, run_example
 from tests.python_filter_support import (
     REQUEST_ID,
     PrefixRejectingFilter,
@@ -27,8 +28,39 @@ from tests.python_filter_support import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
 type FilteredLoggerFactory = cabc.Callable[[object], RecordCollector]
+
+#: Appended to the published example by `run_example`. The example configures
+#: and flushes its own logger, so the probe attaches a collector to that same
+#: `logger`, emits one more record, and prints the delivered key-values as
+#: JSON. Nothing here changes how the shipped text runs. The probe's message
+#: differs from the example's, so an assertion on the example's own delivery
+#: cannot be satisfied by the probe's record.
+PROBE_MESSAGE = "probe after the published example"
+RECORD_PROBE = f"""
+import json
+
+_collector_records = []
+
+
+class _Collector:
+    def handle(self, logger, level, message):
+        pass
+
+    def handle_record(self, record):
+        _collector_records.append(dict(record))
+
+    def flush(self):
+        return True
+
+
+logger.add_handler(_Collector())
+logger.log("INFO", {PROBE_MESSAGE!r})
+logger.flush_handlers()
+print(json.dumps(_collector_records[-1]["metadata"]["key_values"]))
+"""
 
 
 @pytest.fixture(autouse=True)
@@ -265,34 +297,27 @@ def test_contextvar_enrichment_is_thread_local(
     )
 
 
-def test_documented_callback_enrichment_example_enriches_records() -> None:
+def test_documented_callback_enrichment_example_enriches_records(
+    tmp_path: Path,
+) -> None:
     """The published users' guide example configures an enriching filter.
 
-    The example runs exactly as published, so a guide that drifts back to an
-    API the library does not support fails here instead of misleading a
-    reader.
+    The example runs exactly as published in a fresh interpreter, so a guide
+    that drifts back to an API the library does not support fails here instead
+    of misleading a reader. The appended probe only reports what the example
+    itself cannot: the key-values its filter put on a delivered record.
     """
     example = documented_example("callback-enrichment-accepted")
-    namespace: dict[str, object] = {}
-    exec(  # ruff: ignore[exec-builtin] the published example must run as shipped
-        compile(example.body, example.source, "exec"),
-        namespace,
-    )
+    result = run_example(example, tmp_path, probe=RECORD_PROBE)
 
-    collector = RecordCollector()
-    logger = get_logger("service")
-    logger.add_handler(collector)
-
-    assert logger.log("INFO", "request accepted") is not None, (
-        "the documented filter configuration must accept the record"
+    assert result.returncode == 0, f"the published example failed:\n{result.stderr}"
+    # The probe emits a different message, so finding this text proves the
+    # example's own `logger.log(...)` reached a handler and was delivered.
+    assert "request accepted" in result.stderr, (
+        f"the published example must deliver its own record, got {result.stderr!r}"
     )
-    assert logger.flush_handlers(), "service handler delivery should flush"
-
-    assert len(collector.records) == 1, (
-        "the documented configuration must deliver exactly one record, got "
-        f"{collector.records!r}"
-    )
-    key_values = collector.records[0]["metadata"]["key_values"]
+    assert result.stdout.strip(), "the probe must report the delivered record"
+    key_values = json.loads(result.stdout.strip().splitlines()[-1])
     assert key_values == {
         "request_id": "req-123",
         "user_id": "42",
