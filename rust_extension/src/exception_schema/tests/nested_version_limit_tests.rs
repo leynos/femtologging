@@ -82,7 +82,7 @@ fn a_group_chain_past_the_depth_limit_reports_the_limit() {
 }
 
 /// Build a group payload with `total` nodes: the group plus its members.
-fn group_with_nodes(total: usize) -> ExceptionPayload {
+pub(super) fn group_with_nodes(total: usize) -> ExceptionPayload {
     assert!(total >= 1, "a payload tree holds at least the root");
 
     ExceptionPayload {
