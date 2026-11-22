@@ -72,8 +72,9 @@ from `uv.lock`. The action is pinned by commit digest and its tool list is the
 only control; when changing that digest, read its install list as part of the
 coverage environment rather than assuming the lock covers it.
 
-Some other environments are deliberately independent of the project lock, and
-each must pin its dependencies at the call site:
+Some other environments are deliberately independent of the project lock. Each
+controls its dependencies at the call site; the list names where that control
+is a pin, a bound, or a deliberate fresh resolution:
 
 - `uvx` and `uv tool run` invocations pin the tool version in the Makefile
   (`RUFF_VERSION`, `TY_VERSION`, `TYPOS_VERSION`, `PYLINT_VERSION`).

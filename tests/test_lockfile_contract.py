@@ -1,10 +1,11 @@
 """Contracts for the tracked Python lockfile policy.
 
-The repository commits ``uv.lock`` so development, CI and package builds
-resolve the same dependency graph. The policy is enforced at three points: the
-Makefile's ``check-lock`` gate, a dedicated CI step, and the heavy workflow's
-locked install. These checks read repository files only, because the coverage
-action and archive builds run outside a Git checkout.
+The repository commits ``uv.lock`` so development and CI project installs
+resolve the same dependency graph; the isolated build backend resolves its own
+``[build-system]`` requirements outside the lock. The policy is enforced at
+three points: the Makefile's ``check-lock`` gate, a dedicated CI step, and the
+heavy workflow's locked install. These checks read repository files only,
+because the coverage action and archive builds run outside a Git checkout.
 """
 
 from __future__ import annotations
