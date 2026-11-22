@@ -15,7 +15,6 @@ that masks a bad status must be detected.
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests run fixed recipe commands
 import typing as typ
@@ -23,51 +22,20 @@ from pathlib import Path
 
 import pytest
 
-from tests.make_contract_helpers import objects, sole_recipe_rule
+from tests.check_lock_recipe_helpers import (
+    CHECK_LOCK_TARGET,
+    IGNORED_MESSAGE,
+    MUTANTS,
+    recipe_commands,
+    recipe_problems,
+)
 
-_CHECK_LOCK_TARGET: typ.Final = "check-lock"
 _LOCKFILE: typ.Final = "uv.lock"
-_IGNORED_MESSAGE: typ.Final = "uv.lock is ignored"
 _UV_STUB: typ.Final = "#!/bin/sh\nexit 0\n"
 _UV_FAILING_STUB: typ.Final = "#!/bin/sh\nexit 1\n"
-_MASKED_PROBE: typ.Final[re.Pattern[str]] = re.compile(r"check-ignore[^\n]*\|\|\s*true")
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-
-
-def _recipe_commands(target: str) -> list[str]:
-    """Return the Makefile recipe for `target` as shell commands.
-
-    The recipe is taken as makeutil reports it, so quoting and line
-    continuations survive: tokenising with ``shlex`` would drop the quotes
-    around the diagnostic messages. Make runs one shell per logical recipe
-    line and stops at the first failure, so each command is returned
-    separately, with make's ``$$`` escaping resolved to a literal ``$`` and
-    its leading ``@`` removed.
-
-    Parameters
-    ----------
-    target
-        The Makefile target whose recipe to read.
-
-    Returns
-    -------
-    list[str]
-        One shell command per recipe line, in order.
-    """
-    recipes = objects(
-        sole_recipe_rule(target).get("recipes"), subject=f"{target} recipes"
-    )
-    commands = []
-    for recipe in recipes:
-        text = recipe.get("text")
-        if not isinstance(text, str):
-            continue
-        line = text.replace("$$", "$").removeprefix("@")
-        if line.strip() and not line.lstrip().startswith("#"):
-            commands.append(line)
-    return commands
 
 
 def _git(root: Path, *arguments: str) -> None:
@@ -103,6 +71,50 @@ def _write_repository(root: Path, *, ignore: bool, tracked: bool) -> None:
         _git(root, "add", "--force", _LOCKFILE, ".gitignore")
 
 
+def _stub_tools(
+    root: Path,
+    *,
+    uv_exit_code: int,
+    git_script: str | None,
+) -> str:
+    """Write the stub tools and return the restricted `PATH` that finds them.
+
+    The recipe runs `git` by name, so the resolved executable's directory must
+    stay reachable even when Git lives outside ``/usr/bin``.
+
+    Parameters
+    ----------
+    root
+        The temporary repository that owns the stub directory.
+    uv_exit_code
+        The exit status the stubbed ``uv`` should report.
+    git_script
+        A stub ``git`` to install, or ``None`` to leave the real one in place.
+
+    Returns
+    -------
+    str
+        The ``PATH`` value for the recipe's commands.
+    """
+    stub_dir = root / "stub-bin"
+    stub_dir.mkdir(exist_ok=True)
+    stub = stub_dir / "uv"
+    stub.write_text(
+        _UV_STUB if uv_exit_code == 0 else _UV_FAILING_STUB,
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    if git_script is not None:
+        git_stub = stub_dir / "git"
+        git_stub.write_text(git_script, encoding="utf-8")
+        git_stub.chmod(0o755)
+    git_dir = str(Path(GIT).parent) if GIT else ""
+    search_path = f"{stub_dir}:/usr/bin:/bin"
+    if git_dir and git_dir not in search_path.split(":"):
+        search_path = f"{stub_dir}:{git_dir}:/usr/bin:/bin"
+    return search_path
+
+
 def _run_commands(
     root: Path,
     commands: list[str],
@@ -131,26 +143,8 @@ def _run_commands(
     subprocess.CompletedProcess[str]
         The last command's result, or the first failing one's.
     """
-    stub_dir = root / "stub-bin"
-    stub_dir.mkdir(exist_ok=True)
-    stub = stub_dir / "uv"
-    stub.write_text(
-        _UV_STUB if uv_exit_code == 0 else _UV_FAILING_STUB,
-        encoding="utf-8",
-    )
-    stub.chmod(0o755)
-    if git_script is not None:
-        git_stub = stub_dir / "git"
-        git_stub.write_text(git_script, encoding="utf-8")
-        git_stub.chmod(0o755)
-    # The recipe runs `git` by name, so the resolved executable's directory
-    # must stay reachable even when it lives outside /usr/bin.
-    git_dir = str(Path(GIT).parent) if GIT else ""
-    search_path = f"{stub_dir}:/usr/bin:/bin"
-    if git_dir and git_dir not in search_path.split(":"):
-        search_path = f"{stub_dir}:{git_dir}:/usr/bin:/bin"
     environment = {
-        "PATH": search_path,
+        "PATH": _stub_tools(root, uv_exit_code=uv_exit_code, git_script=git_script),
         "HOME": str(root),
         "GIT_CONFIG_NOSYSTEM": "1",
     }
@@ -190,12 +184,12 @@ def test_a_tracked_unignored_lock_passes(tmp_path: Path) -> None:
     """A fresh, tracked and visible lock satisfies every branch of the gate."""
     _write_repository(tmp_path, ignore=False, tracked=True)
 
-    completed = _run_commands(tmp_path, _recipe_commands(_CHECK_LOCK_TARGET))
+    completed = _run_commands(tmp_path, recipe_commands(CHECK_LOCK_TARGET))
 
     assert completed.returncode == 0, (
         f"check-lock rejected a valid lock: {completed.stderr}"
     )
-    assert _IGNORED_MESSAGE not in completed.stderr, (
+    assert IGNORED_MESSAGE not in completed.stderr, (
         f"a valid lock took the ignore branch: {completed.stderr}"
     )
 
@@ -205,7 +199,7 @@ def test_an_untracked_lock_fails(tmp_path: Path) -> None:
     """Git must track the lock, so an untracked file fails the gate."""
     _write_repository(tmp_path, ignore=False, tracked=False)
 
-    completed = _run_commands(tmp_path, _recipe_commands(_CHECK_LOCK_TARGET))
+    completed = _run_commands(tmp_path, recipe_commands(CHECK_LOCK_TARGET))
 
     assert completed.returncode != 0, "an untracked lock passed the gate"
     assert "did not match any file" in completed.stderr, (
@@ -218,12 +212,12 @@ def test_an_ignored_lock_fails_with_the_explanation(tmp_path: Path) -> None:
     """An ignore rule hides the lock, so the gate names the rule to remove."""
     _write_repository(tmp_path, ignore=True, tracked=True)
 
-    completed = _run_commands(tmp_path, _recipe_commands(_CHECK_LOCK_TARGET))
+    completed = _run_commands(tmp_path, recipe_commands(CHECK_LOCK_TARGET))
 
     assert completed.returncode == 1, (
         f"an ignored lock must exit 1, got {completed.returncode}"
     )
-    assert _IGNORED_MESSAGE in completed.stderr, (
+    assert IGNORED_MESSAGE in completed.stderr, (
         f"the gate must name the ignore rule: {completed.stderr}"
     )
 
@@ -235,120 +229,36 @@ def test_a_failing_lock_check_stops_the_gate(tmp_path: Path) -> None:
 
     completed = _run_commands(
         tmp_path,
-        _recipe_commands(_CHECK_LOCK_TARGET),
+        recipe_commands(CHECK_LOCK_TARGET),
         uv_exit_code=1,
     )
 
     assert completed.returncode != 0, "a failing uv lock --check passed the gate"
 
 
-def _recipe_problems(commands: list[str]) -> list[str]:
-    """Return one complaint per way the gate's status branching is unsound.
-
-    The branching is judged rather than described: a mutant recipe must draw a
-    complaint, so a check that reports nothing cannot pass by accident.
-
-    Parameters
-    ----------
-    commands
-        The recipe's shell commands, in order.
-
-    Returns
-    -------
-    list[str]
-        One complaint per requirement the recipe fails to impose.
-    """
-    script = "\n".join(commands)
-    problems: list[str] = []
-    if not re.search(r"git check-ignore --no-index -q uv\.lock", script):
-        problems.append("the ignore probe must run quietly against uv.lock")
-    if "status -eq 0" not in script:
-        problems.append("a matching ignore rule must fail the gate")
-    if "status -ne 1" not in script:
-        problems.append("a probe error other than 'not ignored' must propagate")
-    if _MASKED_PROBE.search(script):
-        problems.append("the probe's status must not be masked")
-    if "git ls-files --error-unmatch uv.lock" not in script:
-        problems.append("the gate must require Git to track the lock")
-    return problems
-
-
 def test_the_real_recipe_branches_on_every_probe_status() -> None:
     """The shipped recipe judges a match, a miss, and a probe error apart."""
-    problems = _recipe_problems(_recipe_commands(_CHECK_LOCK_TARGET))
+    problems = recipe_problems(recipe_commands(CHECK_LOCK_TARGET))
 
     assert not problems, f"the shipped check-lock recipe is unsound: {problems}"
 
 
-def _unquiet_probe(commands: list[str]) -> list[str]:
-    """Drop the probe's quiet flag."""
-    return [
-        command.replace("check-ignore --no-index -q", "check-ignore --no-index")
-        for command in commands
-    ]
-
-
-def _inverted_match_branch(commands: list[str]) -> list[str]:
-    """Treat the 'ignored' status as success."""
-    return [command.replace("status -eq 0", "status -eq 1") for command in commands]
-
-
-def _dropped_error_branch(commands: list[str]) -> list[str]:
-    """Remove the branch that propagates an unexpected status."""
-    return [
-        re.sub(r"if \[ \$status -ne 1 \]; then.*?\n\s*fi", "", command, flags=re.DOTALL)
-        for command in commands
-    ]
-
-
-def _masked_probe(commands: list[str]) -> list[str]:
-    """Swallow the probe's exit status."""
-    return [
-        command.replace(
-            "git check-ignore --no-index -q uv.lock; status=$?",
-            "git check-ignore --no-index -q uv.lock || true; status=$?",
-        )
-        for command in commands
-    ]
-
-
-def _untracked_check_removed(commands: list[str]) -> list[str]:
-    """Drop the requirement that Git tracks the lock."""
-    return [
-        command for command in commands if "git ls-files --error-unmatch" not in command
-    ]
-
-
 @pytest.mark.parametrize(
     ("mutate", "mutant"),
-    [
-        pytest.param(_unquiet_probe, "unquiet-probe", id="unquiet-probe"),
-        pytest.param(
-            _inverted_match_branch, "inverted-match-branch", id="inverted-match-branch"
-        ),
-        pytest.param(
-            _dropped_error_branch, "dropped-error-branch", id="dropped-error-branch"
-        ),
-        pytest.param(_masked_probe, "masked-probe", id="masked-probe"),
-        pytest.param(
-            _untracked_check_removed,
-            "untracked-check-removed",
-            id="untracked-check-removed",
-        ),
-    ],
+    [pytest.param(mutate, name, id=name) for mutate, name in MUTANTS],
 )
 def test_each_mutant_draws_a_complaint(
     mutate: cabc.Callable[[list[str]], list[str]],
     mutant: str,
 ) -> None:
     """A recipe that weakens any branch of the gate must be rejected."""
-    original = _recipe_commands(_CHECK_LOCK_TARGET)
+    original = recipe_commands(CHECK_LOCK_TARGET)
     mutated = mutate(original)
 
     assert mutated != original, (
         f"mutant {mutant} changed nothing, so it cannot detect the defect"
     )
-    assert _recipe_problems(mutated), f"mutant {mutant} was not detected"
+    assert recipe_problems(mutated), f"mutant {mutant} was not detected"
 
 
 @_NEEDS_GIT
@@ -365,7 +275,7 @@ def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
 
     completed = _run_commands(
         tmp_path,
-        _recipe_commands(_CHECK_LOCK_TARGET),
+        recipe_commands(CHECK_LOCK_TARGET),
         git_script=git_stub,
     )
 
@@ -386,7 +296,7 @@ def test_git_does_not_run_after_a_failed_lock_check(tmp_path: Path) -> None:
 
     completed = _run_commands(
         tmp_path,
-        _recipe_commands(_CHECK_LOCK_TARGET),
+        recipe_commands(CHECK_LOCK_TARGET),
         uv_exit_code=1,
         git_script=git_stub,
     )
