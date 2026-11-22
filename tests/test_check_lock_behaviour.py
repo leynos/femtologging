@@ -15,6 +15,7 @@ that masks a bad status must be detected.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] the tests run fixed recipe commands
 import typing as typ
@@ -109,10 +110,13 @@ def _stub_tools(
         git_stub.write_text(git_script, encoding="utf-8")
         git_stub.chmod(0o755)
     git_dir = str(Path(GIT).parent) if GIT else ""
-    search_path = f"{stub_dir}:/usr/bin:/bin"
-    if git_dir and git_dir not in search_path.split(":"):
-        search_path = f"{stub_dir}:{git_dir}:/usr/bin:/bin"
-    return search_path
+    # The discovered directory must win over the conventional ones: a Git
+    # found in /bin would otherwise lose to /usr/bin in the recipe's lookup.
+    search_path = [str(stub_dir)]
+    if git_dir:
+        search_path.append(git_dir)
+    search_path.extend(path for path in ("/usr/bin", "/bin") if path != git_dir)
+    return ":".join(search_path)
 
 
 def _run_commands(
@@ -269,7 +273,7 @@ def test_an_unexpected_probe_error_is_propagated(tmp_path: Path) -> None:
         "#!/bin/sh\n"
         'case "$1" in\n'
         "  check-ignore) exit 2 ;;\n"
-        f'  *) exec "{GIT}" "$@" ;;\n'
+        f'  *) exec {shlex.quote(GIT)} "$@" ;;\n'
         "esac\n"
     )
 
@@ -292,7 +296,7 @@ def test_git_does_not_run_after_a_failed_lock_check(tmp_path: Path) -> None:
     """A stale lock stops the recipe before any Git command runs."""
     _write_repository(tmp_path, ignore=False, tracked=True)
     marker = tmp_path / "git-ran"
-    git_stub = f"#!/bin/sh\ntouch {marker}\nexit 0\n"
+    git_stub = f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\nexit 0\n"
 
     completed = _run_commands(
         tmp_path,
