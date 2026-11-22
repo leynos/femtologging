@@ -9,9 +9,8 @@ from pathlib import Path
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from femtologging import (
-    FemtoRotatingFileHandler,
-    HandlerOptions,
+from femtologging import FemtoRotatingFileHandler, HandlerOptions
+from femtologging._rust_compat import (
     _clear_rotating_fresh_failure_for_test,
     _force_rotating_fresh_failure_for_test,
 )

@@ -592,8 +592,10 @@ The persistent `[tool.maturin]` feature set is now `["python"]` rather than
 `clear_timed_rotation_test_times_for_test`, and `femtologging._has_test_util` is
 `False`. Their underscore-prefixed Python wrappers,
 `_set_timed_rotation_test_times_for_test` and
-`_clear_timed_rotation_test_times_for_test`, are retained as compatibility
-shims: the setter raises `RuntimeError` because the feature is absent, and the
+`_clear_timed_rotation_test_times_for_test`, are no longer re-exported by the
+package in any build. Test code imports them from the private
+`femtologging._rust_compat` module instead. In a production build the native
+hooks behind them are absent, so the setter raises `RuntimeError` and the
 clearer does nothing.
 
 These helpers were never supported runtime API. Code that relied on them must
@@ -601,8 +603,57 @@ build the extension with the `test-util` feature, either by setting
 `UV_CONFIG_FILE=.github/uv-test-util.toml` for a source install or by passing
 `--features python,test-util` to a development build. The rotating
 fresh-failure helpers `_force_rotating_fresh_failure_for_test` and
-`_clear_rotating_fresh_failure_for_test` remain exposed in every build, but
-they are test-only as well and carry no support guarantee.
+`_clear_rotating_fresh_failure_for_test` follow the same rule: the package does
+not re-export them, and only a `test-util` build provides the native hooks.
+They are test-only and carry no support guarantee.
+
+The section
+[Test-only Python and Rust hooks leave the default API](#test-only-python-and-rust-hooks-leave-the-default-api)
+covers the rest of the surface that left the default build.
+
+## Test-only Python and Rust hooks leave the default API
+
+The default extension surface no longer contains helpers that only tests use.
+Each removal below is a deliberate breaking change, and each lists the
+migration step.
+
+### Handler and filter addresses are gone
+
+`FemtoLogger.handler_ptrs_for_test()` and `FemtoLogger.filter_ptrs_for_test()`
+are removed. They returned native addresses, which leaked process layout across
+the Python boundary.
+
+Test builds now expose `handler_identities_for_test()` and
+`filter_identities_for_test()`. They return opaque `AttachmentIdentity` tokens
+in attachment order. The tokens compare by allocation identity, never expose an
+address, and are not registered with the Python module.
+
+Migration step: compare tokens instead of addresses. For example, capture
+`before = logger.handler_identities_for_test()` before a reconfiguration and
+compare it with a later read. Do not unwrap a token to an integer; the token
+has no integer or index conversion.
+
+### The Rust emit and install hooks are gated
+
+`_emit_rust_log`, `_emit_rust_tracing_event`,
+`_emit_rust_tracing_structured_event`, `_emit_rust_tracing_span_event`,
+`_install_test_global_rust_logger` and
+`_install_test_global_tracing_subscriber` are absent from production wheels and
+from the shipped `.pyi` stub.
+
+Migration step: no runtime configuration can restore them. Build the extension
+with `test-util` and the matching `log-compat` or `tracing-compat` feature when
+a test needs them, then bind them defensively (for example with `getattr`) so
+the same test module also collects against a production wheel.
+
+### The Rust test seams require `test-util`
+
+`TestConfig` and `FemtoFileHandler::with_writer_for_test()` are compiled only
+for unit tests and `test-util` builds, together with their crate-root
+re-exports.
+
+Migration step: a default-feature Rust consumer that used them must enable
+`test-util` explicitly. They are test-only and carry no support guarantee.
 
 ______________________________________________________________________
 

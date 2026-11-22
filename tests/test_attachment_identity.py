@@ -58,6 +58,10 @@ def test_identities_are_stable_and_address_free(reset_logger_state: None) -> Non
 
     assert len(first) == 1, "one attached handler should yield one identity"
     assert first == second, "repeated reads must agree on the same attachment"
+    assert first[0] == second[0], "one attachment must compare equal to itself"
+    assert (first[0] != second[0]) is False, (
+        "an equal token pair must not compare unequal"
+    )
     assert repr(first[0]) == "<femtologging.AttachmentIdentity>", (
         "the repr should name the token type"
     )
@@ -82,6 +86,37 @@ def test_appending_a_handler_adds_a_distinct_identity(
     )
     assert len(after) == len(before) + 1, "one appended handler adds one token"
     assert after[-1] not in before, "the new token must differ from earlier ones"
+    assert after[0] != after[1], "two distinct handlers must compare unequal"
+    assert (after[0] != after[1]) is True, (
+        "unequal token pairs must report unequal through !="
+    )
+
+
+def test_a_reattached_handler_never_inherits_a_dropped_identity(
+    reset_logger_state: None,
+) -> None:
+    """A dropped attachment keeps its identity reserved for its token."""
+    logger = get_logger("identity.lifetime")
+    first = _RecordingHandler()
+    logger.add_handler(first)
+    dropped = logger.handler_identities_for_test()[0]
+    twin = logger.handler_identities_for_test()[0]
+
+    assert logger.remove_handler(first) is True, "the attached handler must be found"
+    del first
+
+    logger.add_handler(_RecordingHandler())
+    reattached = logger.handler_identities_for_test()[0]
+
+    assert dropped == twin, (
+        "two tokens for one attachment must stay equal after the attachment drops"
+    )
+    assert reattached != dropped, (
+        "a later attachment must not inherit a dropped attachment's identity"
+    )
+    assert dropped != reattached, (
+        "a dropped attachment's token must not match a later attachment"
+    )
 
 
 def test_filter_identities_follow_the_configured_filters(core_config: None) -> None:
@@ -98,7 +133,12 @@ def test_filter_identities_follow_the_configured_filters(core_config: None) -> N
     assert get_logger("root").filter_identities_for_test() == [], (
         "the root logger should carry no filters"
     )
-    assert handlers != filters, "handler tokens must not equal filter tokens"
+    assert handlers[0] != filters[0], (
+        "a handler token must differ from a filter token on the same logger"
+    )
+    assert filters[0] != handlers[0], (
+        "the filter token must differ from the handler token too"
+    )
 
 
 def test_identities_defer_foreign_comparisons(reset_logger_state: None) -> None:

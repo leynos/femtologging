@@ -18,8 +18,8 @@ from tests.maturin_compat import (
     read_expected_maturin_version,
     read_maturin_pins,
     toolchain_available,
-    wheel_build_snapshot,
 )
+from tests.maturin_wheel_snapshot import wheel_build_snapshot
 
 # The expected wheel manifest lives in an external data file so the assertion
 # stays readable; ``generator`` carries a placeholder that is substituted with

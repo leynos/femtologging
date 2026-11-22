@@ -13,8 +13,10 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from femtologging import (
     FemtoTimedRotatingFileHandler,
     TimedHandlerOptions,
-    _clear_timed_rotation_test_times_for_test,
     _has_test_util,
+)
+from femtologging._rust_compat import (
+    _clear_timed_rotation_test_times_for_test,
     _set_timed_rotation_test_times_for_test,
 )
 

@@ -118,3 +118,161 @@ impl AttachmentIdentity {
         "<femtologging.AttachmentIdentity>"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit coverage for allocation comparison and the Python comparison slot.
+
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::filters::{FemtoFilter, FilterContext, FilterDecision};
+    use crate::log_record::FemtoLogRecord;
+    use crate::test_utils::collecting_handler::CollectingHandler;
+
+    /// Filter used only to produce a distinct filter allocation.
+    struct AcceptAll;
+
+    impl FemtoFilter for AcceptAll {
+        fn decision(
+            &self,
+            _record: &mut FemtoLogRecord,
+            _context: &mut FilterContext,
+        ) -> FilterDecision {
+            FilterDecision::accept(true)
+        }
+    }
+
+    fn handler_ref(handler: &Arc<dyn FemtoHandlerTrait>) -> AttachmentRef {
+        AttachmentRef::Handler(Arc::downgrade(handler))
+    }
+
+    fn filter_ref(filter: &Arc<dyn FemtoFilter>) -> AttachmentRef {
+        AttachmentRef::Filter(Arc::downgrade(filter))
+    }
+
+    #[test]
+    fn same_allocation_is_reflexive_and_symmetric() {
+        let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+        let other: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+        let first = handler_ref(&handler);
+        let again = handler_ref(&handler);
+        let distinct = handler_ref(&other);
+
+        assert!(
+            first.same_allocation(&first),
+            "an allocation matches itself"
+        );
+        assert!(
+            first.same_allocation(&again),
+            "two weak refs match one allocation"
+        );
+        assert!(again.same_allocation(&first), "matching must be symmetric");
+        assert!(
+            !first.same_allocation(&distinct),
+            "distinct handler allocations must not match"
+        );
+    }
+
+    #[test]
+    fn handler_and_filter_allocations_never_match() {
+        let handler: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+        let filter: Arc<dyn FemtoFilter> = Arc::new(AcceptAll);
+        let handler_ref = handler_ref(&handler);
+        let filter_ref = filter_ref(&filter);
+
+        assert!(
+            !handler_ref.same_allocation(&filter_ref),
+            "a handler must never match a filter"
+        );
+        assert!(
+            !filter_ref.same_allocation(&handler_ref),
+            "a filter must never match a handler"
+        );
+    }
+
+    #[test]
+    fn richcmp_compares_allocations_and_defers_otherwise() {
+        Python::attach(|py| {
+            let first: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+            let second: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+            let filter: Arc<dyn FemtoFilter> = Arc::new(AcceptAll);
+
+            let token = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&first)))
+                .expect("the first token must be created");
+            let same = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&first)))
+                .expect("the second token must be created");
+            let other = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&second)))
+                .expect("the distinct handler token must be created");
+            let filter_token = Py::new(py, AttachmentIdentity::for_filter(Arc::downgrade(&filter)))
+                .expect("the filter token must be created");
+
+            let is_true = |value: Py<PyAny>| {
+                value
+                    .bind(py)
+                    .extract::<bool>()
+                    .expect("an equality result must be a bool")
+            };
+
+            assert!(
+                is_true(
+                    token
+                        .borrow(py)
+                        .__richcmp__(same.bind(py), CompareOp::Eq, py)
+                        .expect("equality must not fail")
+                ),
+                "two tokens for one allocation must compare equal"
+            );
+            assert!(
+                !is_true(
+                    token
+                        .borrow(py)
+                        .__richcmp__(other.bind(py), CompareOp::Eq, py)
+                        .expect("equality must not fail")
+                ),
+                "tokens for distinct attachments must not compare equal"
+            );
+            assert!(
+                is_true(
+                    token
+                        .borrow(py)
+                        .__richcmp__(other.bind(py), CompareOp::Ne, py)
+                        .expect("inequality must not fail")
+                ),
+                "tokens for distinct attachments must compare unequal"
+            );
+            assert!(
+                !is_true(
+                    token
+                        .borrow(py)
+                        .__richcmp__(filter_token.bind(py), CompareOp::Eq, py)
+                        .expect("equality must not fail")
+                ),
+                "a handler token must not equal a filter token"
+            );
+
+            let foreign = py.None();
+            let not_implemented = |value: Py<PyAny>| value.bind(py).is(py.NotImplemented());
+            assert!(
+                not_implemented(
+                    token
+                        .borrow(py)
+                        .__richcmp__(foreign.bind(py), CompareOp::Eq, py)
+                        .expect("a foreign operand must not raise")
+                ),
+                "a foreign operand must defer to Python"
+            );
+            for op in [CompareOp::Lt, CompareOp::Le, CompareOp::Gt, CompareOp::Ge] {
+                assert!(
+                    not_implemented(
+                        token
+                            .borrow(py)
+                            .__richcmp__(same.bind(py), op, py)
+                            .expect("ordering must not raise")
+                    ),
+                    "ordering operators must defer to Python"
+                );
+            }
+        });
+    }
+}

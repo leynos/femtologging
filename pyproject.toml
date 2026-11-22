@@ -526,6 +526,16 @@ full_name = ["femtologging._rust_compat._runtime_attachment_state_for_test"]
 reason = "The behavioural suite imports this test-util hook; tests are excluded from the production scan."
 
 [[tool.skylos.dead_code.entrypoints]]
+type = "variable"
+full_name = [
+    "femtologging._rust_compat._force_rotating_fresh_failure_for_test",
+    "femtologging._rust_compat._clear_rotating_fresh_failure_for_test",
+    "femtologging._rust_compat._set_timed_rotation_test_times_for_test",
+    "femtologging._rust_compat._clear_timed_rotation_test_times_for_test",
+]
+reason = "The behavioural suite imports these test-util wrappers; tests are excluded from the production scan."
+
+[[tool.skylos.dead_code.entrypoints]]
 type = "parameter"
 full_name = [
     "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.count",

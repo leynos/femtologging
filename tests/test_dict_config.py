@@ -12,13 +12,10 @@ import typing as typ
 
 import pytest
 
-from femtologging import (
+from femtologging import _has_test_util, dictConfig, get_logger, reset_manager
+from femtologging._rust_compat import (
     _clear_timed_rotation_test_times_for_test,
-    _has_test_util,
     _set_timed_rotation_test_times_for_test,
-    dictConfig,
-    get_logger,
-    reset_manager,
 )
 from tests.helpers import poll_file_for_text
 
