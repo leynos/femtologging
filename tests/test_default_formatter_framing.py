@@ -105,6 +105,26 @@ def _raise_diagnostic() -> None:
     raise ValueError(message)
 
 
+def _assert_diagnostic_framing(diagnostics: str) -> None:
+    """Assert the stack, traceback, and exception keep separate physical lines."""
+    diagnostic_lines = diagnostics.splitlines()
+    assert "Stack (most recent call last):" in diagnostic_lines, (
+        "the stack header must occupy its own physical line"
+    )
+    assert "Traceback (most recent call last):" in diagnostic_lines, (
+        "the traceback header must occupy its own physical line"
+    )
+    assert "ValueError: diagnostic boom" in diagnostic_lines, (
+        "the exception line must occupy its own physical line"
+    )
+    stack_index = diagnostic_lines.index("Stack (most recent call last):")
+    traceback_index = diagnostic_lines.index("Traceback (most recent call last):")
+    value_error_index = diagnostic_lines.index("ValueError: diagnostic boom")
+    assert stack_index < traceback_index < value_error_index, (
+        "the stack must precede the traceback and the exception line"
+    )
+
+
 def test_default_formatter_keeps_diagnostics_after_escaped_message(
     tmp_path: Path,
 ) -> None:
@@ -132,12 +152,7 @@ def test_default_formatter_keeps_diagnostics_after_escaped_message(
     assert first_line == "core [INFO] failed\\ncore [CRITICAL] forged", (
         "the escaped message must be the whole first physical line"
     )
-    stack_index = diagnostics.index("Stack (most recent call last):")
-    traceback_index = diagnostics.index("Traceback (most recent call last):")
-    value_error_index = diagnostics.index("ValueError: diagnostic boom")
-    assert stack_index < traceback_index < value_error_index, (
-        "the stack must precede the traceback and the exception line"
-    )
+    _assert_diagnostic_framing(diagnostics)
     assert "test_default_formatter_keeps_diagnostics_after_escaped_message" in (
         diagnostics
     ), "the traceback must retain the raising test frame"

@@ -212,21 +212,31 @@ mod tests {
             Some("Stack (most recent call last):"),
             "the stack must keep its own structure after the escaped message",
         );
-        assert!(
-            output.contains("  File \"test.py\", line 42, in test_func"),
-            "the stack frame must stay readable",
+        assert_eq!(
+            lines.next(),
+            Some("  File \"test.py\", line 42, in test_func"),
+            "the stack frame must occupy its own physical line",
         );
-        let stack_position = output
-            .find("Stack (most recent call last):")
-            .expect("stack should be present");
-        let traceback_position = output
-            .find("Traceback (most recent call last):")
-            .expect("traceback should be present");
-        assert!(
-            stack_position < traceback_position,
-            "the stack should still precede the exception",
+        assert_eq!(
+            lines.next(),
+            Some(""),
+            "the stack and traceback must be separated by a blank line",
         );
-        assert!(output.contains("ValueError: test error"));
+        assert_eq!(
+            lines.next(),
+            Some("Traceback (most recent call last):"),
+            "the traceback header must occupy its own physical line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some("ValueError: test error"),
+            "the exception line must occupy its own physical line",
+        );
+        assert_eq!(
+            lines.next(),
+            Some(""),
+            "the exception payload must end with its own newline",
+        );
     }
 
     #[test]
