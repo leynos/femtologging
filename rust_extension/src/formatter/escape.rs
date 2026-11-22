@@ -1,9 +1,10 @@
 //! Escaping of message line separators for the default text formatter.
 //!
-//! The default format puts one record on one physical line, so message text
-//! must not contain characters that a reader or Python's `str.splitlines()`
-//! treats as a line boundary. Escaping those characters keeps a message from
-//! impersonating generated event metadata on a following line.
+//! The default format keeps the message field on the record's first physical
+//! line, so message text must not contain characters that a reader or Python's
+//! `str.splitlines()` treats as a line boundary. Escaping those characters
+//! keeps a message from impersonating generated event metadata on a following
+//! line. Diagnostic payloads are appended unescaped and may still span lines.
 
 use std::borrow::Cow;
 

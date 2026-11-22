@@ -82,8 +82,10 @@ impl fmt::Debug for SharedFormatter {
 /// reversible because a literal `\n` looks the same as an escaped LF.
 ///
 /// A stack trace and an exception traceback, when the record carries them,
-/// follow on new lines and keep their own structure. Their text is not escaped
-/// because it comes from the same interpreter that produced the record.
+/// follow on new lines and keep their own structure. Their text is not escaped,
+/// so it can span lines. An exception message may include application data and
+/// is not a trusted single-line field: a separator inside it can still forge a
+/// line.
 ///
 /// # Examples
 ///
