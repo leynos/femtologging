@@ -64,35 +64,18 @@ impl FemtoFileHandler {
     /// Parses a Python record, enqueues it according to the configured
     /// overflow policy, and maps delivery failures to a Python runtime error.
     ///
-    /// PyO3 calls this with the interpreter lock already held, so no caller
-    /// supplies a token: the body attaches with `Python::attach(...)` to
-    /// obtain one, which re-enters the running interpreter rather than
-    /// selecting one, and detaches around the enqueue.
-    ///
     /// The wait for queue capacity runs with the interpreter lock released, so
-    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. See
-    /// the "Concurrency" section of the user guide for the full contract.
+    /// a `"block"` or `"timeout:N"` policy parks only the calling thread. PyO3
+    /// supplies the interpreter token at this boundary, and
+    /// [`Self::enqueue_detached`] uses it to detach around the enqueue; see the
+    /// "Concurrency" section of the user guide for the full contract.
     #[pyo3(name = "handle")]
-    // @codescene(disable:"Excess Number of Function Arguments") Stable Python API signature (2026-10-28).
-    fn py_handle(&self, logger: &str, level: &str, message: &str) -> PyResult<()> {
+    fn py_handle(&self, py: Python<'_>, logger: &str, level: &str, message: &str) -> PyResult<()> {
         // Parsing raises `ValueError`, so it must happen while the lock is
         // still held; only the enqueue below can wait on the worker.
         let parsed_level = crate::level::FemtoLevel::parse_py(level)?;
         let record = FemtoLogRecord::new(logger, parsed_level, message);
-        Python::attach(|py| {
-            let (result, timer) =
-                WaitScope::start(self.diagnostics()).run(|| py.detach(|| self.enqueue(record)));
-            self.record_wait(
-                timer,
-                WaitSite::new("handler_handle", "file"),
-                classify_enqueue(&result),
-            );
-            result
-                .map_err(super::EnqueueFailure::into_handler_error)
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}"))
-                })
-        })
+        self.enqueue_detached(py, record)
     }
 
     /// Flush queued log records to the underlying file without closing the
@@ -204,5 +187,25 @@ impl FemtoFileHandler {
             },
             outcome.into(),
         );
+    }
+}
+
+impl FemtoFileHandler {
+    /// Enqueues a parsed record with the interpreter lock released.
+    ///
+    /// The token is taken as a parameter rather than acquired inside, so the
+    /// `handle` entry point stays within the argument budget the Whitaker
+    /// arity rule allows and the detach boundary stays in one place.
+    fn enqueue_detached(&self, py: Python<'_>, record: FemtoLogRecord) -> PyResult<()> {
+        let (result, timer) =
+            WaitScope::start(self.diagnostics()).run(|| py.detach(|| self.enqueue(record)));
+        self.record_wait(
+            timer,
+            WaitSite::new("handler_handle", "file"),
+            classify_enqueue(&result),
+        );
+        result
+            .map_err(super::EnqueueFailure::into_handler_error)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Handler error: {e}")))
     }
 }
