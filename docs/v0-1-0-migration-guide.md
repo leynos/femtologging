@@ -262,3 +262,124 @@ discarded before reaching it, matching stdlib `Logger.callHandlers()`.
 
 See the [users guide](users-guide.md#using-stdlib-logginghandler-subclasses)
 for details and limitations.
+
+______________________________________________________________________
+
+## Default formatter escapes message line separators
+
+### Who should read this
+
+Read this if you rely on multiline message text appearing verbatim in default
+formatter output, or if you count physical lines in a log file. The default
+formatter now escapes the line separators that Python's `str.splitlines()`
+recognizes inside the message field, so text in that field cannot add a line
+that looks like another logger's record. The escaped set is LF, CR, VT, FF,
+U+001C, U+001D, U+001E, NEL, U+2028, and U+2029; each becomes its
+`char::escape_debug` form, such as `\n` or `\u{2028}`. Only the message field
+changes: an exception message inside the diagnostics is written unescaped, and
+a logger string passed directly to `FemtoFileHandler.handle` is neither
+validated nor escaped.
+
+### Impact at a glance
+
+| Obligation         | Area                          | What to do                                                                                          |
+| ------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| Required           | Assertions on default output  | Update expectations that contain raw line breaks in the message field.                              |
+| Required if relied | Raw multiline default output  | Configure a percent-style or Python callable formatter when raw message text is required.           |
+| Review if enabled  | Size-based rotation           | Allow for longer escaped records when tuning `max_bytes`; escaped bytes count towards the rollover. |
+| Review if enabled  | Log parsers and line counting | Treat an escaped message as one physical line; the separator is no longer a record boundary.        |
+
+### 1. Update assertions on default formatter output
+
+The formatter now escapes separators in the message only. Update any expected
+string that contained a raw separator in that field.
+
+Before:
+
+```python
+assert path.read_text() == "core [INFO] first\nsecond\n"
+```
+
+After:
+
+```python
+assert path.read_text() == "core [INFO] first\\nsecond\n"
+```
+
+The second line still holds a single record terminator. The `\\n` in the
+expected value is a backslash followed by `n`, not a line break.
+
+### 2. Restore raw multiline output where required
+
+Only the default formatter escapes. A percent-style `%(message)s` formatter
+writes the raw message, and a Python callable formatter receives the raw
+message in its record mapping:
+
+```python
+from femtologging import FileHandlerBuilder, FormatterBuilder
+
+handler = (
+    FileHandlerBuilder("app.log")
+    .with_formatter(FormatterBuilder().with_format("%(message)s"))
+    .build()
+)
+```
+
+A callable can keep the logger and level metadata while still writing the raw
+message:
+
+```python
+def raw_multiline_formatter(record: dict[str, object]) -> str:
+    return f"{record['logger']} [{record['level']}] {record['message']}"
+
+
+handler = FileHandlerBuilder("app.log").with_formatter(raw_multiline_formatter).build()
+```
+
+Both forms restore the pre-change line structure, including the ambiguity where
+message text can look like another record. Choose them only when a downstream
+consumer needs the raw separators and can distinguish the content by other
+means.
+
+### What does not need to change
+
+- Percent-style formatters and Python callable formatters receive the raw
+  message and are unaffected.
+- Structured `handle_record` handlers and the stdlib handler adapter receive
+  the raw message and are unaffected.
+- Stack and exception diagnostics keep their own multiline structure; only the
+  message field is escaped. An exception message is part of the diagnostics, so
+  a separator inside it is still written unescaped.
+- Logger names passed to `get_logger`/`getLogger` already reject control
+  characters and Unicode separators with `ValueError`. A logger string passed
+  directly to `FemtoFileHandler.handle` is not validated, so its framing is
+  unchanged by this release and still needs a caller-supplied safe name.
+- Existing logging calls, handler constructors, and builder methods keep their
+  signatures.
+
+### Migration checklist
+
+- [ ] Update assertions that expect raw line breaks in default formatter
+  output.
+- [ ] Re-count physical lines in log parsers that relied on message separators
+  as boundaries.
+- [ ] Review `max_bytes` settings for rotating handlers when messages contain
+  separators.
+- [ ] Configure a formatter where raw multiline message text is required.
+- [ ] Re-run traceback and stack tests to confirm diagnostics remain
+  multiline.
+
+### Common errors and fixes
+
+This change raises no new exception. An assertion that still expects a raw
+separator fails with a value difference such as:
+
+```text
+AssertionError: assert 'core [INFO] first\\nsecond\n' == 'core [INFO] first\nsecond\n'
+```
+
+The left-hand value is the escaped output and the right-hand value is the old
+expectation. Update the expectation to the escaped form, or configure a
+formatter that receives the raw message. A parser that reports fewer records
+than it used to is reading the escaped message as one record; treat the `\n`,
+`\r`, and `\u{...}` sequences as message text rather than as line boundaries.

@@ -2180,6 +2180,27 @@ the fixture raises a nested `ValueError`, preserves its explicit traceback, and
 clears the exception object's `__traceback__` so tuple-based traceback capture
 is exercised.
 
+### Default formatter message framing
+
+`DefaultFormatter` keeps the message field on the record's first physical line.
+The crate-private helper `formatter::escape::escape_message_line_separators`
+escapes the ten separators that Python's `str.splitlines()` recognizes: LF, CR,
+VT, FF, U+001C, U+001D, U+001E, NEL, U+2028, and U+2029. Each becomes its
+`char::escape_debug` form, and the helper returns a borrowed `Cow` when the
+message contains no separator.
+
+Only the message is escaped. Stack and exception payloads are appended
+unescaped and may span lines, so an exception message carrying application data
+can still forge a line. Percent-style and callable formatters, and structured
+`handle_record` handlers, receive the raw message. A direct
+`FemtoFileHandler.handle` call still sends the message through the default
+formatter, so its message is escaped; only the logger string it supplies
+bypasses the logger API's validation and escaping. The tests that pin this
+behaviour are `rust_extension/src/formatter/escape.rs` for the helper,
+`rust_extension/tests/formatter_tests.rs` for the formatted record,
+`rust_extension/tests/file_handler_tests.rs` for file bytes, and
+`tests/test_default_formatter_framing.py` for the Python-visible workflow.
+
 ## Toolchain Boundaries
 
 The root `Makefile` is the source of truth for local and CI tool commands. Keep
