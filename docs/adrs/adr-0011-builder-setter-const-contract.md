@@ -74,3 +74,24 @@ itself does not scope its expansions and is likewise unfulfilled, and
   by-value local.
 - [Developers guide](../developers-guide.md), "Handler builder setters:
   `const` and `#[must_use]`".
+
+## Addendum — 2026-11-22: the contract extends to the configuration builders
+
+The config modules apply the same contract. `ConfigBuilder`'s `with_version`,
+`with_disable_existing_loggers` and `with_default_level` setters, and its
+`version` and `default_level` getters, are `const fn`; `LoggerConfigBuilder`'s
+`with_level` and `with_propagate` setters and its `level_opt` and
+`propagate_opt` getters are `const fn`; and `LoggerMutationBuilder`'s
+`with_level` and `with_propagate` setters are `const fn`. Every setter on those
+builders, and on `FormatterBuilder` and `RuntimeConfigBuilder`, is
+`#[must_use]`. The pins follow the same pattern:
+
+- `rust_extension/tests/ui/pass/config_builder_const_setters.rs` applies the
+  `const` chains to builders passed in as parameters;
+- `rust_extension/tests/ui/fail/unused_must_use_config_builder.rs`,
+  `unused_must_use_formatter_builder.rs`, `unused_must_use_logger_mutation.rs`
+  and `unused_must_use_runtime_mutation.rs` discard a setter result under
+  `#![deny(unused_must_use)]`.
+
+The decision above, including the disclosed `missing_const_for_fn` deferral and
+the refusal of `#[expect]` and `#[allow]`, is unchanged.
