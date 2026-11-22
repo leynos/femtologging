@@ -14,7 +14,8 @@
 //! `cause.exceptions[3].context`. The walk is bounded by
 //! [`MAX_EXCEPTION_PAYLOAD_DEPTH`] and [`MAX_EXCEPTION_PAYLOAD_NODES`], which
 //! bound validation work rather than parsing. Path segments are collected only
-//! while an error unwinds, so successful validation allocates no path strings.
+//! while an error unwinds, so successful validation allocates neither a path
+//! vector nor a path string.
 
 use super::{
     ExceptionPayload, MAX_EXCEPTION_PAYLOAD_DEPTH, MAX_EXCEPTION_PAYLOAD_NODES, SchemaVersionError,
@@ -73,6 +74,17 @@ impl Failure {
             },
         }
     }
+
+    /// Add the edge that led to this failure to its recorded path.
+    ///
+    /// A node-limit failure carries no path, so prepending leaves it unchanged.
+    fn prepend(mut self, segment: PathSegment) -> Self {
+        match &mut self {
+            Self::Version { path, .. } | Self::TooDeep { path } => path.insert(0, segment),
+            Self::TooLarge => {}
+        }
+        self
+    }
 }
 
 /// Render dot-separated path segments, for example `cause.exceptions[3]`.
@@ -116,14 +128,13 @@ pub(super) fn validate_payload_tree(payload: &ExceptionPayload) -> Result<(), Sc
 
 /// Traversal state for one bounded walk.
 ///
-/// Keeping the visited-node count and the current path together avoids
-/// threading the same pair through every recursive call.
+/// Only the visited-node count survives between calls; path segments are
+/// collected by [`Failure::prepend`] as an error unwinds, so a successful walk
+/// allocates neither a path vector nor a path string.
 #[derive(Default)]
 struct Walk {
     /// Payloads accepted into the walk so far.
     visited: usize,
-    /// Segments from the root to the payload currently being visited.
-    path: Vec<PathSegment>,
 }
 
 impl Walk {
@@ -134,14 +145,10 @@ impl Walk {
 
     /// Visit `payload` and, unless a limit stops the walk, its descendants.
     ///
-    /// `depth` is the distance from the root, which is at depth 0.
+    /// `depth` is the distance from the root, which is at depth 0. The depth
+    /// limit is enforced by [`Walk::visit_child`] before it descends, so this
+    /// method is never called past the limit.
     fn visit(&mut self, payload: &ExceptionPayload, depth: usize) -> Result<(), Failure> {
-        if depth > MAX_EXCEPTION_PAYLOAD_DEPTH {
-            return Err(Failure::TooDeep {
-                path: self.path.clone(),
-            });
-        }
-
         self.visited += 1;
         if self.visited > MAX_EXCEPTION_PAYLOAD_NODES {
             return Err(Failure::TooLarge);
@@ -149,7 +156,7 @@ impl Walk {
 
         validate_schema_version(payload.schema_version).map_err(|error| Failure::Version {
             error,
-            path: self.path.clone(),
+            path: Vec::new(),
         })?;
 
         if let Some(cause) = payload.cause.as_deref() {
@@ -165,22 +172,25 @@ impl Walk {
         Ok(())
     }
 
-    /// Visit one child of the current payload, recording the edge in the path.
+    /// Visit one child of the current payload, after the limit checks.
     ///
-    /// The segment is popped again after a successful visit. A failed visit
-    /// keeps it in place: the failure has already captured the path that names
-    /// the offending payload, and the walk abandons the path as it unwinds.
+    /// The child's edge is prepended to any failure as it unwinds. The depth
+    /// limit is checked before the recursive call, so the walk never recurses
+    /// past it.
     fn visit_child(
         &mut self,
         child: &ExceptionPayload,
         segment: PathSegment,
         depth: usize,
     ) -> Result<(), Failure> {
-        self.path.push(segment);
-        let outcome = self.visit(child, depth + 1);
-        if outcome.is_ok() {
-            self.path.pop();
+        let child_depth = depth + 1;
+        if child_depth > MAX_EXCEPTION_PAYLOAD_DEPTH {
+            return Err(Failure::TooDeep {
+                path: vec![segment],
+            });
         }
-        outcome
+
+        self.visit(child, child_depth)
+            .map_err(|failure| failure.prepend(segment))
     }
 }

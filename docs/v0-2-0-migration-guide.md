@@ -828,7 +828,6 @@ Each item carries the same obligation label as the matching row in
       Rust `push_log_context`, or `RecordMetadata::key_values` passed to
       `log_with_metadata`, and update any `with_record_fields` selection that
       named the old key.
-||||||| parent of ad1ac5c1 (Align validation limits and document the API break)
 - [ ] **Required for Rust:** Add a wildcard arm to matches on
       `SchemaVersionError`, which is now `#[non_exhaustive]`.
 - [ ] **Review if enabled:** Move handler state that relied on a per-logger
