@@ -115,17 +115,23 @@ impl FemtoLogger {
     ///
     /// Returns `True` when one matching attachment was removed. Selection runs
     /// outside every guard and the removal re-checks the selection under the
-    /// write guard, so a re-entrant caller can remove the selected attachment
-    /// first. When that happens the selection is repeated against the live
-    /// collection rather than reporting that no match exists while one does.
+    /// write guard, so a re-entrant caller can remove a selected attachment
+    /// first. One scan therefore yields every match, and every one of them is
+    /// tried; a re-entrant removal costs one target rather than the whole
+    /// call's remaining budget. A further scan is made only when a re-entrant
+    /// caller removed everything the previous scan found.
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::attach(|py| {
-            for _ in 0..MAX_REMOVAL_ATTEMPTS {
-                let Some(target) = self.select_py_handler(py, &handler) else {
+            for _ in 0..MAX_REMOVAL_SCANS {
+                let targets = self.select_py_handlers(py, &handler);
+                if targets.is_empty() {
                     return false;
-                };
-                if self.remove_selected_handler(&target) {
+                }
+                if targets
+                    .into_iter()
+                    .any(|target| self.remove_selected_handler(&target))
+                {
                     return true;
                 }
             }
@@ -271,24 +277,25 @@ impl FemtoLogger {
     }
 }
 
-/// How many times `remove_handler` re-selects before reporting no match.
+/// How many times `remove_handler` scans before reporting no removable match.
 ///
-/// Each attempt can lose to a re-entrant `as_any` that removes the selected
-/// attachment first, so one retry covers that case. The bound stops a handler
-/// whose `as_any` always removes a match from spinning forever.
-const MAX_REMOVAL_ATTEMPTS: usize = 4;
+/// A scan tries every match it found, so repeated re-entry cannot exhaust a
+/// budget measured in matching attachments. The bound only limits rescans
+/// after a re-entrant caller removed everything the previous scan found, and
+/// stops a handler whose `as_any` always does that from spinning forever.
+const MAX_REMOVAL_SCANS: usize = 4;
 
 impl FemtoLogger {
-    /// Select the attached handler wrapping *handler*, with no guard held.
+    /// Select every attached handler wrapping *handler*, with no guard held.
     ///
     /// `as_any` is a trait method any handler may override, so calling it under
     /// this logger's lock would deadlock a handler that re-enters the logger.
     /// The clones keep the scan valid without the guard.
-    fn select_py_handler(
+    fn select_py_handlers(
         &self,
         py: Python<'_>,
         handler: &Py<PyAny>,
-    ) -> Option<Arc<dyn FemtoHandlerTrait>> {
+    ) -> Vec<Arc<dyn FemtoHandlerTrait>> {
         let candidates: Vec<Arc<dyn FemtoHandlerTrait>> = {
             let handlers = self.handlers.read();
             handlers
@@ -296,12 +303,15 @@ impl FemtoLogger {
                 .map(|attachment| Arc::clone(&attachment.handler))
                 .collect()
         };
-        candidates.into_iter().find(|candidate| {
-            candidate
-                .as_any()
-                .downcast_ref::<PyHandler>()
-                .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
-        })
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                candidate
+                    .as_any()
+                    .downcast_ref::<PyHandler>()
+                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+            })
+            .collect()
     }
 
     /// Remove the attachment holding *target*, reporting whether it was there.

@@ -19,7 +19,7 @@ use std::sync::{Arc, Weak};
 
 /// Verdict recorded when a probe is destroyed.
 #[derive(Default)]
-struct DropObservation {
+pub(super) struct DropObservation {
     /// Whether the owning collection lock could be taken non-blockingly.
     lock_available: AtomicBool,
     /// Number of probe values destroyed.
@@ -28,7 +28,7 @@ struct DropObservation {
 
 impl DropObservation {
     /// Create an observation that has recorded nothing yet.
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
@@ -42,12 +42,12 @@ impl DropObservation {
     }
 
     /// Return the recorded lock verdict.
-    fn lock_was_available(&self) -> bool {
+    pub(super) fn lock_was_available(&self) -> bool {
         self.lock_available.load(Ordering::SeqCst)
     }
 
     /// Return how many probes were destroyed.
-    fn drop_count(&self) -> usize {
+    pub(super) fn drop_count(&self) -> usize {
         self.drops.load(Ordering::SeqCst)
     }
 }
@@ -63,12 +63,12 @@ fn record_guard_was_free<T>(lock: &Weak<RwLock<T>>, observation: &DropObservatio
 }
 
 /// Build a logger named for the scenario under test.
-fn test_logger(name: &str) -> FemtoLogger {
+pub(super) fn test_logger(name: &str) -> FemtoLogger {
     FemtoLogger::new(name.into()).expect("test logger should construct")
 }
 
 /// Assert a probe was destroyed once and that its owning guard was free then.
-fn assert_dropped_after_release(observation: &DropObservation, operation: &str) {
+pub(super) fn assert_dropped_after_release(observation: &DropObservation, operation: &str) {
     assert_eq!(
         observation.drop_count(),
         1,
@@ -133,11 +133,21 @@ impl Drop for FilterLockProbe {
 ///
 /// Removing an attachment drops its whole filter chain, so a probe placed here
 /// is a genuine last-owner drop inside `remove_handler`.
-struct AttachmentFilterLockProbe {
+pub(super) struct AttachmentFilterLockProbe {
     /// The collection whose guard must already be released.
     handlers: Weak<RwLock<Vec<HandlerAttachment>>>,
     /// Verdict recorded by `Drop`.
     observation: Arc<DropObservation>,
+}
+
+impl AttachmentFilterLockProbe {
+    /// Build a probe observing *logger*'s handler lock.
+    pub(super) fn new(logger: &FemtoLogger, observation: Arc<DropObservation>) -> Arc<Self> {
+        Arc::new(Self {
+            handlers: Arc::downgrade(&logger.handlers),
+            observation,
+        })
+    }
 }
 
 impl FemtoFilter for AttachmentFilterLockProbe {

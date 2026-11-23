@@ -374,11 +374,11 @@ mod logger_tests_drop_reporting;
 #[path = "logger_tests_lock_release.rs"]
 mod logger_tests_lock_release;
 
-// Re-entrant removal tests need Python objects, so they are separate from the
+// Python removal tests need Python objects, so they are separate from the
 // feature-independent lock-release module.
 #[cfg(feature = "python")]
-#[path = "logger_tests_reentrant_removal.rs"]
-mod logger_tests_reentrant_removal;
+#[path = "logger_tests_python_removal.rs"]
+mod logger_tests_python_removal;
 
 // Drain-on-drop and pool-shape tests are in a separate module to respect
 // the 400-line limit.
