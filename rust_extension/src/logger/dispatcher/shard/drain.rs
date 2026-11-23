@@ -3,7 +3,7 @@
 //! A shard answers two kinds of wait. A plain [`Job::Barrier`] says that every
 //! job queued ahead of it has been handled, and a [`Job::Flush`] additionally
 //! carries a handler snapshot that the worker flushes before acknowledging.
-//! Both are bounded: the yes-or-no drain keeps [`BARRIER_TIMEOUT`], while a
+//! Both are bounded: the yes-or-no drain keeps `BARRIER_TIMEOUT`, while a
 //! flush supplies its own absolute deadline so the whole barrier is charged to
 //! one budget rather than one per stage.
 //!
@@ -11,6 +11,7 @@
 //! [`Job::Flush`]: super::Job::Flush
 
 use std::sync::Arc;
+#[cfg(not(loom))]
 use std::time::Instant;
 
 use crate::handler::FemtoHandlerTrait;
@@ -18,7 +19,9 @@ use crate::logger::flush_clock::FlushDeadline;
 use crate::logger::flush_diagnostics::FlushFailureStage;
 use crate::sync::{RecvTimeoutError, SendTimeoutError, Sender, bounded, recv_timeout};
 
-use super::{BARRIER_TIMEOUT, DrainOutcome, Job, Shard};
+#[cfg(not(loom))]
+use super::{BARRIER_TIMEOUT, DrainOutcome};
+use super::{Job, Shard};
 
 /// Counts one flush caller as waiting for room in the bounded queue.
 ///
@@ -86,7 +89,12 @@ impl Shard {
     ///
     /// The two waits share one deadline, exactly as `wait_for_drain`
     /// documents: queueing the barrier and hearing its answer are two halves of
-    /// a single [`BARRIER_TIMEOUT`] budget.
+    /// a single `BARRIER_TIMEOUT` budget.
+    ///
+    /// Only the non-Loom drain path and its unit tests ask this question; a
+    /// Loom build drains through [`Self::wait_for_drain_until`] instead, so the
+    /// method is absent there.
+    #[cfg(not(loom))]
     pub(crate) fn wait_for_drain_outcome(&self) -> DrainOutcome {
         let deadline = Instant::now() + BARRIER_TIMEOUT;
         let (ack, acked) = bounded::<()>(1);
@@ -112,7 +120,7 @@ impl Shard {
 
     /// Wait for a drain barrier using a deadline created by the caller.
     ///
-    /// Unlike [`Self::wait_for_drain_outcome`], which sets its own budget, this
+    /// Unlike `wait_for_drain_outcome`, which sets its own budget, this
     /// shares one deadline with the rest of a flush barrier and names the stage
     /// that expired so the diagnostics can count it.
     pub(crate) fn wait_for_drain_until(

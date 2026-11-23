@@ -31,7 +31,7 @@ mod rollover_schedule;
 mod rotation_steps;
 mod rotation_store;
 mod rotation_strategy;
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod rotation_strategy_retention_tests;
 #[cfg(test)]
 mod rotation_strategy_store_tests;

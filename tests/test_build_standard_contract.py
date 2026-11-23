@@ -121,7 +121,12 @@ def _heavy_steps() -> list[dict[str, typ.Any]]:
 
 
 def test_the_loom_steps_restate_the_linker_flag() -> None:
-    """Each step that assigns ``--cfg loom`` also carries the mold flag."""
+    """Each heavy-workflow step that assigns ``--cfg loom`` carries the mold flag.
+
+    The count is scoped to ``heavy-tests.yml``: the pull-request workflow now
+    runs its own Loom Clippy step, and a count over every workflow would
+    refuse that extra gate for being the extra gate it is meant to be.
+    """
     loom_steps = [
         step for step in _heavy_steps() if "--cfg loom" in str(step.get("run", ""))
     ]
@@ -132,6 +137,53 @@ def test_the_loom_steps_restate_the_linker_flag() -> None:
                 assert MOLD_FLAG.replace("-Clink-arg", "-C link-arg") in line, (
                     f"{step.get('name')}: RUSTFLAGS must restate the mold flag: {line}"
                 )
+
+
+def _ci_steps() -> list[dict[str, typ.Any]]:
+    """Return the steps of the pull-request ``build-test`` job."""
+    document = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
+    )
+    return list(document["jobs"]["build-test"]["steps"])
+
+
+def test_the_pull_request_runs_the_loom_clippy_configuration() -> None:
+    """The pull request compiles every target under the scheduled Loom flags.
+
+    The step must follow the Rust and mold installation, and it must restate
+    the mold linker flag. An assigned ``RUSTFLAGS`` replaces the Linux table in
+    ``.cargo/config.toml``, so a Loom step that omitted the flag would fail to
+    link on the runner while passing on a host whose driver defaults to mold.
+    """
+    steps = _ci_steps()
+    loom_at = next(
+        (
+            index
+            for index, step in enumerate(steps)
+            if "--cfg loom" in str(step.get("run", ""))
+        ),
+        None,
+    )
+    assert loom_at is not None, "ci.yml must run a --cfg loom step"
+    setup_at = next(
+        (
+            index
+            for index, step in enumerate(steps)
+            if "setup-rust" in str(step.get("uses", ""))
+        ),
+        None,
+    )
+    assert setup_at is not None, "ci.yml must install Rust through setup-rust"
+    settings = steps[setup_at].get("with", {})
+    assert str(settings.get("install-mold")) == "true", (
+        "the pull-request Loom step links with mold, so setup-rust must install it"
+    )
+    assert setup_at < loom_at, "mold must be installed before the Loom Clippy step"
+    for line in str(steps[loom_at]["run"]).splitlines():
+        if "--cfg loom" in line:
+            assert MOLD_FLAG.replace("-Clink-arg", "-C link-arg") in line, (
+                f"the pull-request Loom step must restate the mold flag: {line}"
+            )
 
 
 def test_the_heavy_job_installs_mold_before_it_compiles() -> None:

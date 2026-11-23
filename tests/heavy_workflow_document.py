@@ -20,6 +20,7 @@ HEAVY_JOB: typ.Final[str] = "heavy"
 NOTIFY_JOB: typ.Final[str] = "notify-failure"
 SYNC_STEP: typ.Final[str] = "Install locked test dependencies"
 BUILD_STEP: typ.Final[str] = "Build editable extension"
+COMPILE_STEP: typ.Final[str] = "Compile Loom heavy tests"
 LOOM_STEP: typ.Final[str] = "Run Loom models"
 SYNC_COMMAND: typ.Final[tuple[str, ...]] = (
     "uv",

@@ -144,6 +144,16 @@ jobs:
         # resolve them while holding the shared package-cache lock (the Concordat
         # nested-cargo-offline-tests rule, NC-008).
         run: cargo fetch --locked --manifest-path rust_extension/Cargo.toml
+      - name: Loom all-targets Clippy
+        # The exact configuration the scheduled heavy job runs before its
+        # models. A Lib test that refers to a helper compiled out under
+        # `--cfg loom` fails here, on every pull request, rather than a day
+        # later on the nightly. The separate target directory keeps the
+        # Loom fingerprints, which differ for every crate, out of the
+        # ordinary build.
+        env:
+          CARGO_TARGET_DIR: target/loom
+        run: RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy --manifest-path rust_extension/Cargo.toml --no-default-features --all-targets -- -D warnings
       - name: Lint
         run: make lint
       - name: Dead-code gate

@@ -7,12 +7,16 @@
 //! receives a marked record.
 
 use std::fmt;
+#[cfg(not(loom))]
+use std::sync::Once;
 use std::sync::{
-    Arc, Once,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 
-use log::{LevelFilter, Log};
+#[cfg(not(loom))]
+use log::LevelFilter;
+use log::Log;
 use pyo3::prelude::*;
 use rstest::rstest;
 use serial_test::serial;
@@ -24,7 +28,9 @@ use crate::http_handler::transport_origin::{
     enter_http_transport, is_http_transport_active, suspend_http_transport,
 };
 use crate::log_record::{FemtoLogRecord, RecordOrigin};
-use crate::manager::{self, MAX_LOGGERS};
+use crate::manager;
+#[cfg(not(loom))]
+use crate::manager::MAX_LOGGERS;
 use crate::test_utils::collecting_handler::CollectingHandler;
 
 /// A lazily formatted argument that records the transport state it observed.
@@ -193,19 +199,27 @@ fn an_invalid_target_falls_back_to_root_with_the_marker(_log_max_level: ()) {
 /// loggers, so the saturated path runs in a fresh process. Without the marker
 /// surviving that fallback, a transport diagnostic routed to root would be
 /// delivered by the very HTTP handler that produced it.
+///
+/// Subprocess tests are excluded from the Loom unit-test build: spawning this
+/// binary under `--cfg loom` would re-enter the model build through a child
+/// process that shares none of the model's state.
+#[cfg(not(loom))]
 #[test]
 fn a_full_registry_falls_back_to_root_with_the_marker() {
     let output =
         crate::test_utils::isolated_child::run_isolated_test("log_bridge_origin_capacity_child")
             .expect("the isolated origin test should start");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
-        "isolated origin test failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
+        output.status.success() && stdout.contains("1 passed"),
+        "the isolated origin test must run and pass; status: {:?}\n\
+         stdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
     );
 }
 
+#[cfg(not(loom))]
 #[test]
 #[ignore = "run in a fresh process because the manager is process-global"]
 fn log_bridge_origin_capacity_child() {

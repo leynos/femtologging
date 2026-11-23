@@ -1,6 +1,7 @@
 //! Isolated high-cardinality tests for tracing target resolution.
 
 use pyo3::prelude::*;
+use serial_test::serial;
 use std::sync::{Arc, OnceLock};
 use tracing::callsite::{Callsite, Identifier};
 use tracing::field::FieldSet;
@@ -94,6 +95,9 @@ fn dispatch_overflow_targets(dispatch: &Dispatch) -> PyResult<()> {
 
 fn create_root_logger() -> PyResult<(Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize)> {
     Python::attach(|py| {
+        // Start from a clean registry so this child measures its own budget
+        // rather than one a sibling has already spent.
+        manager::reset_manager();
         let root = manager::get_logger(py, "root")?;
         let handler = Arc::new(CollectingHandler::default());
         root.borrow(py)
@@ -184,6 +188,11 @@ fn tracing_target_resolution_keeps_cardinality_bounded() {
         .expect("the isolated tracing test should start");
 }
 
+// The registry this child saturates is process-global, so it must not overlap
+// another ignored test that resets or saturates it. The heavy workflow's
+// ignored lanes run with default test threads, and a previous child in the same
+// process leaves the registry full, so the test resets it before measuring.
+#[serial]
 #[test]
 #[ignore = "run in a fresh process because the manager is process-global"]
 fn tracing_target_saturation_child() {

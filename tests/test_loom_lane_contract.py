@@ -57,8 +57,9 @@ _TEST_FUNCTION: typ.Final = re.compile(r"#\[test\]\s*fn\s+(?P<name>\w+)")
 
 # The environment variable that bounds how much of the state space Loom
 # explores. Without it a multi-threaded model does not fail, it fails to
-# finish.
+# finish. The value is pinned to the one the successful nightly run used.
 _PREEMPTION_BOUND: typ.Final = "LOOM_MAX_PREEMPTIONS"
+_PREEMPTION_BOUND_VALUE: typ.Final = "3"
 
 
 def _step_tokens(step_name: str) -> tuple[str, ...]:
@@ -223,6 +224,33 @@ def test_the_execution_step_runs_last() -> None:
     )
 
 
+@pytest.mark.parametrize("step_name", [_COMPILE_STEP, _EXECUTE_STEP])
+def test_no_loom_gate_can_be_conditioned_or_tolerated(step_name: str) -> None:
+    """Scenario: a Loom step is made skippable or non-blocking.
+
+    Invariant: the heavy job and both named steps carry no ``if``, and neither
+    the job nor a named step tolerates its own failure.
+
+    This is the converse of prior-success gating. Earlier steps are allowed to
+    prevent the models from running only by failing, which fails the job;
+    GitHub otherwise treats a skipped step as a success. An explicit condition
+    on the execution step would leave every earlier gate green while no model
+    ran, and ``continue-on-error`` would report a failed checker as a
+    successful job. Both are the "compile passed, models skipped" state this
+    lane exists to make impossible.
+    """
+    job = workflow_job(_WORKFLOW, _JOB)
+    assert "if" not in job, f"the {_JOB!r} job must carry no condition"
+    assert job.get("continue-on-error", False) is False, (
+        f"the {_JOB!r} job must not tolerate failure"
+    )
+    step = sole_workflow_step(_WORKFLOW, _JOB, step_name)
+    assert "if" not in step, f"the {step_name!r} step must carry no condition"
+    assert step.get("continue-on-error", False) is False, (
+        f"the {step_name!r} step must not tolerate its own failure"
+    )
+
+
 def test_the_compile_step_still_compiles_only() -> None:
     """Scenario: the cheap compile check is asked what it is for.
 
@@ -309,10 +337,10 @@ def test_the_execution_step_bounds_loom_s_exploration() -> None:
         f"the {_EXECUTE_STEP!r} step must set {_PREEMPTION_BOUND}, "
         f"its environment is {environment!r}"
     )
-    assert str(bound).isdigit(), (
-        f"{_PREEMPTION_BOUND} must be a whole number, saw {bound!r}"
+    assert str(bound) == _PREEMPTION_BOUND_VALUE, (
+        f"{_PREEMPTION_BOUND} must stay at the exercised bound "
+        f"{_PREEMPTION_BOUND_VALUE!r}, saw {bound!r}"
     )
-    assert int(bound) > 0, f"{_PREEMPTION_BOUND} must be positive, saw {bound!r}"
 
 
 def test_the_execution_step_pins_the_python_pyo3_links() -> None:

@@ -11,16 +11,11 @@ pub(crate) mod flush_budget;
 pub mod frame_assertion_helpers;
 pub mod frame_test_helpers;
 pub(crate) mod test_worker;
-// Its only callers are the bridge saturation tests, which are excluded under
+// Every caller is a subprocess-based test that is itself excluded under
 // `--cfg loom`; keeping the module out of that build avoids a dead-code error
-// from the Loom Clippy lane.
-#[cfg(all(
-    not(loom),
-    any(
-        all(feature = "python", feature = "log-compat"),
-        all(feature = "python", feature = "tracing-compat")
-    )
-))]
+// from the Loom Clippy lane. The module carries feature-independent helpers
+// too, so only the bridge entry point below is feature-gated.
+#[cfg(not(loom))]
 pub(crate) mod isolated_child;
 pub mod json_round_trip;
 #[cfg(feature = "python")]

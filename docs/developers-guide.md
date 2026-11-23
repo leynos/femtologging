@@ -1135,6 +1135,11 @@ linker itself:
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
+- The pull-request `build-test` job installs `mold` through `setup-rust` and
+  runs the scheduled Loom all-targets Clippy configuration as its own step after
+  `Fetch locked dependencies`. It builds into `target/loom`, so the Loom
+  fingerprints, which differ for every crate, never invalidate the ordinary
+  build.
 - Release wheel builds run in manylinux containers that carry no `mold`, so
   each Linux `maturin-action` step assigns an empty `RUSTFLAGS`, which
   displaces the Linux table. maturin-action forwards `RUST*` variables into the
@@ -1443,6 +1448,14 @@ The scheduled `heavy-tests` workflow runs ignored tests across its feature
 lanes. Loom model test functions are compiled and registered only when Cargo is
 invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
+Because `rust_extension/Cargo.toml` lists the crate itself as a dev-dependency
+with `test-util` and `log-compat`, Cargo unifies those features, and
+`log-compat`'s `python`, into every unit-test build. A `--no-default-features`
+test or Clippy lane therefore compiles the Python and log-bridge code as well;
+for the Loom all-targets lane the effective lib-test feature set is
+`python,log-compat,test-util`. A gate that reasons from the command line's
+feature names alone will miss code that unification compiles.
+
 ### Loom models
 
 Eleven Loom models in `rust_extension/tests/heavy/` check the handler and
@@ -1498,8 +1511,39 @@ not left silent: the workflow's `notify-failure` job comments on, or opens, the
 `tests/heavy_workflow_contract_helpers.py` and its document accessors in
 `tests/heavy_workflow_document.py`, pins that the job installs from `uv.lock`
 before building, keeps the Loom step last, and runs only for a scheduled
-failure. Every rule is also applied to a deliberately broken copy of the
-workflow, so a check that reports nothing cannot pass by accident.
+failure. It also refuses an explicit condition or a tolerated failure on the
+job or either named Loom step, refuses a checker command whose exit status is
+masked, and pins `LOOM_MAX_PREEMPTIONS` to `3`. Every rule is also applied to a
+deliberately broken copy of the workflow, so a check that reports nothing
+cannot pass by accident.
+
+The scheduled configuration is also a pull-request gate. `build-test` runs the
+same command before `make lint`:
+
+```shell
+RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" CARGO_TARGET_DIR=target/loom \
+  cargo clippy --manifest-path rust_extension/Cargo.toml \
+  --no-default-features --all-targets -- -D warnings
+```
+
+This is what catches a cfg-gating mismatch before the nightly. The
+19 November 2026 scheduled run failed before any model executed: the Loom
+lib-test build referred to `test_utils::isolated_child`, whose module is
+compiled out under `--cfg loom`, while the heavy job's compile step built only
+the `heavy` target. Subprocess-based tests are excluded at the test boundary
+rather than by re-exposing the helper. The module is `#[cfg(not(loom))]`, each
+caller carries the same gate in its own module, the retention helper
+`run_isolated_test_in` stays feature-independent, and the bridge entry point
+`run_isolated_test` requires `python` plus a bridge feature. A child process
+spawned from a Loom unit-test binary re-executes that binary and shares none of
+the model's state, so compiling such a test under Loom would only prove the
+call type-checks.
+
+`tests/test_env_access_policy_ci_contract.py` requires that exact command as
+the step's whole `run` value, and its mutation tests reject a removed, echoed,
+commented, masked (`|| true`), conditional or tolerated gate.
+`tests/test_build_standard_contract.py` requires the step after the Rust and
+`mold` setup and requires the linker flag to be restated.
 
 Both steps build into `target/loom` under their own cache key, which names the
 toolchain, the lockfile, the feature selection and the flags, apart from the
@@ -1535,10 +1579,11 @@ The execution step is the **last** step in the job, so a model failure never
 stops the heavy suite, the Clippy lanes and `pytest` from reporting.
 
 `tests/test_loom_lane_contract.py` asserts that the execution step runs
-`cargo test` under the checker with the model list, sets `--cfg loom` and a
-positive `LOOM_MAX_PREEMPTIONS`, selects every model, carries no `--no-run`, is
-bounded and runs last; that the compile step does carry `--no-run`; and that
-the model list names exactly the models the heavy target defines.
+`cargo test` under the checker with the model list, sets `--cfg loom` and the
+pinned `LOOM_MAX_PREEMPTIONS=3`, selects every model, carries no `--no-run`, is
+bounded and runs last; that neither the job nor either Loom step carries a
+condition or tolerates failure; that the compile step does carry `--no-run`;
+and that the model list names exactly the models the heavy target defines.
 
 ## Logger cardinality and shared dispatch
 

@@ -44,6 +44,11 @@ pub(crate) fn log_max_level() {
 /// value so the child can load the same Python shared library. A child that
 /// does not exit successfully is reported as an error rather than panicking,
 /// so the calling test decides whether that fails its own scenario.
+///
+/// A child whose filter selects no test still exits successfully, so the
+/// harness's `1 passed` line is required as well as the status. Without it a
+/// renamed or filtered-out child would report a passing parent while running
+/// nothing.
 #[cfg(all(
     not(loom),
     any(
@@ -53,12 +58,13 @@ pub(crate) fn log_max_level() {
 ))]
 pub(crate) fn run_isolated_child(test_filter: &str) -> std::io::Result<()> {
     let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)?;
-    if output.status.success() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() && stdout.contains("1 passed") {
         return Ok(());
     }
     Err(std::io::Error::other(format!(
-        "isolated test {test_filter:?} failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
+        "isolated test {test_filter:?} must run and pass; status: {:?}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
         String::from_utf8_lossy(&output.stderr),
     )))
 }

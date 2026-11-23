@@ -24,7 +24,9 @@ import pytest
 from tests.heavy_workflow_contract_helpers import workflow_problems
 from tests.heavy_workflow_document import (
     BUILD_STEP,
+    COMPILE_STEP,
     HEAVY_JOB,
+    LOOM_STEP,
     NOTIFY_JOB,
     SYNC_STEP,
     env,
@@ -175,6 +177,54 @@ def _loom_step_no_longer_last(document: Document) -> None:
     raw_steps(found, subject=HEAVY_JOB).append({"name": "After", "run": "true"})
 
 
+def _heavy_job_conditioned(document: Document) -> None:
+    """Make the whole heavy job skippable."""
+    job(document, HEAVY_JOB)["if"] = "false"
+
+
+def _heavy_job_tolerant(document: Document) -> None:
+    """Report a failed heavy job as a successful workflow job."""
+    job(document, HEAVY_JOB)["continue-on-error"] = True
+
+
+def _compile_step_conditioned(document: Document) -> None:
+    """Make the Loom compile step skippable."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, COMPILE_STEP, subject=HEAVY_JOB)["if"] = "false"
+
+
+def _execute_step_conditioned(document: Document) -> None:
+    """Make the model execution step skippable."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, LOOM_STEP, subject=HEAVY_JOB)["if"] = "false"
+
+
+def _compile_step_tolerant(document: Document) -> None:
+    """Let a failed Loom compile stop failing the job."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, COMPILE_STEP, subject=HEAVY_JOB)["continue-on-error"] = True
+
+
+def _execute_step_tolerant(document: Document) -> None:
+    """Let a failed model run stop failing the job."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, LOOM_STEP, subject=HEAVY_JOB)["continue-on-error"] = True
+
+
+def _checker_status_masked(document: Document) -> None:
+    """Keep the checker command but discard its exit status."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = f"{run_text(step)} || true"
+
+
+def _preemption_bound_changed(document: Document) -> None:
+    """Run the models under a different search bound than the contract pins."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    env(step)["LOOM_MAX_PREEMPTIONS"] = "2"
+
+
 _MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -204,6 +254,14 @@ _MUTATIONS = (
     pytest.param(_notification_finds_a_label, id="notification-by-label"),
     pytest.param(_notification_searches_bodies, id="notification-searches-bodies"),
     pytest.param(_loom_step_no_longer_last, id="loom-not-last"),
+    pytest.param(_heavy_job_conditioned, id="heavy-job-conditioned"),
+    pytest.param(_heavy_job_tolerant, id="heavy-job-tolerant"),
+    pytest.param(_compile_step_conditioned, id="compile-step-conditioned"),
+    pytest.param(_execute_step_conditioned, id="execute-step-conditioned"),
+    pytest.param(_compile_step_tolerant, id="compile-step-tolerant"),
+    pytest.param(_execute_step_tolerant, id="execute-step-tolerant"),
+    pytest.param(_checker_status_masked, id="checker-status-masked"),
+    pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )
 
 
