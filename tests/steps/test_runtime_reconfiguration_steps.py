@@ -16,10 +16,10 @@ from femtologging import (
     NameFilterBuilder,
     RuntimeConfigBuilder,
     StreamHandlerBuilder,
+    _rust_compat,
     get_logger,
     reset_manager,
 )
-from femtologging._rust_compat import _runtime_attachment_state_for_test
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -196,7 +196,12 @@ def mutation_fails_with_value_error(
 def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> None:
     """Assert that a normalized runtime state payload stays stable."""
     logger = get_logger(name)
-    attachment_state = _runtime_attachment_state_for_test(name)
+    attachment_state_for_test = getattr(
+        _rust_compat, "_runtime_attachment_state_for_test", None
+    )
+    if attachment_state_for_test is None:
+        pytest.skip("runtime attachment state requires the 'test-util' feature")
+    attachment_state = attachment_state_for_test(name)
     handler_ids, filter_ids = attachment_state or ([], [])
     handler_ptrs = logger.handler_identities_for_test()
     assert len(handler_ptrs) == len(handler_ids), (

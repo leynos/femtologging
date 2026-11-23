@@ -61,14 +61,18 @@ def force_rotating_failure(
     request: pytest.FixtureRequest,
 ) -> cabc.Callable[[int, str], None]:
     """Return a helper that arms a forced reopen failure, cleared after the test."""
+    force = getattr(_rust_compat, "_force_rotating_fresh_failure_for_test", None)
+    clear = getattr(_rust_compat, "_clear_rotating_fresh_failure_for_test", None)
+    if force is None or clear is None:
+        pytest.skip("forced reopen failure requires the 'test-util' feature")
     registered = False
 
     def _activate(count: int, reason: str) -> None:
         """Arm the forced failure and register its cleanup on first use."""
         nonlocal registered
-        _rust_compat._force_rotating_fresh_failure_for_test(count, reason)
+        force(count, reason)
         if not registered:
-            request.addfinalizer(_rust_compat._clear_rotating_fresh_failure_for_test)
+            request.addfinalizer(clear)
             registered = True
 
     return _activate

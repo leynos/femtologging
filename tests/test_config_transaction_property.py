@@ -11,9 +11,15 @@ from femtologging import (
     ConfigBuilder,
     LoggerConfigBuilder,
     StreamHandlerBuilder,
+    _rust_compat,
     get_logger,
 )
-from femtologging._rust_compat import _runtime_attachment_state_for_test
+
+if not hasattr(_rust_compat, "_runtime_attachment_state_for_test"):
+    pytest.skip(
+        "runtime attachment state requires the 'test-util' feature",
+        allow_module_level=True,
+    )
 
 type AttachmentState = tuple[tuple[str, ...], tuple[str, ...]] | None
 # Attachment identities are opaque extension tokens; their concrete type is
@@ -28,7 +34,7 @@ _HANDLER_ID = "stderr"
 
 def _attachment_state(name: str) -> AttachmentState:
     """Return immutable runtime attachment metadata for *name*."""
-    state = _runtime_attachment_state_for_test(name)
+    state = _rust_compat._runtime_attachment_state_for_test(name)
     if state is None:
         return None
     handler_ids, filter_ids = state
