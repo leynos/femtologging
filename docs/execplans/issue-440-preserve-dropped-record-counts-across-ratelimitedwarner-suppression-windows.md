@@ -170,3 +170,18 @@ a normal flush unreported; both workers now flush their own warner before
 acknowledging. The context-capture fixture's warner used the system clock, so
 its suppression window depended on wall-clock timing; it now takes a fixed
 clock injection.
+
+2026-11-23: gate evidence for `8dc82f08` (base `0b06a657`). `make fmt`,
+`check-fmt`, `markdownlint`, `nixie`, `lint` and `typecheck` passed on the
+tree. The four cargo lanes and pytest passed in a full `make test` run; that
+run was then interrupted by a host-level process kill during the last lane, so
+the tracing-compat lane and `pytest --doctest-modules` were rerun directly on
+the same tree and passed (lane exit 0; 1781 passed, 10 skipped). One boundary
+needs recording: the final commit refactors a logger test and edits the users
+guide after that full run. The refactor leaves the assertions unchanged, the
+focused `producer_rejection` tests pass (3 passed), and `make lint`'s clippy
+lanes compile every target under all four feature sets, so the earlier lanes'
+execution evidence is not transferred as a claim about different code; the only
+unexecuted combination is the refactored test body under the `none`,
+`log-compat` and `tracing-compat` feature sets, and it is the same body the
+python lane executes.
