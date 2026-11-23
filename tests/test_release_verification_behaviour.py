@@ -227,31 +227,28 @@ def test_release_probe_checks_every_stub_declaration_shape(
         )
 
 
-def test_release_probe_rejects_package_level_test_hooks(tmp_path: Path) -> None:
-    """A package that re-exports a test hook fails even with a clean extension."""
+@pytest.mark.parametrize("surface", ["package", "compat"])
+def test_release_probe_rejects_python_level_test_hooks(
+    tmp_path: Path, surface: str
+) -> None:
+    """A test hook outside the native module fails even with a clean extension."""
     package = _packaged_stub(tmp_path)
-    package._set_timed_rotation_test_times_for_test = lambda times: None
+
+    def hook(times: list[int]) -> None:
+        """Stand in for the timed-rotation setter."""
+
+    if surface == "package":
+        package._set_timed_rotation_test_times_for_test = hook
+    else:
+        package._rust_compat = SimpleNamespace(
+            _set_timed_rotation_test_times_for_test=hook
+        )
     native = _production_native()
 
     errors = release_wheel_probe.release_wheel_errors(native=native, package=package)
 
     assert any("femtologging exposes test-only hooks" in error for error in errors), (
-        "Report the test-only package attribute."
-    )
-
-
-def test_release_probe_rejects_private_compatibility_hooks(tmp_path: Path) -> None:
-    """A hook left in the private compatibility module still fails the probe."""
-    package = _packaged_stub(tmp_path)
-    package._rust_compat = SimpleNamespace(
-        _set_timed_rotation_test_times_for_test=lambda times: None
-    )
-    native = _production_native()
-
-    errors = release_wheel_probe.release_wheel_errors(native=native, package=package)
-
-    assert any("femtologging exposes test-only hooks" in error for error in errors), (
-        "Report the test-only compatibility attribute."
+        f"Report the test-only {surface} attribute."
     )
 
 
