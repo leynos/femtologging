@@ -34,6 +34,7 @@ ______________________________________________________________________
 | Review if enabled  | HTTP handlers                   | Expect `HandlerConfigError` for an invalid endpoint or header, and check the four-redirect limit and credential stripping.                                                                       |
 | Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                                                                                   |
 | Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                                                                                      |
+| Required for Rust  | `SchemaVersionError` matches    | Add a wildcard arm; the enum is now `#[non_exhaustive]` and gains nested and limit variants.                                                                                                     |
 | Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                                                                         |
 
 _Table 1: Obligations when moving to v0.2.0._
@@ -525,6 +526,28 @@ for the public contract and implementation details.
 
 ______________________________________________________________________
 
+## Recursive schema version validation
+
+`ExceptionPayload::validate_version()` now validates the whole payload tree
+rather than only the root. It checks the root, its `cause`, its `context`, and
+every exception-group member, depth-first in pre-order. Existing calls need no
+source change, but a payload that previously validated may now fail because a
+nested payload carries an unsupported `schema_version`.
+
+A nested mismatch is reported as `SchemaVersionError::Nested`, which carries a
+dot-separated path such as `cause.exceptions[3].context`. The walk is bounded at
+`MAX_EXCEPTION_PAYLOAD_DEPTH` (1,000 edges below the root) and
+`MAX_EXCEPTION_PAYLOAD_NODES` (10,000 payload occurrences), matching the
+defaults of bounded exception-payload filtering; exceeding either bound reports
+`TreeTooDeep` or `TreeTooLarge`.
+
+`SchemaVersionError` gained the `Nested`, `TreeTooDeep`, and `TreeTooLarge`
+variants and is now `#[non_exhaustive]`. This is a breaking change for Rust
+consumers that matched `VersionTooNew` and `VersionTooOld` exhaustively: add a
+wildcard arm. The root-level variants and their fields are unchanged.
+
+______________________________________________________________________
+
 ## 10. File-handler calls release the interpreter lock
 
 Explicit Python calls to `handle()`, `flush()`, and `close()` on the file,
@@ -855,6 +878,8 @@ Each item carries the same obligation label as the matching row in
       Rust `push_log_context`, or `RecordMetadata::key_values` passed to
       `log_with_metadata`, and update any `with_record_fields` selection that
       named the old key.
+- [ ] **Required for Rust:** Add a wildcard arm to matches on
+      `SchemaVersionError`, which is now `#[non_exhaustive]`.
 - [ ] **Review if enabled:** Move handler state that relied on a per-logger
       thread to `contextvars` or into the handler itself.
 - [ ] **Review if enabled:** Review `StdlibHandlerAdapter` levels, filters, and
@@ -886,5 +911,6 @@ ______________________________________________________________________
 | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `AttributeError: 'BasicConfig' object has no attribute 'filename_backup'` | Use one of the five declared fields, or keep the value in the caller's own structure.                 |
 | `RuntimeError: Python-backed handlers must provide contextual dispatch`   | Give the handler contextual-dispatch support, or register it through `ConfigBuilder` or `dictConfig`. |
+| `non-exhaustive patterns` for `SchemaVersionError`                        | Add a wildcard arm; the enum gained nested and limit variants.                                        |
 
 _Table 2: Diagnostics introduced in v0.2.0 and their remedies._

@@ -21,8 +21,18 @@
 //!   versions [`MIN_EXCEPTION_SCHEMA_VERSION`] through N. Missing optional
 //!   fields use serde default values.
 //! - **Forward incompatible**: Code supporting version N rejects payloads with
-//!   version > N. Use [`validate_schema_version`] or the `validate_version`
-//!   methods on payload types to check before processing.
+//!   version > N. Use [`validate_schema_version`] for a single value or the
+//!   `validate_version` method on a payload type to check before processing.
+//!
+//! Validation is recursive. `cause`, `context`, and exception-group members
+//! are independently versioned [`ExceptionPayload`] values, so validating a
+//! payload checks the root and every payload nested beneath it. The walk is
+//! depth-first in pre-order (node, `cause`, `context`, then exception-group
+//! members by index), and the first unsupported version is reported with a
+//! dot-separated path such as `cause.exceptions[3].context`. Traversal is
+//! bounded by [`MAX_EXCEPTION_PAYLOAD_DEPTH`] and
+//! [`MAX_EXCEPTION_PAYLOAD_NODES`]; those limits bound validation work, not
+//! parsing.
 //!
 //! ## Version Increment Rules
 //!
@@ -46,6 +56,7 @@
 //!
 //! fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
 //!     let payload: ExceptionPayload = serde_json::from_str(json)?;
+//!     // Checks the root payload and every nested payload it reaches.
 //!     payload.validate_version()?;
 //!     // Process the validated payload...
 //!     Ok(())
@@ -77,9 +88,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use thiserror::Error;
 
 mod filtering;
+mod version_validation;
+mod versioning;
+
+pub use versioning::{SchemaVersionError, SchemaVersioned, validate_schema_version};
 
 #[cfg(test)]
 mod tests;
@@ -96,91 +110,27 @@ pub const MIN_EXCEPTION_SCHEMA_VERSION: u16 = 1;
 /// compatibility.
 pub const EXCEPTION_SCHEMA_VERSION: u16 = 1;
 
-/// Errors related to exception schema version validation.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum SchemaVersionError {
-    /// The payload schema version is newer than supported.
-    #[error(
-        "unsupported exception schema version: found {found}, \
-         maximum supported is {max_supported}"
-    )]
-    VersionTooNew {
-        /// The schema version found in the payload.
-        found: u16,
-        /// The maximum schema version supported by this library.
-        max_supported: u16,
-    },
-    /// The payload schema version is older than supported.
-    #[error(
-        "unsupported exception schema version: found {found}, \
-         minimum supported is {min_supported}"
-    )]
-    VersionTooOld {
-        /// The schema version found in the payload.
-        found: u16,
-        /// The minimum schema version supported by this library.
-        min_supported: u16,
-    },
-}
+/// Maximum nesting depth that recursive schema version validation traverses.
+///
+/// The root payload is at depth 0, and each `cause`, `context`, or
+/// exception-group edge adds one. The limit matches the default
+/// `max_exception_depth` of the recursive frame filter, so validation accepts
+/// by depth every payload tree that processing accepts. It bounds validation
+/// work; it is not a parsing limit.
+///
+/// Nesting depth in a serialized document and payload-edge depth are not
+/// equivalent, so a payload that parses is not necessarily one this limit
+/// accepts; the node limit can also reject a wide tree that parses.
+pub const MAX_EXCEPTION_PAYLOAD_DEPTH: usize = 1_000;
 
-/// Validate that a schema version is supported.
+/// Maximum number of payload nodes that recursive validation visits.
 ///
-/// Returns `Ok(())` if the version is in the supported range
-/// ([`MIN_EXCEPTION_SCHEMA_VERSION`] through [`EXCEPTION_SCHEMA_VERSION`]),
-/// or an error if the version is unsupported.
-///
-/// # Errors
-///
-/// Returns [`SchemaVersionError::VersionTooNew`] if the version exceeds
-/// [`EXCEPTION_SCHEMA_VERSION`], or [`SchemaVersionError::VersionTooOld`]
-/// if the version is below [`MIN_EXCEPTION_SCHEMA_VERSION`].
-///
-/// # Examples
-///
-/// ```rust
-/// use _femtologging_rs::exception_schema::{
-///     validate_schema_version, EXCEPTION_SCHEMA_VERSION, MIN_EXCEPTION_SCHEMA_VERSION,
-/// };
-///
-/// assert!(validate_schema_version(MIN_EXCEPTION_SCHEMA_VERSION).is_ok());
-/// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION).is_ok());
-/// assert!(validate_schema_version(EXCEPTION_SCHEMA_VERSION + 1).is_err());
-/// ```
-pub fn validate_schema_version(version: u16) -> Result<(), SchemaVersionError> {
-    if version > EXCEPTION_SCHEMA_VERSION {
-        return Err(SchemaVersionError::VersionTooNew {
-            found: version,
-            max_supported: EXCEPTION_SCHEMA_VERSION,
-        });
-    }
-    if version < MIN_EXCEPTION_SCHEMA_VERSION {
-        return Err(SchemaVersionError::VersionTooOld {
-            found: version,
-            min_supported: MIN_EXCEPTION_SCHEMA_VERSION,
-        });
-    }
-    Ok(())
-}
-
-/// Trait for types that carry a schema version.
-///
-/// Implementing this trait provides a blanket `validate_version` method
-/// via the extension trait pattern.
-pub trait SchemaVersioned {
-    /// Returns the schema version of this payload.
-    fn schema_version(&self) -> u16;
-
-    /// Validate that this payload's schema version is supported.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SchemaVersionError::VersionTooNew`] if the version exceeds
-    /// the maximum supported, or [`SchemaVersionError::VersionTooOld`] if
-    /// below the minimum supported.
-    fn validate_version(&self) -> Result<(), SchemaVersionError> {
-        validate_schema_version(self.schema_version())
-    }
-}
+/// The root counts as one node, as does every nested `cause`, `context`, and
+/// exception-group member. The limit matches the default
+/// `max_exception_nodes` of the recursive frame filter. It bounds validation
+/// work; it is not a parsing limit, so a wide payload tree can deserialize and
+/// still exceed this bound.
+pub const MAX_EXCEPTION_PAYLOAD_NODES: usize = 10_000;
 
 /// A single frame in a Python stack trace.
 ///
@@ -314,6 +264,26 @@ impl SchemaVersioned for StackTracePayload {
 impl SchemaVersioned for ExceptionPayload {
     fn schema_version(&self) -> u16 {
         self.schema_version
+    }
+
+    /// Validate this payload and every nested payload it reaches.
+    ///
+    /// The walk is depth-first in pre-order: the payload itself, then its
+    /// `cause`, its `context`, and its exception-group members in index
+    /// order. A mismatch below the root is reported through
+    /// [`SchemaVersionError::Nested`] with a path to the offending payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns a plain [`SchemaVersionError::VersionTooNew`] or
+    /// [`SchemaVersionError::VersionTooOld`] when the root is unsupported,
+    /// [`SchemaVersionError::Nested`] when a nested payload is unsupported,
+    /// [`SchemaVersionError::TreeTooDeep`] when the tree is deeper than
+    /// [`MAX_EXCEPTION_PAYLOAD_DEPTH`], or
+    /// [`SchemaVersionError::TreeTooLarge`] when it holds more than
+    /// [`MAX_EXCEPTION_PAYLOAD_NODES`] nodes.
+    fn validate_version(&self) -> Result<(), SchemaVersionError> {
+        version_validation::validate_payload_tree(self)
     }
 }
 

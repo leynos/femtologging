@@ -30,6 +30,10 @@ PLACEMENTS: typ.Final = (
     # 50 covers the API-boundary check, which builds its own release wheel on
     # the 3.12 lane on top of an already 37-minute gate run.
     ("ci.yml", "build-test", "ubicloud-standard-4", 50),
+    # The baseline publisher runs only on a push to main, where the expression
+    # falls through to Ubicloud: that is the cache store the pull-request
+    # lanes restore the baseline from.
+    ("coverage-main.yml", "coverage-baseline", "ubicloud-standard-2", 15),
 )
 
 #: The runner-selection shape: a condition, a quoted hosted arm and a quoted

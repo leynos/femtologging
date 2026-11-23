@@ -28,5 +28,6 @@ fn compile_time_ui() {
     test_cases.pass("tests/ui/pass/pyo3_pymodule.rs");
     test_cases.pass("tests/ui/pass/pyo3_signature.rs");
     test_cases.pass("tests/ui/pass/pyo3_detach_ungil.rs");
+    test_cases.pass("tests/ui/pass/schema_version_error_wildcard.rs");
     test_cases.compile_fail("tests/ui/fail/*.rs");
 }

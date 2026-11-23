@@ -11,9 +11,9 @@ libraries. Use the links below to explore each topic.
   - Records developer toolchain ownership and validation boundaries.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Describes structured logging additions, the bounded logger and shared
-    dispatch changes, the bounded handler `close()` contract, and the
-    production-wheel packaging change that omits the timed-rotation test
-    hooks in v0.2.0.
+    dispatch changes, the bounded handler `close()` contract, recursive schema
+    version validation, and the production-wheel packaging change that omits
+    the timed-rotation test hooks in v0.2.0.
 - [dependency-analysis.md](./dependency-analysis.md)
   - Summarizes third-party crates chosen for the Rust implementation.
 - [documentation-style-guide.md](./documentation-style-guide.md)
@@ -28,9 +28,9 @@ libraries. Use the links below to explore each topic.
     Rust modules and the Python surface.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Describes the `BasicConfig` slots, bounded logger names and registry,
-    shared dispatch, bounded handler `close()`, and the move to production
-    wheels that omit the timed-rotation test hooks, with migration guidance for
-    v0.2.0.
+    shared dispatch, bounded handler `close()`, recursive schema version
+    validation, and the move to production wheels that omit the timed-rotation
+    test hooks, with migration guidance for v0.2.0.
 
 ## Architecture decision records
 
@@ -57,6 +57,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0008-release-pipeline.md](./adrs/adr-0008-release-pipeline.md)
   - Records the attested release pipeline, production feature set and
     idempotent PyPI/GitHub Release reconciliation.
+- [adrs/adr-0009-main-branch-coverage-publication.md](./adrs/adr-0009-main-branch-coverage-publication.md)
+  - Records the split between pull-request measurement and main-branch
+    publication of the coverage baseline and CodeScene report.
 
 ## Logging Architecture
 

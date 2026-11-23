@@ -952,15 +952,99 @@ configuration names it, so a build without it fails at link time. The pin is
 the stable `1.99.1`, so the nightly-only parallel frontend flag (`-Zthreads=8`)
 is not used.
 
+Every target that compiles Rust depends on `make check-build-tools`, which
+reports a missing pinned toolchain or `mold` with the command that installs it.
+`make install-build-tools` installs the toolchain from `rust-toolchain.toml`
+and, on Linux, the `mold` package. The check is a capability probe: it installs
+nothing, so it is safe to run before every gate. Installed tooling need not be
+active in every job; release, coverage and Whitaker routes deliberately exclude
+parts of the development standard, as described below.
+
+Both scripts read `BUILD_TOOLS_OS` in place of `uname -s` when it is set, so
+the installer and preflight contract tests can exercise the Linux and non-Linux
+branches without leaving the host.
+
+Before the first suite step, install the pinned toolchain and `mold` in every
+hosted Linux job that runs a test suite step, or a Make goal that reaches the
+suite: place an unconditional `setup-rust` step with `install-mold: 'true'`
+ahead of that step. A late, conditional, soft-failing or `mold`-less install
+does not satisfy the rule, because the suite's Make goals reach
+`check-build-tools`. The contract is derived from Make prerequisite
+reachability in
+[`tests/test_workflow_tool_provisioning_contract.py`](../tests/test_workflow_tool_provisioning_contract.py),
+so a new suite job is covered without being named there.
+
+The build-standard tests are split by what each one pins. The capability
+scenarios that judge a host live in
+[`tests/test_build_tools_preflight_script_contract.py`](../tests/test_build_tools_preflight_script_contract.py);
+the rustup probes' own mechanics, such as running from `/` and refusing to
+auto-install, in
+[`tests/test_build_tools_probe_contract.py`](../tests/test_build_tools_probe_contract.py);
+and the Makefile's dependency, ordering and substitutability rules in
+[`tests/test_build_tools_contract.py`](../tests/test_build_tools_contract.py).
+The installer's own contract, which runs every case through both
+`bash scripts/install-build-tools.sh` and `make install-build-tools`, lives in
+[`tests/test_build_tools_installer_script_contract.py`](../tests/test_build_tools_installer_script_contract.py).
+Their machinery has modules of its own:
+[`tests/build_tools_support.py`](../tests/build_tools_support.py) builds the
+fake executables,
+[`tests/build_tools_script_support.py`](../tests/build_tools_script_support.py)
+varies the rustup stub's answers, and
+[`tests/build_tools_probe_support.py`](../tests/build_tools_probe_support.py)
+runs the script against them.
+
+The workflow readers divide the same way.
+[`tests/workflow_document_helpers.py`](../tests/workflow_document_helpers.py)
+discovers and parses the documents, checks that every locally reusable workflow
+a job calls exists, and offers the job and step accessors.
+[`tests/workflow_command_helpers.py`](../tests/workflow_command_helpers.py)
+reads a `run` body's shell text, with
+[`tests/workflow_shell_helpers.py`](../tests/workflow_shell_helpers.py) holding
+the quoting scan both readers share;
+[`tests/workflow_heredoc_helpers.py`](../tests/workflow_heredoc_helpers.py)
+finds the operators that scan leaves unquoted and skips their bodies;
+[`tests/workflow_runner_helpers.py`](../tests/workflow_runner_helpers.py)
+classifies runners; and
+[`tests/workflow_contract_helpers.py`](../tests/workflow_contract_helpers.py)
+states the provisioning rules and consumes the other three.
+[`tests/test_workflow_contract_properties.py`](../tests/test_workflow_contract_properties.py)
+is the Hypothesis suite that checks those readers against independent models,
+and [`tests/make_contract_helpers.py`](../tests/make_contract_helpers.py)
+supplies `prerequisite_map()`, the Makeutil-backed prerequisite map.
+
+The readers take their outside inputs from the caller rather than reaching for
+them: `depends_on_preflight` accepts a prerequisite map and `workflow_jobs`
+accepts a `reusable_exists` lookup, so neither parses the Makefile nor reads
+the repository itself.
+
+The preflight runs `rustup toolchain list` and `rustup show` from `/`, so the
+repository's `rust-toolchain.toml` cannot provision or redirect the pinned
+channel. It matches the installed name as `<channel>-<host>`, and accepts a bare
+`<channel>` only when `rustup show` reports no host. A probe that fails is
+named in the report rather than described as an absent toolchain, so an
+operator can tell a broken rustup from a missing installation.
+
+Every direct Cargo command line in the Makefile uses the `CARGO` variable,
+which defaults to `cargo`. Overriding it runs the same recipe with a different
+executable, so `make test CARGO=/opt/rust/bin/cargo` exercises another Cargo
+installation without editing the Makefile. The `fmt`, `check-fmt`, `clean`,
+`release`, `test` and `lint-rust-test-docs` targets carry such command lines.
+`build` drives `maturin` instead, and the Clippy and environment-policy lane
+drivers (`lint-rust-clippy`, `lint-env-policy`) select Cargo themselves, so
+`CARGO` does not redirect them.
+
 An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
 `[build] rustflags` and each build that assigns `RUSTFLAGS` decides about the
 linker itself:
 
-- CI's `setup-rust` exports `RUSTFLAGS=-D warnings`, so those builds keep the
-  platform linker. The step still installs `mold` (`install-mold: 'true'`),
-  because the compile-time UI tests (trybuild) build a nested crate under
-  `target/` that finds `.cargo/config.toml` without that `RUSTFLAGS`, so the
-  Linux `mold` default applies to it.
+- CI's `setup-rust` exports
+  `rustflags: '-D warnings -Clink-arg=-fuse-ld=mold'`, restating the linker
+  flag the export would otherwise displace, and installs `mold`
+  (`install-mold: 'true'`). The coverage step assigns a warning-only
+  `RUSTFLAGS` again, because the instrumented measurement excludes the
+  development linker. The compile-time UI tests (trybuild) build a nested crate
+  under `target/` that finds `.cargo/config.toml`; with the flag restated, that
+  nested build keeps the same linker as the surrounding job.
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
@@ -1016,16 +1100,17 @@ metadata key (`[unstable] embed-metadata`) does not apply and the configuration
 must not carry it.
 
 `tests/test_build_standard_contract.py` holds all of this: the Linux-only
-`mold` table, the profile settings, the Loom steps, the release-wheel override
-and the Whitaker boundary, and it proves the defaults and both overrides at the
-Cargo boundary by building a one-file crate under the repository's own
-configuration. That fixture also drops the wrapper variables from its
-environment and passes empty `build.rustc-wrapper` and
-`build.rustc-workspace-wrapper` values on the Cargo command line. A host that
-configures a compiler wrapper in its own Cargo configuration would otherwise
-queue the one-file build behind that wrapper, and the measurement would
-describe the host instead of this repository. The fixture also builds with a
-private `CARGO_HOME`, so it reads no host configuration at all.
+`mold` table, the profile settings, the Loom steps, the CI restatement and
+coverage exclusion, the preflight wiring, the release-wheel override and the
+Whitaker boundary. It proves the defaults and both overrides at the Cargo
+boundary by building a one-file crate under the repository's own configuration.
+That fixture also drops the wrapper variables from its environment and passes
+empty `build.rustc-wrapper` and `build.rustc-workspace-wrapper` values on the
+Cargo command line. A host that configures a compiler wrapper in its own Cargo
+configuration would otherwise queue the one-file build behind that wrapper, and
+the measurement would describe the host instead of this repository. The fixture
+also builds with a private `CARGO_HOME`, so it reads no host configuration at
+all.
 
 ### Native backoff randomness
 
@@ -1101,6 +1186,37 @@ boundaries.
 [rust-graph-tests]: ../rust_extension/src/frame_filter_py_graph_tests.rs
 [python-graph-tests]: ../tests/frame_filter/test_exception_graph_limits.py
 [python-graph-property-tests]: ../tests/frame_filter/test_exception_graph_properties.py
+
+## Exception schema version validation
+
+`ExceptionPayload::validate_version()` validates the root payload and every
+payload nested beneath it. `exception_schema/version_validation.rs` holds a
+depth-first pre-order walk that checks each payload's `schema_version` before
+visiting its `cause`, `context`, and exception-group members in index order.
+Path segments are collected only while an error unwinds, so a successful walk
+allocates neither a path vector nor a path string; a nested mismatch is
+reported as `SchemaVersionError::Nested` with a dot-separated path such as
+`cause.exceptions[3].context`.
+
+The walk is bounded by `MAX_EXCEPTION_PAYLOAD_DEPTH` and
+`MAX_EXCEPTION_PAYLOAD_NODES`. A Python-lane test pins both to the frame
+filter's defaults (`max_exception_depth` and `max_exception_nodes`), so the two
+traversals start from the same shape budgets. The limits are not equivalent
+gates: schema validation also rejects unsupported `schema_version` values,
+which frame filtering never inspects, and a caller can raise the filter's
+limits per call without changing validation's. Limit failures report
+`TreeTooDeep` or `TreeTooLarge`.
+
+`exception_schema/versioning.rs` holds the version constants' consumers: the
+`SchemaVersionError` enum, `validate_schema_version`, and the `SchemaVersioned`
+trait. `SchemaVersionError` is `#[non_exhaustive]`; the
+`tests/ui/pass/schema_version_error_wildcard.rs` trybuild case pins the
+wildcard-arm contract that downstream matches need. Root mismatches keep the
+`VersionTooNew` and `VersionTooOld` variants unchanged.
+
+The [users guide](users-guide.md#exception-schema-versioning) documents the
+public contract, and the [v0.2.0 migration guide](v0-2-0-migration-guide.md)
+records the `#[non_exhaustive]` migration for Rust consumers.
 
 ## Publishing a release
 
@@ -2715,8 +2831,10 @@ actor is whoever triggered the run, so a person pushing to a Dependabot branch
 would flip the runner. A push and a dispatch have no pull request, so both
 values are empty strings (falsy) and the expression selects Ubicloud; a
 Dependabot pull request therefore builds cold on the hosted pool. `ci.yml` runs
-on pull requests only, so there is no main-branch cache writer: Ubicloud's
-cache proxy is scoped by ref, and each pull request warms its own scope.
+on pull requests only, and Ubicloud's cache proxy is scoped by ref, so each
+pull request warms its own scope. The one main-branch writer whose cache the
+pull-request lanes read is `coverage-main.yml`'s baseline publisher, described
+under [Coverage publication](#coverage-publication).
 
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
@@ -2744,6 +2862,120 @@ the matrix (`runs-on: ${{ matrix.runner }}` over an Ubicloud value), and
 asserts an exact inventory of the jobs that can land on Ubicloud with their
 runner class and ceiling. A change that adds, removes or re-times such a job
 fails it until the inventory is updated in the same commit.
+
+## Coverage publication
+
+CV-005 splits coverage in two. A pull request generates a Cobertura report and
+measures against the stored baseline, but it publishes nothing and never
+contacts CodeScene: `generate-coverage` runs with `with-ratchet: 'true'` and
+`publish-artefact: 'false'`, and its job declares no environment. This change
+also newly enables the ratchet on that lane, which previously ran the action
+without `with-ratchet` and so took its `'false'` default, and it stops the lane
+publishing its report. The default branch owns both persistent outputs, in
+`coverage-main.yml`, which a push to `main` alone triggers. The decision, its
+drivers and the alternatives it rejected are recorded in
+[ADR-0009](adrs/adr-0009-main-branch-coverage-publication.md).
+
+That publisher has four jobs. `coverage-measure` runs on a hosted runner once
+per required Python lane (`3.12`, `3.13` and `3.14`, the non-experimental lanes
+of `ci.yml`), installs `makeutil` because the measured suite parses the
+Makefile through it, and hands each lane's figures to its publisher through a
+`coverage-baseline-handover-<python>` artefact. `publish-baseline: never` keeps
+the measuring runner out of the cache store entirely, because that store is not
+the one the pull-request lanes read: a ratchet there could never fail and a
+baseline saved there would never be restored. The baseline cache key carries
+the interpreter's major.minor, so every required lane needs its own published
+entry: a lane whose entry was never written restores nothing, compares against
+zero and can never fail.
+
+A cache miss still fails open. `generate-coverage` writes `0` into a baseline
+file its restore did not supply
+([leynos/shared-actions#699](https://github.com/leynos/shared-actions/issues/699)),
+so an evicted entry starts that lane at zero and its ratchet cannot fail while
+the run still looks green. The pinned action makes the miss visible but neither
+this repository nor the action fails closed on it; the repair belongs in the
+action. Its `Report ratchet baseline cache decisions` step prints
+`metric ratchet-cache.restore=<hit|miss|skipped|error>`, raises a
+`::notice title=generate-coverage ratchet cache::restore=… save=…` annotation,
+and adds a `### generate-coverage ratchet cache` block with a
+`- baseline restore:` line to the job summary, so the run log and the summary
+record which comparison the lane actually made. `ci.yml` cites that line at the
+ratchet input, because the baseline file cannot answer the question afterwards:
+`ratchet_coverage.py` rewrites the file to the measured figure on the same run,
+so a zero is no longer observable once the step has finished.
+
+Two publishers then ratchet each lane's handed-over figures, because a cache
+entry written on one runner provider is not read by the other.
+`coverage-baseline` runs on an Ubicloud runner, where the same-repository
+pull-request lanes run. `coverage-baseline-hosted` runs on `ubuntu-latest` and
+writes GitHub's cache store, which is what a fork or Dependabot pull request
+restores from: `ci.yml` places those lanes on the hosted pool, so without the
+second publisher that lane would restore nothing, start its baseline at zero
+and never fail. Each publisher ratchets the same figure and writes only its own
+provider's store.
+
+A failed lane must not withdraw a successful sibling's publication. Measurement
+uses `fail-fast: false`, so every other lane still finishes, and each publisher
+is conditioned on `!cancelled()` rather than on its dependency succeeding,
+which is the one form that still runs after a failed `needs`. Each lane then
+publishes only when the matrix as a whole succeeded or its own hand-over is
+present: under a partial failure a `continue-on-error` probe decides, and an
+absent hand-over means that lane measured nothing and publishes nothing. When
+every lane succeeded the probe does not run, so a lost hand-over reaches the
+action's own download unguarded and fails the publisher: that is a lost
+publication, not an empty lane.
+
+`coverage-upload` is a job of its own, downstream of the measurement alone, so
+a CodeScene outage cannot stop the baseline advancing; it still fails, and
+fails the workflow with it, when CodeScene refuses the report. It receives the
+newest required lane's report as an artefact, because only that lane produces
+one, and checks out the measured revision because the uploader takes its branch
+and commit from the clone it runs in rather than from the report alone. A
+failure in another lane therefore still uploads the trunk's report.
+
+The upload is optional and guarded twice. A token-presence step writes
+`available` and binds no secret; the upload step runs only when that output is
+`'true'` and `github.ref` is `refs/heads/main`. The token reaches the uploader
+as its `access-token` input and sits in no `env`, because the upload action is
+composite and hands its step's environment to the nested steps it runs. The
+presence step records the boolean and its consequence in the run log and the
+job summary in both branches, so a skipped upload states its own reason, and it
+never writes the secret. Until the owner provisions `CS_ACCESS_TOKEN` in the
+`codescene` environment, the step reports `available=false` and skips; the
+baseline job still runs, so a missing token cannot hide a coverage regression.
+
+The `codescene` environment admits `main` alone, and no pull-request-reachable
+job may declare it. The publisher's concurrency group is keyed on the ref and
+never cancels, so a newer push cannot abandon an in-flight upload or baseline
+write. `tests/test_coverage_publisher_contract.py` holds the whole split: both
+publishers, one environment holder, the single recorded call into another
+repository, the canonical guard and seven ways to weaken it, no token in any
+`env`, and identical measurement inputs on both lanes.
+`tests/test_coverage_reach_contract.py` holds the fail-closed trigger and
+reachability readers, including the forwards direction of a `workflow_run`
+edge: the listener becomes reachable once the workflow it watches does, not the
+other way round.
+
+The readers behind those contracts live in `tests/coverage_contract_helpers.py`,
+`tests/coverage_reach_helpers.py`, `tests/coverage_environment_helpers.py` and
+`tests/coverage_push_filter_helpers.py`. They are test-only readers: the
+package imports none of them, and each fails closed on a declaration it cannot
+resolve. That includes an expression-valued `env` and an aggregate `secrets`
+access such as `toJSON(secrets)`, which are refused or reported as carrying the
+token rather than passed as safe.
+
+Both lanes must measure the same population, so every input that defines it
+(`output-path`, `format`, `cargo-manifest`, `with-default-features`, `features`,
+`pytest-workers`) is identical. The pull-request lanes run on Ubicloud and
+restore from that provider's cache store, so `coverage-baseline` runs there
+too; a push has no pull request, so both arms of the placement expression are
+empty and it selects Ubicloud. The expression is kept because the placement
+contract reads exactly that shape as the estate's fallback rule, and
+`coverage-baseline-hosted` states `ubuntu-latest` literally.
+
+Known exception: a Dependabot pull request merged by `dependabot-automerge` with
+`GITHUB_TOKEN` fires no push event, so that merge publishes nothing until the
+next push to `main`.
 
 ## Validation
 
