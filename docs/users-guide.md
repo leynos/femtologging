@@ -421,11 +421,13 @@ holding back. At that point, the dispatch-admission drops counted by
 and the context-capture failures counted by `get_context_capture_failures()` use
 `FemtoLogger: dropped {count} records after context capture failed`. Both
 figures are cumulative since the last report, so a suppressed interval's drops
-are carried into the next one. A logger flush adds no report of its own: the
-barrier is deadline-bound, so a blocking sink must not be able to push
-`flush_handlers()` past its timeout, and these counts wait for destruction. (An
-open handler's own pending count still travels on the barrier's marker to that
-handler's worker.)
+are carried into the next one. Destruction reports whatever is still pending at
+that point; a count whose interval elapsed first may already have been reported
+by a due warning, so the message does not mean every drop since the last report
+is still outstanding. A logger flush adds no report of its own: the barrier is
+deadline-bound, so a blocking sink must not be able to push `flush_handlers()`
+past its timeout, and these counts wait for destruction. (An open handler's own
+pending count still travels on the barrier's marker to that handler's worker.)
 
 ### Flushing logger handlers
 
@@ -502,9 +504,12 @@ for the compatibility rules.
   the next report. An open handler's `flush()` carries a pending count on its
   flush marker, which the worker reports before acknowledging; if the marker
   never enters the queue the count stays pending. `close()` and destruction
-  report a pending count directly, because no later warning will come: the
-  former before it waits for the worker, the latter before it closes. A flush
-  on an already closed handler reports nothing and returns `False`.
+  report a pending count directly because no later warning will come: the
+  former before it waits for the worker, the latter before it closes. That
+  report runs before the close wait starts, so a blocking `log` sink can delay
+  `close()` past the flush timeout, and the Python `close()` makes it while
+  still holding the GIL. A flush on an already closed handler reports nothing
+  and returns `False`.
 - To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
   provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
   `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
