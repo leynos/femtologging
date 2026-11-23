@@ -13,6 +13,7 @@ from femtologging import (
     StreamHandlerBuilder,
     get_logger,
 )
+from tests.helpers import require_identity_hooks
 
 type BuilderFactory = cabc.Callable[[], ConfigBuilder]
 
@@ -39,6 +40,7 @@ def test_disable_existing_loggers_clears_unmentioned(
     new_info_stderr_builder: BuilderFactory,
 ) -> None:
     """Loggers not present in new config are disabled and lose attachments."""
+    require_identity_hooks()
     builder = new_info_stderr_builder().with_logger(
         "stale", LoggerConfigBuilder().with_handlers([HANDLER_ID])
     )
@@ -190,6 +192,7 @@ def test_disable_existing_loggers_keeps_ancestors(
     new_info_stderr_builder: BuilderFactory, ancestors: list[str]
 ) -> None:
     """Configured descendants preserve ancestor handlers."""
+    require_identity_hooks()
     builder = new_info_stderr_builder()
     for name in ancestors:
         builder = builder.with_logger(

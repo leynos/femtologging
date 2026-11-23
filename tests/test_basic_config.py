@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from femtologging import BasicConfig, basicConfig, get_logger, reset_manager
+from tests.helpers import require_identity_hooks
 
 # Levels emitted by every case, ordered from most to least verbose so the
 # expected sets below read as prefixes of this sequence.
@@ -28,6 +29,7 @@ def test_basic_config_emits_expected_records(
     expected_msgs: set[str],
 ) -> None:
     """Verify that ``basicConfig`` honours level and force combinations."""
+    require_identity_hooks()
     reset_manager()
     basicConfig(level=level, force=force)
     logger = get_logger("root")

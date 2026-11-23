@@ -20,7 +20,7 @@ from femtologging import (
     StreamHandlerBuilder,
     get_logger,
 )
-from tests.helpers import poll_file_for_text
+from tests.helpers import poll_file_for_text, require_identity_hooks
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -61,6 +61,7 @@ def test_runtime_apply_appends_handler_and_replaces_filters(
     core_config: None,
 ) -> None:
     """Happy-path runtime mutation should take effect immediately."""
+    require_identity_hooks()
     logger = get_logger("core")
     before = logger.handler_identities_for_test()
 
@@ -120,6 +121,7 @@ def test_runtime_invalid_handler_filter_does_not_create_file(
     core_config: None, tmp_path: Path
 ) -> None:
     """Invalid new handler references fail before resources or state change."""
+    require_identity_hooks()
     logger = get_logger("core")
     previous_handlers = logger.handler_identities_for_test()
     path = tmp_path / "invalid-runtime-handler.log"

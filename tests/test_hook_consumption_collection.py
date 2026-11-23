@@ -6,8 +6,11 @@ importable, because pytest has to collect them before it can apply a skip
 marker; an import error at collection is not a skip. The independent tests in
 those modules must also still run.
 
-The probe hides the hooks from a `test-util` build, which reproduces a
-hook-absent build without building a second extension.
+The probe hides the hooks from a `test-util` build and runs the plain test
+modules that consume them, which reproduces a hook-absent build without
+building a second extension. BDD step modules need their whole feature's step
+set and cannot run standalone; their identity steps call the same
+`require_identity_hooks` guard, and the feature runs cover them.
 """
 
 from __future__ import annotations
@@ -26,30 +29,38 @@ _HOOK_HIDING_PLUGIN = """\
 import femtologging
 import femtologging._rust_compat as compat
 
-_HOOKS = (
-    "_force_rotating_fresh_failure_for_test",
-    "_clear_rotating_fresh_failure_for_test",
-    "_set_timed_rotation_test_times_for_test",
-    "_clear_timed_rotation_test_times_for_test",
-    "_runtime_attachment_state_for_test",
+# The native hooks keep their unprefixed names; the compatibility wrappers add
+# an underscore. Delete both spellings so the probe matches a production build.
+_NATIVE_HOOKS = (
+    "force_rotating_fresh_failure_for_test",
+    "clear_rotating_fresh_failure_for_test",
+    "set_timed_rotation_test_times_for_test",
+    "clear_timed_rotation_test_times_for_test",
+    "runtime_attachment_state_for_test",
+    "_rust_log_enabled",
+    "_rust_log_max_level",
+    "_emit_rust_log",
+    "_install_test_global_rust_logger",
 )
 
 
 def pytest_configure(config):
     del config
     femtologging._has_test_util = False
-    for name in _HOOKS:
-        for module in (compat, femtologging.rust):
-            if hasattr(module, name):
-                delattr(module, name)
+    for name in _NATIVE_HOOKS:
+        if hasattr(compat, f"_{name}"):
+            delattr(compat, f"_{name}")
+        if hasattr(femtologging.rust, name):
+            delattr(femtologging.rust, name)
 """
 
 _HOOK_CONSUMERS = (
-    "tests/test_dict_config.py",
-    "tests/steps/test_rotating_rotation_steps.py",
-    "tests/steps/test_timed_rotating_rotation_steps.py",
+    "tests/test_basic_config.py",
     "tests/test_config_transaction_property.py",
-    "tests/steps/test_runtime_reconfiguration_steps.py",
+    "tests/test_dict_config.py",
+    "tests/test_disable_existing_loggers.py",
+    "tests/test_runtime_definition_lifecycle.py",
+    "tests/test_runtime_reconfiguration.py",
 )
 
 

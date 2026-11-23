@@ -17,6 +17,7 @@ from femtologging import (
     StreamHandlerBuilder,
     get_logger,
 )
+from tests.helpers import require_identity_hooks
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -97,6 +98,7 @@ def test_runtime_apply_rejects_unreferenced_http_handler(
 
 def test_runtime_apply_of_empty_transaction_is_a_noop(core_config: None) -> None:
     """An empty transaction must succeed without disturbing the registries."""
+    require_identity_hooks()
     logger = get_logger("core")
     before = logger.handler_identities_for_test()
 
@@ -115,6 +117,7 @@ def test_runtime_apply_defines_and_attaches_in_one_transaction(
     core_config: None,
 ) -> None:
     """A definition attached in the same transaction must be published and live."""
+    require_identity_hooks()
     logger = get_logger("core")
     before = logger.handler_identities_for_test()
 
@@ -145,6 +148,7 @@ def test_replacing_file_handler_id_keeps_one_live_handler(
     is pinned more precisely by the Rust lifetime tests; what this test adds is
     that the public API keeps the live attachment set bounded across churn.
     """
+    require_identity_hooks()
     logger = get_logger("core")
     baseline = len(logger.handler_identities_for_test())
 

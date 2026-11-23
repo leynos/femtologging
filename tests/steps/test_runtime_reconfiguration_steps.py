@@ -20,6 +20,7 @@ from femtologging import (
     get_logger,
     reset_manager,
 )
+from tests.helpers import require_identity_hooks
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -146,6 +147,7 @@ def set_root_level(level: str) -> None:
 @then(parsers.parse('logger "{name}" has {count:d} handlers'))
 def logger_has_handler_count(name: str, count: int) -> None:
     """Assert the handler count seen by the named logger."""
+    require_identity_hooks()
     actual = len(get_logger(name).handler_identities_for_test())
     assert actual == count, (
         f"expected {name} to have {count} handlers but found {actual}"
@@ -195,6 +197,7 @@ def mutation_fails_with_value_error(
 @then(parsers.parse('logger "{name}" runtime state matches snapshot'))
 def runtime_state_matches_snapshot(name: str, snapshot: SnapshotAssertion) -> None:
     """Assert that a normalized runtime state payload stays stable."""
+    require_identity_hooks()
     logger = get_logger(name)
     attachment_state_for_test = getattr(
         _rust_compat, "_runtime_attachment_state_for_test", None
@@ -238,6 +241,7 @@ def clear_runtime_handlers_and_filters(name: str) -> None:
 @then(parsers.parse('logger "{name}" has no runtime handlers'))
 def logger_has_no_runtime_handlers(name: str) -> None:
     """Assert that the logger has no runtime handlers after mutation."""
+    require_identity_hooks()
     remaining = get_logger(name).handler_identities_for_test()
     assert not remaining, (
         f"clearing runtime handlers must leave {name} with none, "

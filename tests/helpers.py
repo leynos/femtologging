@@ -129,3 +129,23 @@ def poll_captured_text(
         f"got {collected!r}"
     )
     raise AssertionError(message)
+
+
+def require_identity_hooks() -> None:
+    """Skip the calling test when the extension lacks the identity hooks.
+
+    A production extension reports ``_has_test_util`` as ``False`` and does not
+    register ``handler_identities_for_test`` or ``filter_identities_for_test``.
+    Tests that compare attachment tokens call this first, so those modules
+    still collect and their independent tests still run in a production build.
+
+    Examples
+    --------
+    >>> require_identity_hooks()  # doctest: +SKIP
+    """
+    import pytest
+
+    import femtologging
+
+    if not femtologging._has_test_util:
+        pytest.skip("attachment identity hooks require the 'test-util' feature")
