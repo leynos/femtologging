@@ -881,15 +881,99 @@ configuration names it, so a build without it fails at link time. The pin is
 the stable `1.99.1`, so the nightly-only parallel frontend flag (`-Zthreads=8`)
 is not used.
 
+Every target that compiles Rust depends on `make check-build-tools`, which
+reports a missing pinned toolchain or `mold` with the command that installs it.
+`make install-build-tools` installs the toolchain from `rust-toolchain.toml`
+and, on Linux, the `mold` package. The check is a capability probe: it installs
+nothing, so it is safe to run before every gate. Installed tooling need not be
+active in every job; release, coverage and Whitaker routes deliberately exclude
+parts of the development standard, as described below.
+
+Both scripts read `BUILD_TOOLS_OS` in place of `uname -s` when it is set, so
+the installer and preflight contract tests can exercise the Linux and non-Linux
+branches without leaving the host.
+
+Before the first suite step, install the pinned toolchain and `mold` in every
+hosted Linux job that runs a test suite step, or a Make goal that reaches the
+suite: place an unconditional `setup-rust` step with `install-mold: 'true'`
+ahead of that step. A late, conditional, soft-failing or `mold`-less install
+does not satisfy the rule, because the suite's Make goals reach
+`check-build-tools`. The contract is derived from Make prerequisite
+reachability in
+[`tests/test_workflow_tool_provisioning_contract.py`](../tests/test_workflow_tool_provisioning_contract.py),
+so a new suite job is covered without being named there.
+
+The build-standard tests are split by what each one pins. The capability
+scenarios that judge a host live in
+[`tests/test_build_tools_preflight_script_contract.py`](../tests/test_build_tools_preflight_script_contract.py);
+the rustup probes' own mechanics, such as running from `/` and refusing to
+auto-install, in
+[`tests/test_build_tools_probe_contract.py`](../tests/test_build_tools_probe_contract.py);
+and the Makefile's dependency, ordering and substitutability rules in
+[`tests/test_build_tools_contract.py`](../tests/test_build_tools_contract.py).
+The installer's own contract, which runs every case through both
+`bash scripts/install-build-tools.sh` and `make install-build-tools`, lives in
+[`tests/test_build_tools_installer_script_contract.py`](../tests/test_build_tools_installer_script_contract.py).
+Their machinery has modules of its own:
+[`tests/build_tools_support.py`](../tests/build_tools_support.py) builds the
+fake executables,
+[`tests/build_tools_script_support.py`](../tests/build_tools_script_support.py)
+varies the rustup stub's answers, and
+[`tests/build_tools_probe_support.py`](../tests/build_tools_probe_support.py)
+runs the script against them.
+
+The workflow readers divide the same way.
+[`tests/workflow_document_helpers.py`](../tests/workflow_document_helpers.py)
+discovers and parses the documents, checks that every locally reusable workflow
+a job calls exists, and offers the job and step accessors.
+[`tests/workflow_command_helpers.py`](../tests/workflow_command_helpers.py)
+reads a `run` body's shell text, with
+[`tests/workflow_shell_helpers.py`](../tests/workflow_shell_helpers.py) holding
+the quoting scan both readers share;
+[`tests/workflow_heredoc_helpers.py`](../tests/workflow_heredoc_helpers.py)
+finds the operators that scan leaves unquoted and skips their bodies;
+[`tests/workflow_runner_helpers.py`](../tests/workflow_runner_helpers.py)
+classifies runners; and
+[`tests/workflow_contract_helpers.py`](../tests/workflow_contract_helpers.py)
+states the provisioning rules and consumes the other three.
+[`tests/test_workflow_contract_properties.py`](../tests/test_workflow_contract_properties.py)
+is the Hypothesis suite that checks those readers against independent models,
+and [`tests/make_contract_helpers.py`](../tests/make_contract_helpers.py)
+supplies `prerequisite_map()`, the Makeutil-backed prerequisite map.
+
+The readers take their outside inputs from the caller rather than reaching for
+them: `depends_on_preflight` accepts a prerequisite map and `workflow_jobs`
+accepts a `reusable_exists` lookup, so neither parses the Makefile nor reads
+the repository itself.
+
+The preflight runs `rustup toolchain list` and `rustup show` from `/`, so the
+repository's `rust-toolchain.toml` cannot provision or redirect the pinned
+channel. It matches the installed name as `<channel>-<host>`, and accepts a bare
+`<channel>` only when `rustup show` reports no host. A probe that fails is
+named in the report rather than described as an absent toolchain, so an
+operator can tell a broken rustup from a missing installation.
+
+Every direct Cargo command line in the Makefile uses the `CARGO` variable,
+which defaults to `cargo`. Overriding it runs the same recipe with a different
+executable, so `make test CARGO=/opt/rust/bin/cargo` exercises another Cargo
+installation without editing the Makefile. The `fmt`, `check-fmt`, `clean`,
+`release`, `test` and `lint-rust-test-docs` targets carry such command lines.
+`build` drives `maturin` instead, and the Clippy and environment-policy lane
+drivers (`lint-rust-clippy`, `lint-env-policy`) select Cargo themselves, so
+`CARGO` does not redirect them.
+
 An assigned `RUSTFLAGS` replaces every `rustflags` source, so the file has no
 `[build] rustflags` and each build that assigns `RUSTFLAGS` decides about the
 linker itself:
 
-- CI's `setup-rust` exports `RUSTFLAGS=-D warnings`, so those builds keep the
-  platform linker. The step still installs `mold` (`install-mold: 'true'`),
-  because the compile-time UI tests (trybuild) build a nested crate under
-  `target/` that finds `.cargo/config.toml` without that `RUSTFLAGS`, so the
-  Linux `mold` default applies to it.
+- CI's `setup-rust` exports
+  `rustflags: '-D warnings -Clink-arg=-fuse-ld=mold'`, restating the linker
+  flag the export would otherwise displace, and installs `mold`
+  (`install-mold: 'true'`). The coverage step assigns a warning-only
+  `RUSTFLAGS` again, because the instrumented measurement excludes the
+  development linker. The compile-time UI tests (trybuild) build a nested crate
+  under `target/` that finds `.cargo/config.toml`; with the flag restated, that
+  nested build keeps the same linker as the surrounding job.
 - The scheduled `heavy-tests` workflow installs `mold` through `setup-rust`
   (`install-mold: 'true'`, `rustflags: ''`) and its three Loom steps assign
   `RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"`.
@@ -945,16 +1029,17 @@ metadata key (`[unstable] embed-metadata`) does not apply and the configuration
 must not carry it.
 
 `tests/test_build_standard_contract.py` holds all of this: the Linux-only
-`mold` table, the profile settings, the Loom steps, the release-wheel override
-and the Whitaker boundary, and it proves the defaults and both overrides at the
-Cargo boundary by building a one-file crate under the repository's own
-configuration. That fixture also drops the wrapper variables from its
-environment and passes empty `build.rustc-wrapper` and
-`build.rustc-workspace-wrapper` values on the Cargo command line. A host that
-configures a compiler wrapper in its own Cargo configuration would otherwise
-queue the one-file build behind that wrapper, and the measurement would
-describe the host instead of this repository. The fixture also builds with a
-private `CARGO_HOME`, so it reads no host configuration at all.
+`mold` table, the profile settings, the Loom steps, the CI restatement and
+coverage exclusion, the preflight wiring, the release-wheel override and the
+Whitaker boundary. It proves the defaults and both overrides at the Cargo
+boundary by building a one-file crate under the repository's own configuration.
+That fixture also drops the wrapper variables from its environment and passes
+empty `build.rustc-wrapper` and `build.rustc-workspace-wrapper` values on the
+Cargo command line. A host that configures a compiler wrapper in its own Cargo
+configuration would otherwise queue the one-file build behind that wrapper, and
+the measurement would describe the host instead of this repository. The fixture
+also builds with a private `CARGO_HOME`, so it reads no host configuration at
+all.
 
 ### Native backoff randomness
 
