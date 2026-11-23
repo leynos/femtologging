@@ -310,45 +310,6 @@ impl FemtoLogger {
         Ok(Self::from_shard(name, parent, std::sync::Arc::new(shard)))
     }
 
-    /// Create a logger whose producer formatter a test supplies.
-    ///
-    /// A logger's formatter is fixed at construction, so a test that must
-    /// observe whether the producer path reached formatting needs this seam
-    /// rather than a public setter.
-    #[cfg(all(test, feature = "python", not(loom)))]
-    pub(crate) fn with_formatter_for_test(name: String, formatter: SharedFormatter) -> Self {
-        let mut logger = Self::with_parent(name, None).expect("test dispatcher should start");
-        logger.formatter = formatter;
-        logger
-    }
-
-    /// Create a logger with a test-controlled context snapshot provider.
-    #[cfg(all(feature = "python", test, not(loom)))]
-    pub(super) fn with_context_snapshot_provider(
-        name: String,
-        parent: Option<String>,
-        context_snapshot_provider: std::sync::Arc<dyn ContextSnapshotProvider>,
-    ) -> Self {
-        let dispatcher = Dispatcher::shared().expect("test dispatcher should start");
-        Self::assembled(
-            name,
-            parent,
-            dispatcher.assign_shard(),
-            context_snapshot_provider,
-        )
-    }
-
-    /// Assemble a logger on a shard a test has chosen.
-    ///
-    /// Tests that assert what one logger's flush does to a shard it *shares*
-    /// have to place the logger on that shard; the process-wide pool assigns
-    /// round robin and gives no control over which logger lands where. Outside
-    /// Loom only, like the pool it borrows from.
-    #[cfg(all(test, not(loom)))]
-    pub(crate) fn assembled_for_test(name: String, shard: ShardHandle) -> Self {
-        Self::from_shard(name, None, shard)
-    }
-
     /// Assemble a logger on a shard with the default context snapshot provider.
     fn from_shard(name: String, parent: Option<String>, shard: ShardHandle) -> Self {
         Self::assembled(
