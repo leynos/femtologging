@@ -9,11 +9,7 @@ from pathlib import Path
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from femtologging import FemtoRotatingFileHandler, HandlerOptions
-from femtologging._rust_compat import (
-    _clear_rotating_fresh_failure_for_test,
-    _force_rotating_fresh_failure_for_test,
-)
+from femtologging import FemtoRotatingFileHandler, HandlerOptions, _rust_compat
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -70,9 +66,9 @@ def force_rotating_failure(
     def _activate(count: int, reason: str) -> None:
         """Arm the forced failure and register its cleanup on first use."""
         nonlocal registered
-        _force_rotating_fresh_failure_for_test(count, reason)
+        _rust_compat._force_rotating_fresh_failure_for_test(count, reason)
         if not registered:
-            request.addfinalizer(_clear_rotating_fresh_failure_for_test)
+            request.addfinalizer(_rust_compat._clear_rotating_fresh_failure_for_test)
             registered = True
 
     return _activate
