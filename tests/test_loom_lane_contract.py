@@ -224,33 +224,6 @@ def test_the_execution_step_runs_last() -> None:
     )
 
 
-@pytest.mark.parametrize("step_name", [_COMPILE_STEP, _EXECUTE_STEP])
-def test_no_loom_gate_can_be_conditioned_or_tolerated(step_name: str) -> None:
-    """Scenario: a Loom step is made skippable or non-blocking.
-
-    Invariant: the heavy job and both named steps carry no ``if``, and neither
-    the job nor a named step tolerates its own failure.
-
-    This is the converse of prior-success gating. Earlier steps are allowed to
-    prevent the models from running only by failing, which fails the job;
-    GitHub otherwise treats a skipped step as a success. An explicit condition
-    on the execution step would leave every earlier gate green while no model
-    ran, and ``continue-on-error`` would report a failed checker as a
-    successful job. Both are the "compile passed, models skipped" state this
-    lane exists to make impossible.
-    """
-    job = workflow_job(_WORKFLOW, _JOB)
-    assert "if" not in job, f"the {_JOB!r} job must carry no condition"
-    assert job.get("continue-on-error", False) is False, (
-        f"the {_JOB!r} job must not tolerate failure"
-    )
-    step = sole_workflow_step(_WORKFLOW, _JOB, step_name)
-    assert "if" not in step, f"the {step_name!r} step must carry no condition"
-    assert step.get("continue-on-error", False) is False, (
-        f"the {step_name!r} step must not tolerate its own failure"
-    )
-
-
 def test_the_compile_step_still_compiles_only() -> None:
     """Scenario: the cheap compile check is asked what it is for.
 

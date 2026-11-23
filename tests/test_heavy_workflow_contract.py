@@ -275,7 +275,17 @@ def test_the_real_heavy_workflow_is_accepted() -> None:
 def test_a_broken_heavy_workflow_is_reported(
     mutate: cabc.Callable[[Document], None],
 ) -> None:
-    """Each deliberate break is reported."""
+    """Each deliberate break is reported.
+
+    The Loom mutations are the converse of prior-success gating. An earlier
+    step is allowed to stop the models from running only by failing, which
+    fails the job; GitHub otherwise treats a skipped step as a success. An
+    explicit ``if`` on the heavy job or either Loom step, a ``continue-on-error``
+    that absorbs a failure, a masked checker status, or a changed preemption
+    bound would all restore the "compile passed, models skipped" state this
+    lane exists to make impossible, so each is refused and each refusal is
+    proved against a broken copy.
+    """
     document = copy.deepcopy(load_workflow())
     mutate(document)
     assert workflow_problems(document), "the mutated workflow must be reported"

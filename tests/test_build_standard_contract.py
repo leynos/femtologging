@@ -139,14 +139,6 @@ def test_the_loom_steps_restate_the_linker_flag() -> None:
                 )
 
 
-def _ci_steps() -> list[dict[str, typ.Any]]:
-    """Return the steps of the pull-request ``build-test`` job."""
-    document = yaml.safe_load(
-        (ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8")
-    )
-    return list(document["jobs"]["build-test"]["steps"])
-
-
 def test_the_pull_request_runs_the_loom_clippy_configuration() -> None:
     """The pull request compiles every target under the scheduled Loom flags.
 
@@ -155,7 +147,8 @@ def test_the_pull_request_runs_the_loom_clippy_configuration() -> None:
     ``.cargo/config.toml``, so a Loom step that omitted the flag would fail to
     link on the runner while passing on a host whose driver defaults to mold.
     """
-    steps = _ci_steps()
+    document = load_workflow(ROOT / ".github" / "workflows" / "ci.yml")
+    steps = job_steps(document, "build-test")
     loom_at = next(
         (
             index
@@ -165,16 +158,9 @@ def test_the_pull_request_runs_the_loom_clippy_configuration() -> None:
         None,
     )
     assert loom_at is not None, "ci.yml must run a --cfg loom step"
-    setup_at = next(
-        (
-            index
-            for index, step in enumerate(steps)
-            if "setup-rust" in str(step.get("uses", ""))
-        ),
-        None,
-    )
-    assert setup_at is not None, "ci.yml must install Rust through setup-rust"
-    settings = steps[setup_at].get("with", {})
+    setup = step_using(steps, "setup-rust")
+    setup_at = steps.index(setup)
+    settings = setup.get("with", {})
     assert str(settings.get("install-mold")) == "true", (
         "the pull-request Loom step links with mold, so setup-rust must install it"
     )
