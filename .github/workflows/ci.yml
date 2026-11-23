@@ -171,7 +171,7 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-${{ runner.environment }}-${{ matrix.python-version }}-
       - name: Test and measure coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@14c325b60788814cd50298eb8060228daee3b842
+        uses: leynos/shared-actions/.github/actions/generate-coverage@203eedc136c14c28041e92c06a929383807b3a3f
         env:
           FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
           UV_CONFIG_FILE: ${{ github.workspace }}/.github/uv-test-util.toml
@@ -196,6 +196,26 @@ jobs:
           # the stack-info snapshot records pytest's own call stack, and
           # an xdist worker replaces it with execnet frames.
           pytest-workers: ''
+          # The pull request measures coverage for its own ratchet check and
+          # nothing else: it neither publishes the report nor contacts
+          # CodeScene. Main owns both, in coverage-main.yml, and the workflow
+          # contracts hold the split. Every input that defines what is
+          # measured must match that publisher field for field.
+          #
+          # A baseline cache miss fails open upstream: the action writes 0 for
+          # the baseline its restore did not supply, so that lane's ratchet
+          # cannot fail while the run still looks green
+          # (leynos/shared-actions#699). Read which comparison the lane made
+          # from the action's `Report ratchet baseline cache decisions` step,
+          # not from the baseline file: the step prints
+          # `metric ratchet-cache.restore=miss`, raises a
+          # `::notice title=generate-coverage ratchet cache::restore=miss
+          # save=...`, and adds `- baseline restore: miss` to the job summary,
+          # whereas ratchet_coverage.py rewrites the baseline file to the
+          # measured figure on the same run. The repair belongs in the action;
+          # this lane can only make the miss visible.
+          with-ratchet: 'true'
+          publish-artefact: 'false'
 
   build-wheels:
     permissions:
