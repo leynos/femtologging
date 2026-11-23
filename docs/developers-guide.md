@@ -408,10 +408,11 @@ gone.
 
 `make check-api-boundary` rejects `*_for_test`, `_emit_rust_*`, and
 `_install_test_*` names in the native module, the `FemtoLogger` type, the
-package namespace (`dir(femtologging)`), and the shipped stub. The four
-underscore-prefixed rotation wrappers are no longer re-exported by
-`femtologging`; tests import them from the private `femtologging._rust_compat`
-module.
+package namespace (`dir(femtologging)`), the private
+`femtologging._rust_compat` module, and the shipped stub. The four
+underscore-prefixed rotation wrappers and the runtime attachment snapshot are
+defined only when the native hooks exist, so a production build omits them from
+both modules.
 
 #### Why the default-feature boundary is not a trybuild case
 

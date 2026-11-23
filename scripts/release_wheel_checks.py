@@ -9,21 +9,21 @@ probe's job, and it happens only when a check needs it.
 from __future__ import annotations
 
 import ast
-import http.server
 import importlib.machinery
-import queue
 import sys
-import threading
 import typing as typ
 from pathlib import Path
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from femtologging import FemtoHTTPHandler
 
-
-_TEST_ONLY_EXACT_NAMES = frozenset({"_stream_waiter_count", "AttachmentIdentity"})
+_TEST_ONLY_EXACT_NAMES = frozenset({
+    "_rust_log_enabled",
+    "_rust_log_max_level",
+    "_stream_waiter_count",
+    "AttachmentIdentity",
+})
 _TEST_ONLY_NAME_PREFIXES = ("_emit_rust_", "_install_test_")
 _TEST_ONLY_NAME_SUFFIX = "_for_test"
 
@@ -53,14 +53,6 @@ def _is_test_only_name(name: str) -> bool:
         or name.endswith(_TEST_ONLY_NAME_SUFFIX)
         or name.startswith(_TEST_ONLY_NAME_PREFIXES)
     )
-
-
-# The record whose delivery proves the installed native HTTP worker runs.
-_PROBE_MESSAGE = "release-wheel-probe"
-# The path the loopback collector expects the handler to post to.
-_PROBE_PATH = "/probe"
-# How long the delivered record may take to reach the loopback collector.
-_DELIVERY_TIMEOUT_SECONDS = 10.0
 
 
 def _native_location_errors(native_location: object) -> list[str]:
@@ -164,6 +156,58 @@ def _reexported_names(aliases: cabc.Iterable[ast.alias]) -> set[str]:
     }
 
 
+def _string_values(value: ast.expr) -> set[str]:
+    """Return the string literals in a list, tuple or set expression."""
+    match value:
+        case ast.List(elts=elts) | ast.Set(elts=elts) | ast.Tuple(elts=elts):
+            return {
+                element.value
+                for element in elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            }
+    return set()
+
+
+def _exports_all(targets: list[ast.expr]) -> bool:
+    """Return whether an assignment targets the module's ``__all__``."""
+    return any(
+        isinstance(target, ast.Name) and target.id == "__all__" for target in targets
+    )
+
+
+def _exported_names(tree: ast.AST) -> set[str]:
+    """Return the statically listed names in every ``__all__`` assignment.
+
+    ``__all__`` makes an imported name public, so a stub can publish a test
+    hook with a plain import plus an ``__all__`` entry. Only literal string
+    lists are readable statically; a computed ``__all__`` cannot be checked
+    here.
+
+    Parameters
+    ----------
+    tree : ast.AST
+        Parsed type stub.
+
+    Returns
+    -------
+    set[str]
+        Names listed in a static ``__all__`` assignment.
+
+    Examples
+    --------
+    >>> sorted(_exported_names(ast.parse('__all__ = ["Token", "Other"]')))
+    ['Other', 'Token']
+    """
+    exported: set[str] = set()
+    for node in ast.walk(tree):
+        match node:
+            case ast.Assign(targets=targets, value=value) if _exports_all(targets):
+                exported.update(_string_values(value))
+            case ast.AnnAssign(target=ast.Name(id="__all__"), value=value) if value:
+                exported.update(_string_values(value))
+    return exported
+
+
 def _stub_declaration_names(tree: ast.AST) -> set[str]:
     """Return every name *tree* declares or explicitly re-exports.
 
@@ -172,7 +216,7 @@ def _stub_declaration_names(tree: ast.AST) -> set[str]:
     whose name is followed by ``[``. Type parameters are not declarations of
     the module's API, so they are not collected. A ``from x import Y as Y``
     alias is a stub's way of re-exporting ``Y``; a plain import stays private
-    and is not collected.
+    and is not collected unless the stub lists it in ``__all__``.
 
     Parameters
     ----------
@@ -191,7 +235,7 @@ def _stub_declaration_names(tree: ast.AST) -> set[str]:
     >>> _stub_declaration_names(ast.parse("from .mod import Token as Token"))
     {'Token'}
     """
-    names: set[str] = set()
+    names: set[str] = _exported_names(tree)
     for node in ast.walk(tree):
         match node:
             case ast.AsyncFunctionDef() | ast.ClassDef() | ast.FunctionDef():
@@ -213,9 +257,9 @@ def _package_surface_errors(package: object) -> list[str]:
     """Return violations for test-only helpers exported by the package.
 
     The native module and the shipped stub are not the only surfaces a wheel
-    exposes: ``femtologging`` also re-exports pure-Python helpers, and the
-    fault-injection hooks must stay out of that namespace in a production
-    build rather than appear as raising or no-op shims.
+    exposes: ``femtologging`` and its private compatibility module define
+    pure-Python helpers, and a production build must omit the fault-injection
+    names there rather than keep raising or no-op shims.
 
     Parameters
     ----------
@@ -232,7 +276,16 @@ def _package_surface_errors(package: object) -> list[str]:
     >>> _package_surface_errors(object())
     []
     """
-    hooks = sorted(name for name in dir(package) if _is_test_only_name(name))
+    surfaces = [package]
+    compat = getattr(package, "_rust_compat", None)
+    if compat is not None:
+        surfaces.append(compat)
+    hooks = sorted(
+        name
+        for surface in surfaces
+        for name in dir(surface)
+        if _is_test_only_name(name)
+    )
     if hooks:
         return ["femtologging exposes test-only hooks: " + ", ".join(hooks)]
     return []
@@ -276,99 +329,3 @@ def _stub_surface_errors(package: object) -> list[str]:
     if hooks:
         return ["type stub declares test-only hooks: " + ", ".join(hooks)]
     return []
-
-
-class _RecordCollector(http.server.ThreadingHTTPServer):
-    """Loopback endpoint that records the record the handler delivers.
-
-    The native handler posts on its own worker thread, so the probe needs a
-    live endpoint to receive the request and a queue to wait on for it.
-    """
-
-    allow_reuse_address = True
-    daemon_threads = True
-
-    def __init__(self) -> None:
-        """Bind an ephemeral loopback port and create the request queue."""
-        super().__init__(("127.0.0.1", 0), _RecordRequestHandler)
-        self.requests: queue.Queue[tuple[str, bytes]] = queue.Queue()
-
-
-class _RecordRequestHandler(http.server.BaseHTTPRequestHandler):
-    """Record each delivered POST body and answer with a success status."""
-
-    def do_POST(self) -> None:
-        """Store the delivered request, then reply 204 No Content."""
-        collector = typ.cast("_RecordCollector", self.server)
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        collector.requests.put((self.path, body))
-        self.send_response(http.HTTPStatus.NO_CONTENT)
-        self.end_headers()
-
-    @typ.override
-    def log_message(
-        self,
-        format: str,
-        *arguments: object,
-    ) -> None:
-        """Silence the default per-request stderr logging."""
-        _ = (format, arguments)
-
-
-def _collector_endpoint(collector: _RecordCollector) -> str:
-    """Return the endpoint URL a handler should post probe records to."""
-    host, port = collector.server_address[:2]
-    return f"http://{host}:{port}{_PROBE_PATH}"
-
-
-def _collect_delivery(collector: _RecordCollector, endpoint: str) -> list[str]:
-    """Wait for the probe record and report a missing or malformed delivery."""
-    try:
-        path, body = collector.requests.get(timeout=_DELIVERY_TIMEOUT_SECONDS)
-    except queue.Empty:
-        return [f"no HTTP delivery reached {endpoint}"]
-    errors: list[str] = []
-    if path != _PROBE_PATH:
-        errors.append(f"the record used the wrong request path: {path}")
-    if _PROBE_MESSAGE.encode() not in body:
-        errors.append("the delivered body did not contain the record message")
-    return errors
-
-
-def http_behaviour_errors() -> list[str]:
-    """Deliver one record through the installed wheel's native HTTP worker.
-
-    Returns
-    -------
-    list[str]
-        Human-readable violations. An empty list means the handler built from
-        this installation reached a loopback endpoint and delivered its record,
-        which the location checks alone cannot show.
-
-    Examples
-    --------
-    Run after installing a wheel built without ``test-util``:
-
-    >>> http_behaviour_errors()  # doctest: +SKIP
-    []
-    """
-    import femtologging
-
-    collector = _RecordCollector()
-    thread = threading.Thread(target=collector.serve_forever, daemon=True)
-    thread.start()
-    endpoint = _collector_endpoint(collector)
-    handler: FemtoHTTPHandler | None = None
-    try:
-        handler = femtologging.HTTPHandlerBuilder().with_endpoint(endpoint).build()
-        handler.handle("release.wheel.probe", "INFO", _PROBE_MESSAGE)
-        handler.flush()
-        errors = _collect_delivery(collector, endpoint)
-    finally:
-        if handler is not None:
-            handler.close()
-        collector.shutdown()
-        collector.server_close()
-        thread.join(timeout=1)
-    return errors

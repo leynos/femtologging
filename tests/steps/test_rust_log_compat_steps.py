@@ -55,11 +55,19 @@ if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
     skip = typ.cast("typ.Any", pytest.skip)
     skip(message, allow_module_level=True)
 
-# The emit hook exists only in `test-util` builds and is deliberately absent
-# from the production stub, so bind it dynamically rather than importing it.
+# The test hooks exist only in `test-util` builds and are deliberately absent
+# from the production stub, so bind them dynamically rather than importing them.
 _EMIT_RUST_LOG = typ.cast(
     "cabc.Callable[[str, str, str | None], None]",
     getattr(rust, "_emit_rust_log", None),
+)
+_RUST_LOG_ENABLED = typ.cast(
+    "cabc.Callable[[str, str], bool]",
+    getattr(rust, "_rust_log_enabled", None),
+)
+_RUST_LOG_MAX_LEVEL = typ.cast(
+    "cabc.Callable[[], str]",
+    getattr(rust, "_rust_log_max_level", None),
 )
 
 scenarios(str(FEATURES / "rust_log_compat.feature"))
@@ -134,7 +142,7 @@ def then_log_levels_have_expected_enablement(
     mismatched_levels = [
         level.strip()
         for level in levels.split(",")
-        if rust._rust_log_enabled(level.strip(), target) != should_be_enabled
+        if _RUST_LOG_ENABLED(level.strip(), target) != should_be_enabled
     ]
     expected_action = "accept" if should_be_enabled else "reject"
     assert not mismatched_levels, (
@@ -146,7 +154,7 @@ def then_log_levels_have_expected_enablement(
 @then(parsers.parse('the Rust log facade maximum is "{level}"'))
 def then_rust_log_max_level_is(level: str) -> None:
     """Assert the process-wide Rust log macro prefilter threshold."""
-    actual = rust._rust_log_max_level()
+    actual = _RUST_LOG_MAX_LEVEL()
     assert actual == level, f"expected facade maximum {level!r}, got {actual!r}"
 
 

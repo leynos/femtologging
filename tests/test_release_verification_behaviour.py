@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 import femtologging
-from scripts import release_wheel_checks, release_wheel_probe
+from scripts import release_wheel_http, release_wheel_probe
 from tests import conftest
 from tests.make_contract_helpers import sole_workflow_step
 from tests.release_workflow_helpers import run_bash
@@ -192,6 +192,17 @@ def test_release_probe_accepts_a_production_wheel(
         ),
         ("from .test_support import Helper as Helper\n", None),
         ("from .test_support import AttachmentIdentity\n", None),
+        (
+            (
+                "from ._rust_compat import wait_for_flush_entry_for_test\n"
+                '__all__ = ["wait_for_flush_entry_for_test"]\n'
+            ),
+            "wait_for_flush_entry_for_test",
+        ),
+        (
+            'from ._rust_compat import Helper\n__all__ = ["Helper"]\n',
+            None,
+        ),
         ("class Broken(:\n", "cannot be parsed"),
     ],
 )
@@ -226,6 +237,21 @@ def test_release_probe_rejects_package_level_test_hooks(tmp_path: Path) -> None:
 
     assert any("femtologging exposes test-only hooks" in error for error in errors), (
         "Report the test-only package attribute."
+    )
+
+
+def test_release_probe_rejects_private_compatibility_hooks(tmp_path: Path) -> None:
+    """A hook left in the private compatibility module still fails the probe."""
+    package = _packaged_stub(tmp_path)
+    package._rust_compat = SimpleNamespace(
+        _set_timed_rotation_test_times_for_test=lambda times: None
+    )
+    native = _production_native()
+
+    errors = release_wheel_probe.release_wheel_errors(native=native, package=package)
+
+    assert any("femtologging exposes test-only hooks" in error for error in errors), (
+        "Report the test-only compatibility attribute."
     )
 
 
@@ -277,9 +303,9 @@ def test_collect_delivery_reports_a_malformed_delivery(
     delivered: tuple[str, bytes], expected: str
 ) -> None:
     """A request on the wrong path or without the record message is a failure."""
-    errors = release_wheel_checks._collect_delivery(
+    errors = release_wheel_http._collect_delivery(
         typ.cast(
-            "release_wheel_checks._RecordCollector", _collector_receiving(delivered)
+            "release_wheel_http._RecordCollector", _collector_receiving(delivered)
         ),
         "http://127.0.0.1:1/probe",
     )
@@ -293,10 +319,10 @@ def test_collect_delivery_reports_an_absent_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A collector that receives nothing names the endpoint it waited on."""
-    monkeypatch.setattr(release_wheel_checks, "_DELIVERY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(release_wheel_http, "_DELIVERY_TIMEOUT_SECONDS", 0.01)
 
-    errors = release_wheel_checks._collect_delivery(
-        typ.cast("release_wheel_checks._RecordCollector", _collector_receiving(None)),
+    errors = release_wheel_http._collect_delivery(
+        typ.cast("release_wheel_http._RecordCollector", _collector_receiving(None)),
         "http://127.0.0.1:1/probe",
     )
 

@@ -208,9 +208,10 @@ those external settings exist.
 The fresh-failure test hooks are gated behind the non-default `test-util`
 feature alongside the timed-rotation hooks, so the known ungated surface noted
 in the accepted text above no longer applies. The Python package no longer
-re-exports the four underscore-prefixed rotation wrappers; test code imports
-them from the private `femtologging._rust_compat` module, and a production
-build reaches only absent native hooks.
+re-exports the four underscore-prefixed rotation wrappers, and a production
+build does not define them or the runtime attachment snapshot in the private
+`femtologging._rust_compat` module either. Test code imports them from that
+module in a `test-util` build.
 
 The address-returning `handler_ptrs_for_test()` and `filter_ptrs_for_test()`
 Python methods are replaced by `handler_identities_for_test()` and

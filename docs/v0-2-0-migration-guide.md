@@ -593,18 +593,17 @@ The persistent `[tool.maturin]` feature set is now `["python"]` rather than
 `False`. Their underscore-prefixed Python wrappers,
 `_set_timed_rotation_test_times_for_test` and
 `_clear_timed_rotation_test_times_for_test`, are no longer re-exported by the
-package in any build. Test code imports them from the private
-`femtologging._rust_compat` module instead. In a production build the native
-hooks behind them are absent, so the setter raises `RuntimeError` and the
-clearer does nothing.
+package in any build, and a production build does not define them, or the other
+`*_for_test` wrappers, in the private `femtologging._rust_compat` module
+either. Test code imports them from that module in a `test-util` build.
 
 These helpers were never supported runtime API. Code that relied on them must
 build the extension with the `test-util` feature, either by setting
 `UV_CONFIG_FILE=.github/uv-test-util.toml` for a source install or by passing
 `--features python,test-util` to a development build. The rotating
 fresh-failure helpers `_force_rotating_fresh_failure_for_test` and
-`_clear_rotating_fresh_failure_for_test` follow the same rule: the package does
-not re-export them, and only a `test-util` build provides the native hooks.
+`_clear_rotating_fresh_failure_for_test` follow the same rule: neither the
+package nor the private compatibility module defines them without `test-util`.
 They are test-only and carry no support guarantee.
 
 The section
@@ -635,9 +634,9 @@ has no integer or index conversion.
 
 ### The Rust emit and install hooks are gated
 
-`_emit_rust_log`, `_emit_rust_tracing_event`,
-`_emit_rust_tracing_structured_event`, `_emit_rust_tracing_span_event`,
-`_install_test_global_rust_logger` and
+`_emit_rust_log`, `_rust_log_enabled`, `_rust_log_max_level`,
+`_emit_rust_tracing_event`, `_emit_rust_tracing_structured_event`,
+`_emit_rust_tracing_span_event`, `_install_test_global_rust_logger` and
 `_install_test_global_tracing_subscriber` are absent from production wheels and
 from the shipped `.pyi` stub.
 

@@ -178,8 +178,6 @@ fn register_dispatch_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(feature = "log-compat")]
 pub(crate) fn register_log_compat_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::log_compat::setup_rust_logging, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_enabled, m)?)?;
-    m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_max_level, m)?)?;
     register_log_compat_test_functions(m)?;
     Ok(())
 }
@@ -187,6 +185,8 @@ pub(crate) fn register_log_compat_functions(m: &Bound<'_, PyModule>) -> PyResult
 /// Register the log-compat hooks that only a `test-util` build compiles.
 #[cfg(all(feature = "log-compat", feature = "test-util"))]
 fn register_log_compat_test_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_enabled, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::log_compat::rust_log_max_level, m)?)?;
     m.add_function(wrap_pyfunction!(crate::log_compat::emit_rust_log, m)?)?;
     m.add_function(wrap_pyfunction!(
         crate::log_compat::install_test_global_rust_logger,

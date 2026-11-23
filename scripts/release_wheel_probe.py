@@ -27,8 +27,8 @@ from release_wheel_checks import (
     _native_surface_errors,
     _package_surface_errors,
     _stub_surface_errors,
-    http_behaviour_errors,
 )
+from release_wheel_http import http_behaviour_errors
 
 
 def _resolve_probe_inputs(
