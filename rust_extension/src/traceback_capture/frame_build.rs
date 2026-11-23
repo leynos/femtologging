@@ -223,6 +223,9 @@ fn lookup_source_line(
         return None;
     };
     prepare_source(linecache, frame, filename, prepared);
+    if !source_is_bounded(filename.py(), linecache, filename) {
+        return None;
+    }
     let raw = linecache.call_method1("getline", (filename, lineno)).ok()?;
     let raw = raw.cast::<PyString>().ok()?;
     let trimmed = trim_short_line(raw);
@@ -242,6 +245,52 @@ fn lookup_source_line(
     }
     Some(truncate_to_limit(first_line, limit).unwrap_or_else(|| first_line.to_string()))
 }
+
+/// Return `true` when `linecache` can supply this file without an unbounded read.
+///
+/// `linecache.getline` reads and caches a whole file on a miss, so a frame in a
+/// file with a huge trailing section would cost the file's size on the logging
+/// thread. A file already in `linecache.cache` has already paid that cost, so a
+/// hit is free; otherwise the file's size is checked first and a source larger
+/// than [`MAX_SOURCE_BYTES`] is omitted, leaving the frame's filename, function
+/// and line number in place. A path that is not a regular file — an archive
+/// member, say — also yields no source rather than an unbounded loader read.
+fn source_is_bounded(
+    py: Python<'_>,
+    linecache: &Bound<'_, PyAny>,
+    filename: &Bound<'_, PyString>,
+) -> bool {
+    if cached_source(linecache, filename) {
+        return true;
+    }
+    let Ok(os) = py.import("os") else {
+        return false;
+    };
+    let Ok(path) = os.getattr("path") else {
+        return false;
+    };
+    path.call_method1("getsize", (filename,))
+        .ok()
+        .and_then(|size| size.extract::<u64>().ok())
+        .is_some_and(|size| size <= MAX_SOURCE_BYTES)
+}
+
+/// Return `true` when `linecache` already holds this filename.
+///
+/// A cache hit has already paid for reading the source, so using it adds no
+/// unbounded work of its own.
+fn cached_source(linecache: &Bound<'_, PyAny>, filename: &Bound<'_, PyString>) -> bool {
+    let Ok(cache) = linecache.getattr("cache") else {
+        return false;
+    };
+    let Ok(cache) = cache.cast::<pyo3::types::PyDict>() else {
+        return false;
+    };
+    cache.contains(filename).unwrap_or(false)
+}
+
+/// Largest source file whose line is read through `linecache`.
+const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 
 /// Longest source line copied in full so it can be trimmed before clamping.
 const MAX_TRIMMED_LINE: usize = 8 * 1024;

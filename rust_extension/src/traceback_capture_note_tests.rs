@@ -163,3 +163,25 @@ raise error
         );
     });
 }
+
+#[rstest]
+fn a_scan_stopped_by_its_work_ceiling_is_reported() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+error = ValueError('note')
+error.__notes__ = iter(['a', 'b', 0, 'c'])
+raise error
+",
+            &tiny_limits(),
+        );
+
+        assert_eq!(payload.notes, vec!["a", "b"]);
+        assert_eq!(
+            marker(&payload).notes_omitted,
+            1,
+            "the unscanned tail must be reported as an incomplete scan"
+        );
+    });
+}

@@ -61,11 +61,16 @@ pub(super) fn retain_notes(
     let mut visited = 0usize;
     let mut exhausted = false;
     let mut tail_after_retention = false;
-    for item in iterator.take(scan_limit) {
+    let mut iterator_ended = false;
+    let mut iteration_failed = false;
+    let mut iterator = iterator;
+    for item in iterator.by_ref().take(scan_limit) {
         visited += 1;
+        iterator_ended = visited == scan_limit;
         let item = match item {
             Ok(item) => item,
             Err(_) => {
+                iteration_failed = true;
                 marker.failed_elements = marker.failed_elements.saturating_add(1);
                 break;
             }
@@ -93,12 +98,22 @@ pub(super) fn retain_notes(
         marker.notes_truncated |= rendered.truncated;
         retained.push(rendered.text);
     }
+    // An unknown-length scan that filled every probe position may have stopped
+    // at the work ceiling rather than at the end of the attribute. One extra
+    // item distinguishes the two without draining the iterator; when it exists
+    // the scan is incomplete, but its size is unknown.
+    let scan_incomplete = known_len.is_none()
+        && !tail_after_retention
+        && !exhausted
+        && !iteration_failed
+        && iterator_ended
+        && iterator.next().is_some();
     let omitted = known_len.map_or_else(
         || {
             // A tail is only proven when retention stopped because the ceiling
             // was already full. An extra position consumed by a non-note, or
             // by the last retained note, shows no missing note.
-            usize::from(tail_after_retention || exhausted)
+            usize::from(tail_after_retention || exhausted || scan_incomplete)
         },
         |length| {
             // Unvisited positions are exact omissions; a failed conversion is

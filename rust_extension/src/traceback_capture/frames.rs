@@ -32,6 +32,7 @@
 
 use std::collections::VecDeque;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyFrame, PyTraceback};
 
@@ -193,8 +194,17 @@ pub(super) fn collect_stack_frames(
     marker: &mut PayloadTruncation,
 ) -> PyResult<Vec<StackFrame>> {
     let linecache = py.import("linecache")?;
-    let Some(head) = caller_frame(py) else {
-        return Ok(Vec::new());
+    let head = match caller_frame(py) {
+        Ok(Some(head)) => head,
+        // No Python frame beneath the extension is a normal empty stack; a
+        // raising audit hook is not, and must be reported rather than read as
+        // "there was nothing to capture".
+        Ok(None) => return Ok(Vec::new()),
+        Err(_) => {
+            marker.frames_omitted = marker.frames_omitted.saturating_add(1);
+            marker.frames_omitted_is_lower_bound = true;
+            return Ok(Vec::new());
+        }
     };
 
     let mut omitted = 0usize;
@@ -248,13 +258,18 @@ pub(super) fn collect_stack_frames(
 /// the application happens to be several frames deep.
 ///
 /// A process with no Python frame beneath the extension — a Rust unit test, or a
-/// C caller — has no stack to capture, and the same `ValueError` is how that
-/// case reports itself. It is a missing stack rather than a failure, so the
-/// capture comes back empty.
-fn caller_frame(py: Python<'_>) -> Option<Bound<'_, PyAny>> {
-    let sys = py.import("sys").ok()?;
-    let frame = sys.call_method1("_getframe", (0,)).ok()?;
-    (!frame.is_none()).then_some(frame)
+/// C caller — has no stack to capture. That case and a raising audit hook both
+/// surface as errors from `_getframe`, so the two are distinguished by type:
+/// `ValueError` is a missing stack, anything else is a lost one.
+fn caller_frame(py: Python<'_>) -> PyResult<Option<Bound<'_, PyAny>>> {
+    let sys = py.import("sys")?;
+    match sys.call_method1("_getframe", (0,)) {
+        Ok(frame) => Ok((!frame.is_none()).then_some(frame)),
+        // `ValueError` is how "no Python frame" reports itself; any other
+        // failure, such as an audit hook refusing the call, is a real loss.
+        Err(error) if error.is_instance_of::<PyValueError>(py) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Read a `u32` attribute, treating a missing or negative value as absent.

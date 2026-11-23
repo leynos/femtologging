@@ -6,9 +6,9 @@
 //! repository's module-size ceiling and keeps the argument-reading rules in one
 //! place.
 
-use pyo3::exceptions::PySyntaxError;
+use pyo3::exceptions::{PyOSError, PySyntaxError};
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyType};
+use pyo3::types::{PyString, PyTuple, PyType};
 
 use crate::traceback_capture::limits::{STR_FAILURE_SENTINEL, TRUNCATION_SUFFIX};
 use crate::traceback_capture::values::{self, BoundedText};
@@ -32,6 +32,9 @@ pub(in crate::traceback_capture) fn build_message(
         return message;
     }
     if let Some(message) = key_error_message(exception, args, limit) {
+        return message;
+    }
+    if let Some(message) = os_error_container_message(exception, limit) {
         return message;
     }
     if uses_default_str(exception).unwrap_or(false) {
@@ -75,6 +78,38 @@ fn syntax_error_message(exception: &Bound<'_, PyAny>, limit: usize) -> Option<Bo
     let message = exception.getattr("msg").ok()?;
     let message = message.cast::<PyString>().ok()?;
     Some(values::bounded_string(message, limit))
+}
+
+/// Reproduce an `OSError` message when its `strerror` is a container.
+///
+/// `OSError.__str__` formats the second argument with `str`, which for a
+/// container is its `repr` and enumerates every element before any ceiling can
+/// apply. Only that shape is handled here: the ordinary `[Errno 2] text` form
+/// has no container to bound and keeps the normal path.
+fn os_error_container_message(exception: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    let py = exception.py();
+    let os_error = py.get_type::<PyOSError>();
+    if !exception.get_type().is_subclass(&os_error).unwrap_or(false) {
+        return None;
+    }
+    let inherited = class_attribute(os_error.as_any(), "__str__")?;
+    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
+    if !actual.is(&inherited) {
+        return None;
+    }
+    let args = super::exception_args(exception).ok()?;
+    let args = args.cast::<PyTuple>().ok()?;
+    if args.len() != 2 {
+        return None;
+    }
+    let errno: i64 = args.get_item(0).ok()?.extract().ok()?;
+    let strerror = args.get_item(1).ok()?;
+    let bounded = values::bounded_container(&strerror, limit.saturating_sub(16).max(1))?;
+    let text = values::clamp(format!("[Errno {errno}] {}", bounded.text), limit);
+    Some(BoundedText {
+        truncated: text.truncated || bounded.truncated,
+        ..text
+    })
 }
 
 /// Report whether `exception` inherits `BaseException.__str__` unchanged.

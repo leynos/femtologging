@@ -11,6 +11,7 @@
 
 use pyo3::exceptions::{PyBaseException, PyBaseExceptionGroup};
 use pyo3::prelude::*;
+use pyo3::types::PyType;
 
 /// Return `true` when `value` is a real Python exception instance.
 pub(super) fn is_exception(py: Python<'_>, value: &Bound<'_, PyAny>) -> bool {
@@ -29,4 +30,31 @@ pub(super) fn is_exception_group(py: Python<'_>, exception: &Bound<'_, PyAny>) -
         .get_type()
         .is_subclass(&py.get_type::<PyBaseExceptionGroup>())
         .unwrap_or(false)
+}
+/// Return `true` when `value` uses the built-in `BaseException.__repr__`.
+///
+/// That representation renders every argument in full before any byte ceiling
+/// can apply. Types that define their own `__repr__` are left to it: their
+/// representation is what the application chose to expose.
+pub(super) fn inherits_exception_repr(value: &Bound<'_, PyAny>) -> bool {
+    let py = value.py();
+    if !is_exception(py, value) {
+        return false;
+    }
+    let base = py.get_type::<PyBaseException>();
+    let Some(inherited) = class_attribute(base.as_any(), "__repr__") else {
+        return false;
+    };
+    let Some(actual) = class_attribute(value.get_type().as_any(), "__repr__") else {
+        return false;
+    };
+    actual.is(&inherited)
+}
+
+/// Read a class attribute through `type.__getattribute__`.
+fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
+    let py = class.py();
+    let type_type = py.get_type::<PyType>();
+    let getattribute = type_type.getattr("__getattribute__").ok()?;
+    getattribute.call1((class, name)).ok()
 }

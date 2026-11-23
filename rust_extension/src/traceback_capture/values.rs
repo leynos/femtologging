@@ -116,11 +116,39 @@ pub(super) fn repr_bounded_at(
     if super::types::is_exception_group(value.py(), value) {
         return Some(clamp("<exception group>".to_string(), limit));
     }
+    // The inherited `BaseException.__repr__` renders every argument, so a
+    // nested exception holding a large string would build that string first.
+    // A fixed summary keeps the type visible without the subtree.
+    if super::types::inherits_exception_repr(value) {
+        return Some(exception_repr_summary(value, limit));
+    }
     if let Some(rendered) = render_builtin(value, limit) {
         return Some(rendered);
     }
     let binding = value.repr().ok()?;
     Some(bounded_string(&binding, limit))
+}
+
+/// Render a fixed summary for an exception that uses the built-in `repr`.
+fn exception_repr_summary(value: &Bound<'_, PyAny>, limit: usize) -> BoundedText {
+    let name_limit = limit.saturating_sub(6).max(1);
+    let name = value
+        .get_type()
+        .getattr("__name__")
+        .ok()
+        .and_then(|name| name.cast_into::<PyString>().ok())
+        .map(|name| bounded_string(&name, name_limit).text)
+        .unwrap_or_else(|| "exception".to_string());
+    clamp(format!("{name}(...)"), limit)
+}
+
+/// Render an exact built-in container through the bounded container renderer.
+///
+/// Used where a caller needs the container text without going through the
+/// general `repr` path, such as the `OSError` message assembled from a
+/// non-string `strerror`.
+pub(super) fn bounded_container(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    container::render(value, limit, 0)
 }
 
 /// Convert a built-in string to bounded UTF-8 without copying its full value.

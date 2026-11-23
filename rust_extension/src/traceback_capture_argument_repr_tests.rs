@@ -6,8 +6,11 @@
 //! placeholder, container entries rendered only up to explicit limits, and the
 //! same treatment when such a value is a group member or a single argument.
 
+use std::ffi::CStr;
+
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use rstest::rstest;
 
 use crate::test_utils::capture_limit_helpers::{
     capture_raised, capture_raised_in, marker, tiny_limits,
@@ -185,6 +188,83 @@ raise ExceptionGroup('g', [Counted(i) for i in range(100)])
             payload.args_repr[1].len() <= 16,
             "the group member summary must respect the argument ceiling: {:?}",
             payload.args_repr[1]
+        );
+    });
+}
+
+#[rstest]
+#[case(c"raise ValueError((1,))", "(1,)")]
+#[case(c"raise ValueError(set())", "set()")]
+#[case(c"raise ValueError(frozenset())", "frozenset()")]
+#[case(c"raise ValueError({'a': 1})", "{'a': 1}")]
+fn small_containers_keep_their_python_forms(#[case] source: &CStr, #[case] expected: &str) {
+    Python::attach(|py| {
+        let payload = capture_raised(py, source, &CaptureLimits::default());
+
+        assert_eq!(payload.args_repr[0], expected);
+    });
+}
+
+#[test]
+fn an_os_error_with_a_container_strerror_stays_bounded() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"raise OSError(2, ['a', 'a'])",
+            &CaptureLimits::default(),
+        );
+
+        assert_eq!(
+            payload.message, "[Errno 2] ['a', 'a']",
+            "the ordinary OSError form must be preserved"
+        );
+    });
+}
+
+#[test]
+fn a_nested_builtin_exception_uses_a_summary() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"raise ValueError(ValueError('x' * 600))",
+            &CaptureLimits::default(),
+        );
+
+        assert_eq!(
+            payload.args_repr[0], "ValueError(...)",
+            "an inherited exception repr must not render its arguments in full"
+        );
+    });
+}
+
+#[test]
+fn a_dict_mutated_by_an_element_repr_is_still_rendered() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+container = {}
+
+class Mutating:
+    def __repr__(self):
+        container['added'] = 1
+        return 'm'
+
+container['key'] = Mutating()
+raise ValueError(container)
+",
+            &CaptureLimits::default(),
+        );
+
+        assert!(
+            payload.args_repr[0].contains("'key': m"),
+            "the snapshot must be rendered before the mutation is observed: {:?}",
+            payload.args_repr[0]
+        );
+        assert!(
+            !payload.args_repr[0].contains("added"),
+            "the mutation must not appear in the snapshot: {:?}",
+            payload.args_repr[0]
         );
     });
 }

@@ -6,10 +6,13 @@
 //! a shared subtree, would then cost far more than the capture budget on the
 //! logging thread.
 //!
-//! Each container is therefore rendered here, element by element, stopping at
-//! explicit item, depth and byte limits. Small containers keep the ordinary
-//! representation because the element rendering is the same text; a container
-//! that would exceed a limit is summarised with the truncation marker instead.
+//! Each container is therefore snapshotted into a bounded list of entries, and
+//! then rendered element by element, stopping at explicit item, depth and byte
+//! limits. Snapshotting first means no element hook runs while the container
+//! itself is being iterated, so an element that mutates its own container
+//! cannot invalidate the walk. A container that would exceed a limit is
+//! summarised with the truncation marker instead.
+//!
 //! Subclasses are excluded: they may override `__repr__`, and their own
 //! representation is what the caller expects to see.
 
@@ -30,6 +33,9 @@ const MAX_CONTAINER_DEPTH: usize = 4;
 /// Returns `None` for anything that is not an exact `list`, `tuple`, `dict`,
 /// `set` or `frozenset`, leaving the caller to take the general `repr` path.
 /// `depth` is the container nesting already rendered above this value.
+///
+/// A container whose own iteration raises still produces a summary rather than
+/// `None`, so the caller never restarts the conversion through native `repr`.
 pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Option<BoundedText> {
     let kind = container_kind(value)?;
     let (open, close) = delimiters(kind);
@@ -37,63 +43,135 @@ pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Op
     if depth >= MAX_CONTAINER_DEPTH || limit < fixed {
         return Some(summary(open, close, limit));
     }
+    if let Some(length) = exact_len(value, kind)
+        && length > MAX_CONTAINER_ITEMS.saturating_add(1)
+    {
+        // A container known to be oversized is summarised without copying a
+        // prefix that only the summary would replace.
+        return Some(summary(open, close, limit));
+    }
+    let Some(entries) = snapshot(value, kind) else {
+        return Some(BoundedText::failure("<container unavailable>", limit));
+    };
+    Some(render_entries(&entries, kind, open, close, limit, depth))
+}
+
+/// Copy at most one entry past the rendering ceiling out of a container.
+///
+/// Taking the snapshot before any element is rendered means an element's
+/// `__repr__` cannot mutate the container being iterated. One entry beyond the
+/// ceiling is kept so that a container holding exactly the ceiling's worth is
+/// not reported as truncated.
+fn snapshot<'py>(value: &Bound<'py, PyAny>, kind: ContainerKind) -> Option<Vec<Piece<'py>>> {
+    let mut entries = Vec::with_capacity(MAX_CONTAINER_ITEMS.min(4));
+    if matches!(kind, ContainerKind::Dict) {
+        let dict = value.cast::<PyDict>().ok()?;
+        for (key, entry) in dict.iter().take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
+            entries.push(Piece::Entry(key, entry));
+        }
+        return Some(entries);
+    }
+    let iterator = PyIterator::from_object(value).ok()?;
+    for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
+        entries.push(Piece::Value(item.ok()?));
+    }
+    Some(entries)
+}
+
+/// Read the exact length of a built-in container without iterating it.
+fn exact_len(value: &Bound<'_, PyAny>, kind: ContainerKind) -> Option<usize> {
     match kind {
-        ContainerKind::Dict => {
-            let dict = value.cast::<PyDict>().ok()?;
-            render_entries(
-                dict.iter().map(|(key, entry)| Ok(Piece::Entry(key, entry))),
-                open,
-                close,
-                limit,
-                depth,
-            )
-        }
-        _ => {
-            let iterator = PyIterator::from_object(value).ok()?;
-            render_entries(
-                iterator.map(|item| item.map(Piece::Value)),
-                open,
-                close,
-                limit,
-                depth,
-            )
-        }
+        ContainerKind::List => value.cast::<PyList>().ok().map(|list| list.len()),
+        ContainerKind::Tuple => value.cast::<PyTuple>().ok().map(|tuple| tuple.len()),
+        ContainerKind::Dict => value.cast::<PyDict>().ok().map(|dict| dict.len()),
+        ContainerKind::Set => value.cast::<PySet>().ok().map(|set| set.len()),
+        ContainerKind::FrozenSet => value.cast::<PyFrozenSet>().ok().map(|set| set.len()),
     }
 }
 
-/// Render entries from `iterator` inside `open`/`close`, stopping at the ceilings.
-fn render_entries<'py>(
-    iterator: impl Iterator<Item = PyResult<Piece<'py>>>,
+/// Render a snapshotted container inside `open`/`close`.
+fn render_entries(
+    entries: &[Piece<'_>],
+    kind: ContainerKind,
     open: &str,
     close: &str,
     limit: usize,
     depth: usize,
-) -> Option<BoundedText> {
+) -> BoundedText {
     let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len();
     let body_budget = limit - fixed;
     let mut body = String::new();
-    let mut truncated = false;
-    for (rendered, piece) in iterator.enumerate() {
-        if rendered == MAX_CONTAINER_ITEMS {
-            truncated = true;
+    let mut shortened = false;
+    let mut failed = false;
+    let mut kept = 0usize;
+    for (index, piece) in entries.iter().enumerate() {
+        if index == MAX_CONTAINER_ITEMS {
+            shortened = true;
             break;
         }
-        let piece = piece.ok()?;
         let piece_limit = body_budget.saturating_sub(body.len()).max(1);
-        let piece = render_piece(&piece, piece_limit, depth + 1)?;
+        let piece = match render_piece(piece, piece_limit, depth + 1) {
+            Some(piece) => piece,
+            None => {
+                failed = true;
+                break;
+            }
+        };
+        shortened |= piece.truncated;
+        failed |= piece.failed;
         if !fits(&mut body, &piece.text, body_budget) {
-            truncated = true;
+            shortened = true;
             break;
         }
+        kept += 1;
     }
+    let body = finish_body(body, kind, kept, entries.len(), shortened);
     let mut text = String::with_capacity(body.len() + fixed);
     text.push_str(open);
     text.push_str(&body);
-    if truncated {
-        text.push_str(TRUNCATION_SUFFIX);
-    }
     text.push_str(close);
-    Some(BoundedText::ok(text, truncated))
+    if body.is_empty() && !shortened {
+        match kind {
+            ContainerKind::Set => text = "set()".to_string(),
+            ContainerKind::FrozenSet => text = "frozenset()".to_string(),
+            _ => {}
+        }
+    }
+    BoundedText {
+        text,
+        truncated: shortened,
+        failed,
+        clipped: false,
+    }
+}
+
+/// Add the marker and any singleton or empty-container form to a rendered body.
+///
+/// A singleton tuple keeps its trailing comma, and an empty `set` renders as
+/// `set()` rather than as an empty dict. Both are decided here because they
+/// depend on what the entry loop actually kept.
+fn finish_body(
+    mut body: String,
+    kind: ContainerKind,
+    kept: usize,
+    offered: usize,
+    shortened: bool,
+) -> String {
+    if shortened {
+        if kept > 0 {
+            body.push_str(", ");
+        }
+        body.push_str(TRUNCATION_SUFFIX);
+    } else if is_single_tuple(kind, kept, offered) {
+        // `(1)` is not a tuple; CPython prints `(1,)`.
+        body.push(',');
+    }
+    body
+}
+
+/// Return `true` when a complete one-entry rendering is a singleton tuple.
+fn is_single_tuple(kind: ContainerKind, kept: usize, offered: usize) -> bool {
+    matches!(kind, ContainerKind::Tuple) && kept == 1 && offered == 1
 }
 
 /// Append `piece` to `body` when it fits `budget`, reporting whether it did.
@@ -124,7 +202,12 @@ fn render_piece(piece: &Piece<'_>, limit: usize, depth: usize) -> Option<Bounded
             text.push_str(&key.text);
             text.push_str(": ");
             text.push_str(&value.text);
-            Some(BoundedText::ok(text, key.truncated || value.truncated))
+            Some(BoundedText {
+                text,
+                truncated: key.truncated || value.truncated,
+                failed: key.failed || value.failed,
+                clipped: false,
+            })
         }
     }
 }
@@ -186,5 +269,10 @@ fn delimiters(kind: ContainerKind) -> (&'static str, &'static str) {
 /// A fixed summary used when a container is too deep or its ceiling too small.
 fn summary(open: &str, close: &str, limit: usize) -> BoundedText {
     let bounded = clamp(format!("{open}{TRUNCATION_SUFFIX}{close}"), limit);
-    BoundedText::ok(bounded.text, true)
+    BoundedText {
+        text: bounded.text,
+        truncated: true,
+        failed: false,
+        clipped: bounded.clipped,
+    }
 }
