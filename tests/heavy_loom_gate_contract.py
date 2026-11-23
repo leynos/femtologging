@@ -13,6 +13,8 @@ The document accessors live in :mod:`tests.heavy_workflow_document`.
 
 from __future__ import annotations
 
+import shlex
+
 from tests.heavy_workflow_document import (
     COMPILE_STEP,
     HEAVY_JOB,
@@ -33,6 +35,22 @@ _CHECKER_MASK_FRAGMENTS: tuple[str, ...] = (
 )
 _PREEMPTION_BOUND: str = "LOOM_MAX_PREEMPTIONS"
 _REQUIRED_PREEMPTION_BOUND: str = "3"
+_RUNNER: str = "scripts/run_loom_models.py"
+
+
+def _command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the tokens after any leading ``NAME=value`` assignments.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The command and its arguments, or ``()`` when the command is nothing
+        but assignments.
+    """
+    for index, token in enumerate(tokens):
+        if "=" not in token.split(" ", 1)[0]:
+            return tokens[index:]
+    return ()
 
 
 def loom_condition_problems(found: Job) -> list[str]:
@@ -107,6 +125,42 @@ def _execution_step(found: Job) -> dict[str, object] | None:
         ),
         None,
     )
+
+
+def checker_invocation_problems(found: Job) -> list[str]:
+    """Return a complaint unless the execution step runs the model checker.
+
+    Rejecting masking fragments is not enough on its own: a step rewritten as
+    ``run: "true"`` contains none of them and would satisfy every other rule,
+    while running no model. The command must start with the `uv run --script`
+    invocation of the committed checker, and must pass the ``--`` that
+    separates the checker's arguments from Cargo's.
+
+    Parameters
+    ----------
+    found : Job
+        The parsed heavy job.
+
+    Returns
+    -------
+    list[str]
+        A complaint when the checker invocation or its argument separator is
+        missing.
+    """
+    step = _execution_step(found)
+    if step is None:
+        return [f"the job must have a {LOOM_STEP!r} step"]
+    words = _command_words(tuple(shlex.split(run_text(step).replace("\\\n", " "))))
+    if words[:4] != ("uv", "run", "--script", _RUNNER):
+        return [
+            (
+                f"the {LOOM_STEP!r} step must run the models under {_RUNNER}, "
+                f"its command begins {words[:4]!r}"
+            )
+        ]
+    if "--" not in words:
+        return [f"the {LOOM_STEP!r} step must pass the checker's `--` separator"]
+    return []
 
 
 def checker_mask_problems(found: Job) -> list[str]:
@@ -187,6 +241,7 @@ def loom_gate_problems(found: Job) -> list[str]:
     return [
         *loom_condition_problems(found),
         *loom_tolerance_problems(found),
+        *checker_invocation_problems(found),
         *checker_mask_problems(found),
         *preemption_problems(found),
     ]

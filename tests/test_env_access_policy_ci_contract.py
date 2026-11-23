@@ -188,6 +188,17 @@ def _tolerated_loom_step(document: Workflow) -> None:
     loom_step(document)["continue-on-error"] = True
 
 
+def _tolerated_on_every_leg(document: Workflow) -> None:
+    """Tolerate failure on every leg, including the required ones.
+
+    The expression reads a matrix property, so a predicate that only searched
+    for ``matrix.`` would accept it, but logical OR makes it true everywhere.
+    """
+    jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
+    build_test = mapping(jobs.get("build-test"), subject="build-test job")
+    build_test["continue-on-error"] = "${{ true || matrix.experimental }}"
+
+
 _LOOM_MUTATIONS = (
     pytest.param(_removed_loom_step, id="loom-step-removed"),
     pytest.param(_echoed_loom_step, id="loom-step-echoed"),
@@ -195,6 +206,7 @@ _LOOM_MUTATIONS = (
     pytest.param(_masked_loom_step, id="loom-step-masked"),
     pytest.param(_conditional_loom_step, id="loom-step-conditional"),
     pytest.param(_tolerated_loom_step, id="loom-step-tolerated"),
+    pytest.param(_tolerated_on_every_leg, id="job-tolerated-every-leg"),
 )
 
 

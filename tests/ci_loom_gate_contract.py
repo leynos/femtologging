@@ -15,6 +15,7 @@ The document accessors live in :mod:`tests.make_contract_helpers`.
 
 from __future__ import annotations
 
+import re
 import shlex
 import typing as typ
 
@@ -49,14 +50,27 @@ FETCH_STEP: typ.Final = "Fetch locked dependencies"
 #: rules each out; naming them makes the refusal legible to a reader.
 MASK_FRAGMENTS: typ.Final[Tokens] = ("||", "&&", ";", "echo ", "#")
 
+#: The only matrix expression a required gate may be conditioned on: a bare
+#: property read. Anything with an operator, such as
+#: `${{ true || matrix.experimental }}`, evaluates to a constant and tolerates
+#: failure on every leg, including the required ones.
+_MATRIX_SELECTOR: typ.Final[re.Pattern[str]] = re.compile(
+    r"^\$\{\{\s*matrix\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$"
+)
+
 
 def job_tolerance_is_acceptable(job: dict[str, object]) -> bool:
     """Report whether a job's failure tolerance is acceptable for a gate.
 
     An allow-list of shapes, not a deny-list of spellings: a deny-list would
     have to enumerate every constant-true expression. A job may omit the key,
-    set an explicit `false`, or consult the matrix, which is how an
-    experimental leg is singled out.
+    set an explicit `false`, or select a leg with a bare matrix property read,
+    which is how an experimental leg is singled out.
+
+    A string containing ``matrix.`` is not enough. GitHub evaluates
+    ``${{ true || matrix.experimental }}`` as logical OR, so it is true on
+    every leg and would tolerate failure everywhere; the whole value must be
+    the bare selector.
 
     Returns
     -------
@@ -68,7 +82,7 @@ def job_tolerance_is_acceptable(job: dict[str, object]) -> bool:
     tolerance = job["continue-on-error"]
     if tolerance is False:
         return True
-    return isinstance(tolerance, str) and "matrix." in tolerance
+    return isinstance(tolerance, str) and bool(_MATRIX_SELECTOR.match(tolerance))
 
 
 def step_tolerance_is_acceptable(step: dict[str, object]) -> bool:

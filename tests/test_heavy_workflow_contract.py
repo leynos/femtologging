@@ -225,6 +225,12 @@ def _preemption_bound_changed(document: Document) -> None:
     env(step)["LOOM_MAX_PREEMPTIONS"] = "2"
 
 
+def _checker_replaced_with_true(document: Document) -> None:
+    """Keep the named step and its bound, but run nothing."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, LOOM_STEP, subject=HEAVY_JOB)["run"] = "true"
+
+
 _MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -261,6 +267,7 @@ _MUTATIONS = (
     pytest.param(_compile_step_tolerant, id="compile-step-tolerant"),
     pytest.param(_execute_step_tolerant, id="execute-step-tolerant"),
     pytest.param(_checker_status_masked, id="checker-status-masked"),
+    pytest.param(_checker_replaced_with_true, id="checker-replaced-with-true"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )
 
