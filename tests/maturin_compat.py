@@ -8,7 +8,6 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] tests shell out 
 import sys
 import tomllib
 import typing as typ
-import venv
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -283,6 +282,11 @@ def install_wheel_into_fresh_venv(environment: Path, wheel: Path) -> Path:
     >>> python = install_wheel_into_fresh_venv(env, wheel)  # doctest: +SKIP
 
     """
+    # Imported here rather than at module scope: `tests/test_maturin_build.py`
+    # must be collectable on an interpreter without the stdlib `venv` module,
+    # and that test imports this module before it decides to skip.
+    import venv
+
     venv.EnvBuilder(with_pip=True).create(environment)
     python = environment / (
         "Scripts/python.exe" if sys.platform == "win32" else "bin/python"

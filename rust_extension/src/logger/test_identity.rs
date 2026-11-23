@@ -191,85 +191,94 @@ mod tests {
         );
     }
 
+    /// Build the comparison tokens used by the `__richcmp__` cases.
+    fn comparison_tokens(
+        py: Python<'_>,
+    ) -> (
+        Py<AttachmentIdentity>,
+        Py<AttachmentIdentity>,
+        Py<AttachmentIdentity>,
+        Py<AttachmentIdentity>,
+    ) {
+        let first: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+        let second: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
+        let filter: Arc<dyn FemtoFilter> = Arc::new(AcceptAll);
+        let token = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&first)))
+            .expect("the first token must be created");
+        let same = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&first)))
+            .expect("the second token must be created");
+        let other = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&second)))
+            .expect("the distinct handler token must be created");
+        let filter_token = Py::new(py, AttachmentIdentity::for_filter(Arc::downgrade(&filter)))
+            .expect("the filter token must be created");
+        (token, same, other, filter_token)
+    }
+
+    /// Compare `left` with `right` under `op`, as Python's slot receives them.
+    fn compare(
+        py: Python<'_>,
+        left: &Py<AttachmentIdentity>,
+        right: &Bound<'_, PyAny>,
+        op: CompareOp,
+    ) -> Py<PyAny> {
+        left.borrow(py)
+            .__richcmp__(right, op, py)
+            .expect("comparison must not fail")
+    }
+
+    /// Report whether `value` is the `NotImplemented` sentinel.
+    fn is_not_implemented(py: Python<'_>, value: &Py<PyAny>) -> bool {
+        value.bind(py).is(py.NotImplemented())
+    }
+
+    /// Extract a Python truth value from a comparison result.
+    fn is_true(py: Python<'_>, value: &Py<PyAny>) -> bool {
+        value
+            .bind(py)
+            .extract::<bool>()
+            .expect("an equality result must be a bool")
+    }
+
     #[test]
     fn richcmp_compares_allocations_and_defers_otherwise() {
         Python::attach(|py| {
-            let first: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
-            let second: Arc<dyn FemtoHandlerTrait> = Arc::new(CollectingHandler::new());
-            let filter: Arc<dyn FemtoFilter> = Arc::new(AcceptAll);
-
-            let token = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&first)))
-                .expect("the first token must be created");
-            let same = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&first)))
-                .expect("the second token must be created");
-            let other = Py::new(py, AttachmentIdentity::for_handler(Arc::downgrade(&second)))
-                .expect("the distinct handler token must be created");
-            let filter_token = Py::new(py, AttachmentIdentity::for_filter(Arc::downgrade(&filter)))
-                .expect("the filter token must be created");
-
-            let is_true = |value: Py<PyAny>| {
-                value
-                    .bind(py)
-                    .extract::<bool>()
-                    .expect("an equality result must be a bool")
-            };
+            let (token, same, other, filter_token) = comparison_tokens(py);
 
             assert!(
-                is_true(
-                    token
-                        .borrow(py)
-                        .__richcmp__(same.bind(py), CompareOp::Eq, py)
-                        .expect("equality must not fail")
-                ),
+                is_true(py, &compare(py, &token, same.bind(py), CompareOp::Eq)),
                 "two tokens for one allocation must compare equal"
             );
             assert!(
-                !is_true(
-                    token
-                        .borrow(py)
-                        .__richcmp__(other.bind(py), CompareOp::Eq, py)
-                        .expect("equality must not fail")
-                ),
+                !is_true(py, &compare(py, &token, other.bind(py), CompareOp::Eq)),
                 "tokens for distinct attachments must not compare equal"
             );
             assert!(
-                is_true(
-                    token
-                        .borrow(py)
-                        .__richcmp__(other.bind(py), CompareOp::Ne, py)
-                        .expect("inequality must not fail")
-                ),
+                is_true(py, &compare(py, &token, other.bind(py), CompareOp::Ne)),
                 "tokens for distinct attachments must compare unequal"
             );
             assert!(
                 !is_true(
-                    token
-                        .borrow(py)
-                        .__richcmp__(filter_token.bind(py), CompareOp::Eq, py)
-                        .expect("equality must not fail")
+                    py,
+                    &compare(py, &token, filter_token.bind(py), CompareOp::Eq)
                 ),
                 "a handler token must not equal a filter token"
             );
+        });
+    }
 
+    #[test]
+    fn richcmp_defers_foreign_operands_and_ordering() {
+        Python::attach(|py| {
+            let (token, same, _, _) = comparison_tokens(py);
             let foreign = py.None();
-            let not_implemented = |value: Py<PyAny>| value.bind(py).is(py.NotImplemented());
+
             assert!(
-                not_implemented(
-                    token
-                        .borrow(py)
-                        .__richcmp__(foreign.bind(py), CompareOp::Eq, py)
-                        .expect("a foreign operand must not raise")
-                ),
+                is_not_implemented(py, &compare(py, &token, foreign.bind(py), CompareOp::Eq)),
                 "a foreign operand must defer to Python"
             );
             for op in [CompareOp::Lt, CompareOp::Le, CompareOp::Gt, CompareOp::Ge] {
                 assert!(
-                    not_implemented(
-                        token
-                            .borrow(py)
-                            .__richcmp__(same.bind(py), op, py)
-                            .expect("ordering must not raise")
-                    ),
+                    is_not_implemented(py, &compare(py, &token, same.bind(py), op)),
                     "ordering operators must defer to Python"
                 );
             }
