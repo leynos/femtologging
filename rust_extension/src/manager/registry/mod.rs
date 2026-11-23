@@ -379,8 +379,6 @@ pub fn reset_manager() {
     // Take both registries under the lock but drop neither there: handler
     // destruction may flush or join a worker, and a filter may own the last
     // reference to a Python callable whose finalizer re-enters the manager.
-    // `clear_runtime_state` is `()` without the python feature, so the one
-    // take-and-drop shape covers both lanes.
     let (loggers, displaced_runtime) = {
         let mut mgr = MANAGER.write();
         let displaced_runtime = clear_runtime_state(&mut mgr);
@@ -389,15 +387,12 @@ pub fn reset_manager() {
         (std::mem::take(&mut mgr.loggers), displaced_runtime)
     };
     #[cfg(feature = "python")]
-    // Destroy both halves with the interpreter detached: a file handler's
-    // destructor closes and waits for completion, and a logger's destructor may
-    // wait for queued records to drain. Holding the GIL across either wait
-    // stalls unrelated Python threads. The configuration commit's refusal path
-    // disposes of displaced state the same way.
+    // Destroy both halves with the interpreter detached: a handler or logger
+    // destructor may wait for completion or queued records, and holding the
+    // GIL across that wait stalls unrelated Python threads.
     Python::attach(|py| py.detach(move || drop((displaced_runtime, loggers))));
     #[cfg(not(feature = "python"))]
-    // Dropping the loggers outside the registry lock may wait for queued
-    // records; the wait must not sit inside the guard.
+    // Dropping outside the guard may wait for queued records.
     drop((displaced_runtime, loggers));
     #[cfg(feature = "log-compat")]
     crate::log_compat::refresh_global_max_level();
