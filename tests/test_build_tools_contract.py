@@ -346,6 +346,23 @@ def test_a_refused_preflight_stops_the_build_before_uv_runs(
     )
 
 
+def _has_adjacent(command: list[str], first: str, second: str) -> bool:
+    """Return whether ``first`` immediately precedes ``second`` in ``command``.
+
+    The build recipe inserts optional flags such as ``--locked`` between the
+    ``uv`` subcommand and its arguments, so the package command is matched by
+    the adjacent pair rather than by a fixed offset.
+
+    Returns
+    -------
+        bool: ``True`` when the two tokens appear consecutively.
+    """
+    return any(
+        command[index] == first and command[index + 1] == second
+        for index in range(len(command) - 1)
+    )
+
+
 def test_a_permitted_preflight_reaches_the_build_recipe(tmp_path: Path) -> None:
     """The ``uv`` stub records the build commands when the preflight passes.
 
@@ -370,7 +387,12 @@ def test_a_permitted_preflight_reaches_the_build_recipe(tmp_path: Path) -> None:
     assert log.exists(), "the build recipe never invoked the uv stub"
     commands = _recorded_uv_commands(log)
     assert ["venv"] in commands, commands
-    assert any(command[:2] == ["sync", "--group"] for command in commands), commands
-    assert any(command[:3] == ["run", "maturin", "develop"] for command in commands), (
-        commands
-    )
+    # The recipe passes `--locked` between the subcommand and its group flag,
+    # so match on the subcommand and the flag rather than on adjacency.
+    assert any(
+        command[:1] == ["sync"] and "--group" in command for command in commands
+    ), commands
+    assert any(
+        command[:1] == ["run"] and _has_adjacent(command, "maturin", "develop")
+        for command in commands
+    ), commands
