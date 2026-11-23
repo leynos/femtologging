@@ -79,8 +79,7 @@ fn key_values_to_dict_copies_structured_values() {
             key_values: BTreeMap::from([("request_id".to_owned(), "abc".to_owned())]),
             ..RecordMetadata::default()
         };
-        let dict =
-            key_values_to_dict(py, &metadata.key_values).expect("build key-value dict");
+        let dict = key_values_to_dict(py, &metadata.key_values).expect("build key-value dict");
         let request_id: String = dict
             .get_item("request_id")
             .expect("lookup")
