@@ -56,20 +56,6 @@ fn reject_unknown_backoff_keys(config: &Bound<'_, PyDict>) -> PyResult<()> {
     Ok(())
 }
 
-/// Read the four optional backoff overrides from a validated dictionary.
-fn extract_backoff_overrides(config: &Bound<'_, PyDict>) -> PyResult<BackoffOverrides> {
-    let base_ms = extract_optional_u64(config, "base_ms")?;
-    let cap_ms = extract_optional_u64(config, "cap_ms")?;
-    let reset_after_ms = extract_optional_u64(config, "reset_after_ms")?;
-    let deadline_ms = extract_optional_u64(config, "deadline_ms")?;
-    Ok(BackoffOverrides::from_options(
-        base_ms,
-        cap_ms,
-        reset_after_ms,
-        deadline_ms,
-    ))
-}
-
 #[pymethods]
 impl BackoffOverrides {
     /// Construct `BackoffOverrides` from an optional configuration dictionary.
