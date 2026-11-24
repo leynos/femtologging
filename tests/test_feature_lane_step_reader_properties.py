@@ -16,9 +16,8 @@ from tests.feature_lane_step_readers import (
     disables_errexit,
     effective_shell,
     shell_fails_fast,
-    tokenize,
-    tokenize_statements,
 )
+from tests.workflow_shell_scanner import tokenize, tokenize_statements
 
 
 @pytest.mark.parametrize(
@@ -61,8 +60,12 @@ def test_the_errexit_reader_distinguishes_enabling_from_disabling(
         pytest.param("echo ready && set +e", True, id="after-and"),
         pytest.param("echo ready || set +e", True, id="after-or"),
         pytest.param("echo ready | set +e", True, id="after-pipe"),
-        pytest.param("echo 'a; b'", False, id="quoted-semicolon"),
-        pytest.param("echo a > out; set -e", False, id="after-redirection"),
+        pytest.param("echo ready > out; set +e", True, id="after-redirection"),
+        pytest.param("echo ready 2>&1; set +e", True, id="after-fd-redirection"),
+        pytest.param("echo 'a; b'", False, id="quoted-semicolon-in-word"),
+        pytest.param("echo ';' set +e", False, id="quoted-semicolon-token"),
+        pytest.param('echo "a|b"', False, id="quoted-pipe"),
+        pytest.param("echo a > out; set -e", False, id="enabling-after-redirection"),
     ],
 )
 def test_the_statement_reader_finds_a_set_after_a_separator(
@@ -71,8 +74,9 @@ def test_the_statement_reader_finds_a_set_after_a_separator(
     """Scenario: ``set +e`` follows another command on the same line.
 
     Invariant: the second command is inspected, so a line whose first word is
-    harmless cannot hide the option change. A separator inside quotes stays
-    part of its word.
+    harmless cannot hide the option change, and a redirection does not end the
+    scan. A separator that quoting produced stays part of its word, so
+    ``echo ';' set +e`` is one command whose ``set`` is an argument.
     """
     assert (
         any(disables_errexit(statement) for statement in tokenize_statements(script))

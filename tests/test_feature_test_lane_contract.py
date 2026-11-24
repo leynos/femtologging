@@ -35,9 +35,9 @@ from tests.feature_lane_step_readers import (
     run_text,
     shell_fails_fast,
     step,
-    tokenize_statements,
 )
 from tests.make_contract_helpers import repo_root, workflow_job
+from tests.workflow_shell_scanner import tokenize_statements
 
 _WORKFLOW: typ.Final = WORKFLOW
 _JOB: typ.Final = JOB
