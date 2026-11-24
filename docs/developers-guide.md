@@ -559,6 +559,19 @@ refreshes it while still holding `MANAGER`, so no dispatch can observe the new
 index thresholds through a stale prefilter; the refresh takes only the index
 lock, which the manager-then-index ordering already permits.
 
+#### Bridge diagnostics
+
+The adapter reports its own trouble on standard error rather than through
+`log`, because it *is* the global Rust logger: a record about the adapter would
+be discarded by the same target filter that admitted it. The write is split so
+the failure path stays testable. `write_diagnostic_to` takes any `io::Write`
+and returns its `io::Result`, `acknowledge_write` is the single boundary that
+accepts and discards that result, and `report_diagnostic` wires the two
+together over `std::io::stderr()`. A closed, full, or otherwise refusing stderr
+therefore degrades to a missing warning; it never panics the logging call that
+triggered the diagnostic. `log_compat::diagnostics_tests` proves this with a
+writer that refuses the write.
+
 The root-level `FemtoLogAdapter`, install function, and logger lookup
 re-exports are hidden and require both `log-compat` and `test-util`. Keep
 benchmark-only access behind those feature gates. The Criterion benchmark can

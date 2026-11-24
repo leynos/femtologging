@@ -19,12 +19,14 @@ use pyo3::prelude::*;
 
 use crate::http_handler::transport_origin;
 use crate::level::FemtoLevel;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
+use crate::log_record::{FemtoLogRecord, RecordMetadata, RecordOrigin};
 use crate::logger::DEFAULT_LOGGER_LEVEL;
 use crate::manager;
 
 mod diagnostics;
-use diagnostics::{mirror_ignored_warning, resolve_logger, should_ignore_target};
+use diagnostics::{
+    mirror_ignored_warning, report_diagnostic, resolve_logger, should_ignore_target,
+};
 
 /// Adapter implementing the Rust `log::Log` trait.
 ///
@@ -36,7 +38,7 @@ pub struct FemtoLogAdapter;
 /// Convert a `log` severity to the matching femtologging level.
 ///
 /// For example, `log::Level::Warn` becomes `FemtoLevel::Warn`.
-fn map_log_level(level: log::Level) -> FemtoLevel {
+const fn map_log_level(level: log::Level) -> FemtoLevel {
     match level {
         log::Level::Trace => FemtoLevel::Trace,
         log::Level::Debug => FemtoLevel::Debug,
@@ -52,7 +54,7 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
 /// strongest severity supported by `log`. Its only callers are the
 /// `test-util` hooks, so a production build omits it with them.
 #[cfg(feature = "test-util")]
-fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
+const fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
         FemtoLevel::Debug => log::Level::Debug,
@@ -170,7 +172,9 @@ impl log::Log for FemtoLogAdapter {
             return;
         }
         if should_ignore_target(record.target()) {
-            mirror_ignored_warning(record, |message| eprintln!("{message}"));
+            // The warning mirrors out of band, and a failed write stops at the
+            // boundary documented by `report_diagnostic`.
+            mirror_ignored_warning(record, |message| report_diagnostic(*message));
             return;
         }
 
@@ -181,32 +185,7 @@ impl log::Log for FemtoLogAdapter {
         let origin = transport_origin::capture_record_origin();
         let _suspended = transport_origin::suspend_http_transport();
 
-        Python::attach(|py| {
-            let Some((_, logger)) = resolve_logger(py, record.target()) else {
-                return;
-            };
-
-            let level = FemtoLevel::from(record.level());
-            {
-                let guarded = logger.borrow(py);
-                if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
-                    return;
-                }
-            }
-
-            let metadata = RecordMetadata {
-                module_path: record.module_path().unwrap_or_default().to_string(),
-                filename: record.file().unwrap_or_default().to_string(),
-                line_number: record.line().unwrap_or(0),
-                ..Default::default()
-            };
-
-            let message = record.args().to_string();
-            let guarded = logger.borrow(py);
-            let record = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
-                .with_origin(origin);
-            let _ = guarded.log_prebuilt(record);
-        });
+        Python::attach(|py| dispatch_record(py, record, origin));
     }
 
     fn flush(&self) {
@@ -214,6 +193,40 @@ impl log::Log for FemtoLogAdapter {
             manager::flush_all_handlers(py);
         });
     }
+}
+
+/// Resolve an accepted record's target and queue it on the matching logger.
+///
+/// A target that cannot be resolved, or a logger that refuses the record by
+/// level, drops the record silently; the facade's enablement decision is the
+/// only threshold the caller observes. `origin` is the transport marker the
+/// caller captured before dispatch began, so HTTP-worker diagnostics keep
+/// their provenance through the queue.
+fn dispatch_record(py: Python<'_>, record: &Record<'_>, origin: RecordOrigin) {
+    let Some((_, logger)) = resolve_logger(py, record.target()) else {
+        return;
+    };
+
+    let level = FemtoLevel::from(record.level());
+    {
+        let guarded = logger.borrow(py);
+        if guarded.refuse_if_disabled() || !guarded.is_enabled_for(level) {
+            return;
+        }
+    }
+
+    let metadata = RecordMetadata {
+        module_path: record.module_path().unwrap_or_default().to_owned(),
+        filename: record.file().unwrap_or_default().to_owned(),
+        line_number: record.line().unwrap_or(0),
+        ..Default::default()
+    };
+
+    let message = record.args().to_string();
+    let guarded = logger.borrow(py);
+    let prebuilt = FemtoLogRecord::with_metadata(guarded.name(), level, &message, metadata)
+        .with_origin(origin);
+    let _ = guarded.log_prebuilt(prebuilt);
 }
 
 /// Singleton adapter installed as the process-wide Rust logger.
@@ -283,10 +296,10 @@ pub(crate) fn setup_rust_logging() -> PyResult<()> {
 pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
     let mapped = map_femto_to_log_level(level);
 
-    if let Some(target) = target {
-        log::log!(target: target, mapped, "{}", message);
+    if let Some(target_name) = target {
+        log::log!(target: target_name, mapped, "{message}");
     } else {
-        log::log!(mapped, "{}", message);
+        log::log!(mapped, "{message}");
     }
 }
 
@@ -352,6 +365,10 @@ mod tests;
 #[cfg(test)]
 #[path = "enabled_tests.rs"]
 mod enabled_tests;
+
+#[cfg(test)]
+#[path = "const_eval_tests.rs"]
+mod const_eval_tests;
 
 #[cfg(test)]
 #[path = "flush_tests.rs"]

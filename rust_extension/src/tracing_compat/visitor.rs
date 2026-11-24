@@ -50,7 +50,7 @@ impl FieldCaptureVisitor {
         if field.name() == "message" && !self.preserve_message_field {
             self.message = Some(value);
         } else {
-            self.key_values.insert(field.name().to_string(), value);
+            self.key_values.insert(field.name().to_owned(), value);
         }
     }
 
@@ -65,7 +65,7 @@ impl FieldCaptureVisitor {
 
 impl Visit for FieldCaptureVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.store(field, value.to_string());
+        self.store(field, value.to_owned());
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {

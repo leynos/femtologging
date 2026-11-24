@@ -6,6 +6,7 @@
 //! warnings visible, and the rate-limited diagnostic a target refused by the
 //! bounded registry produces before the bridge falls back to root.
 
+use std::io::Write;
 use std::sync::LazyLock;
 
 use log::Record;
@@ -42,6 +43,11 @@ pub(super) fn should_ignore_target(target: &str) -> bool {
 ///
 /// For example, dispatch-capacity warnings are mirrored to stderr instead of
 /// being forwarded back into the adapter that could not accept their record.
+///
+/// A writer that refuses the warning is not retried and must not panic: the
+/// warning describes the logger that would otherwise report its own failure.
+/// [`report_diagnostic`] is the bridge's writer, and it documents where a
+/// failed write stops.
 pub(super) fn mirror_ignored_warning(
     record: &Record<'_>,
     write_warning: impl FnOnce(&std::fmt::Arguments<'_>),
@@ -49,6 +55,43 @@ pub(super) fn mirror_ignored_warning(
     if should_ignore_target(record.target()) && record.level() == log::Level::Warn {
         write_warning(record.args());
     }
+}
+
+/// Write one diagnostic line to an arbitrary writer.
+///
+/// Split from [`report_diagnostic`] so a test can inject a failing writer and
+/// prove that a refused stderr surfaces as an error rather than as a panic.
+pub(super) fn write_diagnostic_to(
+    mut writer: impl Write,
+    message: std::fmt::Arguments<'_>,
+) -> std::io::Result<()> {
+    writeln!(writer, "{message}")
+}
+
+/// Acknowledge the result of a diagnostic write, discarding any failure.
+///
+/// This is the single boundary where a failed bridge diagnostic stops. Stderr
+/// may be closed, a pipe full, or the enclosing file system out of space; the
+/// write cannot be retried, and it cannot be reported through the logger being
+/// diagnosed without repeating the recursion the stderr route exists to avoid.
+/// Panicking is not acceptable here either: a logging path that panics because
+/// it could not print its own warning would turn a broken diagnostic stream
+/// into a failed logging call. The failure is therefore acknowledged and
+/// discarded, and [`write_diagnostic_to`] keeps it observable to a test.
+pub(super) fn acknowledge_write(result: std::io::Result<()>) {
+    let _ = result;
+}
+
+/// Report one bridge diagnostic on standard error.
+///
+/// The bridge reports its own trouble here rather than through `log`: the
+/// adapter is the global Rust logger, so a record about the adapter itself
+/// would be discarded by [`should_ignore_target`] before anyone saw it. The
+/// write result is handed to [`acknowledge_write`], the one boundary where a
+/// failed diagnostic stops, so a closed or full stderr degrades to a missing
+/// warning instead of a panic on the logging path.
+pub(super) fn report_diagnostic(message: std::fmt::Arguments<'_>) {
+    acknowledge_write(write_diagnostic_to(std::io::stderr(), message));
 }
 
 /// Identify the `KeyError` used when a requested logger name is absent.
@@ -108,7 +151,7 @@ pub(super) struct LookupFailureDiagnostic<'a> {
 /// fixed prefix. Quoting them verbatim would let one warning write an unbounded
 /// line, and an unescaped one could forge a record boundary in the same
 /// line-oriented output the name rules exist to protect.
-pub(super) fn lookup_failure_message(diagnostic: LookupFailureDiagnostic<'_>) -> String {
+pub(super) fn lookup_failure_message(diagnostic: &LookupFailureDiagnostic<'_>) -> String {
     let LookupFailureDiagnostic {
         reason,
         target,
@@ -128,6 +171,15 @@ pub(super) fn lookup_failure_message(diagnostic: LookupFailureDiagnostic<'_>) ->
 ///
 /// For example, repeated records to a full-registry target share one stderr
 /// warning per configured interval instead of writing once per record.
+///
+/// The warning goes to stderr rather than through `log::warn!` because its
+/// whole subject is a target the bridge could not resolve, and the adapter is
+/// the global Rust logger: routing the warning through it would send a record
+/// whose target is `femtologging.log_compat` straight back into the adapter.
+/// [`should_ignore_target`] discards exactly that target, so a `log::warn!`
+/// here would be written and immediately dropped, leaving a registry at its cap
+/// with no visible diagnostic at all on the bridge path. [`report_diagnostic`]
+/// carries the failure boundary for the write itself.
 fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &str) {
     LOOKUP_WARNER.record_drop();
     // Both the classification and the message are built inside the closure
@@ -138,24 +190,16 @@ fn warn_lookup_failure(py: Python<'_>, err: &PyErr, target: &str, normalized: &s
     LOOKUP_WARNER.warn_if_due(|count| {
         let reason = classify_logger_error(py, err);
         let detail = err.to_string();
-        // Stderr, not `log::warn!`. This diagnostic's whole subject is a target
-        // the bridge could not resolve, and the adapter is the global Rust
-        // logger: routing the warning through it would send a record whose
-        // target is `femtologging.log_compat` straight back into the adapter.
-        // `should_ignore_target` discards exactly that target, so a `log::warn!`
-        // here is written and immediately dropped — leaving a registry at its
-        // cap with no visible diagnostic at all on the bridge path. Writing to
-        // stderr bypasses the logger being diagnosed.
-        eprintln!(
+        report_diagnostic(format_args!(
             "{}",
-            lookup_failure_message(LookupFailureDiagnostic {
+            lookup_failure_message(&LookupFailureDiagnostic {
                 reason,
                 target,
                 normalized,
                 detail: &detail,
                 count,
             })
-        );
+        ));
     });
 }
 
@@ -176,8 +220,8 @@ fn classify_logger_error(py: Python<'_>, err: &PyErr) -> &'static str {
 ///
 /// For example, a valid `my::service` target resolves to `my.service`; a name
 /// refused by the bounded registry resolves to the root logger.
-pub(super) fn resolve_logger<'py>(
-    py: Python<'py>,
+pub(super) fn resolve_logger(
+    py: Python<'_>,
     target: &str,
 ) -> Option<(String, Py<crate::FemtoLogger>)> {
     let normalized = normalize_target(target);
@@ -188,7 +232,7 @@ pub(super) fn resolve_logger<'py>(
             // Root is always resolvable: it is exempt from the registry cap, so
             // this fallback cannot itself be refused.
             let logger = manager::get_logger(py, "root").ok()?;
-            Some(("root".to_string(), logger))
+            Some(("root".to_owned(), logger))
         }
     }
 }

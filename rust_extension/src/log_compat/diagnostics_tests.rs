@@ -13,7 +13,8 @@ use serial_test::serial;
 
 use super::FemtoLogAdapter;
 use super::diagnostics::{
-    LookupFailureDiagnostic, lookup_failure_message, mirror_ignored_warning, should_ignore_target,
+    LookupFailureDiagnostic, acknowledge_write, lookup_failure_message, mirror_ignored_warning,
+    should_ignore_target, write_diagnostic_to,
 };
 use super::test_support::log_max_level;
 use crate::handler::FemtoHandlerTrait;
@@ -68,7 +69,8 @@ fn ignored_internal_warnings_are_mirrored_to_stderr() {
 /// without the fixture this case would assert nothing.
 #[rstest]
 #[serial]
-fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) {
+fn refused_targets_fall_back_to_root_without_losing_records() {
+    log_max_level();
     manager::reset_manager();
 
     let refused = [
@@ -78,7 +80,7 @@ fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) 
             "a".repeat(crate::manager::MAX_LOGGER_NAME_BYTES)
         ),
         // A newline would let a target forge a line boundary in output.
-        "stress.forged\nfake [ERROR] injected".to_string(),
+        "stress.forged\nfake [ERROR] injected".to_owned(),
         // Deeper than `MAX_LOGGER_NAME_SEGMENTS`.
         ["deep"; crate::manager::MAX_LOGGER_NAME_SEGMENTS + 1].join("."),
     ];
@@ -148,7 +150,8 @@ fn refused_targets_fall_back_to_root_without_losing_records(_log_max_level: ()) 
 /// fixture the assertion would hold for the wrong reason.
 #[rstest]
 #[serial]
-fn the_bridge_ignores_records_about_itself(_log_max_level: ()) {
+fn the_bridge_ignores_records_about_itself() {
+    log_max_level();
     manager::reset_manager();
 
     Python::attach(|py| {
@@ -221,7 +224,7 @@ fn refused_target_diagnostics_are_bounded_and_escaped() {
     let escaped = format!("stress.forged\nfake [ERROR] {}", "b".repeat(1_000_000));
     let overlong = format!("stress.{}", "c".repeat(1_000_000));
 
-    let message = lookup_failure_message(LookupFailureDiagnostic {
+    let message = lookup_failure_message(&LookupFailureDiagnostic {
         reason: "invalid logger target",
         target: &escaped,
         normalized: &escaped,
@@ -280,4 +283,40 @@ fn the_family_check_requires_a_separator_after_the_root(
             "forwarded"
         },
     );
+}
+
+/// A writer that refuses every write, standing in for a closed stderr.
+struct FailingWriter;
+
+impl std::io::Write for FailingWriter {
+    /// Refuse the write the way a closed pipe does.
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "diagnostic stream closed",
+        ))
+    }
+
+    /// Succeed at flushing; the write itself is the failing step.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A failed diagnostic write is an error at the seam and a no-op at the boundary.
+///
+/// The bridge writes its own diagnostics to stderr, so a closed or full stream
+/// is a real possibility. [`write_diagnostic_to`] must surface that as an
+/// ordinary error a test can see, and [`acknowledge_write`] must be where it
+/// stops: no retry, no second failing write, and no panic. The base revision
+/// used `eprintln!`, which panicked on this same condition.
+#[test]
+fn a_failed_diagnostic_write_is_acknowledged_at_one_boundary() {
+    let failure = write_diagnostic_to(FailingWriter, format_args!("diagnostic"));
+    assert!(
+        matches!(&failure, Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe),
+        "the writer seam must surface the write failure, got {failure:?}",
+    );
+    // The boundary itself: returning normally is the assertion.
+    acknowledge_write(failure);
 }
