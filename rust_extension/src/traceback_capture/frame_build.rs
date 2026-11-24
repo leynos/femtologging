@@ -269,10 +269,19 @@ fn source_is_bounded(
     let Ok(path) = os.getattr("path") else {
         return false;
     };
-    path.call_method1("getsize", (filename,))
+    // Size alone does not prove a path is safe to open: a FIFO reports a size
+    // but blocks on open until a writer appears.
+    let is_file = path
+        .call_method1("isfile", (filename,))
         .ok()
-        .and_then(|size| size.extract::<u64>().ok())
-        .is_some_and(|size| size <= MAX_SOURCE_BYTES)
+        .and_then(|flag| flag.extract::<bool>().ok())
+        .unwrap_or(false);
+    is_file
+        && path
+            .call_method1("getsize", (filename,))
+            .ok()
+            .and_then(|size| size.extract::<u64>().ok())
+            .is_some_and(|size| size <= MAX_SOURCE_BYTES)
 }
 
 /// Return `true` when `linecache` already holds this filename.
@@ -286,7 +295,16 @@ fn cached_source(linecache: &Bound<'_, PyAny>, filename: &Bound<'_, PyString>) -
     let Ok(cache) = cache.cast::<pyo3::types::PyDict>() else {
         return false;
     };
-    cache.contains(filename).unwrap_or(false)
+    let Ok(Some(entry)) = cache.get_item(filename) else {
+        return false;
+    };
+    let Ok(entry) = entry.cast::<pyo3::types::PyTuple>() else {
+        return false;
+    };
+    // A lazy entry holds `None` where the lines belong: `prepare_source` has
+    // registered the loader, but no source has been read yet. Only a
+    // materialised entry has already paid for its source.
+    entry.get_item(2).is_ok_and(|lines| !lines.is_none())
 }
 
 /// Largest source file whose line is read through `linecache`.

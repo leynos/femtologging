@@ -38,8 +38,12 @@ const MAX_CONTAINER_DEPTH: usize = 4;
 /// `None`, so the caller never restarts the conversion through native `repr`.
 pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Option<BoundedText> {
     let kind = container_kind(value)?;
+    if exact_len(value, kind) == Some(0) {
+        return Some(clamp(empty_form(kind).to_string(), limit));
+    }
     let (open, close) = delimiters(kind);
-    let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len();
+    // The marker is written after a separator, so both are reserved.
+    let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len() + 2;
     if depth >= MAX_CONTAINER_DEPTH || limit < fixed {
         return Some(summary(open, close, limit));
     }
@@ -64,6 +68,15 @@ pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Op
 /// not reported as truncated.
 fn snapshot<'py>(value: &Bound<'py, PyAny>, kind: ContainerKind) -> Option<Vec<Piece<'py>>> {
     let mut entries = Vec::with_capacity(MAX_CONTAINER_ITEMS.min(4));
+    if matches!(kind, ContainerKind::List) {
+        // A list subclass can override `__iter__`, so the native iterator is
+        // requested from the `list` type itself; that reads the real storage.
+        let iterator = native_list_iterator(value)?;
+        for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
+            entries.push(Piece::Value(item.ok()?));
+        }
+        return Some(entries);
+    }
     if matches!(kind, ContainerKind::Dict) {
         let dict = value.cast::<PyDict>().ok()?;
         for (key, entry) in dict.iter().take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
@@ -81,7 +94,7 @@ fn snapshot<'py>(value: &Bound<'py, PyAny>, kind: ContainerKind) -> Option<Vec<P
 /// Read the exact length of a built-in container without iterating it.
 fn exact_len(value: &Bound<'_, PyAny>, kind: ContainerKind) -> Option<usize> {
     match kind {
-        ContainerKind::List => value.cast::<PyList>().ok().map(|list| list.len()),
+        ContainerKind::List => native_list_len(value),
         ContainerKind::Tuple => value.cast::<PyTuple>().ok().map(|tuple| tuple.len()),
         ContainerKind::Dict => value.cast::<PyDict>().ok().map(|dict| dict.len()),
         ContainerKind::Set => value.cast::<PySet>().ok().map(|set| set.len()),
@@ -98,10 +111,12 @@ fn render_entries(
     limit: usize,
     depth: usize,
 ) -> BoundedText {
-    let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len();
+    // The marker is written after a separator, so both are reserved.
+    let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len() + 2;
     let body_budget = limit - fixed;
     let mut body = String::new();
     let mut shortened = false;
+    let mut byte_cut = false;
     let mut failed = false;
     let mut kept = 0usize;
     for (index, piece) in entries.iter().enumerate() {
@@ -121,6 +136,7 @@ fn render_entries(
         failed |= piece.failed;
         if !fits(&mut body, &piece.text, body_budget) {
             shortened = true;
+            byte_cut = true;
             break;
         }
         kept += 1;
@@ -130,18 +146,13 @@ fn render_entries(
     text.push_str(open);
     text.push_str(&body);
     text.push_str(close);
-    if body.is_empty() && !shortened {
-        match kind {
-            ContainerKind::Set => text = "set()".to_string(),
-            ContainerKind::FrozenSet => text = "frozenset()".to_string(),
-            _ => {}
-        }
-    }
     BoundedText {
         text,
         truncated: shortened,
         failed,
-        clipped: false,
+        // Only a cut by this call's byte allowance counts as clipped; item and
+        // depth limits summarise without claiming the byte budget ran out.
+        clipped: byte_cut,
     }
 }
 
@@ -249,10 +260,61 @@ fn container_kind(value: &Bound<'_, PyAny>) -> Option<ContainerKind> {
     if value.is_exact_instance_of::<PySet>() {
         return Some(ContainerKind::Set);
     }
+    if inherits_list_repr(value) {
+        return Some(ContainerKind::List);
+    }
     if value.is_exact_instance_of::<PyFrozenSet>() {
         return Some(ContainerKind::FrozenSet);
     }
     None
+}
+
+/// Read a list subclass's length through the native `list` type.
+fn native_list_len(value: &Bound<'_, PyAny>) -> Option<usize> {
+    let len = value.py().get_type::<PyList>().getattr("__len__").ok()?;
+    len.call1((value,)).ok()?.extract().ok()
+}
+
+/// Iterate a list subclass's storage without invoking its `__iter__`.
+fn native_list_iterator<'py>(value: &Bound<'py, PyAny>) -> Option<Bound<'py, PyIterator>> {
+    let iter = value.py().get_type::<PyList>().getattr("__iter__").ok()?;
+    let iterator = iter.call1((value,)).ok()?;
+    iterator.cast_into::<PyIterator>().ok()
+}
+
+/// Return `true` for a list subclass that inherits `list.__repr__`.
+///
+/// Such a subclass renders every entry through the inherited C
+/// implementation, so it needs the same bounded element walk as an exact list.
+/// A subclass with its own `__repr__` keeps the general path: that
+/// representation is what the application chose to expose.
+fn inherits_list_repr(value: &Bound<'_, PyAny>) -> bool {
+    let py = value.py();
+    let list_type = py.get_type::<PyList>();
+    if !value.get_type().is_subclass(&list_type).unwrap_or(false) {
+        return false;
+    }
+    let type_type = py.get_type::<pyo3::types::PyType>();
+    let Ok(getattribute) = type_type.getattr("__getattribute__") else {
+        return false;
+    };
+    let inherited = getattribute.call1((&list_type, "__repr__")).ok();
+    let actual = getattribute.call1((value.get_type(), "__repr__")).ok();
+    match (inherited, actual) {
+        (Some(inherited), Some(actual)) => actual.is(&inherited),
+        _ => false,
+    }
+}
+
+/// The exact text of an empty container.
+fn empty_form(kind: ContainerKind) -> &'static str {
+    match kind {
+        ContainerKind::List => "[]",
+        ContainerKind::Tuple => "()",
+        ContainerKind::Dict => "{}",
+        ContainerKind::Set => "set()",
+        ContainerKind::FrozenSet => "frozenset()",
+    }
 }
 
 /// The opening and closing text of each container kind.
@@ -274,5 +336,54 @@ fn summary(open: &str, close: &str, limit: usize) -> BoundedText {
         truncated: true,
         failed: false,
         clipped: bounded.clipped,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Container rendering at the item and byte ceilings.
+
+    use super::*;
+    use pyo3::types::{PyFrozenSet, PySet};
+
+    #[test]
+    fn a_marker_separator_fits_inside_the_ceiling() {
+        Python::attach(|py| {
+            let list = PyList::new(py, ["12345", "6"]).expect("list should build");
+            let rendered = render(list.as_any(), 12, 0).expect("a list should render");
+
+            assert!(
+                rendered.text.len() <= 12,
+                "the marker separator must be part of the ceiling: {:?}",
+                rendered.text
+            );
+            assert!(rendered.clipped, "the byte ceiling caused the cut");
+        });
+    }
+
+    #[test]
+    fn a_complete_container_is_not_reported_as_clipped() {
+        Python::attach(|py| {
+            let list = PyList::new(py, [1, 2]).expect("list should build");
+            let rendered = render(list.as_any(), 32, 0).expect("a list should render");
+
+            assert_eq!(rendered.text, "[1, 2]");
+            assert!(!rendered.truncated);
+            assert!(!rendered.clipped);
+        });
+    }
+
+    #[test]
+    fn singleton_tuples_and_empty_sets_keep_their_forms() {
+        Python::attach(|py| {
+            let tuple = PyTuple::new(py, [1]).expect("tuple should build");
+            assert_eq!(render(tuple.as_any(), 16, 0).unwrap().text, "(1,)");
+
+            let set = PySet::empty(py).expect("set should build");
+            assert_eq!(render(set.as_any(), 16, 0).unwrap().text, "set()");
+
+            let frozen = PyFrozenSet::empty(py).expect("frozenset should build");
+            assert_eq!(render(frozen.as_any(), 16, 0).unwrap().text, "frozenset()");
+        });
     }
 }

@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple, PyType};
 
 use crate::traceback_capture::limits::{STR_FAILURE_SENTINEL, TRUNCATION_SUFFIX};
+use crate::traceback_capture::types;
 use crate::traceback_capture::values::{self, BoundedText};
 
 use super::RenderedArgs;
@@ -42,7 +43,13 @@ pub(in crate::traceback_capture) fn build_message(
             return multi_argument_message(args, limit);
         }
         if let Some(argument) = args.first_arg.as_ref() {
-            return values::stringify_argument(argument.bind(exception.py()), limit);
+            let argument = argument.bind(exception.py());
+            if types::inherits_exception_str(argument) {
+                // A nested exception's inherited `str` renders its own
+                // arguments, so a bounded summary replaces that recursion.
+                return values::exception_summary(argument, limit);
+            }
+            return values::stringify_argument(argument, limit);
         }
     }
     values::stringify(exception, limit, STR_FAILURE_SENTINEL)
@@ -105,10 +112,33 @@ fn os_error_container_message(exception: &Bound<'_, PyAny>, limit: usize) -> Opt
     let errno: i64 = args.get_item(0).ok()?.extract().ok()?;
     let strerror = args.get_item(1).ok()?;
     let bounded = values::bounded_container(&strerror, limit.saturating_sub(16).max(1))?;
-    let text = values::clamp(format!("[Errno {errno}] {}", bounded.text), limit);
+    let mut text = format!("[Errno {errno}] {}", bounded.text);
+    let mut shortened = bounded.truncated;
+    // `OSError.__str__` appends the filename(s) after the message; keep that
+    // information without reaching the container's unbounded `repr`.
+    for attribute in ["filename", "filename2"] {
+        let Ok(value) = exception.getattr(attribute) else {
+            continue;
+        };
+        if value.is_none() {
+            continue;
+        }
+        let remaining = limit.saturating_sub(text.len() + 4).max(1);
+        let Some(rendered) = values::repr_bounded(&value, remaining) else {
+            continue;
+        };
+        text.push_str(if attribute == "filename" {
+            ": "
+        } else {
+            " -> "
+        });
+        text.push_str(&rendered.text);
+        shortened |= rendered.truncated;
+    }
+    let bounded = values::clamp(text, limit);
     Some(BoundedText {
-        truncated: text.truncated || bounded.truncated,
-        ..text
+        truncated: bounded.truncated || shortened,
+        ..bounded
     })
 }
 
@@ -189,7 +219,14 @@ fn key_error_message(
         // The only key could not be represented. Returning `None` would send
         // the caller to `str(exception)`, which calls the same failing
         // `__repr__` a second time, so report the contained failure instead.
-        None if args.failed > 0 => Some(BoundedText::failure("<repr conversion failed>", limit)),
+        None if args.failed > 0 => {
+            // The failed key conversion was already counted by
+            // `report_failures`; this placeholder explains the text without
+            // counting the same failure a second time.
+            let mut failure = BoundedText::failure("<repr conversion failed>", limit);
+            failure.failed = false;
+            Some(failure)
+        }
         None => None,
     }
 }

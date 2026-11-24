@@ -185,3 +185,38 @@ raise error
         );
     });
 }
+
+#[rstest]
+fn a_failing_final_probe_counts_as_a_failure() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+class Noted:
+    def __init__(self):
+        self.step = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.step += 1
+        if self.step <= 2:
+            return 0
+        raise RuntimeError('iterator failed')
+
+error = ValueError('note')
+error.__notes__ = Noted()
+raise error
+",
+            &tiny_limits(),
+        );
+
+        let marker = marker(&payload);
+        assert_eq!(marker.notes_omitted, 0, "no note was shown to be dropped");
+        assert_eq!(
+            marker.failed_elements, 1,
+            "the failing probe must be counted as a conversion failure"
+        );
+    });
+}

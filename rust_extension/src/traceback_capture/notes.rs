@@ -20,6 +20,48 @@ use super::limits::{CaptureBudget, CaptureLimits};
 use super::values;
 use crate::exception_schema::PayloadTruncation;
 
+/// What the scan loop observed, used to decide whether a tail probe is valid.
+struct ScanState {
+    /// Exact length, when the attribute exposed one.
+    known_len: Option<usize>,
+    /// Whether retention stopped because the ceiling was already full.
+    tail_after_retention: bool,
+    /// Whether the aggregate budget refused a note.
+    exhausted: bool,
+    /// Whether the iterator raised part way through.
+    iteration_failed: bool,
+    /// Whether the loop consumed every probe position.
+    iterator_ended: bool,
+}
+
+/// Consume one position past the scan and report whether a tail was proven.
+///
+/// A successful extra item proves the attribute held more than the scan saw.
+/// A failing extra item is counted as a conversion failure rather than as an
+/// omitted note, because no ceiling has been shown to drop anything.
+fn probe_tail(
+    state: ScanState,
+    iterator: &mut Bound<'_, PyIterator>,
+    marker: &mut PayloadTruncation,
+) -> bool {
+    let ready = state.known_len.is_none()
+        && !state.tail_after_retention
+        && !state.exhausted
+        && !state.iteration_failed
+        && state.iterator_ended;
+    if !ready {
+        return false;
+    }
+    match iterator.next() {
+        None => false,
+        Some(Ok(_)) => true,
+        Some(Err(_)) => {
+            marker.failed_elements = marker.failed_elements.saturating_add(1);
+            false
+        }
+    }
+}
+
 /// Collect `__notes__` entries, stopping at the count and byte limits.
 ///
 /// Exact built-in lists and tuples expose their C-level length without invoking
@@ -102,12 +144,14 @@ pub(super) fn retain_notes(
     // at the work ceiling rather than at the end of the attribute. One extra
     // item distinguishes the two without draining the iterator; when it exists
     // the scan is incomplete, but its size is unknown.
-    let scan_incomplete = known_len.is_none()
-        && !tail_after_retention
-        && !exhausted
-        && !iteration_failed
-        && iterator_ended
-        && iterator.next().is_some();
+    let completed = ScanState {
+        known_len,
+        tail_after_retention,
+        exhausted,
+        iteration_failed,
+        iterator_ended,
+    };
+    let scan_incomplete = probe_tail(completed, &mut iterator, marker);
     let omitted = known_len.map_or_else(
         || {
             // A tail is only proven when retention stopped because the ceiling

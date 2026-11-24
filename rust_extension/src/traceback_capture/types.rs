@@ -51,6 +51,26 @@ pub(super) fn inherits_exception_repr(value: &Bound<'_, PyAny>) -> bool {
     actual.is(&inherited)
 }
 
+/// Return `true` when `value` uses the built-in `BaseException.__str__`.
+///
+/// That implementation renders the argument tuple, so a nested exception can
+/// build an unbounded message through it. Types with their own `__str__` keep
+/// their chosen representation.
+pub(super) fn inherits_exception_str(value: &Bound<'_, PyAny>) -> bool {
+    let py = value.py();
+    if !is_exception(py, value) {
+        return false;
+    }
+    let base = py.get_type::<PyBaseException>();
+    let Some(inherited) = class_attribute(base.as_any(), "__str__") else {
+        return false;
+    };
+    let Some(actual) = class_attribute(value.get_type().as_any(), "__str__") else {
+        return false;
+    };
+    actual.is(&inherited)
+}
+
 /// Read a class attribute through `type.__getattribute__`.
 fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
     let py = class.py();

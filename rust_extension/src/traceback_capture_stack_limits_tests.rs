@@ -33,7 +33,7 @@ use crate::traceback_capture::{CaptureLimits, capture_stack_with_limits};
 fn capture_stack_with_test_limits(
     py: Python<'_>,
     max_frames: usize,
-) -> PyResult<(Vec<String>, Option<u32>)> {
+) -> PyResult<(Vec<String>, Option<u32>, bool)> {
     let limits = CaptureLimits {
         max_frames,
         ..CaptureLimits::default()
@@ -47,11 +47,12 @@ fn capture_stack_with_test_limits(
     // Keep `None` distinct from a marker with a zero count: a complete capture
     // must not carry a marker at all, and a helper that flattened both to `0`
     // could not show the difference.
-    let omitted = payload
-        .truncation
-        .as_ref()
-        .map(|marker| marker.frames_omitted);
-    Ok((functions, omitted))
+    let marker = payload.truncation.as_ref();
+    let omitted = marker.map(|marker| marker.frames_omitted);
+    // A stack cut at the ceiling was not walked to its end, so its count is a
+    // lower bound; the flag is the only signal of that.
+    let lower_bound = marker.is_some_and(|marker| marker.frames_omitted_is_lower_bound);
+    Ok((functions, omitted, lower_bound))
 }
 
 /// Run `source` in a fresh namespace with the stack helper and `max_frames`
@@ -72,7 +73,7 @@ fn capture_stack_from(
     source: &std::ffi::CStr,
     entry: &str,
     max_frames: usize,
-) -> (Vec<String>, Option<u32>) {
+) -> (Vec<String>, Option<u32>, bool) {
     let globals = PyDict::new(py);
     let module = PyModule::new(py, "_capture_limit_test_support")
         .expect("scratch module should be creatable");
@@ -104,7 +105,7 @@ fn stack_capture_keeps_the_innermost_frames() {
         // frame has already returned by the time the entry point is called, and
         // the Rust frames in between are invisible to `sys._getframe`, so the
         // chain is exactly the five `def`s below.
-        let (functions, omitted) = capture_stack_from(
+        let (functions, omitted, lower_bound) = capture_stack_from(
             py,
             c"
 def level_four():
@@ -141,13 +142,17 @@ def capstack():
             "a cut stack reports that a tail was omitted; the remaining frames \
              are not walked to count them"
         );
+        assert!(
+            lower_bound,
+            "a stack stopped at its ceiling reports a minimum, not an exact count"
+        );
     });
 }
 
 #[rstest]
 fn stack_capture_respects_the_frame_ceiling() {
     Python::attach(|py| {
-        let (functions, omitted) = capture_stack_from(
+        let (functions, omitted, lower_bound) = capture_stack_from(
             py,
             c"
 def four():
@@ -169,13 +174,14 @@ def one():
         assert_eq!(functions.len(), 2, "the ceiling should bound the payload");
         assert_eq!(functions, vec!["two".to_string(), "one".to_string()]);
         assert_eq!(omitted, Some(1));
+        assert!(lower_bound, "a cut stack reports a lower-bound count");
     });
 }
 
 #[rstest]
 fn stack_capture_reports_no_marker_when_nothing_is_dropped() {
     Python::attach(|py| {
-        let (functions, omitted) = capture_stack_from(
+        let (functions, omitted, lower_bound) = capture_stack_from(
             py,
             c"
 def outer():
@@ -196,6 +202,10 @@ def inner():
         assert_eq!(
             omitted, None,
             "a complete capture should carry no truncation marker at all"
+        );
+        assert!(
+            !lower_bound,
+            "a complete capture makes no lower-bound claim"
         );
     });
 }

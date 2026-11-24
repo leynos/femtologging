@@ -268,3 +268,63 @@ raise ValueError(container)
         );
     });
 }
+
+#[test]
+fn a_list_subclass_inheriting_list_repr_is_bounded() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+class Numbers(list):
+    pass
+
+raise ValueError(Numbers(range(1000)))
+",
+            &CaptureLimits::default(),
+        );
+
+        assert!(
+            payload.args_repr[0].len() < 200,
+            "the inherited list repr must be bounded: {} bytes",
+            payload.args_repr[0].len()
+        );
+    });
+}
+
+#[test]
+fn an_os_error_filename_survives_the_bounded_message() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"raise OSError(2, ['bad'], '/tmp/missing')",
+            &CaptureLimits::default(),
+        );
+
+        assert_eq!(
+            payload.message, "[Errno 2] ['bad']: '/tmp/missing'",
+            "the bounded form must keep the filename"
+        );
+    });
+}
+
+#[test]
+fn a_nested_exception_str_is_bounded() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"raise ValueError(ValueError([0] * 100000))",
+            &CaptureLimits::default(),
+        );
+
+        assert!(
+            payload.message.len() < 100,
+            "the nested str must not render the inner list: {:?}",
+            payload.message
+        );
+        assert_eq!(payload.message, "ValueError(...)");
+        assert!(
+            marker(&payload).message_truncated,
+            "a substituted summary marks the message as shortened"
+        );
+    });
+}
