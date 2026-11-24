@@ -46,6 +46,10 @@ LOOM_GATE_STEPS: tuple[str, ...] = (COMPILE_STEP, LOOM_STEP)
 #: before it is judged.
 _ATTACHED_OPERATORS: typ.Final = re.compile(r"([&;|])")
 
+#: A shell redirection. The operand that follows is not an argument, so a
+#: command carrying one cannot be validated as a plain argument vector.
+_REDIRECTION: typ.Final = re.compile(r"(?:^|\s)(?:\d*[<>]|&>)")
+
 #: The `cargo test` subcommand arguments the compile step must carry.
 
 
@@ -58,6 +62,10 @@ def run_tokens(step: dict[str, object]) -> tuple[str, ...]:
     the builtin the foreground rule looks for. An unquoted `#` ends the
     command, so a comment-only script tokenizes to nothing.
 
+    A redirection makes the next word an operand rather than an argument — a
+    `> --test` consumes the flag as a filename — so a command containing one
+    returns a token no rule accepts.
+
     Returns
     -------
     tuple[str, ...]
@@ -65,6 +73,8 @@ def run_tokens(step: dict[str, object]) -> tuple[str, ...]:
         attached control operators separated.
     """
     command = run_text(step).strip()
+    if _REDIRECTION.search(command.replace("\\\n", " ")):
+        return ("<redirect>",)
     if "\n" in command.replace("\\\n", ""):
         # An unescaped newline is a command separator. shlex would discard it
         # and read an assignment line as part of the next command, so return a

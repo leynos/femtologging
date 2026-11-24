@@ -119,6 +119,17 @@ def _compile_step_null_flags(document: Document) -> None:
     step["env"] = {"RUSTFLAGS": None}
 
 
+def _compile_step_redirects_target(document: Document) -> None:
+    """Redirect output to a file named after the target flag.
+
+    Bash consumes `--test` as the output filename, so Cargo never receives the
+    heavy target even though the flags appear in the text.
+    """
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace("--test heavy", "> --test heavy", 1)
+
+
 COMPILE_MUTATIONS = (
     pytest.param(_compile_step_conditioned, id="compile-step-conditioned"),
     pytest.param(_compile_step_tolerant, id="compile-step-tolerant"),
@@ -131,6 +142,10 @@ COMPILE_MUTATIONS = (
     pytest.param(_compile_loom_variant, id="compile-loom-variant"),
     pytest.param(_compile_split_assignment, id="compile-split-assignment"),
     pytest.param(_compile_step_echoes, id="compile-step-echoes"),
+    pytest.param(
+        _compile_step_redirects_target,
+        id="compile-step-redirects-target",
+    ),
     pytest.param(_compile_step_asks_for_help, id="compile-step-asks-for-help"),
     pytest.param(_compile_step_masks_failure, id="compile-step-masks-failure"),
     pytest.param(_compile_flags_after_separator, id="compile-flags-after-separator"),

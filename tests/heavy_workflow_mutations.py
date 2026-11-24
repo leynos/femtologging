@@ -117,8 +117,15 @@ def _notification_step_disabled(document: Document) -> None:
 
 
 def _notification_without_issue_write(document: Document) -> None:
-    """Withhold the permission the notification job needs."""
-    job(document, NOTIFY_JOB)["permissions"] = {"contents": "read"}
+    """Withhold `issues: write` and nothing else.
+
+    `actions: read` stays, so only the issue-write check can be the complaint
+    this mutation provokes.
+    """
+    job(document, NOTIFY_JOB)["permissions"] = {
+        "contents": "read",
+        "actions": "read",
+    }
 
 
 def _notification_without_actions_read(document: Document) -> None:
