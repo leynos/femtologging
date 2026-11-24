@@ -208,6 +208,29 @@ def _split_across_lines(document: Workflow) -> None:
     )
 
 
+def _every_leg_experimental(document: Workflow) -> None:
+    """Make the matrix itself experimental on every leg.
+
+    The tolerance is the accepted bare selector, so only the matrix values
+    decide whether any required leg is left to fail.
+
+    Raises
+    ------
+    TypeError
+        If the workflow copy no longer has a matrix with `include` rows.
+    """
+    jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
+    build_test = mapping(jobs.get("build-test"), subject="build-test job")
+    strategy = mapping(build_test.get("strategy"), subject="build-test strategy")
+    matrix = mapping(strategy.get("matrix"), subject="build-test matrix")
+    included = matrix.get("include")
+    if not isinstance(included, list):
+        msg = "build-test matrix must carry include rows"
+        raise TypeError(msg)
+    for row in included:
+        mapping(row, subject="matrix include row")["experimental"] = True
+
+
 _LOOM_MUTATIONS = (
     pytest.param(_removed_loom_step, id="loom-step-removed"),
     pytest.param(_echoed_loom_step, id="loom-step-echoed"),
@@ -217,6 +240,7 @@ _LOOM_MUTATIONS = (
     pytest.param(_tolerated_loom_step, id="loom-step-tolerated"),
     pytest.param(_tolerated_on_every_leg, id="job-tolerated-every-leg"),
     pytest.param(_split_across_lines, id="loom-step-split-across-lines"),
+    pytest.param(_every_leg_experimental, id="every-leg-experimental"),
 )
 
 

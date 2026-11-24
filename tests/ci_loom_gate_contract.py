@@ -55,8 +55,41 @@ MASK_FRAGMENTS: typ.Final[Tokens] = ("||", "&&", ";", "echo ", "#")
 #: `${{ true || matrix.experimental }}`, evaluates to a constant and tolerates
 #: failure on every leg, including the required ones.
 _MATRIX_SELECTOR: typ.Final[re.Pattern[str]] = re.compile(
-    r"^\$\{\{\s*matrix\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$"
+    r"^\$\{\{\s*matrix\.(?P<property>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}$"
 )
+
+
+def _matrix_values(job: dict[str, object], property_name: str) -> list[object]:
+    """Return every value the matrix gives ``property_name``.
+
+    Both shapes a matrix may take are read: an axis list and `include` rows.
+    An unrecognised shape yields no values, which the caller treats as a
+    refusal rather than as an acceptable selector.
+
+    Returns
+    -------
+    list[object]
+        The property's values in document order, or an empty list when the
+        matrix does not define it.
+    """
+    strategy = job.get("strategy")
+    if not isinstance(strategy, dict):
+        return []
+    matrix = strategy.get("matrix")
+    if not isinstance(matrix, dict):
+        return []
+    values: list[object] = []
+    axis = matrix.get(property_name)
+    if isinstance(axis, list):
+        values.extend(axis)
+    include = matrix.get("include")
+    if isinstance(include, list):
+        values.extend(
+            row[property_name]
+            for row in include
+            if isinstance(row, dict) and property_name in row
+        )
+    return values
 
 
 def job_tolerance_is_acceptable(job: dict[str, object]) -> bool:
@@ -70,19 +103,26 @@ def job_tolerance_is_acceptable(job: dict[str, object]) -> bool:
     A string containing ``matrix.`` is not enough. GitHub evaluates
     ``${{ true || matrix.experimental }}`` as logical OR, so it is true on
     every leg and would tolerate failure everywhere; the whole value must be
-    the bare selector.
+    the bare selector. The selector alone is not enough either: a matrix whose
+    every row sets the property true has no required leg left to fail, so at
+    least one of the property's values must be falsy.
 
     Returns
     -------
     bool
-        True when the job's failure would still fail CI.
+        True when the job's failure would still fail at least one leg.
     """
     if "continue-on-error" not in job:
         return True
     tolerance = job["continue-on-error"]
     if tolerance is False:
         return True
-    return isinstance(tolerance, str) and bool(_MATRIX_SELECTOR.match(tolerance))
+    match = _MATRIX_SELECTOR.match(tolerance) if isinstance(tolerance, str) else None
+    if match is None:
+        return False
+    property_name = match.group("property")
+    values = _matrix_values(job, property_name)
+    return bool(values) and any(not value for value in values)
 
 
 def step_tolerance_is_acceptable(step: dict[str, object]) -> bool:

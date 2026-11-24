@@ -245,6 +245,23 @@ def _checker_backgrounded_without_space(document: Document) -> None:
     step["run"] = f"{run_text(step)}&wait"
 
 
+def _checker_asked_for_help(document: Document) -> None:
+    """Ask the checker for its usage text, which exits before any model."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "--expected rust_extension/tests/heavy/loom-models.txt --",
+        "--help --expected rust_extension/tests/heavy/loom-models.txt --",
+    )
+
+
+def _checker_given_no_command(document: Document) -> None:
+    """Pass the separator but no command for the checker to run."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = f"{run_text(step).split(' -- ')[0]} --"
+
+
 def _bound_overridden_in_command(document: Document) -> None:
     """Shadow the step's pinned bound with a larger command-local value."""
     found = job(document, HEAVY_JOB)
@@ -294,6 +311,8 @@ _MUTATIONS = (
         _checker_backgrounded_without_space,
         id="checker-backgrounded-attached",
     ),
+    pytest.param(_checker_asked_for_help, id="checker-asked-for-help"),
+    pytest.param(_checker_given_no_command, id="checker-given-no-command"),
     pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )

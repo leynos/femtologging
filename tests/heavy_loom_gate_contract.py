@@ -45,6 +45,13 @@ _RUNNER: str = "scripts/run_loom_models.py"
 #: checker failed, so the step must be one foreground command.
 _FOREGROUND_ONLY_TOKENS: tuple[str, ...] = ("&", ";", "|", "&&", "||", "wait")
 
+#: Options that make the checker exit before it checks a model. They are valid
+#: for a human at a terminal and useless in this step.
+_CHECKER_EARLY_EXITS: tuple[str, ...] = ("--help", "-h", "--version")
+
+#: The separator token plus the shortest possible command after it.
+_SEPARATOR_AND_ONE_COMMAND: int = 2
+
 #: Operators that also bind without surrounding whitespace. `shlex.split` keeps
 #: `&wait` attached to the preceding word, so each token is split on these
 #: before it is judged.
@@ -171,6 +178,11 @@ def checker_invocation_problems(found: Job) -> list[str]:
     single command: a backgrounded checker reaped by `wait` returns zero even
     when it failed.
 
+    The command the checker runs must also reach it: a real argument after the
+    separator, and no option before it that ends the checker before it checks
+    anything. `--help` would otherwise satisfy the prefix and separator rules
+    while printing usage and exiting without running a model.
+
     Parameters
     ----------
     found : Job
@@ -179,8 +191,9 @@ def checker_invocation_problems(found: Job) -> list[str]:
     Returns
     -------
     list[str]
-        A complaint when the checker invocation, its argument separator or its
-        foreground execution is missing.
+        A complaint when the checker invocation, its argument separator, its
+        foreground execution, its checked command or its pre-separator options
+        are wrong.
     """
     step = _execution_step(found)
     if step is None:
@@ -201,8 +214,38 @@ def checker_invocation_problems(found: Job) -> list[str]:
                 f"its command begins {words[:4]!r}"
             )
         ]
+    return _argument_problems(words)
+
+
+def _argument_problems(words: tuple[str, ...]) -> list[str]:
+    """Return the complaints about the checker's own arguments.
+
+    Returns
+    -------
+    list[str]
+        A complaint for a missing separator, an option that exits the checker
+        early, or a separator with no command after it.
+    """
     if "--" not in words:
         return [f"the {LOOM_STEP!r} step must pass the checker's `--` separator"]
+    separator = words.index("--")
+    early_exits = [
+        option for option in words[4:separator] if option in _CHECKER_EARLY_EXITS
+    ]
+    if early_exits:
+        return [
+            (
+                f"the {LOOM_STEP!r} step must not pass {early_exits[0]!r} to the "
+                "checker before its `--` separator"
+            )
+        ]
+    if len(words) - separator < _SEPARATOR_AND_ONE_COMMAND:
+        return [
+            (
+                f"the {LOOM_STEP!r} step must pass the command the checker "
+                "runs after its `--` separator"
+            )
+        ]
     return []
 
 
