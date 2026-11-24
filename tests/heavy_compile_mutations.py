@@ -108,11 +108,23 @@ def _compile_split_assignment(document: Document) -> None:
     step["run"] = run_text(step).replace(" cargo test", "\ncargo test", 1)
 
 
+def _compile_step_null_flags(document: Document) -> None:
+    """Declare a null step-level `RUSTFLAGS` over a job-level Loom value."""
+    found = job(document, HEAVY_JOB)
+    found["env"] = {"RUSTFLAGS": "--cfg loom"}
+    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" ', ""
+    )
+    step["env"] = {"RUSTFLAGS": None}
+
+
 COMPILE_MUTATIONS = (
     pytest.param(_compile_step_conditioned, id="compile-step-conditioned"),
     pytest.param(_compile_step_tolerant, id="compile-step-tolerant"),
     pytest.param(_compile_step_removed, id="compile-step-removed"),
     pytest.param(_compile_step_without_loom, id="compile-step-without-loom"),
+    pytest.param(_compile_step_null_flags, id="compile-step-null-flags"),
     pytest.param(
         _compile_encoded_flags_assignment, id="compile-encoded-flags-assignment"
     ),

@@ -322,20 +322,25 @@ def _effective_value(
     """Return the value a shell step's environment variable takes.
 
     An inline ``NAME=value`` assignment in the command wins over step, job and
-    workflow environments, in that order.
+    workflow environments, in that order. The first scope that declares the
+    variable decides, even when its value is not a string.
 
     Returns
     -------
     str | None
-        The effective value, or ``None`` when no scope sets it.
+        The effective value, or ``None`` when no scope declares it or the
+        declaring scope's value is not a string.
     """
     inline = _inline_assignments(run_tokens(step)).get(name)
     if inline is not None:
         return inline
     for container in (step, found, document):
-        value = _environment_value(container, name)
-        if value is not None:
-            return value
+        if not _declares_environment(container, name):
+            continue
+        # The first scope that declares the variable decides. A null or
+        # non-string declaration still exports an empty value, so it must not
+        # fall through to a broader scope that happens to carry a valid one.
+        return _environment_value(container, name)
     return None
 
 

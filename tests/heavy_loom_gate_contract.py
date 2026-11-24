@@ -237,8 +237,10 @@ def preemption_problems(found: Job) -> list[str]:
     step = _execution_step(found)
     if step is None:
         return [f"the job must have a {LOOM_STEP!r} step"]
-    local_prefix = f"{_PREEMPTION_BOUND}="
-    if any(token.startswith(local_prefix) for token in run_tokens(step)):
+    # Any token naming the bound is refused: a leading assignment shadows the
+    # step's value, and a Cargo `--config env.LOOM_MAX_PREEMPTIONS.force=true`
+    # overrides it from inside the command, where a prefix check misses it.
+    if any(_PREEMPTION_BOUND in token for token in run_tokens(step)):
         return [
             (
                 f"the {LOOM_STEP!r} step must set {_PREEMPTION_BOUND} in the "
