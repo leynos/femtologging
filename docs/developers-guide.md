@@ -150,7 +150,7 @@ for a re-entry that never happened.
 `AssertionError` explicitly instead of using `assert`. `python -O` removes
 assertion statements, so a scenario that skipped its checks would still exit
 zero and print its marker; raising keeps the failure visible at every
-optimisation level.
+optimization level.
 
 ### Stack-info snapshot normalization
 
