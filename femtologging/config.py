@@ -35,6 +35,14 @@ from . import _femtologging_rs as rust
 # (these are also available from the top-level femtologging package)
 from ._basic_config import BasicConfig, basicConfig
 from ._config_policy import validate_allow_factories
+
+# Re-exported for the section modules that have historically imported these
+# from here. New code should import them from _config_validation directly.
+from ._config_validation import (
+    _validate_mapping_type,
+    _validate_string_keys,
+    _validate_string_list,
+)
 from ._timed_handler_config import parse_timed_args
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
@@ -86,30 +94,11 @@ def _evaluate_string_safely(value: str, context: str) -> object:
         raise ValueError(msg) from exc
 
 
-def _validate_mapping_type(value: object, name: str) -> cabc.Mapping[object, object]:
-    """Ensure ``value`` is a mapping and not bytes-like."""
-    if isinstance(value, (bytes, bytearray)) or not isinstance(value, cabc.Mapping):
-        msg = f"{name} must be a mapping"
-        raise TypeError(msg)
-    return typ.cast("cabc.Mapping[object, object]", value)
-
-
 def _validate_no_bytes(value: object, name: str) -> None:
     """Reject ``bytes`` or ``bytearray`` for ``value``."""
     if isinstance(value, (bytes, bytearray)):
         msg = f"{name} must not be bytes or bytearray"
         raise TypeError(msg)
-
-
-def _validate_string_keys(
-    mapping: cabc.Mapping[object, object], name: str
-) -> cabc.Mapping[str, object]:
-    """Ensure all keys in ``mapping`` are strings."""
-    for key in mapping:
-        if not isinstance(key, str):
-            msg = f"{name} keys must be strings"
-            raise TypeError(msg)
-    return typ.cast("cabc.Mapping[str, object]", mapping)
 
 
 def _coerce_args(args: object, ctx: str) -> list[object]:
@@ -224,20 +213,6 @@ def _build_handler_from_dict(hid: str, data: cabc.Mapping[str, object]) -> objec
     if filters is not None:
         builder = builder.with_filters(filters)
     return builder
-
-
-def _validate_string_list(
-    value: object, label: str, *, owner: str = "logger"
-) -> list[str]:
-    """Validate that ``value`` is a list or tuple of strings."""
-    if not isinstance(value, (list, tuple)):
-        msg = f"{owner} {label} must be a list or tuple of strings"
-        raise TypeError(msg)
-    seq = typ.cast("cabc.Sequence[object]", value)
-    if not all(isinstance(item, str) for item in seq):
-        msg = f"{owner} {label} must be a list or tuple of strings"
-        raise TypeError(msg)
-    return list(typ.cast("cabc.Sequence[str]", seq))
 
 
 def _validate_logger_config_keys(name: str, data: cabc.Mapping[str, object]) -> None:
