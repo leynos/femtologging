@@ -132,6 +132,21 @@ _SPELLING_INTEGRATION_COMMANDS: tuple[Tokens, ...] = (
 )
 
 
+_CHECK_API_BOUNDARY_COMMANDS: tuple[Tokens, ...] = (
+    (
+        "$(CARGO_BUILD_ENV)",
+        "UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml",
+        "uv",
+        "run",
+        "pytest",
+        "-v",
+        "-o",
+        "addopts=",
+        "tests/test_release_api_boundary.py",
+    ),
+)
+
+
 def _commands(target: str) -> tuple[Tokens, ...]:
     """Return non-comment recipe commands parsed for *target*."""
     return tuple(

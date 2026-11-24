@@ -2,7 +2,7 @@
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-config spelling-check \
         spelling-integration-test \
-        check-lock test typecheck makeutil skylos skylos-allow \
+        check-lock check-api-boundary test typecheck makeutil skylos skylos-allow \
         install-build-tools check-build-tools
 
 CARGO ?= cargo

@@ -55,8 +55,10 @@ exclude = [
 # project virtual environment is named explicitly; `make build` creates it
 # at `.venv` and installs the extension module there. (`typings` is
 # deliberately absent: its partial pytest stub is for pyright and would shadow
-# the real pytest.)
+# the real pytest.) `scripts/lint_rust_lanes.py` imports its siblings as
+# top-level modules, so the directory is on the search path.
 python = "./.venv"
+extra-paths = ["scripts"]
 
 [tool.ruff]
 line-length = 88
@@ -473,6 +475,15 @@ include = [{ path = "docs/users-guide.md", format = "sdist" }]
 
 [tool.pytest.ini_options]
 timeout = 30
+# The API-boundary suite builds a release wheel and compiles two Rust probes,
+# so only `make check-api-boundary` runs it. That target clears this option
+# with `-o addopts=`. Leaving the suite in default collection would make every
+# local `pytest` run and every CI coverage lane repeat the packaging build.
+addopts = "--ignore=tests/test_release_api_boundary.py"
+# The helper scripts import each other as top-level modules, exactly as
+# `[tool.ty.environment] extra-paths` records. `--doctest-modules` imports
+# every module pytest walks, so without this their collection fails.
+pythonpath = ["scripts"]
 markers = [
     "concurrency: tests covering threaded behaviour",
     "log_compat: tests requiring the Rust log-compat feature",
