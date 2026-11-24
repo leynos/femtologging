@@ -11,8 +11,10 @@ import it. ``make lint-lanes-test`` runs it, and its examples, in the script's
 own environment; only that target sets ``LINT_LANES_TEST``, so the import that
 would fail under the project environment is never attempted. The script is
 excluded for the same reason `[tool.ty.src]` excludes it. ``run_loom_models.py``
-is the same kind of script; ``make loom-runner-test`` runs it and its examples
-with ``LOOM_RUNNER_TEST`` set, and only then is it collected here.
+and ``run_cargo_feature_tests.py`` are the same kind of script;
+``make loom-runner-test`` and ``make feature-tests-runner-test`` run them and
+their examples with ``LOOM_RUNNER_TEST`` and ``FEATURE_TESTS_RUNNER_TEST`` set,
+and only then are they collected here.
 """
 
 from __future__ import annotations
@@ -26,3 +28,5 @@ if not os.environ.get("LINT_LANES_TEST"):
 
 if not os.environ.get("LOOM_RUNNER_TEST"):
     collect_ignore.append("run_loom_models.py")
+if not os.environ.get("FEATURE_TESTS_RUNNER_TEST"):
+    collect_ignore.append("run_cargo_feature_tests.py")

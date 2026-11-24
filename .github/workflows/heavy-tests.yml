@@ -100,21 +100,24 @@ jobs:
       - name: Run formatters and tests
         env:
           FEMTOLOGGING_EXPECT_TEST_UTIL: "1"
+          # The feature-matrix driver below is a `uv` script, which puts its own
+          # interpreter first on PATH; PyO3 links whichever Python it finds
+          # there. Pinning `PYO3_PYTHON` to the interpreter `setup-python`
+          # installed keeps every test binary linked against the library on the
+          # runner's loader path, as the "Run Loom models" step documents.
+          PYO3_PYTHON: ${{ env.pythonLocation }}/bin/python
+          # `none` selects `--no-default-features` with no `--features` flag,
+          # because an empty name cannot survive a whitespace-separated
+          # environment list.
+          INPUT_MANIFEST: rust_extension/Cargo.toml
+          INPUT_FEATURE_SETS: none python log-compat python,log-compat
+          INPUT_TEST_ARGS: --ignored
         run: |
           cargo fmt --manifest-path rust_extension/Cargo.toml -- --check
           make lint-rust-clippy
           RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy --manifest-path rust_extension/Cargo.toml \
             --no-default-features --all-targets -- -D warnings
-          feature_sets=("" "python" "log-compat" "python,log-compat")
-          for feature_set in "${feature_sets[@]}"; do
-            if [ -z "$feature_set" ]; then
-              cargo test --manifest-path rust_extension/Cargo.toml \
-                --no-default-features -- --ignored
-            else
-              cargo test --manifest-path rust_extension/Cargo.toml \
-                --no-default-features --features "$feature_set" -- --ignored
-            fi
-          done
+          uv run --script scripts/run_cargo_feature_tests.py
           uv run --locked pytest -q
       # Executing the models is separate from compiling them, and the split is
       # the point: a green compile step says the models type-check and nothing
