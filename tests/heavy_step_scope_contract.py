@@ -229,9 +229,13 @@ def _compile_words_problems(words: tuple[str, ...]) -> list[str]:
                 f"begins {words[:3]!r}"
             )
         ]
-    if not _contains_in_order(words, _HEAVY_TARGET):
+    # Cargo's own arguments end at `--`; anything after it belongs to the
+    # test binary, so `--test heavy --no-run` there selects no target and
+    # compiles nothing.
+    cargo_arguments = words[: words.index("--")] if "--" in words else words
+    if not _contains_in_order(cargo_arguments, _HEAVY_TARGET):
         return [f"the {COMPILE_STEP!r} step must name the heavy target"]
-    if _NO_RUN not in words:
+    if _NO_RUN not in cargo_arguments:
         return [f"the {COMPILE_STEP!r} step must compile without running"]
     return []
 

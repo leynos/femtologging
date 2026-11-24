@@ -312,6 +312,16 @@ def _compile_step_masks_failure(document: Document) -> None:
     step["run"] = f"{run_text(step)} || true"
 
 
+def _compile_flags_after_separator(document: Document) -> None:
+    """Move the target and `--no-run` past Cargo's own `--` separator."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
+    step["run"] = (
+        "cargo test --release --manifest-path rust_extension/Cargo.toml "
+        "--no-default-features -- --test heavy --no-run"
+    )
+
+
 MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -361,6 +371,10 @@ MUTATIONS = (
     pytest.param(_compile_step_echoes, id="compile-step-echoes"),
     pytest.param(_compile_step_asks_for_help, id="compile-step-asks-for-help"),
     pytest.param(_compile_step_masks_failure, id="compile-step-masks-failure"),
+    pytest.param(
+        _compile_flags_after_separator,
+        id="compile-flags-after-separator",
+    ),
     pytest.param(
         _compile_step_shell_never_runs,
         id="compile-step-shell-never-runs",
