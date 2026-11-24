@@ -61,7 +61,7 @@ def _matrix_combinations(job: dict[str, object]) -> list[dict[str, object]] | No
         evaluated.
     """
     matrix = _flat_matrix(job)
-    if matrix is None:
+    if matrix is None or _has_expression(matrix):
         return None
     axes = _flat_axes(matrix)
     if axes is None:
@@ -261,3 +261,26 @@ def step_tolerance_is_acceptable(step: dict[str, object]) -> bool:
         True when the step's failure would still fail its job.
     """
     return "continue-on-error" not in step or step["continue-on-error"] is False
+
+
+def _has_expression(value: object) -> bool:
+    """Return whether a matrix value contains a `${{ }}` expression.
+
+    A matrix whose axis or row values are expressions resolves at run time,
+    so its combinations cannot be enumerated here. The caller refuses such a
+    matrix rather than comparing an expression string with a literal.
+
+    Returns
+    -------
+    bool
+        True for any string containing `${{`, at any depth.
+    """
+    match value:
+        case str():
+            return "${{" in value
+        case dict():
+            return any(_has_expression(item) for item in value.values())
+        case list():
+            return any(_has_expression(item) for item in value)
+        case _:
+            return False

@@ -285,7 +285,7 @@ def compile_loom_flag_problems(
     problems.extend(
         f"the {COMPILE_STEP!r} step's {scope} must not set {_ENCODED_FLAGS}"
         for scope, container in encodings
-        if _environment_value(container, _ENCODED_FLAGS) is not None
+        if _declares_environment(container, _ENCODED_FLAGS)
     )
     if _ENCODED_FLAGS in _inline_assignments(run_tokens(step)):
         problems.append(
@@ -369,3 +369,18 @@ def _environment_value(container: cabc.Mapping[str, object], name: str) -> str |
         return None
     value = environment.get(name)
     return value if isinstance(value, str) else None
+
+
+def _declares_environment(container: cabc.Mapping[str, object], name: str) -> bool:
+    """Return whether a container's environment declares `name`.
+
+    The key's presence is what matters: a null declaration still exports an
+    empty value, which would displace the inline flags just as a value does.
+
+    Returns
+    -------
+    bool
+        True when the container's `env` mapping defines `name`.
+    """
+    environment = container.get("env")
+    return isinstance(environment, dict) and name in environment
