@@ -14,7 +14,9 @@ The document accessors live in :mod:`tests.heavy_workflow_document`.
 
 from __future__ import annotations
 
+import re
 import shlex
+import typing as typ
 
 from tests.heavy_workflow_document import (
     COMPILE_STEP,
@@ -43,16 +45,30 @@ _RUNNER: str = "scripts/run_loom_models.py"
 #: checker failed, so the step must be one foreground command.
 _FOREGROUND_ONLY_TOKENS: tuple[str, ...] = ("&", ";", "|", "&&", "||", "wait")
 
+#: Operators that also bind without surrounding whitespace. `shlex.split` keeps
+#: `&wait` attached to the preceding word, so each token is split on these
+#: before it is judged.
+_ATTACHED_OPERATORS: typ.Final = re.compile(r"([&;|])")
+
 
 def _run_tokens(step: dict[str, object]) -> tuple[str, ...]:
-    """Return the tokenized shell command of a step.
+    """Return the shell command of a step as operator-separated tokens.
+
+    A shell separates `&`, `;` and `|` from their neighbours, with or without
+    whitespace, so the lexical tokens are split again on those characters. A
+    command ending in `&wait`, or `true;handler`, then exposes the operator and
+    the builtin the foreground rule looks for.
 
     Returns
     -------
     tuple[str, ...]
-        The step's command tokens, with line continuations flattened.
+        The step's command tokens, with line continuations flattened and
+        attached control operators separated.
     """
-    return tuple(shlex.split(run_text(step).replace("\\\n", " ")))
+    words = shlex.split(run_text(step).replace("\\\n", " "))
+    return tuple(
+        part for word in words for part in _ATTACHED_OPERATORS.split(word) if part
+    )
 
 
 def _command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:

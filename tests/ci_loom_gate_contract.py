@@ -166,7 +166,23 @@ def _command_words(tokens: Tokens) -> Tokens:
 
 
 def _normalize_run(run: str) -> str:
-    """Return a shell run value without line continuations or layout."""
+    """Return a shell run value without line continuations or layout.
+
+    An unescaped newline is a command separator, not layout. Collapsing it to a
+    space would let a two-line script — an assignment on one line and the
+    command on the next — read as the single required command, while the shell
+    runs the assignment in a child of its own and Cargo never sees
+    ``--cfg loom``. Such a value is returned unchanged, so the whole-command
+    comparison refuses it.
+
+    Returns
+    -------
+    str
+        The normalised command, or the original value when it contains an
+        unescaped newline.
+    """
+    if "\n" in run.replace("\\\n", ""):
+        return run
     return " ".join(run.replace("\\\n", " ").split())
 
 
@@ -174,8 +190,9 @@ def _run_problems(step: dict[str, object]) -> list[str]:
     """Return the complaints about what the gate step executes.
 
     The whole ``run`` value is compared, after normalising line continuations
-    and layout, so a comment, an ``echo``, or a trailing status mask cannot
-    satisfy the contract by leaving the command text in place.
+    and layout, so a comment, an ``echo``, a trailing status mask, or a second
+    newline-separated command cannot satisfy the contract by leaving the
+    command text in place.
 
     Returns
     -------

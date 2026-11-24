@@ -238,6 +238,13 @@ def _checker_backgrounded(document: Document) -> None:
     step["run"] = f"{run_text(step)} &\nwait"
 
 
+def _checker_backgrounded_without_space(document: Document) -> None:
+    """Attach the background operator and `wait` to the final argument."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = f"{run_text(step)}&wait"
+
+
 def _bound_overridden_in_command(document: Document) -> None:
     """Shadow the step's pinned bound with a larger command-local value."""
     found = job(document, HEAVY_JOB)
@@ -283,6 +290,10 @@ _MUTATIONS = (
     pytest.param(_checker_status_masked, id="checker-status-masked"),
     pytest.param(_checker_replaced_with_true, id="checker-replaced-with-true"),
     pytest.param(_checker_backgrounded, id="checker-backgrounded"),
+    pytest.param(
+        _checker_backgrounded_without_space,
+        id="checker-backgrounded-attached",
+    ),
     pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )

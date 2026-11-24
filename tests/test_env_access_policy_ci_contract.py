@@ -199,6 +199,15 @@ def _tolerated_on_every_leg(document: Workflow) -> None:
     build_test["continue-on-error"] = "${{ true || matrix.experimental }}"
 
 
+def _split_across_lines(document: Workflow) -> None:
+    """Put the assignment on its own line, so the shell runs it separately."""
+    loom_step(document)["run"] = (
+        'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold"\n'
+        "cargo clippy --manifest-path rust_extension/Cargo.toml "
+        "--no-default-features --all-targets -- -D warnings"
+    )
+
+
 _LOOM_MUTATIONS = (
     pytest.param(_removed_loom_step, id="loom-step-removed"),
     pytest.param(_echoed_loom_step, id="loom-step-echoed"),
@@ -207,6 +216,7 @@ _LOOM_MUTATIONS = (
     pytest.param(_conditional_loom_step, id="loom-step-conditional"),
     pytest.param(_tolerated_loom_step, id="loom-step-tolerated"),
     pytest.param(_tolerated_on_every_leg, id="job-tolerated-every-leg"),
+    pytest.param(_split_across_lines, id="loom-step-split-across-lines"),
 )
 
 
