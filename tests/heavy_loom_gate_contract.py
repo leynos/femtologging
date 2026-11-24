@@ -241,12 +241,17 @@ def loom_gate_problems(found: Job) -> list[str]:
 
 
 def step_presence_problems(found: Job) -> list[str]:
-    """Return a complaint for each named Loom step the job no longer has.
+    """Return a complaint unless each named Loom step appears exactly once.
 
     The condition and tolerance rules inspect only the steps that survive, so
     removing the compile gate outright would leave them with nothing to
     complain about. The compile step is a gate in its own right: it proves the
     models build before the execution step spends forty minutes on them.
+
+    A duplicate is as bad as a removal. The rules look a step up by name, and
+    two lookups can land on different steps: the command checks could pass on
+    one while the shell check passes on another, and the job would report
+    success with no valid gate at all.
 
     Parameters
     ----------
@@ -256,11 +261,17 @@ def step_presence_problems(found: Job) -> list[str]:
     Returns
     -------
     list[str]
-        One complaint per missing named step.
+        One complaint per missing or duplicated named step.
     """
     names = [step.get("name") for step in steps(found, subject=HEAVY_JOB)]
-    return [
-        f"the {name!r} step must remain in the {HEAVY_JOB!r} job"
-        for name in LOOM_GATE_STEPS
-        if name not in names
-    ]
+    problems: list[str] = []
+    for name in LOOM_GATE_STEPS:
+        count = names.count(name)
+        if count == 0:
+            problems.append(f"the {name!r} step must remain in the {HEAVY_JOB!r} job")
+        elif count > 1:
+            problems.append(
+                f"the {name!r} step must appear once in the {HEAVY_JOB!r} job, "
+                f"found {count}"
+            )
+    return problems

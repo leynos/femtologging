@@ -266,6 +266,19 @@ def _checker_commented_out(document: Document) -> None:
     step["run"] = f"#=disabled {run_text(step)}"
 
 
+def _duplicate_execution_step(document: Document) -> None:
+    """Add a second step with the execution step's name.
+
+    The first carries a valid command and a non-executing shell; the second
+    runs `true`. The command checks can accept one and the shell check the
+    other, so only a uniqueness rule refuses the pair.
+    """
+    found = job(document, HEAVY_JOB)
+    first = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    first["shell"] = "bash -n {0}"
+    raw_steps(found, subject=HEAVY_JOB).append({"name": LOOM_STEP, "run": "true"})
+
+
 CORE_MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -295,6 +308,7 @@ CORE_MUTATIONS = (
     pytest.param(_notification_finds_a_label, id="notification-by-label"),
     pytest.param(_notification_searches_bodies, id="notification-searches-bodies"),
     pytest.param(_loom_step_no_longer_last, id="loom-not-last"),
+    pytest.param(_duplicate_execution_step, id="loom-step-duplicated"),
     pytest.param(_heavy_job_conditioned, id="heavy-job-conditioned"),
     pytest.param(_heavy_job_tolerant, id="heavy-job-tolerant"),
     pytest.param(_execute_step_conditioned, id="execute-step-conditioned"),

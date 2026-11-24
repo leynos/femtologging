@@ -74,8 +74,9 @@ def _compile_flags_after_separator(document: Document) -> None:
     found = job(document, HEAVY_JOB)
     step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
     step["run"] = (
-        "cargo test --release --manifest-path rust_extension/Cargo.toml "
-        "--no-default-features -- --test heavy --no-run"
+        'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo test --release '
+        "--manifest-path rust_extension/Cargo.toml --no-default-features "
+        "-- --test heavy --no-run"
     )
 
 
