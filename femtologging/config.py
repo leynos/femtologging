@@ -2,10 +2,14 @@
 
 This module implements :func:`dictConfig`, a restricted variant of
 ``logging.config.dictConfig`` with no handler ``level`` or incremental
-configuration. Filters may be declarative or use the ``"()"`` factory form.
+configuration. Filters may be declarative (``level`` or ``name``) or use the
+``"()"`` factory form.
 
-Factory entries are trusted-code-equivalent input, so lower-trust configuration
-must exclude them; see ``docs/users-guide.md#filter-factory-trust-boundary``.
+Factory entries are trusted-code-equivalent input: a dotted string imports a
+module and invokes the resolved callable, and a direct callable is invoked as
+given. Lower-trust configuration must exclude them with
+``allow_factories=False``; see
+``docs/users-guide.md#filter-factory-trust-boundary``.
 
 Example:
 -------
@@ -330,6 +334,9 @@ def _build_formatter(fcfg: cabc.Mapping[str, object]) -> object:
 def dictConfig(
     config: cabc.Mapping[str, object], *, allow_factories: bool = True
 ) -> None:
+    # ruff: ignore[docstring-extraneous-exception] ValueError is raised by the
+    # validation and section-processing helpers called below; documenting it
+    # here keeps the public contract accurate.
     """Configure logging using a ``dictConfig``-style dictionary.
 
     Parameters
@@ -342,6 +349,13 @@ def dictConfig(
         ``False`` accepts only declarative ``level`` and ``name`` filters.
         Non-bool values raise ``TypeError``.
 
+    Raises
+    ------
+    ValueError
+        If ``config`` is malformed, or if it configures a filter factory while
+        ``allow_factories`` is ``False``; the message names the rejected
+        filter.
+
     Notes
     -----
     **Security:** a ``"()"`` filter entry is trusted-code-equivalent. A dotted
@@ -353,7 +367,8 @@ def dictConfig(
     ``allow_factories=False``; checks after resolution or invocation are too
     late. ``allow_factories=False`` rejects filter factories only and applies no
     trust policy to the rest of the document, so callers must validate
-    permitted handler classes and destinations separately. See
+    permitted handler classes and destinations separately. It is not a sandbox:
+    permitted handlers still write files and open network connections. See
     ``docs/users-guide.md#filter-factory-trust-boundary``.
 
     Examples

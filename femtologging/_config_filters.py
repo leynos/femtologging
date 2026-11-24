@@ -117,8 +117,13 @@ def build_filter_from_dict(
 
     Notes
     -----
-    A non-string ``level`` or ``name``, or a factory target that is not
-    callable, raises ``TypeError`` from the builder helpers.
+    When ``allow_factories`` is ``True`` (the default), a ``"()"`` entry uses
+    the stdlib factory form: a dotted string is imported and resolved, and the
+    resolved callable is invoked with the entry's remaining keys as keyword
+    arguments. A direct callable object is invoked without resolution. Both
+    forms run code chosen by the configuration author, so the entry is
+    trusted-code-equivalent. A non-string ``level`` or ``name``, or a factory
+    target that is not callable, raises ``TypeError`` from the builder helpers.
 
     Examples
     --------
