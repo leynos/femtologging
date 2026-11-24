@@ -13,6 +13,7 @@ use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
+use proptest::prelude::*;
 use pyo3::types::PyModule;
 use rstest::rstest;
 
@@ -23,6 +24,7 @@ use super::*;
 use crate::filters::FemtoFilter;
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
+use crate::logger::python_api::MAX_REMOVAL_SCANS;
 
 /// Handler whose outermost `as_any` removes one Python attachment per scan.
 struct ReentrantRemovalProbe {
@@ -117,6 +119,53 @@ fn removal_keeps_progress_when_a_scan_loses_attachments(#[case] attachments: usi
              whatever the match count",
         );
     });
+}
+
+proptest! {
+    /// Removal reports success exactly when a match survives the re-entry.
+    ///
+    /// The invariant: for any number of matching attachments,
+    /// `py_remove_handler` returns `true` whenever at least one match remains
+    /// after the re-entrant scan, and the surviving count is what the re-entry
+    /// did not take. Re-entry is bounded by `MAX_REMOVAL_SCANS`, so the
+    /// generator stays inside the range where the bound cannot be the reason
+    /// for a `false`.
+    #[test]
+    fn removal_reports_success_for_any_match_count(attachments in 2usize..=16) {
+        Python::attach(|py| {
+            let logger = Arc::new(
+                FemtoLogger::new("reentrant.remove.property".into())
+                    .expect("test logger should construct"),
+            );
+            let object = handler_object(py);
+            logger
+                .add_handler(Arc::new(ReentrantRemovalProbe {
+                    logger: Arc::downgrade(&logger),
+                    target: object.clone_ref(py),
+                    depth: AtomicUsize::new(0),
+                }))
+                .expect("the probe attaches");
+            for _ in 0..attachments {
+                logger
+                    .add_handler(Arc::new(PyHandler::new(py, object.clone_ref(py))))
+                    .expect("the Python handler attaches");
+            }
+
+            prop_assert!(
+                logger.py_remove_handler(object),
+                "removal must report success while {} matches remain, within the \
+                 {} scan bound",
+                attachments - 1,
+                MAX_REMOVAL_SCANS,
+            );
+            prop_assert_eq!(
+                logger.handlers.read().len(),
+                attachments - 1,
+                "the surviving count must be the matches the re-entry did not take",
+            );
+            Ok(())
+        })?;
+    }
 }
 
 /// `py_remove_handler` drops its attachment's filter chain after the guard.

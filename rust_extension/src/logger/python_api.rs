@@ -283,7 +283,7 @@ impl FemtoLogger {
 /// budget measured in matching attachments. The bound only limits rescans
 /// after a re-entrant caller removed everything the previous scan found, and
 /// stops a handler whose `as_any` always does that from spinning forever.
-const MAX_REMOVAL_SCANS: usize = 4;
+pub(crate) const MAX_REMOVAL_SCANS: usize = 4;
 
 impl FemtoLogger {
     /// Select every attached handler wrapping *handler*, with no guard held.

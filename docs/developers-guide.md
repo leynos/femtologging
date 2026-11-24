@@ -121,6 +121,37 @@ regenerating the lock as described in
 - `pyyaml` is bounded to `>=6.0.3,<7` because the lint contract tests parse
   the CI workflow files.
 
+### Re-entrant finalizer scenarios
+
+A finalizer that re-enters a held lock deadlocks the thread it runs on, so the
+regression for it cannot run inside the pytest process: a deadlocked scenario
+would hang the suite rather than fail it.
+`tests/reentrant_finalizer_support.py` runs each scenario in a child
+interpreter with a ten-second timeout, and a hang becomes a test failure with
+the child's captured output attached.
+
+Each scenario is a module in `tests/fixtures/` rather than a string literal, so
+lint, type checking and docstring coverage see it as code. The child is started
+as `python -m tests.fixtures.<scenario>` from the repository root; a by-path
+launch would put the scenario's own directory on the child's import path
+instead of the root, making its `tests.fixtures.scenario_support` import depend
+on the environment already exposing the checkout. Running a module executes the
+scenario, while importing it — as pytest's `--doctest-modules` does — leaves
+the body inert behind a `__main__` guard.
+
+A marker on standard output is the completion signal, and each script prints it
+only after the re-entrant log call inside `__del__` returns. A scenario that
+merely avoids crashing therefore still fails. For the same reason a finalizer
+records completion after its log call, never before: Python swallows an
+exception raised by `__del__`, and a flag set first would let the marker stand
+for a re-entry that never happened.
+
+`tests/fixtures/scenario_support.py` provides `require`, which raises
+`AssertionError` explicitly instead of using `assert`. `python -O` removes
+assertion statements, so a scenario that skipped its checks would still exit
+zero and print its marker; raising keeps the failure visible at every
+optimisation level.
+
 ### Stack-info snapshot normalization
 
 `stack_info=True` records capture the whole Python call stack, so a snapshot
@@ -2281,6 +2312,46 @@ See the [Rust extension guide](rust-extension.md) and the
 [multithreaded logging design](rust-multithreaded-logging-framework-for-python-design.md#flush-barrier-states)
 for the queue state machine and deadline transitions.
 
+## Collection lock release
+
+A collection lock covers the mutation of its collection and nothing else. Any
+value the mutation removes or displaces leaves the guarded scope intact and is
+destroyed only after the guard ends. The rule is recorded in
+[ADR 0011](adrs/adr-0011-release-collection-locks-before-dropping-user-resources.md).
+
+The reason is re-entry. A removed `Arc` may hold the last reference to a Python
+object, and dropping it runs that object's finalizer on the calling thread. A
+finalizer is arbitrary user code, and user code logs: `get_logger(name)` takes
+the manager lock and `logger.info(...)` takes the logger's handler lock for
+reading. `parking_lot`'s `RwLock` is not reentrant, so a finalizer that
+re-enters a collection its caller still holds for writing deadlocks the thread.
+The same applies to a native handler whose destructor flushes or joins a worker
+that needs the same lock.
+
+The affected entry points are:
+
+- `clear_handlers` and `clear_filters`, which take the whole collection with
+  `std::mem::take` under the write guard;
+- `remove_handler` and `remove_filter`, which move the removed entry into a
+  local `Option` with `Vec::remove`;
+- `replace_handlers` and `replace_filters`, which replace under the guard and
+  then return the displaced collection to the caller;
+- `reset_manager` and `replace_runtime_state`, which take the loggers and the
+  runtime snapshot out of `MANAGER` and dispose of them after the guard, with
+  the GIL released;
+- `stage_loggers` and `register_missing_ancestors`, which must not drop a
+  partially built map under the manager guard.
+
+A fallible batch follows the same rule in one of two forms: it drops its
+partial result after releasing the guard, or it hands the partial result back
+with the error so the caller's unlocked failure path can. `stage_loggers` takes
+the first form. `register_missing_ancestors` takes the second by returning an
+`AncestorRegistrationError` (`PartialBatch<Py<FemtoLogger>>`) that owns the
+ancestors built before the failure; a bare `Result<_, PyErr>` could not,
+because the error value would be forced to drop the partial batch in place. Its
+`build_batch` helper is what leaves the loop with the error instead of being
+dropped by it.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` splits into a fallible preparation step and a
@@ -2300,7 +2371,11 @@ only fallible work under that lock is `register_missing_ancestors`: it
 recomputes the planned names and their missing dotted ancestors, rechecks
 `registry_has_room_for` against the live registry so room consumed since
 preparation is counted, and builds every missing ancestor object before
-inserting any. A refusal therefore raises the registry-limit `RuntimeError`
+inserting any. Construction is fallible, so the ancestors built before a
+failure are returned with it as an `AncestorRegistrationError` rather than
+dropped under the manager guard; `build_batch` is what carries that partial
+result out of the loop, and the caller destroys it only after releasing the
+guard and the GIL. A refusal therefore raises the registry-limit `RuntimeError`
 without mutating anything, and all of this happens before the first live-logger
 change. The refusal path also releases the manager lock and then the GIL before
 the staged loggers and registries are dropped, because their handlers may flush
@@ -2424,6 +2499,15 @@ Setup helpers return the error their step produced — `io::Error`, `ConfigError
 `HandlerError` or `PyResult` — and the calling test propagates it with a
 reasoned `expect`. A failing arrangement then names the step that failed
 instead of surfacing as a panic from inside the helper.
+
+Lock-release probes follow the same rule. A probe's `Drop` calls `try_write` on
+the collection lock it observes and records whether that succeeded, so a value
+destroyed under the guard fails the test immediately instead of hanging it.
+`logger_tests_lock_release.rs` and `manager_tests_lock_release.rs` hold those
+probes. The logger module's `AttachmentFilterLockProbe` sits inside an
+attachment's filter chain, which makes removing that attachment a genuine
+last-owner drop. `logger_tests_python_removal.rs` reuses those helpers to cover
+the Python `remove_handler` path.
 
 ### Capturing log records in an integration test
 
