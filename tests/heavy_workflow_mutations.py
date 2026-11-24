@@ -322,6 +322,13 @@ def _compile_flags_after_separator(document: Document) -> None:
     )
 
 
+def _compile_step_without_loom(document: Document) -> None:
+    """Strip ``--cfg loom`` from the compile step's inline flags."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace("--cfg loom ", "")
+
+
 MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -368,6 +375,7 @@ MUTATIONS = (
     pytest.param(_checker_given_no_command, id="checker-given-no-command"),
     pytest.param(_checker_commented_out, id="checker-commented-out"),
     pytest.param(_compile_step_removed, id="compile-step-removed"),
+    pytest.param(_compile_step_without_loom, id="compile-step-without-loom"),
     pytest.param(_compile_step_echoes, id="compile-step-echoes"),
     pytest.param(_compile_step_asks_for_help, id="compile-step-asks-for-help"),
     pytest.param(_compile_step_masks_failure, id="compile-step-masks-failure"),

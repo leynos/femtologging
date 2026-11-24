@@ -14,7 +14,11 @@ from __future__ import annotations
 import re
 
 from tests.heavy_loom_gate_contract import loom_gate_problems, step_presence_problems
-from tests.heavy_step_scope_contract import compile_command_problems, shell_problems
+from tests.heavy_step_scope_contract import (
+    compile_command_problems,
+    compile_loom_flag_problems,
+    shell_problems,
+)
 from tests.heavy_workflow_document import (
     BUILD_STEP,
     HEAVY_JOB,
@@ -353,6 +357,7 @@ def workflow_problems(document: Document) -> list[str]:
         *notification_problems(document),
         *step_presence_problems(heavy),
         *compile_command_problems(heavy),
+        *compile_loom_flag_problems(document, heavy),
         *loom_gate_problems(heavy),
         *shell_problems(document, heavy),
         *loom_position_problems(heavy),

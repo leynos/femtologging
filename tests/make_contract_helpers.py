@@ -246,3 +246,38 @@ def sole_workflow_step(
         )
         raise AssertionError(msg)
     return matches[0]
+
+
+def command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the tokens after any leading ``NAME=value`` assignments.
+
+    A shell command may be prefixed with environment assignments, so a rule
+    that asks what program a step runs has to skip them first.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The command and its arguments, or ``()`` when the command is nothing
+        but assignments.
+    """
+    for index, token in enumerate(tokens):
+        if "=" not in token.split(" ", 1)[0]:
+            return tokens[index:]
+    return ()
+
+
+def defaults_shell(container: cabc.Mapping[str, object]) -> object:
+    """Return a workflow or job ``defaults.run.shell`` value, if one is set.
+
+    Returns
+    -------
+    object
+        The configured shell template, or ``None`` when no default is set.
+    """
+    defaults = container.get("defaults")
+    if not isinstance(defaults, dict):
+        return None
+    run = defaults.get("run")
+    if not isinstance(run, dict):
+        return None
+    return run.get("shell")

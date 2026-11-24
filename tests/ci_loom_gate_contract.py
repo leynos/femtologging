@@ -24,7 +24,12 @@ from tests.ci_gate_scope_contract import (
     job_tolerance_is_acceptable,
     step_tolerance_is_acceptable,
 )
-from tests.make_contract_helpers import mapping, repo_root
+from tests.make_contract_helpers import (
+    command_words,
+    defaults_shell,
+    mapping,
+    repo_root,
+)
 
 type Tokens = tuple[str, ...]
 type Workflow = dict[str, object]
@@ -57,10 +62,6 @@ FETCH_STEP: typ.Final = "Fetch locked dependencies"
 MASK_FRAGMENTS: typ.Final[Tokens] = ("||", "&&", ";", "echo ", "#")
 
 
-#: The only matrix expression a required gate may be conditioned on: a bare
-#: property read. Anything with an operator, such as
-#: `${{ true || matrix.experimental }}`, evaluates to a constant and tolerates
-#: failure on every leg, including the required ones.
 def load_ci_workflow() -> Workflow:
     """Return the parsed pull-request workflow.
 
@@ -112,21 +113,6 @@ def loom_step(document: Workflow) -> dict[str, object]:
     )
 
 
-def _command_words(tokens: Tokens) -> Tokens:
-    """Return the tokens after any leading ``NAME=value`` assignments.
-
-    Returns
-    -------
-    Tokens
-        The command and its arguments, or ``()`` when the command is nothing
-        but assignments.
-    """
-    for index, token in enumerate(tokens):
-        if "=" not in token.split(" ", 1)[0]:
-            return tokens[index:]
-    return ()
-
-
 def _normalize_run(run: str) -> str:
     """Return a shell run value without line continuations or layout.
 
@@ -151,17 +137,6 @@ def _normalize_run(run: str) -> str:
     return " ".join(stripped.replace("\\\n", " ").split())
 
 
-def _defaults_shell(container: dict[str, object]) -> object:
-    """Return a workflow or job ``defaults.run.shell`` value, if one is set."""
-    defaults = container.get("defaults")
-    if not isinstance(defaults, dict):
-        return None
-    run = defaults.get("run")
-    if not isinstance(run, dict):
-        return None
-    return run.get("shell")
-
-
 def _shell_problems(
     document: Workflow,
     build_test: dict[str, object],
@@ -183,9 +158,9 @@ def _shell_problems(
     problems: list[str] = []
     if "shell" in step:
         problems.append(f"the {CI_LOOM_CLIPPY_STEP!r} step must not override the shell")
-    if _defaults_shell(build_test) is not None:
+    if defaults_shell(build_test) is not None:
         problems.append(f"the {CI_JOB} job must not set defaults.run.shell")
-    if _defaults_shell(document) is not None:
+    if defaults_shell(document) is not None:
         problems.append(f"{CI_WORKFLOW} must not set defaults.run.shell")
     return problems
 
@@ -216,7 +191,7 @@ def _run_problems(step: dict[str, object]) -> list[str]:
             f"Loom Clippy command, saw {run!r}"
         )
         return problems
-    words = _command_words(tuple(shlex.split(normalized)))
+    words = command_words(tuple(shlex.split(normalized)))
     if words[:2] != ("cargo", "clippy"):
         problems.append(
             f"the {CI_LOOM_CLIPPY_STEP!r} step must invoke cargo clippy, its "

@@ -28,6 +28,7 @@ from tests.heavy_workflow_document import (
     run_text,
     steps,
 )
+from tests.make_contract_helpers import command_words, defaults_shell
 
 #: The steps the scheduled job must keep and must not make skippable.
 LOOM_GATE_STEPS: tuple[str, ...] = (COMPILE_STEP, LOOM_STEP)
@@ -40,6 +41,13 @@ _ATTACHED_OPERATORS: typ.Final = re.compile(r"([&;|])")
 #: The `cargo test` subcommand arguments the compile step must carry.
 _HEAVY_TARGET: tuple[str, ...] = ("--test", "heavy")
 _NO_RUN: str = "--no-run"
+
+#: The configuration the compile step must build under.
+_LOOM_CONFIG: str = "--cfg loom"
+
+#: The flag variable and its higher-precedence encoded form.
+_FLAGS_VARIABLE: str = "RUSTFLAGS"
+_ENCODED_FLAGS: str = "CARGO_ENCODED_RUSTFLAGS"
 
 #: Shell control operators and the `wait` builtin: a compile step must be one
 #: foreground command whose failure the job sees.
@@ -72,32 +80,6 @@ def run_tokens(step: dict[str, object]) -> tuple[str, ...]:
     )
 
 
-def command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
-    """Return the tokens after any leading ``NAME=value`` assignments.
-
-    Returns
-    -------
-    tuple[str, ...]
-        The command and its arguments, or ``()`` when the command is nothing
-        but assignments.
-    """
-    for index, token in enumerate(tokens):
-        if "=" not in token.split(" ", 1)[0]:
-            return tokens[index:]
-    return ()
-
-
-def _defaults_shell(container: cabc.Mapping[str, object]) -> object:
-    """Return a workflow or job ``defaults.run.shell`` value, if one is set."""
-    defaults = container.get("defaults")
-    if not isinstance(defaults, dict):
-        return None
-    run = defaults.get("run")
-    if not isinstance(run, dict):
-        return None
-    return run.get("shell")
-
-
 def shell_problems(document: cabc.Mapping[str, object], found: Job) -> list[str]:
     """Return complaints about overrides of how the Loom steps run.
 
@@ -118,9 +100,9 @@ def shell_problems(document: cabc.Mapping[str, object], found: Job) -> list[str]
         step = named.get(step_name)
         if step is not None and "shell" in step:
             problems.append(f"the {step_name!r} step must not override the shell")
-    if _defaults_shell(found) is not None:
+    if defaults_shell(found) is not None:
         problems.append(f"the {HEAVY_JOB!r} job must not set defaults.run.shell")
-    if _defaults_shell(document) is not None:
+    if defaults_shell(document) is not None:
         problems.append(f"{WORKFLOW} must not set defaults.run.shell")
     return problems
 
@@ -253,3 +235,107 @@ def _contains_in_order(tokens: tuple[str, ...], wanted: tuple[str, ...]) -> bool
         tokens[start : start + width] == wanted
         for start in range(len(tokens) - width + 1)
     )
+
+
+def compile_loom_flag_problems(
+    document: cabc.Mapping[str, object], found: Job
+) -> list[str]:
+    """Return a complaint unless the compile step builds under `--cfg loom`.
+
+    The step selects Loom through an inline ``RUSTFLAGS`` assignment, which
+    the command-word helper deliberately skips. Without the flag the step
+    compiles the ordinary heavy tests while still carrying the Loom gate's
+    name, so the models never build. ``CARGO_ENCODED_RUSTFLAGS`` outranks
+    ``RUSTFLAGS`` and is refused at every scope, as in the pull-request gate.
+
+    Returns
+    -------
+    list[str]
+        A complaint when no effective ``RUSTFLAGS`` carries ``--cfg loom``, or
+        when an encoded value could displace it.
+    """
+    step = next(
+        (
+            step
+            for step in steps(found, subject=HEAVY_JOB)
+            if step.get("name") == COMPILE_STEP
+        ),
+        None,
+    )
+    if step is None:
+        return [f"the job must have a {COMPILE_STEP!r} step"]
+    problems: list[str] = []
+    flags = _effective_value(step, found, document, _FLAGS_VARIABLE)
+    if flags is None or _LOOM_CONFIG not in flags:
+        problems.append(
+            f"the {COMPILE_STEP!r} step must set {_LOOM_CONFIG} in {_FLAGS_VARIABLE}"
+        )
+    encodings = (
+        ("step", step),
+        ("job", found),
+        ("workflow", document),
+    )
+    problems.extend(
+        f"the {COMPILE_STEP!r} step's {scope} must not set {_ENCODED_FLAGS}"
+        for scope, container in encodings
+        if _environment_value(container, _ENCODED_FLAGS) is not None
+    )
+    return problems
+
+
+def _effective_value(
+    step: dict[str, object],
+    found: Job,
+    document: cabc.Mapping[str, object],
+    name: str,
+) -> str | None:
+    """Return the value a shell step's environment variable takes.
+
+    An inline ``NAME=value`` assignment in the command wins over step, job and
+    workflow environments, in that order.
+
+    Returns
+    -------
+    str | None
+        The effective value, or ``None`` when no scope sets it.
+    """
+    inline = _inline_assignments(run_tokens(step)).get(name)
+    if inline is not None:
+        return inline
+    for container in (step, found, document):
+        value = _environment_value(container, name)
+        if value is not None:
+            return value
+    return None
+
+
+def _inline_assignments(tokens: tuple[str, ...]) -> dict[str, str]:
+    """Return the ``NAME=value`` tokens before the command.
+
+    Returns
+    -------
+    dict[str, str]
+        The assignments, mapped by name.
+    """
+    assignments: dict[str, str] = {}
+    for token in tokens:
+        name, separator, value = token.partition("=")
+        if not separator or " " in name:
+            break
+        assignments[name] = value
+    return assignments
+
+
+def _environment_value(container: cabc.Mapping[str, object], name: str) -> str | None:
+    """Return a container's environment value for `name`, if it is a string.
+
+    Returns
+    -------
+    str | None
+        The configured string, or ``None`` when absent or not a string.
+    """
+    environment = container.get("env")
+    if not isinstance(environment, dict):
+        return None
+    value = environment.get(name)
+    return value if isinstance(value, str) else None
