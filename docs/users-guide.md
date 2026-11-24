@@ -306,7 +306,9 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
             found,
             max_supported,
         }) => {
-            // Reject too-new payloads explicitly.
+            // Log the mismatch, skip schema-dependent processing, and return
+            // the error. The caller still owns `json`, so it must keep its
+            // own copy if it needs the raw payload.
             eprintln!(
                 "payload schema {} is newer than supported {}",
                 found, max_supported
@@ -360,6 +362,12 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 Malformed JSON propagates as `serde_json::Error` inside the boxed error, and
 version validation runs only after a successful parse.
+
+`process_payload` borrows `json`: it neither stores nor returns the raw
+payload, and `SchemaVersionError` reports a mismatch through versions, paths,
+and bounds rather than through the payload itself. A caller that needs the raw
+JSON after `VersionTooNew` (for example, to quarantine or forward the payload)
+must retain its own copy.
 
 When consuming payloads in Python from external sources, each nested `cause`,
 `context`, and exception-group member carries its own `schema_version`. Compare
