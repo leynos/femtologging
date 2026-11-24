@@ -370,5 +370,5 @@ mod origin_tests;
 mod cardinality_tests;
 
 #[cfg(all(test, not(loom)))]
-#[path = "log_compat/http_redaction_tests.rs"]
+#[path = "http_redaction_tests.rs"]
 mod http_redaction_tests;
