@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import re
 
-from tests.heavy_loom_gate_contract import loom_gate_problems, shell_problems
+from tests.heavy_loom_gate_contract import loom_gate_problems, step_presence_problems
+from tests.heavy_step_scope_contract import shell_problems
 from tests.heavy_workflow_document import (
     BUILD_STEP,
     HEAVY_JOB,
@@ -350,6 +351,7 @@ def workflow_problems(document: Document) -> list[str]:
     return [
         *install_problems(heavy),
         *notification_problems(document),
+        *step_presence_problems(heavy),
         *loom_gate_problems(heavy),
         *shell_problems(document, heavy),
         *loom_position_problems(heavy),

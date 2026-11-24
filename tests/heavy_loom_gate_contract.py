@@ -22,7 +22,6 @@ from tests.heavy_workflow_document import (
     COMPILE_STEP,
     HEAVY_JOB,
     LOOM_STEP,
-    WORKFLOW,
     Job,
     env,
     run_text,
@@ -73,7 +72,13 @@ def _run_tokens(step: dict[str, object]) -> tuple[str, ...]:
         The step's command tokens, with line continuations flattened and
         attached control operators separated.
     """
-    words = shlex.split(run_text(step).replace("\\\n", " "))
+    lexer = shlex.shlex(run_text(step).replace("\\\n", " "), posix=True)
+    lexer.whitespace_split = True
+    # A shell ends a command at an unquoted `#`, so the lexer must too;
+    # otherwise a comment-only script keeps its `#word` as a token and can
+    # be mistaken for an assignment followed by the checker.
+    lexer.commenters = "#"
+    words = list(lexer)
     return tuple(
         part for word in words for part in _ATTACHED_OPERATORS.split(word) if part
     )
@@ -320,48 +325,6 @@ def preemption_problems(found: Job) -> list[str]:
     return []
 
 
-def _defaults_shell(container: dict[str, object]) -> object:
-    """Return a workflow or job ``defaults.run.shell`` value, if one is set."""
-    defaults = container.get("defaults")
-    if not isinstance(defaults, dict):
-        return None
-    run = defaults.get("run")
-    if not isinstance(run, dict):
-        return None
-    return run.get("shell")
-
-
-def shell_problems(document: dict[str, object], found: Job) -> list[str]:
-    """Return complaints about overrides of how the execution step runs.
-
-    A ``shell`` template such as ``bash -n {0}`` makes GitHub parse the script
-    without executing it, so the step succeeds while no model runs. The
-    effective shell is the step's own setting, else the job's
-    ``defaults.run.shell``, else the workflow's; all three are refused.
-
-    Parameters
-    ----------
-    document : dict[str, object]
-        The parsed workflow, for the workflow-level defaults.
-    found : Job
-        The parsed heavy job.
-
-    Returns
-    -------
-    list[str]
-        One complaint per scope that overrides the shell.
-    """
-    problems: list[str] = []
-    step = _execution_step(found)
-    if step is not None and "shell" in step:
-        problems.append(f"the {LOOM_STEP!r} step must not override the shell")
-    if _defaults_shell(found) is not None:
-        problems.append(f"the {HEAVY_JOB!r} job must not set defaults.run.shell")
-    if _defaults_shell(document) is not None:
-        problems.append(f"{WORKFLOW} must not set defaults.run.shell")
-    return problems
-
-
 def loom_gate_problems(found: Job) -> list[str]:
     """Return every complaint about the heavy job's Loom gates.
 
@@ -381,4 +344,30 @@ def loom_gate_problems(found: Job) -> list[str]:
         *checker_invocation_problems(found),
         *checker_mask_problems(found),
         *preemption_problems(found),
+    ]
+
+
+def step_presence_problems(found: Job) -> list[str]:
+    """Return a complaint for each named Loom step the job no longer has.
+
+    The condition and tolerance rules inspect only the steps that survive, so
+    removing the compile gate outright would leave them with nothing to
+    complain about. The compile step is a gate in its own right: it proves the
+    models build before the execution step spends forty minutes on them.
+
+    Parameters
+    ----------
+    found : Job
+        The parsed heavy job.
+
+    Returns
+    -------
+    list[str]
+        One complaint per missing named step.
+    """
+    names = [step.get("name") for step in steps(found, subject=HEAVY_JOB)]
+    return [
+        f"the {name!r} step must remain in the {HEAVY_JOB!r} job"
+        for name in _LOOM_GATE_STEPS
+        if name not in names
     ]

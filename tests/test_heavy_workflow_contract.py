@@ -285,6 +285,20 @@ def _bound_overridden_in_command(document: Document) -> None:
     step["run"] = f"LOOM_MAX_PREEMPTIONS=100 {run_text(step)}"
 
 
+def _checker_commented_out(document: Document) -> None:
+    """Comment the entire script out, so bash runs nothing."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = f"#=disabled {run_text(step)}"
+
+
+def _compile_step_removed(document: Document) -> None:
+    """Delete the separate compile gate."""
+    found = job(document, HEAVY_JOB)
+    found_steps = raw_steps(found, subject=HEAVY_JOB)
+    found_steps.remove(named_step(found, COMPILE_STEP, subject=HEAVY_JOB))
+
+
 _MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -329,6 +343,8 @@ _MUTATIONS = (
     ),
     pytest.param(_checker_asked_for_help, id="checker-asked-for-help"),
     pytest.param(_checker_given_no_command, id="checker-given-no-command"),
+    pytest.param(_checker_commented_out, id="checker-commented-out"),
+    pytest.param(_compile_step_removed, id="compile-step-removed"),
     pytest.param(_checker_shell_never_runs, id="checker-shell-never-runs"),
     pytest.param(_job_default_shell_never_runs, id="job-default-shell-never-runs"),
     pytest.param(

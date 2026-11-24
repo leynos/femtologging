@@ -19,7 +19,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _MATRIX_SELECTOR: typ.Final[re.Pattern[str]] = re.compile(
-    r"^\$\{\{\s*matrix\.(?P<property>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}$"
+    r"^\$\{\{\s*matrix\.(?P<property>[A-Za-z_][A-Za-z0-9_-]*)\s*\}\}$"
 )
 
 

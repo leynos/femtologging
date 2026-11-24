@@ -232,9 +232,22 @@ def _excluded_only_required_leg(document: Workflow) -> None:
     matrix["exclude"] = [{"experimental": False}]
 
 
+def _environment(container: dict[str, object], subject: str) -> dict[str, object]:
+    """Return a container's environment mapping, creating an empty one.
+
+    Returns
+    -------
+    dict[str, object]
+        The writable environment mapping; :func:`mapping` raises ``TypeError``
+        when an existing `env` value is not one.
+    """
+    container.setdefault("env", {})
+    return mapping(container["env"], subject=subject)
+
+
 def _encoded_flags_override(document: Workflow) -> None:
     """Displace the inline flags with an encoded value Cargo prefers."""
-    environment = loom_step(document).setdefault("env", {})
+    environment = _environment(loom_step(document), "Loom Clippy step env")
     environment["CARGO_ENCODED_RUSTFLAGS"] = "-Clink-arg=-fuse-ld=mold"
 
 
@@ -242,13 +255,13 @@ def _job_encoded_flags_override(document: Workflow) -> None:
     """Set the encoded flags on the job, outranking the step's own."""
     jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
     build_test = mapping(jobs.get("build-test"), subject="build-test job")
-    environment = build_test.setdefault("env", {})
+    environment = _environment(build_test, "build-test job env")
     environment["CARGO_ENCODED_RUSTFLAGS"] = "-Clink-arg=-fuse-ld=mold"
 
 
 def _workflow_encoded_flags_override(document: Workflow) -> None:
     """Set the encoded flags for the whole workflow."""
-    environment = document.setdefault("env", {})
+    environment = _environment(document, f"{CI_WORKFLOW} env")
     environment["CARGO_ENCODED_RUSTFLAGS"] = "-Clink-arg=-fuse-ld=mold"
 
 
@@ -304,3 +317,25 @@ def test_a_broken_ci_loom_clippy_gate_is_reported(
     document = copy.deepcopy(load_ci_workflow())
     mutate(document)
     assert loom_clippy_problems(document), "the mutated workflow must be reported"
+
+
+def test_a_mixed_hyphenated_matrix_keeps_a_required_leg() -> None:
+    """Scenario: a matrix names its tolerance property with a hyphen.
+
+    Invariant: a bare selector over a matrix with both required and
+    experimental legs is accepted, and a compound expression over the same
+    matrix is refused. GitHub permits hyphens in dot-property names, so a
+    selector that rejected them would refuse a valid configuration.
+    """
+    job: dict[str, object] = {
+        "continue-on-error": "${{ matrix.allow-failure }}",
+        "strategy": {"matrix": {"allow-failure": [False, True]}},
+    }
+    assert job_tolerance_is_acceptable(job), "a mixed matrix must keep its required leg"
+    compound: dict[str, object] = {
+        **job,
+        "continue-on-error": "${{ true || matrix.allow-failure }}",
+    }
+    assert not job_tolerance_is_acceptable(compound), (
+        "a constant-true expression must be refused"
+    )
