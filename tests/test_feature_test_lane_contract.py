@@ -129,7 +129,7 @@ def test_a_failing_driver_fails_the_step(tmp_path: pathlib.Path) -> None:
     status, calls = run_script(
         StepRun(
             script=run_text(),
-            shell=effective_shell(),
+            shell_template=effective_shell(),
             driver_exit=101,
             runner=_RUNNER,
             workdir=tmp_path,
@@ -153,7 +153,7 @@ def test_a_passing_driver_lets_the_step_finish(tmp_path: pathlib.Path) -> None:
     status, calls = run_script(
         StepRun(
             script=run_text(),
-            shell=effective_shell(),
+            shell_template=effective_shell(),
             driver_exit=0,
             runner=_RUNNER,
             workdir=tmp_path,
@@ -162,6 +162,55 @@ def test_a_passing_driver_lets_the_step_finish(tmp_path: pathlib.Path) -> None:
 
     assert driver_calls(calls, _RUNNER), "the step must invoke the driver"
     assert status == 0, f"a passing driver must let the step finish; saw {calls!r}"
+
+
+#: A script that captures the driver's status and then hides it behind a
+#: passing command. `set +e` stops the capture from aborting the script, and
+#: the pipeline's status is its last command's, so `-e` alone does not see the
+#: failure; only `-o pipefail` rejects it.
+_STATUS_LAUNDERING: typ.Final[str] = (
+    "set +e\nbash -c 'exit 101'\nstatus=$?\n(exit \"$status\") | cat\n"
+)
+
+
+def test_the_implicit_shell_matches_the_runner(tmp_path: pathlib.Path) -> None:
+    """Scenario: a step declares no shell and launders the driver's status.
+
+    Invariant: the harness reproduces GitHub's implicit default exactly, so
+    this script really does exit 0 there and the contract only accepts a
+    workflow whose shell rejects it. GitHub runs ``bash -e {0}`` when no
+    ``shell`` is declared, and that is *not* ``shell: bash``, which adds
+    ``-o pipefail``. A harness that ran the stricter command would report the
+    failure the runner misses, and the contract would pass a step that cannot
+    propagate the driver's verdict.
+    """
+    status, _ = run_script(
+        StepRun(
+            script=_STATUS_LAUNDERING,
+            shell_template=None,
+            driver_exit=101,
+            runner=_RUNNER,
+            workdir=tmp_path,
+        )
+    )
+    assert status == 0, (
+        "the implicit default has no pipefail, so the laundered status must "
+        f"escape it; saw exit {status}"
+    )
+
+    strict, _ = run_script(
+        StepRun(
+            script=_STATUS_LAUNDERING,
+            shell_template="bash",
+            driver_exit=101,
+            runner=_RUNNER,
+            workdir=tmp_path / "strict",
+        )
+    )
+    assert strict != 0, (
+        "an explicit bash adds pipefail and must reject the laundered status; "
+        f"saw exit {strict}"
+    )
 
 
 def test_the_driver_is_given_every_supported_selection() -> None:

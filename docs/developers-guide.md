@@ -1443,9 +1443,28 @@ interpreter: `uv run --script` puts the script's own interpreter first on
 `PATH`, and PyO3 links whichever Python it finds there.
 `make feature-tests-runner-test` runs the driver's own tests, which use
 `cmd-mox` to shim `cargo`. `tests/test_feature_test_lane_contract.py` holds the
-workflow wiring in place, including that the inline loop does not return. Loom
-model test functions are compiled and registered only when Cargo is invoked with
-`--cfg loom`; the ordinary heavy run does not compile or run them.
+workflow wiring in place, including that the inline loop does not return.
+
+Whether a failing driver fails the step is asked of bash rather than of the
+step's text. `tests/workflow_step_execution.py` runs the step's own script
+under the shell the workflow declares, with `cargo`, `make` and `uv` replaced
+by stubs, and reports whether a failing driver's status reaches the step. This
+replaced a handwritten shell reader: each round of review found another
+construct it did not model (`set +e`, redirections that hid a later command,
+quoting that `shlex` discards, here-document bodies, `if` blocks, `-n`
+templates), and each was a script that passed the contract while discarding the
+verdict.
+
+The helper reproduces GitHub's shell resolution exactly, because the
+differences matter. An undeclared shell runs `bash -e {0}`; `shell: bash` runs
+`bash --noprofile --norc -eo pipefail {0}`, which is stricter; `shell: sh` runs
+`sh -e {0}`. A harness that used the explicit-bash command for the implicit
+default would reject a status-laundering script the real runner accepts, and
+the contract would pass a step that cannot propagate the driver's failure.
+`test_the_implicit_shell_matches_the_runner` pins that distinction.
+
+Loom model test functions are compiled and registered only when Cargo is
+invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
 ### Loom models
 

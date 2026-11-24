@@ -29,14 +29,32 @@ if typ.TYPE_CHECKING:
 #: Commands the step's script invokes but must not really run here.
 STUBBED_COMMANDS: typ.Final[tuple[str, ...]] = ("cargo", "make", "uv")
 
-#: The shell GitHub uses for a ``run`` body on Linux when none is declared.
-DEFAULT_SHELL: typ.Final[tuple[str, ...]] = (
+#: What GitHub runs for a ``run`` body whose step declares no ``shell``.
+#: The documentation is explicit that this differs from an explicit ``bash``.
+_IMPLICIT_SHELL: typ.Final[tuple[str, ...]] = ("bash", "-e", "{0}")
+
+#: What GitHub runs for ``shell: bash``. Stricter than the implicit default:
+#: ``-o pipefail`` is added as well as ``-e``.
+_EXPLICIT_BASH: typ.Final[tuple[str, ...]] = (
     "bash",
     "--noprofile",
     "--norc",
     "-eo",
     "pipefail",
+    "{0}",
 )
+
+#: What GitHub runs for ``shell: sh``.
+_EXPLICIT_SH: typ.Final[tuple[str, ...]] = ("sh", "-e", "{0}")
+
+#: The built-in shell names and the command GitHub runs for each. The implicit
+#: default is deliberately absent: it is not one of the selectable names, and
+#: conflating the two would test a stricter shell than the runner uses, which
+#: is how a step that loses the driver's failure would pass this contract.
+BUILT_IN_SHELLS: typ.Final[dict[str, tuple[str, ...]]] = {
+    "bash": _EXPLICIT_BASH,
+    "sh": _EXPLICIT_SH,
+}
 
 #: A stub that records its invocation and reports a controllable status.
 _STUB: typ.Final[str] = """#!/bin/sh
@@ -48,14 +66,30 @@ exit 0
 """
 
 
-def shell_words(shell: object) -> list[str]:
+def shell_words(shell_template: object) -> list[str]:
     """Return the command words that run a script under ``shell``.
 
-    ``None`` and the built-in ``bash`` and ``sh`` names mean GitHub's
-    fail-fast default for the platform. A custom template is split and its
-    ``{0}`` placeholder is replaced by the script path when the script is
-    run, so the template's own flags — including a disabling or no-execution
-    one — take effect exactly as they would in the workflow.
+    GitHub resolves three cases differently, and the difference matters:
+
+    ``None``
+        ``bash -e {0}``. Note that this is *not* what ``shell: bash`` runs.
+    ``"bash"`` or ``"sh"``
+        The built-in command for that name, with ``-eo pipefail`` for bash.
+    anything else
+        A custom template, used as written.
+
+    A custom template's own flags — including a disabling, no-execution or
+    argument-after-the-operand one — take effect exactly as they would in the
+    workflow.
+
+    >>> shell_words(None)
+    ['bash', '-e', '{0}']
+    >>> shell_words("bash")[:6]
+    ['bash', '--noprofile', '--norc', '-eo', 'pipefail', '{0}']
+    >>> shell_words("sh")
+    ['sh', '-e', '{0}']
+    >>> shell_words("bash {0}")
+    ['bash', '{0}']
 
     Returns
     -------
@@ -66,11 +100,13 @@ def shell_words(shell: object) -> list[str]:
     ValueError
         If a custom template has no ``{0}`` placeholder.
     """
-    if shell is None or shell in {"bash", "sh"}:
-        return [*DEFAULT_SHELL, "{0}"]
-    words = shlex.split(str(shell))
+    if shell_template is None:
+        return list(_IMPLICIT_SHELL)
+    words = list(BUILT_IN_SHELLS.get(str(shell_template), ()))
+    if not words:
+        words = shlex.split(str(shell_template))
     if "{0}" not in words:
-        message = f"the shell template {shell!r} has no {{0}} placeholder"
+        message = f"the shell template {shell_template!r} has no {{0}} placeholder"
         raise ValueError(message)
     return words
 
@@ -101,7 +137,7 @@ class StepRun:
     """Everything one run of a step's script needs."""
 
     script: str
-    shell: object
+    shell_template: object
     driver_exit: int
     runner: str
     workdir: Path
@@ -124,12 +160,14 @@ def run_script(run: StepRun) -> tuple[int, list[str]]:
         order.
     """
     bin_dir = run.workdir / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(parents=True)
     log = run.workdir / "calls.log"
     _write_stubs(bin_dir, run.runner)
     path = run.workdir / "step.sh"
     path.write_text(run.script, encoding="utf-8")
-    command = [word.replace("{0}", str(path)) for word in shell_words(run.shell)]
+    command = [
+        word.replace("{0}", str(path)) for word in shell_words(run.shell_template)
+    ]
     environment = {
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         "STEP_LOG": str(log),
