@@ -250,11 +250,20 @@ keeping the target space bounded.
 - Issue #432 and its folded findings `892a59c0`, `a25c11d3`, `b721c5d5` and
   `193b1941`.
 - `rust_extension/src/manager/validation.rs` — the name rules.
-- `rust_extension/src/manager/registry.rs` — the registry cap.
-- `rust_extension/src/logger/dispatcher.rs` and
+- `rust_extension/src/manager/registry/mod.rs` — the registry cap.
+- `rust_extension/src/logger/dispatcher/mod.rs` and
   `rust_extension/src/logger/dispatcher/shard/` — the shared pool.
 - `docs/users-guide.md` — the caller-facing naming guidance.
 - ADR 0004 (batching optimizations in consumer threads) — the equivalent
   single-consumer design for the file handler.
 - ADR 0006 (environment seam taxonomy) — the seam discipline the dispatch
   worker's thread, channel and lock primitives follow.
+
+## Addendum: module-root paths (2026-11-18)
+
+The module-root move replaced single-file modules with directory modules, so
+the reference list above now names `rust_extension/src/manager/registry/mod.rs`
+and `rust_extension/src/logger/dispatcher/mod.rs`. Only the pointers changed;
+the decision, its drivers and its consequences remain as accepted on
+2026-10-16. This addendum records that edit rather than leaving an accepted
+record silently rewritten.

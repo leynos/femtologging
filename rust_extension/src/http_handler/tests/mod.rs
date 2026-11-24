@@ -338,37 +338,37 @@ fn spawn_retry_server(
     Ok((addr, rx))
 }
 
-#[path = "close_tests.rs"]
+#[path = "../close_tests.rs"]
 mod close;
 
 // What the handler reports when it drops records, including the drops it
 // refuses after close.
-#[path = "drop_reporting_tests.rs"]
+#[path = "../drop_reporting_tests.rs"]
 mod drop_reporting;
 
 // The worker-side count a normal flush must report, kept apart from
 // `drop_reporting` so both files stay clear of the size limit.
-#[path = "worker_flush_reporting_tests.rs"]
+#[path = "../worker_flush_reporting_tests.rs"]
 mod worker_flush_reporting;
 
-#[path = "retry_tests.rs"]
+#[path = "../retry_tests.rs"]
 mod retry;
 // Contracts for what the worker does with the shutdown signal, as opposed to
 // what the handler does with the acknowledgement.
-#[path = "drain_tests.rs"]
+#[path = "../drain_tests.rs"]
 mod drain;
 
 // Properties of the command queue that decide whether an unread shutdown
 // acknowledgement disconnects or leaves `close` waiting out its budget.
-#[path = "channel_property_tests.rs"]
+#[path = "../channel_property_tests.rs"]
 mod channel_property;
 // Response classification tests (unit tests for the worker module)
-#[path = "response_classification_tests.rs"]
+#[path = "../response_classification_tests.rs"]
 mod response_classification;
 // Contracts for the bytes one request puts on the wire.
-#[path = "request_shape_tests.rs"]
+#[path = "../request_shape_tests.rs"]
 mod request_shape;
 
 // Transport-origin admission tests: marked records never enter the queue.
-#[path = "origin_tests.rs"]
+#[path = "../origin_tests.rs"]
 mod origin;

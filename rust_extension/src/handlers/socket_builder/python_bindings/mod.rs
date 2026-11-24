@@ -222,5 +222,5 @@ impl AsPyDict for SocketHandlerBuilder {
 }
 
 #[cfg(test)]
-#[path = "python_bindings/tests.rs"]
+#[path = "tests.rs"]
 mod tests;

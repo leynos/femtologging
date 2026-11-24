@@ -98,7 +98,7 @@ mod manager_tests;
 #[cfg(all(test, feature = "python"))]
 mod configuration_tests;
 #[cfg(all(test, feature = "python"))]
-#[path = "manager/manager_tests_capacity.rs"]
+#[path = "manager_tests_capacity.rs"]
 mod manager_tests_capacity;
 #[cfg(feature = "python")]
 pub(crate) use configuration::{
@@ -119,5 +119,5 @@ pub(crate) fn registered_logger_names_for_test() -> Vec<String> {
 }
 
 #[cfg(all(test, feature = "python", feature = "log-compat", not(loom)))]
-#[path = "manager/manager_tests_flush.rs"]
+#[path = "manager_tests_flush.rs"]
 mod manager_tests_flush;

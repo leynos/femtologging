@@ -372,9 +372,8 @@ impl HandlerBuilderTrait for HTTPHandlerBuilder {
 mod python_bindings;
 
 // Endpoint validation, which has to agree with the transport's own parser.
-#[path = "http_builder/validation.rs"]
 mod validation;
 
 #[cfg(test)]
-#[path = "http_builder/tests.rs"]
+#[path = "tests.rs"]
 mod tests;
