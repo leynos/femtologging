@@ -19,7 +19,6 @@ import typing as typ
 import yaml
 
 from tests.make_contract_helpers import repo_root, sole_workflow_step, workflow_job
-from tests.workflow_shell_scanner import tokenize
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -65,14 +64,37 @@ def run_text() -> str:
     return command.replace("\\\n", " ")
 
 
-def commands() -> list[list[str]]:
-    """Return the step's shell script tokens, one entry per command.
+def _tokenize(script: str) -> list[list[str]]:
+    """Return one script's words, one entry per non-empty line.
+
+    ``shlex`` is enough for this ordering question, which only needs to know
+    which line names which program. A ``#`` is read as a comment so a comment
+    containing an apostrophe does not open a quotation the line never closes;
+    a quoted ``#`` stays argument content.
 
     Returns
     -------
-        The tokenized commands, in the order the step runs them.
+        The tokenized lines, in the order the script runs them.
     """
-    return tokenize(run_text())
+    return [
+        tokens
+        for line in script.splitlines()
+        if (tokens := shlex.split(line, comments=True))
+    ]
+
+
+def commands() -> list[list[str]]:
+    """Return the step's shell script tokens, one entry per line.
+
+    Whether a failed command fails the step is asked of bash in the contract,
+    not of this reader; these tokens are only used to say which program a line
+    names and in what order.
+
+    Returns
+    -------
+        The tokenized lines, in the order the step runs them.
+    """
+    return _tokenize(run_text())
 
 
 def environment() -> dict[str, object]:
@@ -84,82 +106,6 @@ def environment() -> dict[str, object]:
     """
     found = step().get("env")
     return found if isinstance(found, dict) else {}
-
-
-def errexit_state(options: cabc.Sequence[str]) -> bool | None:
-    """Return the exit-on-error state the option words leave behind.
-
-    Bash processes ``set`` options left to right and the last assignment
-    wins, so ``set -e +e`` disables the option even though ``-e`` appears
-    first. Short options may be grouped: ``-euo pipefail`` enables ``errexit``
-    alongside others, and ``+ex`` disables it alongside others. ``-o`` and
-    ``+o`` consume the following word as the option name.
-
-    Returns
-    -------
-        ``True`` when the words enable ``errexit``, ``False`` when they
-        disable it, and ``None`` when they say nothing about it.
-    """
-    state: bool | None = None
-    index = 0
-    while index < len(options):
-        option = options[index]
-        index += 1
-        if option in {"-o", "+o"}:
-            name = options[index] if index < len(options) else ""
-            index += 1
-            if name == "errexit":
-                state = option == "-o"
-            continue
-        if option.startswith("--"):
-            # A long option is one word, not a group of short ones, so none
-            # of its letters is the `e` flag. `--noprofile` does not enable
-            # exit-on-error.
-            continue
-        if option.startswith(("-", "+")) and "e" in option[1:]:
-            state = option.startswith("-")
-    return state
-
-
-def disables_errexit(command: list[str]) -> bool:
-    """Report whether one command leaves exit-on-error off.
-
-    Only the command words are inspected, so a flag inside a quoted argument
-    to another program is not mistaken for the shell builtin.
-
-    Returns
-    -------
-        True when the command is a ``set`` whose final ``errexit`` assignment
-        disables it.
-    """
-    if not command or command[0] != "set":
-        return False
-    return errexit_state(command[1:]) is False
-
-
-def shell_fails_fast(shell: object) -> bool:
-    """Report whether a step's effective shell exits on error.
-
-    An absent shell means GitHub's built-in ``bash -e {0}`` on Linux, and the
-    built-in ``bash`` and ``sh`` names run with ``-e`` too. A custom template
-    has to say so itself, and a later disabling option such as
-    ``bash -e +e {0}`` wins over an earlier enabling one, so the whole option
-    list is evaluated in order.
-
-    Returns
-    -------
-        True when the shell is the platform default, a built-in, or a
-        template whose final ``errexit`` assignment enables it.
-    """
-    if shell is None or shell in {"bash", "sh"}:
-        return True
-    words = shlex.split(str(shell))
-    if "{0}" not in words:
-        return False
-    # Everything after the script operand is an argument to the script, not a
-    # shell option, so `bash {0} -e` runs without exit-on-error.
-    operand = words.index("{0}")
-    return errexit_state(words[1:operand]) is True
 
 
 def declared_shell(mapping: cabc.Mapping[str, object]) -> object:

@@ -9,11 +9,18 @@ call carried a guard. The workflow now delegates to
 so the matrix cannot quietly shrink, lose its harness selection, or become an
 inline loop again.
 
-The assertions are over the parsed workflow document and the tokenized
-command, not over the file's text, so re-indenting the workflow or renaming a
-nearby step cannot break them and cannot hide a change either. The readers
-live in :mod:`tests.feature_lane_step_readers`, and the reader properties are
-in ``test_feature_lane_step_reader_properties.py``.
+The assertions are over the parsed workflow document, not over the file's
+text, so re-indenting the workflow or renaming a nearby step cannot break
+them and cannot hide a change either.
+
+Whether a failed driver fails the step is asked of bash rather than of the
+text: the step's own script is run under the shell template the workflow
+declares, with ``cargo``, ``make`` and ``uv`` stubbed, and a failing driver's
+effect on the step's status is observed. Reading the text for that answer
+means modelling quoting, separators, redirections, here-documents and shell
+flags, and every model has constructs it does not handle — each one a script
+that passes while discarding the verdict. See
+:mod:`tests.workflow_step_execution`.
 """
 
 from __future__ import annotations
@@ -29,15 +36,16 @@ from tests.feature_lane_step_readers import (
     STEP,
     WORKFLOW,
     commands,
-    disables_errexit,
     effective_shell,
     environment,
     run_text,
-    shell_fails_fast,
     step,
 )
 from tests.make_contract_helpers import repo_root, workflow_job
-from tests.workflow_shell_scanner import tokenize_statements
+from tests.workflow_step_execution import StepRun, driver_calls, run_script
+
+if typ.TYPE_CHECKING:
+    import pathlib
 
 _WORKFLOW: typ.Final = WORKFLOW
 _JOB: typ.Final = JOB
@@ -91,15 +99,8 @@ def test_the_matrix_runs_through_the_python_driver() -> None:
 def test_the_driver_failure_cannot_be_suppressed() -> None:
     """Scenario: a selection fails and the step swallows the verdict.
 
-    Invariant: the step carries no ``if``, neither the step nor the job
-    tolerates its own failure, and the shell running it exits on error.
-    ``|| true`` is refused by requiring the driver to be the whole command;
-    these rules close the surrounding ways to lose the same failure.
-
-    The shell is resolved through the step, the job and the workflow, because
-    a ``defaults.run.shell`` template such as ``bash {0}`` replaces the
-    built-in ``bash -e {0}`` and an absent step-level key would otherwise read
-    as the safe default.
+    Invariant: the step and its job run unconditionally and do not tolerate
+    their own failure, so the YAML cannot absorb it.
     """
     found = step()
     assert "if" not in found, f"the {_STEP!r} step must run unconditionally"
@@ -110,32 +111,57 @@ def test_the_driver_failure_cannot_be_suppressed() -> None:
     assert job.get("continue-on-error") in {None, False}, (
         f"the {_JOB!r} job must not tolerate its own failure"
     )
-    shell = effective_shell()
-    assert shell_fails_fast(shell), (
-        f"the {_STEP!r} step's effective shell must exit on error, saw {shell!r}"
-    )
 
 
-def test_the_script_never_disables_errexit_before_the_driver() -> None:
-    """Scenario: the step runs ``set +e`` ahead of the driver.
+def test_a_failing_driver_fails_the_step(tmp_path: pathlib.Path) -> None:
+    """Scenario: the driver reports a failing feature selection.
 
-    Invariant: no command turns exit-on-error off, so a failed driver still
-    fails the step. Without this, ``set +e`` followed by the driver and a
-    passing ``pytest`` reports a green step while every selection may have
-    failed.
+    Invariant: the step's own script exits non-zero under the shell the
+    workflow declares, so the job fails. This is asked of bash by running the
+    script, not of the text: a suppression suffix, a disabling ``set``, a
+    redirection that hides a later command, a here-document body, a
+    conditional list, or a shell template without fail-fast behaviour all
+    leave the driver failing while the step continues, and each has defeated
+    a text-level check.
 
-    Each simple command is inspected, not each line: ``echo ready; set +e``
-    is one line whose second command disables the option, and a reader that
-    looked only at the line's first word would accept it.
+    The driver is stubbed to report failure, so no Rust is compiled.
     """
-    offenders = [
-        statement
-        for statement in tokenize_statements(run_text())
-        if disables_errexit(statement)
-    ]
-    assert not offenders, (
-        f"the {_STEP!r} step must not disable exit-on-error, found {offenders!r}"
+    status, calls = run_script(
+        StepRun(
+            script=run_text(),
+            shell=effective_shell(),
+            driver_exit=101,
+            runner=_RUNNER,
+            workdir=tmp_path,
+        )
     )
+
+    assert driver_calls(calls, _RUNNER), (
+        f"the step must actually invoke the feature-matrix driver; it ran {calls!r}"
+    )
+    assert status != 0, (
+        f"a failing driver must fail the step; the script exited 0 after {calls!r}"
+    )
+
+
+def test_a_passing_driver_lets_the_step_finish(tmp_path: pathlib.Path) -> None:
+    """Scenario: the driver reports success.
+
+    Invariant: the step's script exits zero, so the rule above is a real
+    control rather than a step that always fails.
+    """
+    status, calls = run_script(
+        StepRun(
+            script=run_text(),
+            shell=effective_shell(),
+            driver_exit=0,
+            runner=_RUNNER,
+            workdir=tmp_path,
+        )
+    )
+
+    assert driver_calls(calls, _RUNNER), "the step must invoke the driver"
+    assert status == 0, f"a passing driver must let the step finish; saw {calls!r}"
 
 
 def test_the_driver_is_given_every_supported_selection() -> None:
@@ -169,8 +195,8 @@ def test_the_driver_is_given_the_manifest_and_the_harness_selection() -> None:
     assert isinstance(harness, str), (
         f"the {_STEP!r} step must set INPUT_TEST_ARGS, saw {harness!r}"
     )
-    assert _HARNESS_ARGUMENT in harness.split(), (
-        f"the harness selection must include {_HARNESS_ARGUMENT}, saw {harness!r}"
+    assert tuple(harness.split()) == (_HARNESS_ARGUMENT,), (
+        f"the harness selection must be exactly {_HARNESS_ARGUMENT!r}, saw {harness!r}"
     )
 
 
