@@ -1,5 +1,7 @@
 # Architectural decision record (ADR) 0011: release collection locks before dropping user resources
 
+Renumbered from 0009 on 2026-11-24 (duplicate number).
+
 ## Status
 
 Accepted — 2026-11-17: a collection guard covers mutation only. Anything the
