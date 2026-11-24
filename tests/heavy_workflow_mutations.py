@@ -12,9 +12,9 @@ import typing as typ
 
 import pytest
 
+from tests.heavy_compile_mutations import COMPILE_MUTATIONS
 from tests.heavy_workflow_document import (
     BUILD_STEP,
-    COMPILE_STEP,
     HEAVY_JOB,
     LOOM_STEP,
     NOTIFY_JOB,
@@ -173,22 +173,10 @@ def _heavy_job_tolerant(document: Document) -> None:
     job(document, HEAVY_JOB)["continue-on-error"] = True
 
 
-def _compile_step_conditioned(document: Document) -> None:
-    """Make the Loom compile step skippable."""
-    found = job(document, HEAVY_JOB)
-    named_step(found, COMPILE_STEP, subject=HEAVY_JOB)["if"] = "false"
-
-
 def _execute_step_conditioned(document: Document) -> None:
     """Make the model execution step skippable."""
     found = job(document, HEAVY_JOB)
     named_step(found, LOOM_STEP, subject=HEAVY_JOB)["if"] = "false"
-
-
-def _compile_step_tolerant(document: Document) -> None:
-    """Let a failed Loom compile stop failing the job."""
-    found = job(document, HEAVY_JOB)
-    named_step(found, COMPILE_STEP, subject=HEAVY_JOB)["continue-on-error"] = True
 
 
 def _execute_step_tolerant(document: Document) -> None:
@@ -278,58 +266,7 @@ def _checker_commented_out(document: Document) -> None:
     step["run"] = f"#=disabled {run_text(step)}"
 
 
-def _compile_step_removed(document: Document) -> None:
-    """Delete the separate compile gate."""
-    found = job(document, HEAVY_JOB)
-    found_steps = raw_steps(found, subject=HEAVY_JOB)
-    found_steps.remove(named_step(found, COMPILE_STEP, subject=HEAVY_JOB))
-
-
-def _compile_step_echoes(document: Document) -> None:
-    """Keep the compile step's text but only print it."""
-    found = job(document, HEAVY_JOB)
-    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = f"echo '{run_text(step)}'"
-
-
-def _compile_step_shell_never_runs(document: Document) -> None:
-    """Ask GitHub to parse the compile step without executing it."""
-    found = job(document, HEAVY_JOB)
-    named_step(found, COMPILE_STEP, subject=HEAVY_JOB)["shell"] = "bash -n {0}"
-
-
-def _compile_step_asks_for_help(document: Document) -> None:
-    """Make Cargo print help instead of compiling."""
-    found = job(document, HEAVY_JOB)
-    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = f"{run_text(step)} --help"
-
-
-def _compile_step_masks_failure(document: Document) -> None:
-    """Keep the compile command but discard its exit status."""
-    found = job(document, HEAVY_JOB)
-    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = f"{run_text(step)} || true"
-
-
-def _compile_flags_after_separator(document: Document) -> None:
-    """Move the target and `--no-run` past Cargo's own `--` separator."""
-    found = job(document, HEAVY_JOB)
-    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = (
-        "cargo test --release --manifest-path rust_extension/Cargo.toml "
-        "--no-default-features -- --test heavy --no-run"
-    )
-
-
-def _compile_step_without_loom(document: Document) -> None:
-    """Strip ``--cfg loom`` from the compile step's inline flags."""
-    found = job(document, HEAVY_JOB)
-    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = run_text(step).replace("--cfg loom ", "")
-
-
-MUTATIONS = (
+CORE_MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
     pytest.param(_sync_after_build, id="sync-after-build"),
@@ -360,9 +297,7 @@ MUTATIONS = (
     pytest.param(_loom_step_no_longer_last, id="loom-not-last"),
     pytest.param(_heavy_job_conditioned, id="heavy-job-conditioned"),
     pytest.param(_heavy_job_tolerant, id="heavy-job-tolerant"),
-    pytest.param(_compile_step_conditioned, id="compile-step-conditioned"),
     pytest.param(_execute_step_conditioned, id="execute-step-conditioned"),
-    pytest.param(_compile_step_tolerant, id="compile-step-tolerant"),
     pytest.param(_execute_step_tolerant, id="execute-step-tolerant"),
     pytest.param(_checker_status_masked, id="checker-status-masked"),
     pytest.param(_checker_replaced_with_true, id="checker-replaced-with-true"),
@@ -373,20 +308,6 @@ MUTATIONS = (
     ),
     pytest.param(_checker_asked_for_help, id="checker-asked-for-help"),
     pytest.param(_checker_given_no_command, id="checker-given-no-command"),
-    pytest.param(_checker_commented_out, id="checker-commented-out"),
-    pytest.param(_compile_step_removed, id="compile-step-removed"),
-    pytest.param(_compile_step_without_loom, id="compile-step-without-loom"),
-    pytest.param(_compile_step_echoes, id="compile-step-echoes"),
-    pytest.param(_compile_step_asks_for_help, id="compile-step-asks-for-help"),
-    pytest.param(_compile_step_masks_failure, id="compile-step-masks-failure"),
-    pytest.param(
-        _compile_flags_after_separator,
-        id="compile-flags-after-separator",
-    ),
-    pytest.param(
-        _compile_step_shell_never_runs,
-        id="compile-step-shell-never-runs",
-    ),
     pytest.param(_checker_shell_never_runs, id="checker-shell-never-runs"),
     pytest.param(_job_default_shell_never_runs, id="job-default-shell-never-runs"),
     pytest.param(
@@ -394,5 +315,9 @@ MUTATIONS = (
         id="workflow-default-shell-never-runs",
     ),
     pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
+    pytest.param(_checker_commented_out, id="checker-commented-out"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )
+
+#: Every deliberate break, core and compile, in one sequence.
+MUTATIONS = (*CORE_MUTATIONS, *COMPILE_MUTATIONS)

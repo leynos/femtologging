@@ -44,6 +44,7 @@ _NO_RUN: str = "--no-run"
 
 #: The configuration the compile step must build under.
 _LOOM_CONFIG: str = "--cfg loom"
+_LOOM_CONFIG_FORM: str = "--cfg=loom"
 
 #: The flag variable and its higher-precedence encoded form.
 _FLAGS_VARIABLE: str = "RUSTFLAGS"
@@ -72,7 +73,13 @@ def run_tokens(step: dict[str, object]) -> tuple[str, ...]:
         The step's command tokens, with line continuations flattened and
         attached control operators separated.
     """
-    lexer = shlex.shlex(run_text(step).replace("\\\n", " "), posix=True)
+    command = run_text(step).strip()
+    if "\n" in command.replace("\\\n", ""):
+        # An unescaped newline is a command separator. shlex would discard it
+        # and read an assignment line as part of the next command, so return a
+        # token no rule accepts.
+        return ("\n",)
+    lexer = shlex.shlex(command.replace("\\\n", " "), posix=True)
     lexer.whitespace_split = True
     lexer.commenters = "#"
     return tuple(
@@ -266,7 +273,7 @@ def compile_loom_flag_problems(
         return [f"the job must have a {COMPILE_STEP!r} step"]
     problems: list[str] = []
     flags = _effective_value(step, found, document, _FLAGS_VARIABLE)
-    if flags is None or _LOOM_CONFIG not in flags:
+    if flags is None or not _enables_loom(flags):
         problems.append(
             f"the {COMPILE_STEP!r} step must set {_LOOM_CONFIG} in {_FLAGS_VARIABLE}"
         )
@@ -280,7 +287,30 @@ def compile_loom_flag_problems(
         for scope, container in encodings
         if _environment_value(container, _ENCODED_FLAGS) is not None
     )
+    if _ENCODED_FLAGS in _inline_assignments(run_tokens(step)):
+        problems.append(
+            f"the {COMPILE_STEP!r} step must not set {_ENCODED_FLAGS} in its command"
+        )
     return problems
+
+
+def _enables_loom(flags: str) -> bool:
+    """Return whether compiler flags enable exactly the `loom` configuration.
+
+    The configuration name is a whole argument, so `--cfg loom_extra` must not
+    satisfy it. Both `--cfg loom` and `--cfg=loom` are accepted.
+
+    Returns
+    -------
+    bool
+        True when the flags name the `loom` configuration.
+    """
+    words = shlex.split(flags)
+    if _LOOM_CONFIG_FORM in words:
+        return True
+    return any(
+        words[index : index + 2] == ["--cfg", "loom"] for index in range(len(words) - 1)
+    )
 
 
 def _effective_value(
