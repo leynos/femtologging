@@ -140,7 +140,11 @@ def _include_combinations(
     axes: dict[str, list[object]],
     included: object,
 ) -> list[dict[str, object]] | None:
-    """Merge each `include` row into the combinations it does not overwrite.
+    """Merge each `include` row into the original combinations it matches.
+
+    A row may only merge into a combination formed from the axes, never into
+    one an earlier `include` appended: GitHub creates such a row as a separate
+    leg even when an earlier row already appended the same axis values.
 
     Returns
     -------
@@ -150,26 +154,26 @@ def _include_combinations(
     """
     if not isinstance(included, list):
         return None
+    appended: list[dict[str, object]] = []
     for row in included:
         if not isinstance(row, dict):
             return None
         if not axes:
-            # An include-only matrix has no base combinations to merge into,
-            # so every row is a leg of its own; merging them onto one empty
-            # mapping would collapse them into a single overwritten leg.
-            combinations = [*combinations, dict(row)]
+            # An include-only matrix has no base combinations; each row is a
+            # leg of its own.
+            appended.append(dict(row))
             continue
         merged_into = [
             combination
             for combination in combinations
             if _matches(combination, row, keys=axes)
         ]
-        if not merged_into:
-            combinations = [*combinations, dict(row)]
-            continue
-        for combination in merged_into:
-            combination.update(row)
-    return combinations
+        if merged_into:
+            for combination in merged_into:
+                combination.update(row)
+        else:
+            appended.append(dict(row))
+    return [*combinations, *appended]
 
 
 def _matches(

@@ -232,6 +232,26 @@ def _excluded_only_required_leg(document: Workflow) -> None:
     matrix["exclude"] = [{"experimental": False}]
 
 
+def _encoded_flags_override(document: Workflow) -> None:
+    """Displace the inline flags with an encoded value Cargo prefers."""
+    environment = loom_step(document).setdefault("env", {})
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "-Clink-arg=-fuse-ld=mold"
+
+
+def _job_encoded_flags_override(document: Workflow) -> None:
+    """Set the encoded flags on the job, outranking the step's own."""
+    jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
+    build_test = mapping(jobs.get("build-test"), subject="build-test job")
+    environment = build_test.setdefault("env", {})
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "-Clink-arg=-fuse-ld=mold"
+
+
+def _workflow_encoded_flags_override(document: Workflow) -> None:
+    """Set the encoded flags for the whole workflow."""
+    environment = document.setdefault("env", {})
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "-Clink-arg=-fuse-ld=mold"
+
+
 _LOOM_MUTATIONS = (
     pytest.param(_removed_loom_step, id="loom-step-removed"),
     pytest.param(_echoed_loom_step, id="loom-step-echoed"),
@@ -242,6 +262,12 @@ _LOOM_MUTATIONS = (
     pytest.param(_tolerated_on_every_leg, id="job-tolerated-every-leg"),
     pytest.param(_split_across_lines, id="loom-step-split-across-lines"),
     pytest.param(_every_leg_experimental, id="every-leg-experimental"),
+    pytest.param(_encoded_flags_override, id="encoded-flags-step"),
+    pytest.param(_job_encoded_flags_override, id="encoded-flags-job"),
+    pytest.param(
+        _workflow_encoded_flags_override,
+        id="encoded-flags-workflow",
+    ),
     pytest.param(_excluded_only_required_leg, id="excluded-only-required-leg"),
     pytest.param(_checker_never_runs, id="loom-step-shell-never-runs"),
     pytest.param(_job_default_shell_never_runs, id="job-default-shell-never-runs"),

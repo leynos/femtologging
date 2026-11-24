@@ -45,6 +45,9 @@ LOOM_CLIPPY_COMMAND: typ.Final = (
 #: from the ordinary lanes rather than invalidating them.
 LOOM_CLIPPY_TARGET_DIR: typ.Final = "target/loom"
 
+#: Displaces an inline `RUSTFLAGS`, so no scope of the gate may set it.
+ENCODED_FLAGS: typ.Final = "CARGO_ENCODED_RUSTFLAGS"
+
 #: The step the gate must follow, because it resolves dependencies first.
 FETCH_STEP: typ.Final = "Fetch locked dependencies"
 
@@ -312,4 +315,46 @@ def loom_clippy_problems(document: Workflow) -> list[str]:
         *_target_problems(step),
         *_order_problems(found_steps),
         *_shell_problems(document, build_test, step),
+        *_encoded_flags_problems(document, build_test, step),
     ]
+
+
+def _encoded_flags_problems(
+    document: Workflow,
+    build_test: dict[str, object],
+    step: dict[str, object],
+) -> list[str]:
+    """Return complaints about encoded compiler flags that displace the command's.
+
+    Cargo gives `CARGO_ENCODED_RUSTFLAGS` precedence over an inline
+    `RUSTFLAGS`, so a value set at step, job or workflow scope would remove
+    `--cfg loom` while the command text kept it. The gate names its flags
+    inline, so no scope may carry the encoded variable.
+
+    Returns
+    -------
+    list[str]
+        One complaint per scope that sets the variable.
+    """
+    problems: list[str] = []
+    if _environment_has(step, ENCODED_FLAGS):
+        problems.append(
+            f"the {CI_LOOM_CLIPPY_STEP!r} step must not set {ENCODED_FLAGS}"
+        )
+    if _environment_has(build_test, ENCODED_FLAGS):
+        problems.append(f"the {CI_JOB} job must not set {ENCODED_FLAGS}")
+    if _environment_has(document, ENCODED_FLAGS):
+        problems.append(f"{CI_WORKFLOW} must not set {ENCODED_FLAGS}")
+    return problems
+
+
+def _environment_has(container: dict[str, object], name: str) -> bool:
+    """Return whether a workflow, job or step environment sets `name`.
+
+    Returns
+    -------
+    bool
+        True when the container's `env` mapping defines `name`.
+    """
+    environment = container.get("env")
+    return isinstance(environment, dict) and name in environment
