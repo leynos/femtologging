@@ -59,14 +59,14 @@ def _compile_step_asks_for_help(document: Document) -> None:
     """Make Cargo print help instead of compiling."""
     found = job(document, HEAVY_JOB)
     step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = f"{run_text(step)} --help"
+    step["run"] = f"{run_text(step).rstrip()} --help"
 
 
 def _compile_step_masks_failure(document: Document) -> None:
     """Keep the compile command but discard its exit status."""
     found = job(document, HEAVY_JOB)
     step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
-    step["run"] = f"{run_text(step)} || true"
+    step["run"] = f"{run_text(step).rstrip()} || true"
 
 
 def _compile_flags_after_separator(document: Document) -> None:

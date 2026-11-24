@@ -209,14 +209,14 @@ def _checker_backgrounded(document: Document) -> None:
     """Background the checker and reap it with a status-losing `wait`."""
     found = job(document, HEAVY_JOB)
     step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
-    step["run"] = f"{run_text(step)} &\nwait"
+    step["run"] = f"{run_text(step).rstrip()} & wait"
 
 
 def _checker_backgrounded_without_space(document: Document) -> None:
     """Attach the background operator and `wait` to the final argument."""
     found = job(document, HEAVY_JOB)
     step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
-    step["run"] = f"{run_text(step)}&wait"
+    step["run"] = f"{run_text(step).rstrip()}&wait"
 
 
 def _checker_asked_for_help(document: Document) -> None:
