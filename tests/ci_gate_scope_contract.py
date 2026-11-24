@@ -152,28 +152,48 @@ def _include_combinations(
         The final combinations, or ``None`` when `include` is not a list of
         mappings.
     """
-    if not isinstance(included, list):
+    rows = _mapping_list(included)
+    if rows is None:
         return None
-    appended: list[dict[str, object]] = []
-    for row in included:
-        if not isinstance(row, dict):
-            return None
-        if not axes:
-            # An include-only matrix has no base combinations; each row is a
-            # leg of its own.
-            appended.append(dict(row))
-            continue
-        merged_into = [
-            combination
-            for combination in combinations
-            if _matches(combination, row, keys=axes)
-        ]
-        if merged_into:
-            for combination in merged_into:
-                combination.update(row)
-        else:
-            appended.append(dict(row))
+    appended = [dict(row) for row in rows if not _merge_row(combinations, axes, row)]
     return [*combinations, *appended]
+
+
+def _mapping_list(value: object) -> list[dict[str, object]] | None:
+    """Return `value` as a list of mappings.
+
+    Returns
+    -------
+    list[dict[str, object]] | None
+        The rows, or ``None`` when `value` is not a list of mappings.
+    """
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        return None
+    return [typ.cast("dict[str, object]", row) for row in value]
+
+
+def _merge_row(
+    combinations: list[dict[str, object]],
+    axes: dict[str, list[object]],
+    row: dict[str, object],
+) -> bool:
+    """Merge one `include` row into the axis combinations it matches.
+
+    Returns
+    -------
+    bool
+        True when the row merged into at least one combination; False when it
+        must be appended as a leg of its own, which is also the case for an
+        include-only matrix with no axis combinations.
+    """
+    merged_into = [
+        combination
+        for combination in combinations
+        if axes and _matches(combination, row, keys=axes)
+    ]
+    for combination in merged_into:
+        combination.update(row)
+    return bool(merged_into)
 
 
 def _matches(
