@@ -298,6 +298,13 @@ def _model_list_replaced(document: Document) -> None:
     )
 
 
+def _checker_child_not_cargo(document: Document) -> None:
+    """Replace the checker's child command with a model-name printer."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace("cargo test --release", "printf 'test loom_'")
+
+
 CORE_MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -350,6 +357,7 @@ CORE_MUTATIONS = (
     pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
     pytest.param(_preemption_bound_stripped, id="bound-stripped-in-command"),
     pytest.param(_model_list_replaced, id="model-list-replaced"),
+    pytest.param(_checker_child_not_cargo, id="checker-child-not-cargo"),
     pytest.param(_checker_commented_out, id="checker-commented-out"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )

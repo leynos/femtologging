@@ -44,8 +44,6 @@ _RUNNER: str = "scripts/run_loom_models.py"
 #: The manifest the checker compares the run against.
 _MODEL_LIST: str = "rust_extension/tests/heavy/loom-models.txt"
 
-#: Wrappers that change the environment before the checker runs Cargo.
-_ENV_WRAPPERS: tuple[str, ...] = ("env",)
 
 #: Shell control operators and the `wait` builtin. A checker started in the
 #: background and reaped by an argument-free `wait` returns zero even when the
@@ -153,9 +151,10 @@ def _argument_problems(words: tuple[str, ...]) -> list[str]:
         ]
     problems = _model_list_problems(words[:separator])
     child = words[separator + 1 :]
-    if child[0] in _ENV_WRAPPERS:
+    if child[:2] != ("cargo", "test"):
         problems.append(
-            f"the {LOOM_STEP!r} step must pass Cargo directly, not through {child[0]!r}"
+            f"the {LOOM_STEP!r} step must pass `cargo test` after its `--` "
+            f"separator, saw {child[:2]!r}"
         )
     return problems
 
