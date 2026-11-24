@@ -231,6 +231,20 @@ def _checker_replaced_with_true(document: Document) -> None:
     named_step(found, LOOM_STEP, subject=HEAVY_JOB)["run"] = "true"
 
 
+def _checker_backgrounded(document: Document) -> None:
+    """Background the checker and reap it with a status-losing `wait`."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = f"{run_text(step)} &\nwait"
+
+
+def _bound_overridden_in_command(document: Document) -> None:
+    """Shadow the step's pinned bound with a larger command-local value."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = f"LOOM_MAX_PREEMPTIONS=100 {run_text(step)}"
+
+
 _MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -268,6 +282,8 @@ _MUTATIONS = (
     pytest.param(_execute_step_tolerant, id="execute-step-tolerant"),
     pytest.param(_checker_status_masked, id="checker-status-masked"),
     pytest.param(_checker_replaced_with_true, id="checker-replaced-with-true"),
+    pytest.param(_checker_backgrounded, id="checker-backgrounded"),
+    pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )
 

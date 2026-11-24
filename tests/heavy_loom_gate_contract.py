@@ -3,8 +3,9 @@
 The scheduled job must not be able to report success while no model ran, and
 the checker's exit status is the only signal that the models ran. These rules
 therefore refuse an explicit condition or a tolerated failure on the job or
-either named Loom step, refuse a checker command whose status is masked, and
-pin the preemption bound the successful run used.
+either named Loom step, require the checker to run in the foreground as one
+command, refuse a checker command whose status is masked, and pin the
+preemption bound the successful run used in the step environment.
 
 Each rule returns one complaint per violation, so the contract test can prove
 every judgement against a deliberately broken copy as well as the real file.
@@ -36,6 +37,22 @@ _CHECKER_MASK_FRAGMENTS: tuple[str, ...] = (
 _PREEMPTION_BOUND: str = "LOOM_MAX_PREEMPTIONS"
 _REQUIRED_PREEMPTION_BOUND: str = "3"
 _RUNNER: str = "scripts/run_loom_models.py"
+
+#: Shell control operators and the `wait` builtin. A checker started in the
+#: background and reaped by an argument-free `wait` returns zero even when the
+#: checker failed, so the step must be one foreground command.
+_FOREGROUND_ONLY_TOKENS: tuple[str, ...] = ("&", ";", "|", "&&", "||", "wait")
+
+
+def _run_tokens(step: dict[str, object]) -> tuple[str, ...]:
+    """Return the tokenized shell command of a step.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The step's command tokens, with line continuations flattened.
+    """
+    return tuple(shlex.split(run_text(step).replace("\\\n", " ")))
 
 
 def _command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
@@ -133,8 +150,10 @@ def checker_invocation_problems(found: Job) -> list[str]:
     Rejecting masking fragments is not enough on its own: a step rewritten as
     ``run: "true"`` contains none of them and would satisfy every other rule,
     while running no model. The command must start with the `uv run --script`
-    invocation of the committed checker, and must pass the ``--`` that
-    separates the checker's arguments from Cargo's.
+    invocation of the committed checker, must pass the ``--`` that separates
+    the checker's arguments from Cargo's, and must run in the foreground as a
+    single command: a backgrounded checker reaped by `wait` returns zero even
+    when it failed.
 
     Parameters
     ----------
@@ -144,13 +163,21 @@ def checker_invocation_problems(found: Job) -> list[str]:
     Returns
     -------
     list[str]
-        A complaint when the checker invocation or its argument separator is
-        missing.
+        A complaint when the checker invocation, its argument separator or its
+        foreground execution is missing.
     """
     step = _execution_step(found)
     if step is None:
         return [f"the job must have a {LOOM_STEP!r} step"]
-    words = _command_words(tuple(shlex.split(run_text(step).replace("\\\n", " "))))
+    tokens = _run_tokens(step)
+    if any(token in _FOREGROUND_ONLY_TOKENS for token in tokens):
+        return [
+            (
+                f"the {LOOM_STEP!r} step must run the checker in the "
+                "foreground as one command"
+            )
+        ]
+    words = _command_words(tokens)
     if words[:4] != ("uv", "run", "--script", _RUNNER):
         return [
             (
@@ -214,6 +241,14 @@ def preemption_problems(found: Job) -> list[str]:
     step = _execution_step(found)
     if step is None:
         return [f"the job must have a {LOOM_STEP!r} step"]
+    local_prefix = f"{_PREEMPTION_BOUND}="
+    if any(token.startswith(local_prefix) for token in _run_tokens(step)):
+        return [
+            (
+                f"the {LOOM_STEP!r} step must set {_PREEMPTION_BOUND} in the "
+                "step environment, not in the command"
+            )
+        ]
     bound = env(step).get(_PREEMPTION_BOUND)
     if str(bound) != _REQUIRED_PREEMPTION_BOUND:
         return [

@@ -219,7 +219,11 @@ fn a_full_registry_falls_back_to_root_with_the_marker() {
     );
 }
 
+// The registry this child resets and saturates is process-global, so it must
+// not overlap another ignored test that saturates it. The heavy workflow's
+// ignored lanes run with default test threads.
 #[cfg(not(loom))]
+#[serial]
 #[test]
 #[ignore = "run in a fresh process because the manager is process-global"]
 fn log_bridge_origin_capacity_child() {

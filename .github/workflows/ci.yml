@@ -28,8 +28,12 @@ jobs:
     # An Ubicloud runner is a self-hosted just-in-time runner with no
     # six-hour hosted cap, so the job states its own ceiling. Warm standard-4
     # runs reached 37 min (run 44118816542), and the 3.12 lane additionally
-    # builds a release wheel for the API-boundary check, so the ceiling is 50.
-    timeout-minutes: 50
+    # builds a release wheel for the API-boundary check. The Loom all-targets
+    # Clippy then compiles every target again under `--cfg loom` into its own
+    # cold `target/loom`, and the first pull requests with that gate reached
+    # the old 40-minute ceiling on every leg (run 45275965962). Sixty minutes
+    # leaves room for the cold Loom build and its first cache fill.
+    timeout-minutes: 60
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
