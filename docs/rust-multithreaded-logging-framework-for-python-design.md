@@ -1313,10 +1313,11 @@ potential future enhancement.
   opens a fresh base file before writing the new record. If opening the fresh
   file fails the append handle remains active so producers keep logging against
   a durable descriptor. Tests can trigger this path via the
-  `_force_rotating_fresh_failure_for_test` hook exposed to Python, which flips
-  a thread-safe toggle. The design keeps rotation non-blocking for producers
-  whilst ensuring backup files remain consistent and compatible with Windows'
-  rename semantics.
+  `_force_rotating_fresh_failure_for_test` hook, which is exposed to Python
+  only when the extension is built with both `python` and the non-default
+  `test-util` feature, and which flips a thread-safe toggle. The design keeps
+  rotation non-blocking for producers whilst ensuring backup files remain
+  consistent and compatible with Windows' rename semantics.
 - `max_bytes == 0` and `backup_count == 0` disable rotation. Builder validation
   in Rust and the Python `HandlerOptions` mirror this rule, ensuring both
   values are set together and exposing the builder API as the canonical
@@ -2388,8 +2389,12 @@ default = ["extension-module", "python", "log-compat", "tracing-compat"]
 `test-util` is a separate, non-default feature. Coverage uses
 `.github/uv-test-util.toml` through `UV_CONFIG_FILE`, while development and
 heavy tests opt in to `python,test-util`. The release wheel probe verifies that
-timed-rotation test hooks do not appear in the installed production wheel.
-Fresh-failure test hooks remain a known ungated surface.
+no test hook appears in the installed production wheel's native module, the
+`FemtoLogger` type, the package namespace, or the shipped stub. The
+fresh-failure hooks are gated behind `python,test-util` like the timed-rotation
+hooks. The address-returning `*_ptrs_for_test` methods are replaced by opaque
+`AttachmentIdentity` tokens that compare with `Weak::ptr_eq`; the token class
+is not registered with the Python module and never exposes an address.
 
 The release workflow builds one sdist and native, per-interpreter wheels for
 CPython 3.12, 3.13 and 3.14 on Linux x86_64/aarch64, macOS x86_64/arm64, and

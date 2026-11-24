@@ -55,6 +55,21 @@ if not all(hasattr(rust, attr) for attr in REQUIRED_RUST_ATTRS):
     skip = typ.cast("typ.Any", pytest.skip)
     skip(message, allow_module_level=True)
 
+# The emit hooks exist only in `test-util` builds and are deliberately absent
+# from the production stub, so bind them dynamically rather than importing them.
+_EMIT_RUST_TRACING_EVENT = typ.cast(
+    "cabc.Callable[[str, str], None]",
+    getattr(rust, "_emit_rust_tracing_event", None),
+)
+_EMIT_RUST_TRACING_STRUCTURED_EVENT = typ.cast(
+    "cabc.Callable[[], None]",
+    getattr(rust, "_emit_rust_tracing_structured_event", None),
+)
+_EMIT_RUST_TRACING_SPAN_EVENT = typ.cast(
+    "cabc.Callable[[], None]",
+    getattr(rust, "_emit_rust_tracing_span_event", None),
+)
+
 scenarios(str(FEATURES / "rust_tracing_compat.feature"))
 
 
@@ -159,7 +174,7 @@ def when_emit_rust_tracing_event(
     """Emit a Rust tracing event and capture stderr output."""
     capfd.readouterr()
     handler, logger_name = stream_handler_ctx
-    rust._emit_rust_tracing_event(level, message)
+    _EMIT_RUST_TRACING_EVENT(level, message)
     logger = get_logger(logger_name)
     _flush_and_sync_stderr(logger, handler)
 
@@ -204,7 +219,7 @@ def when_emit_structured_rust_tracing_event(
 ) -> list[dict[str, object]]:
     """Emit a structured tracing event and capture the Python record payload."""
     handler, logger_name = record_handler_ctx
-    rust._emit_rust_tracing_structured_event()
+    _EMIT_RUST_TRACING_STRUCTURED_EVENT()
     _flush_record_handler(logger_name)
     return [_snapshot_record(record) for record in handler.records]
 
@@ -218,7 +233,7 @@ def when_emit_nested_rust_tracing_span_event(
 ) -> list[dict[str, object]]:
     """Emit a nested-span tracing event and capture the Python record payload."""
     handler, logger_name = record_handler_ctx
-    rust._emit_rust_tracing_span_event()
+    _EMIT_RUST_TRACING_SPAN_EVENT()
     _flush_record_handler(logger_name)
     return [_snapshot_record(record) for record in handler.records]
 

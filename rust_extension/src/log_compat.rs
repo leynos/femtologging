@@ -49,7 +49,9 @@ fn map_log_level(level: log::Level) -> FemtoLevel {
 /// Convert a femtologging level to the closest `log` severity.
 ///
 /// For example, `FemtoLevel::Critical` maps to `log::Level::Error`, the
-/// strongest severity supported by `log`.
+/// strongest severity supported by `log`. Its only callers are the
+/// `test-util` hooks, so a production build omits it with them.
+#[cfg(feature = "test-util")]
 fn map_femto_to_log_level(level: FemtoLevel) -> log::Level {
     match level {
         FemtoLevel::Trace => log::Level::Trace,
@@ -275,7 +277,7 @@ pub(crate) fn setup_rust_logging() -> PyResult<()> {
 /// This is an internal helper used by the Python behavioural tests to validate
 /// the bridge. `CRITICAL` maps to `ERROR` because the `log` crate has no
 /// critical level.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_emit_rust_log")]
 pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&str>) {
@@ -289,7 +291,7 @@ pub(crate) fn emit_rust_log(level: FemtoLevel, message: &str, target: Option<&st
 }
 
 /// Probe the public `log_enabled!` macro from Python behavioural tests.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_rust_log_enabled")]
 pub(crate) fn rust_log_enabled(level: FemtoLevel, target: &str) -> bool {
@@ -298,7 +300,7 @@ pub(crate) fn rust_log_enabled(level: FemtoLevel, target: &str) -> bool {
 }
 
 /// Return the facade maximum for Python behavioural tests.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_rust_log_max_level")]
 pub(crate) fn rust_log_max_level() -> String {
@@ -310,7 +312,7 @@ pub(crate) fn rust_log_max_level() -> String {
 /// This helper is intended for subprocess-based test scenarios that need to
 /// verify `setup_rust_logging()` fails when a different global logger has
 /// already been configured.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "log-compat", feature = "test-util"))]
 #[pyfunction]
 #[pyo3(name = "_install_test_global_rust_logger")]
 pub(crate) fn install_test_global_rust_logger() -> PyResult<()> {

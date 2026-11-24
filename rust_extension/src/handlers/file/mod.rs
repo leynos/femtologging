@@ -51,7 +51,9 @@ use worker::{FileCommand, WorkerConfig, spawn_worker};
 use super::telemetry::{WaitContext, WaitDiagnostics, WaitOutcome, WaitSite, WaitTimer};
 
 pub(crate) use builder_options::BuilderOptions;
-pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy, TestConfig};
+#[cfg(any(test, feature = "test-util"))]
+pub use config::TestConfig;
+pub use config::{DEFAULT_CHANNEL_CAPACITY, HandlerConfig, OverflowPolicy};
 pub(crate) use validations::{
     validate_capacity_nonzero, validate_flush_interval_nonzero, validate_params,
 };
@@ -266,8 +268,12 @@ impl FemtoFileHandler {
         }
     }
 
-    /// Build a handler over the writer in `config` instead of opening a file. For tests: the
-    /// settings are used without the validation that file construction applies.
+    /// Build a handler over the writer in `config` instead of opening a file.
+    ///
+    /// For tests: the settings are used without the validation that file
+    /// construction applies. The constructor exists only for unit tests and
+    /// builds that opt in to `test-util`.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn with_writer_for_test<W, F>(config: TestConfig<W, F>) -> Self
     where
         W: Write + Seek + Send + 'static,

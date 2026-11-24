@@ -14,11 +14,12 @@ import pytest
 from tests import clean_wheel_env
 from tests.maturin_compat import (
     build_native_wheel_artifact,
+    install_wheel_into_fresh_venv,
     read_expected_maturin_version,
     read_maturin_pins,
     toolchain_available,
-    wheel_build_snapshot,
 )
+from tests.maturin_wheel_snapshot import wheel_build_snapshot
 
 # The expected wheel manifest lives in an external data file so the assertion
 # stays readable; ``generator`` carries a placeholder that is substituted with
@@ -213,34 +214,13 @@ def test_release_wheel_does_not_expose_timed_rotation_hooks(
     tmp_path: pth.Path,
 ) -> None:
     """A fresh environment imports a production wheel without test hooks."""
-    environment = tmp_path / "venv"
-    venv_module = pytest.importorskip(
+    pytest.importorskip(
         "venv", reason="the release wheel probe needs the stdlib venv module"
     )
-    venv_module.EnvBuilder(with_pip=True).create(environment)
-    python = environment / (
-        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    pytest.importorskip(
+        "ensurepip", reason="the release wheel probe needs pip in the new environment"
     )
-    # ruff: ignore[subprocess-without-shell-equals-true] fixed local wheel and interpreter paths.
-    install_result = subprocess.run(
-        [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--no-deps",
-            "--no-index",
-            str(production_wheel),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert install_result.returncode == 0, (
-        f"release wheel installation failed:\n"
-        f"{install_result.stdout}{install_result.stderr}"
-    )
+    python = install_wheel_into_fresh_venv(tmp_path / "venv", production_wheel)
     probe = repo_root() / "scripts/release_wheel_probe.py"
     # ruff: ignore[subprocess-without-shell-equals-true] fixed local probe and interpreter paths.
     probe_result = subprocess.run(

@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 import femtologging
-from scripts import release_wheel_probe
+from scripts import release_wheel_http, release_wheel_probe
 from tests import conftest
 from tests.make_contract_helpers import sole_workflow_step
 from tests.release_workflow_helpers import run_bash
@@ -76,23 +76,29 @@ def test_checked_in_sdist_verification(
         assert expected in result.stderr, "Report the specific archive defect."
 
 
+def _packaged_stub(tmp_path: Path, stub_body: str = "") -> SimpleNamespace:
+    """Build a stand-in ``femtologging`` package shipping *stub_body*."""
+    package_dir = tmp_path / "femtologging"
+    package_dir.mkdir()
+    package_file = package_dir / "__init__.py"
+    package_file.write_text("", encoding="utf-8")
+    (package_dir / "_femtologging_rs.pyi").write_text(stub_body, encoding="utf-8")
+    return SimpleNamespace(__file__=str(package_file), _has_test_util=False)
+
+
+def _production_native() -> SimpleNamespace:
+    """Build a stand-in native module inside this environment's ``sys.prefix``."""
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
+    return SimpleNamespace(__file__=str(origin))
+
+
 _UNEXPECTED_DELIVERY = "the delivery check ran before the identity checks passed"
 
 
 def _unexpected_delivery_check() -> list[str]:
     """Fail a test whose setup must not reach the HTTP delivery check."""
     raise AssertionError(_UNEXPECTED_DELIVERY)
-
-
-def _stub_production_extension(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the identity checks see a production extension inside ``sys.prefix``."""
-    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
-    origin = Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}"
-    native = SimpleNamespace(__file__=str(origin))
-    monkeypatch.setattr(
-        release_wheel_probe.importlib, "import_module", lambda _: native
-    )
-    monkeypatch.setattr(femtologging, "_has_test_util", False)
 
 
 @pytest.mark.parametrize(
@@ -106,6 +112,7 @@ def _stub_production_extension(monkeypatch: pytest.MonkeyPatch) -> None:
     ],
 )
 def test_release_probe_rejects_invalid_installations(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     case: tuple[str | None, bool, bool, str],
 ) -> None:
@@ -114,24 +121,28 @@ def test_release_probe_rejects_invalid_installations(
     native = SimpleNamespace(__file__=origin)
     if hooks:
         native.set_timed_rotation_test_times_for_test = lambda: None
-    monkeypatch.setattr(
-        release_wheel_probe.importlib, "import_module", lambda _: native
-    )
-    monkeypatch.setattr(femtologging, "_has_test_util", has_util)
+    package = _packaged_stub(tmp_path)
+    package._has_test_util = has_util
     # A defective installation must not reach the network at all.
     monkeypatch.setattr(
         release_wheel_probe, "http_behaviour_errors", _unexpected_delivery_check
     )
     assert any(
-        expected in error for error in release_wheel_probe.release_wheel_errors()
+        expected in error
+        for error in release_wheel_probe.release_wheel_errors(
+            native=native, package=package
+        )
     ), "Report the specific invalid installation."
 
 
 def test_release_probe_accepts_a_production_wheel(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A native extension inside the environment with no hooks passes the probe."""
-    _stub_production_extension(monkeypatch)
+    native = _production_native()
+    package = _packaged_stub(tmp_path)
     deliveries: list[bool] = []
 
     def record_delivery_check() -> list[str]:
@@ -143,28 +154,121 @@ def test_release_probe_accepts_a_production_wheel(
         release_wheel_probe, "http_behaviour_errors", record_delivery_check
     )
 
-    assert not release_wheel_probe.release_wheel_errors(), (
-        "A production native extension reports no violations."
-    )
+    assert not release_wheel_probe.release_wheel_errors(
+        native=native, package=package
+    ), "A production native extension reports no violations."
     assert deliveries == [True], "The probe must verify delivery as well as location."
-    assert release_wheel_probe.main() == 0, "The probe exits successfully."
+    assert release_wheel_probe.main(native=native, package=package) == 0, (
+        "The probe exits successfully."
+    )
     assert capsys.readouterr().out == "release wheel probe passed\n", (
         "The probe reports its success on standard output."
     )
 
 
+@pytest.mark.parametrize(
+    ("stub_body", "expected"),
+    [
+        ("class AttachmentIdentity:\n    ...\n", "AttachmentIdentity"),
+        (
+            "class AttachmentIdentity[T]:\n    ...\n",
+            "AttachmentIdentity",
+        ),
+        (
+            "def wait_for_flush_entry_for_test(self) -> None: ...\n",
+            "wait_for_flush_entry_for_test",
+        ),
+        (
+            "async def _emit_rust_tracing_event() -> None: ...\n",
+            "_emit_rust_tracing_event",
+        ),
+        ("def setup_rust_logging() -> None: ...\n", None),
+        ("class FemtoLogger:\n    ...\n", None),
+        ("type AttachmentIdentity = object\n", "AttachmentIdentity"),
+        ("type ProductionAlias = object\n", None),
+        (
+            "from .test_support import AttachmentIdentity as AttachmentIdentity\n",
+            "AttachmentIdentity",
+        ),
+        ("from .test_support import Helper as Helper\n", None),
+        ("from .test_support import AttachmentIdentity\n", None),
+        (
+            (
+                "from ._rust_compat import wait_for_flush_entry_for_test\n"
+                '__all__ = ["wait_for_flush_entry_for_test"]\n'
+            ),
+            "wait_for_flush_entry_for_test",
+        ),
+        (
+            'from ._rust_compat import Helper\n__all__ = ["Helper"]\n',
+            None,
+        ),
+        ("class Broken(:\n", "cannot be parsed"),
+    ],
+)
+def test_release_probe_checks_every_stub_declaration_shape(
+    tmp_path: Path,
+    stub_body: str,
+    expected: str | None,
+) -> None:
+    """Class, synchronous and asynchronous declarations all face the name check."""
+    package = _packaged_stub(tmp_path, stub_body)
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    native = SimpleNamespace(
+        __file__=str(Path(sys.prefix) / "lib" / f"_femtologging_rs{suffix}")
+    )
+
+    errors = release_wheel_probe.release_wheel_errors(native=native, package=package)
+    if expected is None:
+        assert not errors, "A production-only stub must pass the probe."
+    else:
+        assert any(expected in error for error in errors), (
+            "Report the test-only stub declaration."
+        )
+
+
+@pytest.mark.parametrize("surface", ["package", "compat"])
+def test_release_probe_rejects_python_level_test_hooks(
+    tmp_path: Path, surface: str
+) -> None:
+    """A test hook outside the native module fails even with a clean extension."""
+    package = _packaged_stub(tmp_path)
+
+    def hook(times: list[int]) -> None:
+        """Stand in for the timed-rotation setter."""
+
+    if surface == "package":
+        package._set_timed_rotation_test_times_for_test = hook
+    else:
+        package._rust_compat = SimpleNamespace(
+            _set_timed_rotation_test_times_for_test=hook
+        )
+    native = _production_native()
+
+    errors = release_wheel_probe.release_wheel_errors(native=native, package=package)
+
+    assert any("femtologging exposes test-only hooks" in error for error in errors), (
+        f"Report the test-only {surface} attribute."
+    )
+
+
 def test_release_probe_reports_a_delivery_failure(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A wheel whose native worker cannot deliver a record fails the probe."""
-    _stub_production_extension(monkeypatch)
     monkeypatch.setattr(
         release_wheel_probe,
         "http_behaviour_errors",
         lambda: ["no HTTP delivery reached http://127.0.0.1:1/probe"],
     )
+    native = _production_native()
+    package = _packaged_stub(tmp_path)
 
-    assert release_wheel_probe.main() == 1, "A delivery failure must exit non-zero."
+    assert release_wheel_probe.main(native=native, package=package) == 1, (
+        "A delivery failure must exit non-zero."
+    )
     assert "no HTTP delivery reached" in capsys.readouterr().err, (
         "Report the specific delivery failure."
     )
@@ -196,9 +300,9 @@ def test_collect_delivery_reports_a_malformed_delivery(
     delivered: tuple[str, bytes], expected: str
 ) -> None:
     """A request on the wrong path or without the record message is a failure."""
-    errors = release_wheel_probe._collect_delivery(
+    errors = release_wheel_http._collect_delivery(
         typ.cast(
-            "release_wheel_probe._RecordCollector", _collector_receiving(delivered)
+            "release_wheel_http._RecordCollector", _collector_receiving(delivered)
         ),
         "http://127.0.0.1:1/probe",
     )
@@ -212,10 +316,10 @@ def test_collect_delivery_reports_an_absent_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A collector that receives nothing names the endpoint it waited on."""
-    monkeypatch.setattr(release_wheel_probe, "_DELIVERY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(release_wheel_http, "_DELIVERY_TIMEOUT_SECONDS", 0.01)
 
-    errors = release_wheel_probe._collect_delivery(
-        typ.cast("release_wheel_probe._RecordCollector", _collector_receiving(None)),
+    errors = release_wheel_http._collect_delivery(
+        typ.cast("release_wheel_http._RecordCollector", _collector_receiving(None)),
         "http://127.0.0.1:1/probe",
     )
 

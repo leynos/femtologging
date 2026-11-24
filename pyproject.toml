@@ -470,10 +470,11 @@ manifest-path = "rust_extension/Cargo.toml"
 python-source = "."
 module-name = "femtologging._femtologging_rs"
 python-packages = ["femtologging"]
-# Persistent package builds are production builds: the Python bindings are on,
-# while the timed-rotation test hooks stay out of wheels and sdists. Coverage
-# opts in through `.github/uv-test-util.toml`; development and heavy tests pass
-# their feature set explicitly.
+# Persistent package builds are production builds: only the Python bindings are
+# requested, so the `test-util` hooks stay out of wheels and sdists while
+# Cargo's default features still supply the rest of the production surface.
+# Test builds opt in explicitly: `maturin develop --features python,test-util`
+# for development and heavy tests, and `.github/uv-test-util.toml` for coverage.
 features = ["python"]
 # `rust_extension/build.rs` extracts the tested examples from the user guide,
 # so an sdist must carry that guide or a source build fails before it compiles
@@ -482,6 +483,11 @@ include = [{ path = "docs/users-guide.md", format = "sdist" }]
 
 [tool.pytest.ini_options]
 timeout = 30
+# The API-boundary suite builds a release wheel and compiles two Rust probes,
+# so only `make check-api-boundary` runs it. That target clears this option
+# with `-o addopts=`. Leaving the suite in default collection would make every
+# local `pytest` run and every CI coverage lane repeat the packaging build.
+addopts = "--ignore=tests/test_release_api_boundary.py"
 # The helper scripts import each other as top-level modules, exactly as
 # `[tool.ty.environment] extra-paths` records. `--doctest-modules` imports
 # every module pytest walks, so without this their collection fails.
@@ -520,11 +526,12 @@ full_name = ["femtologging._rust_compat._runtime_attachment_state_for_test"]
 reason = "The behavioural suite imports this test-util hook; tests are excluded from the production scan."
 
 [[tool.skylos.dead_code.entrypoints]]
-type = "parameter"
+type = "variable"
 full_name = [
-    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.count",
-    "femtologging._rust_compat._make_rotating_fresh_failure_hooks._force.reason",
-    "femtologging._rust_compat._make_timed_rotation_hooks._set.epoch_millis",
-    "femtologging._rust_compat._make_runtime_attachment_state._fallback.name",
+    "femtologging._rust_compat._force_rotating_fresh_failure_for_test",
+    "femtologging._rust_compat._clear_rotating_fresh_failure_for_test",
+    "femtologging._rust_compat._set_timed_rotation_test_times_for_test",
+    "femtologging._rust_compat._clear_timed_rotation_test_times_for_test",
 ]
-reason = "Fallback hooks preserve the test-util protocol signatures when the extension lacks the feature."
+reason = "The behavioural suite imports these test-util wrappers; tests are excluded from the production scan."
+

@@ -30,7 +30,7 @@ impl FreshFailureState {
     }
 
     /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
-    #[cfg(feature = "python")]
+    #[cfg(all(feature = "python", feature = "test-util"))]
     fn set_forced(&self, count: usize, reason: String) {
         self.remaining.store(count, Ordering::SeqCst);
         // Recover from poisoning: the stored reason is always valid data, so
@@ -42,7 +42,7 @@ impl FreshFailureState {
     }
 
     /// Defines file-rotation behaviour that remains serialised on the owning worker to avoid concurrent rename or reopen races.
-    #[cfg(feature = "python")]
+    #[cfg(all(feature = "python", feature = "test-util"))]
     fn clear_forced(&self) {
         self.remaining.store(0, Ordering::SeqCst);
         // Recover from poisoning: see `set_forced`.
@@ -136,7 +136,7 @@ pub(crate) fn take_forced_fresh_failure_reason() -> Option<String> {
 ///
 /// * `count` - Number of failures to force.
 /// * `reason` - Failure message to surface.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) {
     FRESH_FAILURE_STATE.set_forced(count, reason.into());
 }
@@ -145,7 +145,7 @@ pub(crate) fn set_forced_fresh_failure(count: usize, reason: impl Into<String>) 
 ///
 /// Resets the failure count to zero and clears the stored reason. Intended for
 /// test cleanup.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "python", feature = "test-util"))]
 pub(crate) fn clear_forced_fresh_failure() {
     FRESH_FAILURE_STATE.clear_forced();
 }

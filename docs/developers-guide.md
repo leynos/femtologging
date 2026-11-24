@@ -330,8 +330,18 @@ fixtures.
 ### Maturin build features
 
 The persistent `features = ["python"]` setting in the `[tool.maturin]` table is
-the production build configuration. It keeps the test-only `test-util` feature
-and timed-rotation hooks out of ordinary wheel builds.
+the production build configuration, and it is the only feature set a package
+build may use. It keeps the test-only `test-util` feature out of wheels and
+sdists, so the Rust `TestConfig` and `with_writer_for_test()` seams and every
+Python `*_for_test` hook are absent from release artefacts. Build release
+packages with the plain packaging command:
+
+```shell
+maturin build --release --manifest-path rust_extension/Cargo.toml
+```
+
+Cargo treats `--features` as additive, so adding `test-util` to a package build
+would defeat the boundary. Never pass it when packaging.
 
 Tests that exercise those hooks opt in explicitly. `make build` and the heavy
 test workflow run `maturin develop --features python,test-util`. The coverage
@@ -367,6 +377,67 @@ helper with the wheel it already builds, so the check adds no second release
 build and runs as part of `make test` and CI. The test skips before building
 when the Rust toolchain, `venv`, or `ensurepip` is unavailable, and the
 existing Python 3.15 and newer version gate still applies.
+
+`make check-api-boundary` enforces the boundary. It builds a release wheel from
+the production configuration, installs it into a fresh virtual environment, and
+runs `scripts/release_wheel_probe.py`, which rejects any `*_for_test`,
+`_emit_rust_*`, or `_install_test_*` name in the native module, the
+`FemtoLogger` type, the package namespace, or the shipped stub. It then
+compiles three small Rust crates with default features: a control that names
+the production API, and one negative probe each for `TestConfig` and
+`with_writer_for_test()`. Each negative probe names a single test-only seam, so
+an early resolution error in one cannot hide a leak in the other. Default
+pytest collection ignores the module, because every local run and every CI
+coverage lane would otherwise rebuild the release wheel; the target clears that
+ignore with `-o addopts=`. The CI build-test job runs this target once rather
+than in every interpreter lane.
+
+### Attachment identity hooks
+
+`FemtoLogger` exposes `handler_identities_for_test()` and
+`filter_identities_for_test()` only in `test-util` builds. They return
+`AttachmentIdentity` tokens in attachment order. Each token holds a `Weak`
+reference and compares with `Weak::ptr_eq`, so two tokens for one attachment
+are equal, tokens for distinct attachments are unequal, and handler tokens
+never equal filter tokens. A dropped attachment's allocation stays reserved
+while a token refers to it, so a later attachment cannot inherit an old
+identity. The class is deliberately not registered with the Python module, its
+`repr` is constant, and it offers no integer or index conversion, so no native
+address crosses the boundary. The address-returning `*_ptrs_for_test` hooks are
+gone.
+
+`make check-api-boundary` rejects `*_for_test`, `_emit_rust_*`, and
+`_install_test_*` names in the native module, the `FemtoLogger` type, the
+package namespace (`dir(femtologging)`), the private
+`femtologging._rust_compat` module, and the shipped stub. The four
+underscore-prefixed rotation wrappers and the runtime attachment snapshot are
+defined only when the native hooks exist, so a production build omits them from
+both modules.
+
+#### Why the default-feature boundary is not a trybuild case
+
+The compile-time UI suite cannot show that a default-feature consumer is unable
+to name `TestConfig` or `with_writer_for_test()`. Every `cargo test` build
+resolves the crate's own dev-dependency:
+
+```toml
+_femtologging_rs = { path = ".", package = "femtologging_rs", features = ["test-util", "log-compat"] }
+```
+
+Cargo unifies features per package, so the test binary itself always has
+`test-util` enabled. trybuild copies the test binary's enabled feature list
+into its generated crate, so a `compile_fail` case for those seams would
+compile instead of failing. See the dev-dependency edge directly with:
+
+```shell
+cargo tree --manifest-path rust_extension/Cargo.toml -e features \
+    -i femtologging_rs --no-default-features --features python
+```
+
+The `tests/data/rust_api_boundary/` crates therefore compile outside that
+feature-unified graph with default features only, and
+`tests/test_release_api_boundary.py` asserts that each negative probe fails on
+exactly one unresolved seam.
 
 ### Documentation example loader
 
@@ -1445,8 +1516,10 @@ only while a detached wait is in flight and reports whether it counted,
 `gil_release_observations_for_test()` reads that count,
 `reset_gil_release_observations_for_test()` clears it, and
 `wait_for_wait_in_flight_for_test()` waits until a wait has detached. Normal
-`python` builds omit every one of these hooks, and
-`femtologging/_femtologging_rs.pyi` declares them for type checkers.
+`python` builds omit every one of these hooks, so
+`femtologging/_femtologging_rs.pyi` deliberately does not declare them: the
+stub is the published contract of a production wheel. The tests bind the hooks
+through `getattr` and skip when `test-util` is absent.
 
 Dropping a logger follows the same per-logger in-flight check and does not
 queue a flush marker. The pool itself lives for the process lifetime. If the
@@ -2766,9 +2839,9 @@ under [Coverage publication](#coverage-publication).
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
 runner. Every job whose `runs-on` can select Ubicloud therefore states its own
-`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 40
-minutes: warm `standard-4` runs took up to 19 minutes (run 36617135055,
-attempts 2 and 3), against 21.4 on the first, cold-cache run.
+`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 50
+minutes: warm `standard-4` runs reached 37 minutes (run 44118816542), and the
+`3.12` lane additionally builds a release wheel for `make check-api-boundary`.
 
 The uv cache is the caller's. `generate-coverage` is given
 `cache-provider: external`, because its own uv cache is keyed on the operating

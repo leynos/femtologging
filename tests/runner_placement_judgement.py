@@ -27,7 +27,9 @@ HOSTED_CONDITION: typ.Final = f"({FORK_CONDITION} || {DEPENDABOT_CONDITION})"
 PLACEMENTS: typ.Final = (
     ("build-wheels.yml", "build-linux", "ubicloud-standard-4", 40),
     ("build-wheels.yml", "verify-wheel-install", "ubicloud-standard-4", 40),
-    ("ci.yml", "build-test", "ubicloud-standard-4", 40),
+    # 50 covers the API-boundary check, which builds its own release wheel on
+    # the 3.12 lane on top of an already 37-minute gate run.
+    ("ci.yml", "build-test", "ubicloud-standard-4", 50),
     # The baseline publisher runs only on a push to main, where the expression
     # falls through to Ubicloud: that is the cache store the pull-request
     # lanes restore the baseline from.

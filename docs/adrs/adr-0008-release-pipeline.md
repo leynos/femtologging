@@ -202,3 +202,27 @@ those external settings exist.
 - The release workflow is a single point of failure for publication
   correctness; contract tests and scratch-directory reconciliation tests cover
   the checked-in workflow steps and helpers.
+
+## Addendum: test-only seams (2026-11-22)
+
+The fresh-failure test hooks are gated behind the non-default `test-util`
+feature alongside the timed-rotation hooks, so the known ungated surface noted
+in the accepted text above no longer applies. The Python package no longer
+re-exports the four underscore-prefixed rotation wrappers, and a production
+build does not define them or the runtime attachment snapshot in the private
+`femtologging._rust_compat` module either. Test code imports them from that
+module in a `test-util` build.
+
+The address-returning `handler_ptrs_for_test()` and `filter_ptrs_for_test()`
+Python methods are replaced by `handler_identities_for_test()` and
+`filter_identities_for_test()`. These return opaque `AttachmentIdentity` tokens
+backed by `Weak` references: the tokens compare by allocation identity, are not
+registered with the Python module, and expose no native address.
+
+`make check-api-boundary` enforces the boundary. It builds a release wheel from
+the production maturin configuration, runs `scripts/release_wheel_probe.py`
+against the native module, the `FemtoLogger` type, the package namespace and
+the shipped stub, and compiles standalone default-feature Rust probes that must
+fail to resolve `TestConfig` and `with_writer_for_test()`. The probes stay
+outside trybuild because the crate's own dev-dependency enables `test-util` for
+every `cargo test` build, so a generated trybuild crate would inherit it.

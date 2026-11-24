@@ -13,9 +13,8 @@ import typing as typ
 import pytest
 
 from femtologging import (
-    _clear_timed_rotation_test_times_for_test,
     _has_test_util,
-    _set_timed_rotation_test_times_for_test,
+    _rust_compat,
     dictConfig,
     get_logger,
     reset_manager,
@@ -31,12 +30,21 @@ if typ.TYPE_CHECKING:
 def _timed_rotation_test_clock(
     times: list[int],
 ) -> cabc.Generator[None, None, None]:
-    """Context manager to set up and tear down timed rotation test clock."""
-    _set_timed_rotation_test_times_for_test(times)
+    """Set and clear the timed-rotation test clock, skipping without the hooks."""
+    # Looked up through the module rather than imported by name: a production
+    # extension does not define these hooks, and this module must still collect
+    # for the tests that do not need them.
+    set_times = getattr(_rust_compat, "_set_timed_rotation_test_times_for_test", None)
+    clear_times = getattr(
+        _rust_compat, "_clear_timed_rotation_test_times_for_test", None
+    )
+    if set_times is None or clear_times is None:
+        pytest.skip("timed rotation test clock requires the 'test-util' feature")
+    set_times(times)
     try:
         yield
     finally:
-        _clear_timed_rotation_test_times_for_test()
+        clear_times()
 
 
 def test_dict_config_file_handler_args_kwargs(tmp_path: Path) -> None:

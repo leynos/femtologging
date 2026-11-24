@@ -13,9 +13,8 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from femtologging import (
     FemtoTimedRotatingFileHandler,
     TimedHandlerOptions,
-    _clear_timed_rotation_test_times_for_test,
     _has_test_util,
-    _set_timed_rotation_test_times_for_test,
+    _rust_compat,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -82,7 +81,7 @@ def timed_rotating_context_factory(
         if not ctx.closed:
             ctx.handler.close()
             ctx.closed = True
-    _clear_timed_rotation_test_times_for_test()
+    _rust_compat._clear_timed_rotation_test_times_for_test()
 
 
 def _parse_time(value: str) -> dt.time:
@@ -129,7 +128,7 @@ def given_timed_rotating_handler(
 def given_timed_rotation_test_times(datatable: list[list[str]]) -> list[int]:
     """Set the test clock from datatable timestamps and return them."""
     timestamps = [_epoch_millis(row[0]) for row in datatable[1:]]
-    _set_timed_rotation_test_times_for_test(timestamps)
+    _rust_compat._set_timed_rotation_test_times_for_test(timestamps)
     return timestamps
 
 

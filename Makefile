@@ -1,7 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-helper-test \
-        check-lock test typecheck makeutil skylos skylos-allow \
+        check-lock check-api-boundary test typecheck makeutil skylos skylos-allow \
         install-build-tools check-build-tools
 
 CARGO ?= cargo
@@ -333,6 +333,13 @@ test: check-build-tools build makeutil lint-rust-clippy loom-runner-test ## Run 
 	# variables that were never bound. An example nobody runs is a comment
 	# that looks like evidence.
 	FEMTOLOGGING_EXPECT_TEST_UTIL=1 UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml uv run --locked pytest -v --doctest-modules
+
+check-api-boundary: build ## Verify production builds withhold test-only APIs
+	# The release wheel under test is built from the production maturin
+	# configuration, so this suite never inherits the development feature set.
+	# `-o addopts=` clears the repository-wide ignore that keeps this suite out
+	# of default collection and out of every coverage lane.
+	$(CARGO_BUILD_ENV) UV_CONFIG_FILE=$(CURDIR)/.github/uv-test-util.toml uv run pytest -v -o addopts= tests/test_release_api_boundary.py
 
 typecheck: check-build-tools build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter

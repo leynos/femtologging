@@ -10,6 +10,7 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from femtologging import FemtoFileHandler, FemtoStreamHandler, basicConfig, get_logger
+from tests.helpers import require_identity_hooks
 
 FEATURES = Path(__file__).resolve().parents[1] / "features"
 
@@ -37,7 +38,8 @@ def call_basic_config(level: str, force: str | None) -> None:
 @then(parsers.parse("root logger has {count:d} handler"))
 def root_handler_count(count: int) -> None:
     """Assert the root logger holds exactly count handlers."""
-    handlers = get_logger("root").handler_ptrs_for_test()
+    require_identity_hooks()
+    handlers = get_logger("root").handler_identities_for_test()
     assert len(handlers) == count, (
         f"basicConfig must leave the root logger with {count} handler(s), "
         f"found {len(handlers)}"

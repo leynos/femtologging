@@ -6,10 +6,9 @@
 //! they can be shared between the handler implementation and worker thread
 //! logic.
 
-use std::{
-    sync::{Arc, Barrier},
-    time::Duration,
-};
+#[cfg(any(test, feature = "test-util"))]
+use std::sync::{Arc, Barrier};
+use std::time::Duration;
 
 /// Default bounded channel capacity for `FemtoFileHandler`.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
@@ -47,6 +46,10 @@ impl Default for HandlerConfig {
 }
 
 /// Configuration for `with_writer_for_test` when constructing handlers in tests.
+///
+/// Only unit tests and builds that opt in to `test-util` can name this type, so
+/// it stays out of the default Rust API and production wheels.
+#[cfg(any(test, feature = "test-util"))]
 pub struct TestConfig<W, F> {
     /// Destination for the formatted records, typically an in-memory buffer in tests.
     pub writer: W,
@@ -62,6 +65,7 @@ pub struct TestConfig<W, F> {
     pub start_barrier: Option<Arc<Barrier>>,
 }
 
+#[cfg(any(test, feature = "test-util"))]
 impl<W, F> TestConfig<W, F> {
     /// Create a configuration with the default queue capacity, a flush after every write, the
     /// drop policy and no start barrier.
