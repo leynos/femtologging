@@ -1,6 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
-        check-fmt markdownlint tools nixie spelling spelling-integration-test \
+        check-fmt markdownlint tools nixie spelling spelling-config spelling-check \
+        spelling-integration-test \
         check-lock test typecheck makeutil skylos skylos-allow \
         install-build-tools check-build-tools
 
@@ -312,7 +313,24 @@ markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spellin
 
 SPELLING_PHRASE_SCAN ?= $(TYPOS_CONFIG_BUILDER) check-phrases
 
+spelling-config: ## Regenerate typos.toml from the live shared dictionary
+	# The write path, named for what it does: it refreshes the shared dictionary
+	# from the network and rewrites the tracked `typos.toml`. Run it after
+	# changing `typos.local.toml` or after the shared dictionary moves, then
+	# review and commit the regenerated file.
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) gate
+
+spelling-check: ## Report spelling drift without writing typos.toml
+	# The read-only counterpart. It fails when the committed `typos.toml` no
+	# longer matches the live shared dictionary instead of rewriting it.
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) --check gate
+
 spelling: ## Enforce en-GB-oxendict spelling and shared phrase corrections
+	# `make spelling` regenerates `typos.toml` and then checks the index. The
+	# write is deliberate: a stale configuration is repaired here so the check
+	# that follows runs against the current dictionary. `make spelling-check`
+	# reports the drift without writing; `make spelling-config` performs only
+	# the write. The split is documented in the developers guide.
 	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) gate
 	# The gate enumerates the Git index, so a new Markdown file would pass here
 	# and fail once it is committed. The gate has just regenerated `typos.toml`,

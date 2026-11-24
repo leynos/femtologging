@@ -251,6 +251,41 @@ def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
     )
 
 
+def test_spelling_config_target_is_the_only_write_path() -> None:
+    """`spelling-config` regenerates the file; `spelling-check` must not."""
+    assert _commands("spelling-config") == (
+        ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
+    ), "the write path must be the builder gate, and nothing else"
+    assert _commands("spelling-check") == (
+        ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "--check", "gate"),
+    ), (
+        "the read-only path must pass the builder-wide --check option before "
+        "the gate subcommand"
+    )
+    assert not _prerequisites("spelling-config"), (
+        "regeneration must not depend on a check that would run first"
+    )
+    assert not _prerequisites("spelling-check"), (
+        "the drift check must not regenerate anything on the way in"
+    )
+
+
+def test_the_phony_list_declares_the_new_spelling_targets() -> None:
+    """Both new targets must be phony, or a file of the same name shadows them."""
+    lines = (repo_root() / "Makefile").read_text("utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(".PHONY:"))
+    # The list is continued across lines; collect it until a line without the
+    # continuation backslash.
+    parts: list[str] = []
+    for line in lines[start:]:
+        parts.append(line)
+        if not line.rstrip().endswith("\\"):
+            break
+    phony = " ".join(parts)
+    assert "spelling-config" in phony, phony
+    assert "spelling-check" in phony, phony
+
+
 def test_spelling_integration_target_provisions_the_pinned_builder() -> None:
     """The end-to-end target warms the pin and sets its integration flag."""
     assert (

@@ -272,9 +272,15 @@ alternatives that were rejected, are recorded in
   available, the builder falls back to the snapshot bundled in the pinned
   release and reports the refresh as `bootstrap`, so an offline checkout whose
   tool is already provisioned can still run the gate.
-- The gate runs in write mode, so a live dictionary edit is picked up rather
-  than reported as drift. When `make spelling` changes `typos.toml`, commit the
-  regenerated file with the change that caused it.
+- Three targets own the three behaviours, and each is named for what it does.
+  `make spelling-config` is the write path: it refreshes the shared dictionary
+  from the network and rewrites the tracked `typos.toml`. `make spelling-check`
+  is its read-only counterpart: it runs the builder with `--check`, which
+  reports configuration drift and exits non-zero instead of writing.
+  `make spelling` is the ordinary gate and runs the write path before checking,
+  so a stale configuration is repaired rather than failing the check. When
+  either of the first two changes `typos.toml`, commit the regenerated file
+  with the change that caused it.
 - `make markdownlint` depends on `make spelling`, so Markdown structure and
   spelling are checked in one pass.
 
@@ -282,9 +288,11 @@ CI runs the same `make spelling` target, so a local pass and a hosted pass
 invoke the same command on the same pin. That does not make their inputs
 identical: a local run may fall back to a cached dictionary when the authority
 is unreachable, while CI may refresh to a newer revision and report a finding
-the local run did not. The gate is never invoked with `--check`: that option
-belongs to standalone configuration generation, where it reports drift, whereas
-`gate` has no drift mode and always regenerates before checking.
+the local run did not. `--check` is a builder-wide option, not one restricted
+to configuration generation: `make spelling-check` combines it with `gate` to
+report drift, and `make spelling-config` and `make spelling` omit it so the
+generated file is refreshed. Prefer `make spelling-check` in a job that must
+not modify its checkout.
 
 `tests/test_spelling_gate.py` drives both recipe stages against stub
 executables, so it needs neither `uvx` nor the network.

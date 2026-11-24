@@ -143,3 +143,23 @@ from the ambient environment therefore behaves differently per lane.
 - `typos.local.toml` — the repository overlay.
 - [typos-config-builder v0.1.3](https://github.com/leynos/typos-config-builder/releases/tag/v0.1.3)
 - `leynos/agent-helper-scripts` — the shared en-GB-oxendict dictionary.
+
+## Addendum — 2026-11-24: the write path is named separately
+
+The decision above records that `make spelling` runs the gate in write mode.
+That remains true of the ordinary gate. The write is now also reachable on its
+own, and a read-only check exists beside it:
+
+- `make spelling-config` performs the dictionary refresh and the regeneration
+  of `typos.toml` and nothing else.
+- `make spelling-check` runs the builder with the builder-wide `--check`
+  option, which reports generated-configuration drift and exits non-zero
+  without writing.
+- `make spelling` keeps its previous behaviour: it runs the write path and
+  then checks the index, so the configuration a check runs against is the one
+  just generated.
+
+The names state their side effects, and a job that must not modify its checkout
+can call `make spelling-check` instead. The builder's `--check` option predates
+this addendum; it is not restricted to standalone configuration generation,
+which an earlier draft of the developers guide claimed.
