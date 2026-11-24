@@ -18,8 +18,6 @@ from __future__ import annotations
 import shlex
 import typing as typ
 
-import yaml
-
 from tests.ci_gate_scope_contract import (
     job_tolerance_is_acceptable,
     step_tolerance_is_acceptable,
@@ -29,6 +27,7 @@ from tests.make_contract_helpers import (
     defaults_shell,
     mapping,
     repo_root,
+    strict_safe_load,
 )
 
 type Tokens = tuple[str, ...]
@@ -65,13 +64,21 @@ MASK_FRAGMENTS: typ.Final[Tokens] = ("||", "&&", ";", "echo ", "#")
 def load_ci_workflow() -> Workflow:
     """Return the parsed pull-request workflow.
 
+    PyYAML's default loader silently keeps the last value for a repeated
+    mapping key, so a duplicated `run`, `env` or `defaults` key would replace
+    the entry the contract needs to inspect. The loader refuses a duplicate
+    before any value is constructed.
+
     Returns
     -------
     Workflow
-        The workflow mapping, suitable for a deep-copied mutation.
+        The workflow mapping, suitable for a deep-copied mutation; the strict
+        loader raises ``ConstructorError`` when a key is repeated.
     """
-    document = yaml.safe_load((repo_root() / CI_WORKFLOW).read_text(encoding="utf-8"))
-    return mapping(document, subject=CI_WORKFLOW)
+    return mapping(
+        strict_safe_load((repo_root() / CI_WORKFLOW).read_text(encoding="utf-8")),
+        subject=CI_WORKFLOW,
+    )
 
 
 def ci_steps(document: Workflow) -> list[dict[str, object]]:

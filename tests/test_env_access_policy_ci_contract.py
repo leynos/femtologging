@@ -29,7 +29,14 @@ from tests.ci_loom_gate_contract import (
     loom_clippy_problems,
     loom_step,
 )
-from tests.make_contract_helpers import mapping, objects, repo_root, workflow_job
+from tests.make_contract_helpers import (
+    DuplicateKeyError,
+    mapping,
+    objects,
+    repo_root,
+    strict_safe_load,
+    workflow_job,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -363,3 +370,15 @@ def test_exclusion_alone_can_remove_the_last_required_leg() -> None:
     assert not job_tolerance_is_acceptable(job), (
         "excluding the required combination must leave no required gate"
     )
+
+
+def test_a_duplicate_workflow_key_is_refused() -> None:
+    """Scenario: a workflow repeats a mapping key.
+
+    Invariant: the gate's loader refuses the document instead of silently
+    keeping the last value. PyYAML's default loader would replace the earlier
+    entry, so the contract could judge a value the file no longer shows.
+    """
+    text = "jobs:\n  build-test:\n    timeout-minutes: 40\n    timeout-minutes: 60\n"
+    with pytest.raises(DuplicateKeyError, match="timeout-minutes"):
+        strict_safe_load(text)

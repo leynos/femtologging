@@ -16,6 +16,8 @@ import typing as typ
 from pathlib import Path
 
 import yaml
+import yaml.constructor
+import yaml.resolver
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -281,3 +283,88 @@ def defaults_shell(container: cabc.Mapping[str, object]) -> object:
     if not isinstance(run, dict):
         return None
     return run.get("shell")
+
+
+def strict_safe_load(source: str) -> object:
+    """Load YAML with `safe_load`, refusing any repeated mapping key.
+
+    `safe_load` cannot be told to use a subclass, so the strict constructor is
+    registered on a private subclass and restored afterwards; the global
+    `SafeLoader` is never modified.
+
+    Returns
+    -------
+    object
+        The parsed document; the strict constructor raises
+        ``ConstructorError`` when a key is repeated.
+    """
+    original = yaml.SafeLoader.yaml_constructors[
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG
+    ]
+    yaml.SafeLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping
+    )
+    try:
+        return yaml.safe_load(source)
+    finally:
+        yaml.SafeLoader.add_constructor(
+            yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, original
+        )
+
+
+def construct_mapping(
+    loader: yaml.SafeLoader,
+    node: yaml.nodes.MappingNode,
+    *,
+    deep: bool = False,
+) -> dict[object, object]:
+    """Build a mapping, refusing any key that appears twice.
+
+    Returns
+    -------
+    dict[object, object]
+        The constructed mapping.
+
+    Raises
+    ------
+    DuplicateKeyError
+        If two keys in the node are equal.
+    """
+    loader.flatten_mapping(node)
+    seen: set[object] = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise DuplicateKeyError(key, node, key_node)
+        seen.add(key)
+    return typ.cast(
+        "dict[object, object]", yaml.SafeLoader.construct_mapping(loader, node, deep)
+    )
+
+
+class DuplicateKeyError(yaml.constructor.ConstructorError):
+    """Report a repeated mapping key and the position of its second use."""
+
+    def __init__(
+        self,
+        key: object,
+        node: yaml.nodes.MappingNode,
+        key_node: yaml.nodes.Node,
+    ) -> None:
+        """Record the key and the position of its second use.
+
+        Parameters
+        ----------
+        key
+            The repeated key.
+        node
+            The mapping node that contains the repeat.
+        key_node
+            The node of the second occurrence.
+        """
+        super().__init__(
+            "while constructing a mapping",
+            node.start_mark,
+            f"found duplicate key {key!r}",
+            key_node.start_mark,
+        )
