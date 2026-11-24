@@ -12,6 +12,7 @@ use crate::handler::FemtoHandlerTrait;
 use crate::logger::worker_count_for_test;
 use crate::manager::{self, MAX_LOGGERS, named_logger_count_for_test};
 use crate::test_utils::collecting_handler::CollectingHandler;
+use crate::test_utils::logging_test_helpers::run_isolated_child;
 
 /// Callsite metadata used to emit an event with a runtime-selected target.
 struct DynamicTargetCallsite {
@@ -86,71 +87,84 @@ fn dispatch_overflow_targets(dispatch: &Dispatch) {
     }
 }
 
-fn create_root_logger() -> (Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize) {
+fn create_root_logger() -> PyResult<(Py<crate::FemtoLogger>, Arc<CollectingHandler>, usize)> {
     Python::attach(|py| {
-        let root = manager::get_logger(py, "root").expect("root should be available");
+        let root = manager::get_logger(py, "root")?;
         let handler = Arc::new(CollectingHandler::default());
         root.borrow(py)
-            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)
-            .expect("native collecting handler should register");
+            .add_handler(handler.clone() as Arc<dyn FemtoHandlerTrait>)?;
         let initial_worker_count = worker_count_for_test();
         assert!(initial_worker_count > 0, "resolving root starts the pool");
-        (root, handler, initial_worker_count)
+        Ok((root, handler, initial_worker_count))
     })
 }
 
-fn assert_saturated_state(
-    root: &Py<crate::FemtoLogger>,
-    first: &Py<crate::FemtoLogger>,
-    handler: &CollectingHandler,
-    initial_worker_count: usize,
-) {
-    Python::attach(|py| {
-        assert!(
-            root.borrow(py).flush_handlers(),
-            "root should drain its queue",
-        );
-        let collected_names = handler
-            .collected()
-            .iter()
-            .map(|record| record.logger().to_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            collected_names,
-            vec!["root"; 3],
-            "events beyond the cap must reach the existing root logger",
-        );
-        assert!(
-            manager::get_logger(py, "tracing-bridge-0")
-                .expect("existing logger still resolves")
-                .is(first),
-            "existing logger identity must survive saturation",
-        );
-        assert!(
-            manager::get_logger(py, "root")
-                .expect("root remains available")
-                .is(root),
-            "root identity must survive saturation",
-        );
-        assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
-        assert_eq!(worker_count_for_test(), initial_worker_count);
-    });
+/// Return the logger names of every record the handler has collected.
+fn collected_logger_names(handler: &CollectingHandler) -> Vec<String> {
+    handler
+        .collected()
+        .iter()
+        .map(|record| record.logger().to_owned())
+        .collect()
 }
 
-fn run_isolated_child(test_filter: &str) {
-    let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)
-        .expect("the isolated tracing test should start");
+/// Report whether `name` still resolves to the logger `expected` points at.
+fn is_registered_as(py: Python<'_>, name: &str, expected: &Py<crate::FemtoLogger>) -> bool {
+    manager::get_logger(py, name).is_ok_and(|logger| logger.is(expected))
+}
+
+/// Everything the post-saturation assertion needs to inspect.
+///
+/// The inputs are grouped so the assertion takes one argument and its panic
+/// location still points at the test line.
+struct SaturatedState<'py> {
+    /// Interpreter handle used for every logger lookup.
+    py: Python<'py>,
+    /// The root logger that must receive the overflow.
+    root: &'py Py<crate::FemtoLogger>,
+    /// The first bounded logger, whose identity must survive saturation.
+    first: &'py Py<crate::FemtoLogger>,
+    /// Handler collecting the records root received.
+    handler: &'py CollectingHandler,
+    /// Worker count observed before saturation, which must not change.
+    initial_worker_count: usize,
+}
+
+/// Assert that root received the overflow and the registry stayed bounded.
+#[track_caller]
+fn assert_saturated_state(state: SaturatedState<'_>) {
+    let SaturatedState {
+        py,
+        root,
+        first,
+        handler,
+        initial_worker_count,
+    } = state;
     assert!(
-        output.status.success(),
-        "isolated test {test_filter:?} failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
+        root.borrow(py).flush_handlers(),
+        "root should drain its queue",
     );
+    assert_eq!(
+        collected_logger_names(handler),
+        vec!["root"; 3],
+        "events beyond the cap must reach the existing root logger",
+    );
+    assert!(
+        is_registered_as(py, "tracing-bridge-0", first),
+        "existing logger identity must survive saturation",
+    );
+    assert!(
+        is_registered_as(py, "root", root),
+        "root identity must survive saturation",
+    );
+    assert_eq!(named_logger_count_for_test(), MAX_LOGGERS);
+    assert_eq!(worker_count_for_test(), initial_worker_count);
 }
 
 #[test]
 fn tracing_target_resolution_keeps_cardinality_bounded() {
-    run_isolated_child("tracing_target_saturation_child");
+    run_isolated_child("tracing_target_saturation_child")
+        .expect("the isolated tracing test should start");
 }
 
 #[test]
@@ -158,7 +172,8 @@ fn tracing_target_resolution_keeps_cardinality_bounded() {
 fn tracing_target_saturation_child() {
     let subscriber = tracing_subscriber::registry().with(FemtoTracingLayer);
     let dispatch = Dispatch::new(subscriber);
-    let (root, handler, initial_worker_count) = create_root_logger();
+    let (root, handler, initial_worker_count) =
+        create_root_logger().expect("root logger setup should succeed");
 
     dispatch_valid_targets(&dispatch);
 
@@ -177,5 +192,13 @@ fn tracing_target_saturation_child() {
         manager::get_logger(py, "tracing-bridge-0").expect("first logger remains")
     });
     dispatch_overflow_targets(&dispatch);
-    assert_saturated_state(&root, &first, &handler, initial_worker_count);
+    Python::attach(|py| {
+        assert_saturated_state(SaturatedState {
+            py,
+            root: &root,
+            first: &first,
+            handler: &handler,
+            initial_worker_count,
+        });
+    });
 }

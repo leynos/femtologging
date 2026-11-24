@@ -28,12 +28,12 @@ use std::{
 };
 
 use pyo3::Python;
-use rstest::rstest;
+use rstest::{fixture, rstest};
 use serial_test::serial;
 
 use super::{
-    ConfigBuilder, DeferredDrop, LoggerConfigBuilder, LoggerMutationBuilder, RuntimeConfigBuilder,
-    test_utils::gil_and_clean_manager,
+    ConfigBuilder, ConfigError, DeferredDrop, LoggerConfigBuilder, LoggerMutationBuilder,
+    RuntimeConfigBuilder, test_utils::gil_and_clean_manager,
 };
 use crate::{
     FemtoLevel,
@@ -138,7 +138,13 @@ impl Drop for ReenteringFilter {
 }
 
 /// Build a baseline logger holding a handler and a level filter.
-fn install_baseline() {
+///
+/// Returns the build error rather than panicking: fixture setup is not a
+/// recognised test body, so each consuming test reports a failed build at its
+/// own panic boundary. Depending on [`gil_and_clean_manager`] keeps the manager
+/// reset ahead of the baseline, as the original inline calls did.
+#[fixture]
+fn install_baseline(_gil_and_clean_manager: ()) -> Result<(), ConfigError> {
     ConfigBuilder::new()
         .with_filter(
             "lvl",
@@ -155,7 +161,6 @@ fn install_baseline() {
                 .with_filters(["lvl"]),
         )
         .build_and_init()
-        .expect("the baseline configuration should build");
 }
 
 /// Run `body` on its own thread and fail if it does not finish in time.
@@ -192,9 +197,9 @@ where
 /// acquisition against a regression that never releases the guard.
 #[rstest]
 #[serial]
-fn sequential_transactions_both_complete(_gil_and_clean_manager: ()) {
-    run_with_timeout("two sequential transactions", || {
-        install_baseline();
+fn sequential_transactions_both_complete(install_baseline: Result<(), ConfigError>) {
+    run_with_timeout("two sequential transactions", move || {
+        install_baseline.expect("the baseline configuration should build");
         for _ in 0..2 {
             RuntimeConfigBuilder::new()
                 .with_logger(
@@ -215,9 +220,9 @@ fn sequential_transactions_both_complete(_gil_and_clean_manager: ()) {
 /// Python finalizer would deadlock in.
 #[rstest]
 #[serial]
-fn displaced_filter_is_released_after_the_transaction(_gil_and_clean_manager: ()) {
-    run_with_timeout("a filter replacement", || {
-        install_baseline();
+fn displaced_filter_is_released_after_the_transaction(install_baseline: Result<(), ConfigError>) {
+    run_with_timeout("a filter replacement", move || {
+        install_baseline.expect("the baseline configuration should build");
         FILTERS_RELEASED.store(0, Ordering::SeqCst);
         FILTERS_RELEASED_UNDER_GUARD.store(0, Ordering::SeqCst);
 
@@ -259,9 +264,9 @@ fn displaced_filter_is_released_after_the_transaction(_gil_and_clean_manager: ()
 /// would wait on a guard its own thread already owns and never return.
 #[rstest]
 #[serial]
-fn reentering_drop_can_apply_another_transaction(_gil_and_clean_manager: ()) {
-    run_with_timeout("a re-entering drop", || {
-        install_baseline();
+fn reentering_drop_can_apply_another_transaction(install_baseline: Result<(), ConfigError>) {
+    run_with_timeout("a re-entering drop", move || {
+        install_baseline.expect("the baseline configuration should build");
         REENTERED.store(0, Ordering::SeqCst);
 
         Python::attach(|py| {
@@ -294,9 +299,11 @@ fn reentering_drop_can_apply_another_transaction(_gil_and_clean_manager: ()) {
 /// transaction itself releases.
 #[rstest]
 #[serial]
-fn displaced_handlers_are_released_after_the_transaction(_gil_and_clean_manager: ()) {
-    run_with_timeout("a handler replacement", || {
-        install_baseline();
+fn displaced_handlers_are_released_after_the_transaction(
+    install_baseline: Result<(), ConfigError>,
+) {
+    run_with_timeout("a handler replacement", move || {
+        install_baseline.expect("the baseline configuration should build");
         let committed = manager::snapshot_runtime_state();
         let handler = committed
             .handler_registry

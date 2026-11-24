@@ -4,6 +4,7 @@
 //! correctly without stack overflow or performance degradation.
 
 use crate::exception_schema::{ExceptionPayload, SchemaVersioned};
+use crate::test_utils::json_round_trip::assert_json_round_trip;
 use rstest::rstest;
 
 /// The kind of link used to build (and traverse) an exception chain.
@@ -98,11 +99,12 @@ fn build_exception_chain_rejects_zero_depth() {
 fn deep_chain_serializes(#[case] kind: ChainKind, #[case] depth: usize) {
     let payload = build_exception_chain(kind, depth);
 
-    let json = serde_json::to_string(&payload).expect("serialize deep chain");
-    let decoded: ExceptionPayload = serde_json::from_str(&json).expect("deserialize");
+    assert_json_round_trip(&payload);
 
-    verify_chain_depth(&decoded, kind, depth);
-    decoded
+    // The helper asserts the decoded value equals `payload`, so checking the
+    // depth and the version on `payload` covers the decoded chain too.
+    verify_chain_depth(&payload, kind, depth);
+    payload
         .validate_version()
         .expect("a supported chain should validate after a round trip");
 }
