@@ -279,6 +279,25 @@ def _duplicate_execution_step(document: Document) -> None:
     raw_steps(found, subject=HEAVY_JOB).append({"name": LOOM_STEP, "run": "true"})
 
 
+def _preemption_bound_stripped(document: Document) -> None:
+    """Strip the bound from the child command with an `env -u` wrapper."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "cargo test --release", "env -u LOOM_MAX_PREEMPTIONS cargo test --release"
+    )
+
+
+def _model_list_replaced(document: Document) -> None:
+    """Point the checker at a shorter manifest."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, LOOM_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "rust_extension/tests/heavy/loom-models.txt",
+        "rust_extension/tests/heavy/loom-models-subset.txt",
+    )
+
+
 CORE_MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -329,6 +348,8 @@ CORE_MUTATIONS = (
         id="workflow-default-shell-never-runs",
     ),
     pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
+    pytest.param(_preemption_bound_stripped, id="bound-stripped-in-command"),
+    pytest.param(_model_list_replaced, id="model-list-replaced"),
     pytest.param(_checker_commented_out, id="checker-commented-out"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )

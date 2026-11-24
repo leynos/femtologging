@@ -41,6 +41,12 @@ _PREEMPTION_BOUND: str = "LOOM_MAX_PREEMPTIONS"
 _REQUIRED_PREEMPTION_BOUND: str = "3"
 _RUNNER: str = "scripts/run_loom_models.py"
 
+#: The manifest the checker compares the run against.
+_MODEL_LIST: str = "rust_extension/tests/heavy/loom-models.txt"
+
+#: Wrappers that change the environment before the checker runs Cargo.
+_ENV_WRAPPERS: tuple[str, ...] = ("env",)
+
 #: Shell control operators and the `wait` builtin. A checker started in the
 #: background and reaped by an argument-free `wait` returns zero even when the
 #: checker failed, so the step must be one foreground command.
@@ -145,7 +151,40 @@ def _argument_problems(words: tuple[str, ...]) -> list[str]:
                 "runs after its `--` separator"
             )
         ]
-    return []
+    problems = _model_list_problems(words[:separator])
+    child = words[separator + 1 :]
+    if child[0] in _ENV_WRAPPERS:
+        problems.append(
+            f"the {LOOM_STEP!r} step must pass Cargo directly, not through {child[0]!r}"
+        )
+    return problems
+
+
+def _model_list_problems(arguments: tuple[str, ...]) -> list[str]:
+    """Return complaints about the manifest the checker compares against.
+
+    The checker only reports the models its `--expected` file names, so a
+    shorter manifest would let a partial run pass. The committed manifest must
+    be named exactly once.
+
+    Returns
+    -------
+    list[str]
+        A complaint when `--expected` is missing, repeated or points elsewhere.
+    """
+    lists = [
+        arguments[index + 1]
+        for index, argument in enumerate(arguments[:-1])
+        if argument == "--expected"
+    ]
+    if lists == [_MODEL_LIST]:
+        return []
+    return [
+        (
+            f"the {LOOM_STEP!r} step must name {_MODEL_LIST!r} exactly once with "
+            f"--expected, saw {lists!r}"
+        )
+    ]
 
 
 def checker_mask_problems(found: Job) -> list[str]:
