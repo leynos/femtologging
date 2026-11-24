@@ -342,7 +342,7 @@ def documented_example(identifier: str) -> DocumentedExample:
 
 
 def run_example(
-    example: DocumentedExample, cwd: Path
+    example: DocumentedExample, cwd: Path, *, probe: str = ""
 ) -> subprocess.CompletedProcess[str]:
     """Run a published Python example in a fresh interpreter under ``cwd``.
 
@@ -350,13 +350,21 @@ def run_example(
     would, and ``cwd`` keeps any files the example writes out of the
     repository.
 
+    Parameters
+    ----------
+    probe
+        Extra source appended after the published body, for a test that must
+        observe an effect the example cannot report itself. The shipped text
+        still runs verbatim as the first thing the interpreter executes; the
+        probe runs in the same namespace the example populated.
+
     Returns
     -------
     subprocess.CompletedProcess[str]
         The finished interpreter, with its captured output.
     """
     return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] runs the current interpreter on published example text
-        [sys.executable, "-c", example.body],
+        [sys.executable, "-c", example.body + probe],
         capture_output=True,
         check=False,
         cwd=cwd,
