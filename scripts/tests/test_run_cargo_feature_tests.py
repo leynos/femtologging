@@ -356,39 +356,3 @@ def test_the_harness_selection_tells_blank_from_omitted(
     assert run_cargo_feature_tests.harness_selection(test_args, environment) == (
         expected
     ), f"test_args={test_args!r} environment={environment!r}"
-
-
-def test_an_empty_feature_set_list_is_not_success(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Scenario: the selection list is empty.
-
-    Invariant: the run fails and says so. A matrix that checked nothing must
-    not report a clean result, the failure mode the script exists to prevent.
-    """
-    status = run_cargo_feature_tests.main(
-        manifest=manifest_path(), feature_sets=[], test_args=list(HARNESS_ARGS)
-    )
-    assert status == 2, "an empty selection list must not report success"
-    assert "no feature sets requested" in capsys.readouterr().err, (
-        "an empty selection list must explain the refusal"
-    )
-
-
-def test_an_empty_harness_selection_is_not_success(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Scenario: a caller passes an empty harness selection directly.
-
-    Invariant: the run fails and says so. Cargo would accept the command and
-    run the ordinary suite, which passes without touching the ignored tests.
-    The environment path is covered separately: Cyclopts discards a blank
-    variable, so it reaches :func:`main` as ``None`` rather than as ``[]``.
-    """
-    status = run_cargo_feature_tests.main(
-        manifest=manifest_path(), feature_sets=list(FEATURE_SETS), test_args=[]
-    )
-    assert status == 2, "an empty harness selection must not report success"
-    assert "no harness arguments requested" in capsys.readouterr().err, (
-        "an empty harness selection must explain the refusal"
-    )

@@ -33,6 +33,7 @@ from tests.feature_lane_step_readers import (
     effective_shell,
     environment,
     run_text,
+    shell_fails_fast,
     step,
 )
 from tests.make_contract_helpers import repo_root, workflow_job
@@ -109,10 +110,7 @@ def test_the_driver_failure_cannot_be_suppressed() -> None:
         f"the {_JOB!r} job must not tolerate its own failure"
     )
     shell = effective_shell()
-    # An absent shell means GitHub's built-in `bash -e {0}` on Linux, and the
-    # built-in `bash` and `sh` names also run with `-e`. A custom template has
-    # to say so itself.
-    assert shell is None or shell in {"bash", "sh"} or "-e" in str(shell), (
+    assert shell_fails_fast(shell), (
         f"the {_STEP!r} step's effective shell must exit on error, saw {shell!r}"
     )
 

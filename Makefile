@@ -287,6 +287,7 @@ loom-runner-test: ## Unit-test the Loom model runner
 FEATURE_TESTS_RUNNER_SCRIPT ?= scripts/run_cargo_feature_tests.py
 
 FEATURE_TESTS_RUNNER_TESTS ?= scripts/tests/test_run_cargo_feature_tests.py \
+  scripts/tests/test_run_cargo_feature_tests_entrypoint.py \
   scripts/tests/test_run_cargo_feature_tests_properties.py
 
 feature-tests-runner-test: ## Unit-test the Cargo feature-matrix test runner

@@ -13,7 +13,6 @@ judgement and cannot hide a change either.
 
 from __future__ import annotations
 
-import itertools
 import shlex
 import typing as typ
 
@@ -105,27 +104,72 @@ def environment() -> dict[str, object]:
     return found if isinstance(found, dict) else {}
 
 
-def disables_errexit(command: list[str]) -> bool:
-    """Report whether one command turns exit-on-error off.
+def errexit_state(options: cabc.Sequence[str]) -> bool | None:
+    """Return the exit-on-error state the option words leave behind.
 
-    Only the command words are inspected, so a flag inside a quoted argument
-    to another program is not mistaken for the shell builtin. ``+e`` and
-    ``+o errexit`` disable the option; ``-e`` and ``-o errexit`` enable it,
-    and ``-euo pipefail`` enables it alongside others, so neither is matched.
+    Bash processes ``set`` options left to right and the last assignment
+    wins, so ``set -e +e`` disables the option even though ``-e`` appears
+    first. Short options may be grouped: ``-euo pipefail`` enables ``errexit``
+    alongside others, and ``+ex`` disables it alongside others. ``-o`` and
+    ``+o`` consume the following word as the option name.
 
     Returns
     -------
-        True when the command is a ``set`` that disables ``errexit``.
+        ``True`` when the words enable ``errexit``, ``False`` when they
+        disable it, and ``None`` when they say nothing about it.
+    """
+    state: bool | None = None
+    index = 0
+    while index < len(options):
+        option = options[index]
+        index += 1
+        if option in {"-o", "+o"}:
+            name = options[index] if index < len(options) else ""
+            index += 1
+            if name == "errexit":
+                state = option == "-o"
+            continue
+        if option.startswith(("-", "+")) and "e" in option[1:]:
+            state = option.startswith("-")
+    return state
+
+
+def disables_errexit(command: list[str]) -> bool:
+    """Report whether one command leaves exit-on-error off.
+
+    Only the command words are inspected, so a flag inside a quoted argument
+    to another program is not mistaken for the shell builtin.
+
+    Returns
+    -------
+        True when the command is a ``set`` whose final ``errexit`` assignment
+        disables it.
     """
     if not command or command[0] != "set":
         return False
-    options = command[1:]
-    if "+e" in options:
+    return errexit_state(command[1:]) is False
+
+
+def shell_fails_fast(shell: object) -> bool:
+    """Report whether a step's effective shell exits on error.
+
+    An absent shell means GitHub's built-in ``bash -e {0}`` on Linux, and the
+    built-in ``bash`` and ``sh`` names run with ``-e`` too. A custom template
+    has to say so itself, and a later disabling option such as
+    ``bash -e +e {0}`` wins over an earlier enabling one, so the whole option
+    list is evaluated in order.
+
+    Returns
+    -------
+        True when the shell is the platform default, a built-in, or a
+        template whose final ``errexit`` assignment enables it.
+    """
+    if shell is None or shell in {"bash", "sh"}:
         return True
-    return any(
-        option == "+o" and following == "errexit"
-        for option, following in itertools.pairwise(options)
-    )
+    words = shlex.split(str(shell))
+    if "{0}" not in words:
+        return False
+    return errexit_state(words[1:]) is True
 
 
 def declared_shell(mapping: cabc.Mapping[str, object]) -> object:

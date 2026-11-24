@@ -15,6 +15,7 @@ from tests.feature_lane_step_readers import (
     declared_shell,
     disables_errexit,
     effective_shell,
+    shell_fails_fast,
     tokenize,
 )
 
@@ -27,6 +28,10 @@ from tests.feature_lane_step_readers import (
         pytest.param("set -e", False, id="dash-e"),
         pytest.param("set -o errexit", False, id="dash-o-errexit"),
         pytest.param("set -euo pipefail", False, id="combined-enable"),
+        pytest.param("set +ex", True, id="combined-disabling-e"),
+        pytest.param("set +xe", True, id="combined-disabling-e-last"),
+        pytest.param("set -e +e", True, id="disabling-wins-when-later"),
+        pytest.param("set +e -e", False, id="enabling-wins-when-later"),
         pytest.param("echo 'set +e'", False, id="quoted-argument"),
         pytest.param("cargo test", False, id="not-a-set-builtin"),
         pytest.param("set -x", False, id="unrelated-option"),
@@ -94,3 +99,29 @@ def test_a_custom_job_shell_default_is_resolved() -> None:
     assert declared_shell(workflow) == "python {0}", (
         "a workflow-level shell default must be read"
     )
+
+
+@pytest.mark.parametrize(
+    ("shell", "expected"),
+    [
+        pytest.param(None, True, id="built-in-default"),
+        pytest.param("bash", True, id="built-in-bash"),
+        pytest.param("sh", True, id="built-in-sh"),
+        pytest.param("bash -e {0}", True, id="explicit-fail-fast"),
+        pytest.param("bash -euo pipefail {0}", True, id="grouped-fail-fast"),
+        pytest.param("bash {0}", False, id="template-without-errexit"),
+        pytest.param("bash -e +e {0}", False, id="later-disabling-wins"),
+        pytest.param("python {0}", False, id="no-shell-option"),
+        pytest.param("bash -e", False, id="no-placeholder"),
+    ],
+)
+def test_the_shell_template_must_leave_errexit_enabled(
+    shell: object, *, expected: bool
+) -> None:
+    """Scenario: a custom ``defaults.run.shell`` template is used.
+
+    Invariant: only the built-in defaults and templates whose final
+    ``errexit`` assignment enables it are accepted. Counting the presence of
+    ``-e`` would accept ``bash -e +e {0}``, where the later option wins.
+    """
+    assert shell_fails_fast(shell) is expected, shell
