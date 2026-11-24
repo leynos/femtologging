@@ -25,7 +25,7 @@ if not os.environ.get("LINT_LANES_TEST"):
 if not os.environ.get("LOOM_RUNNER_TEST"):
     collect_ignore.append("test_run_loom_models.py")
 if not os.environ.get("FEATURE_TESTS_RUNNER_TEST"):
-    collect_ignore.extend([
+    collect_ignore += [
         "test_run_cargo_feature_tests.py",
         "test_run_cargo_feature_tests_properties.py",
-    ])
+    ]
