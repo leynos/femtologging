@@ -17,6 +17,10 @@ import typing as typ
 import pytest
 import yaml
 
+from tests.ci_gate_scope_contract import (
+    job_tolerance_is_acceptable,
+    step_tolerance_is_acceptable,
+)
 from tests.ci_loom_gate_contract import (
     LOOM_CLIPPY_COMMAND,
     Workflow,
@@ -80,41 +84,6 @@ def workflow_steps(job_name: str) -> list[dict[str, object]]:
     """
     job = workflow_job(CI_WORKFLOW, job_name)
     return objects(job.get("steps"), subject=f"{job_name} steps")
-
-
-def job_tolerance_is_acceptable(job: dict[str, object]) -> bool:
-    """Report whether a job's failure tolerance is acceptable for a gate.
-
-    An allow-list of shapes, not a deny-list of spellings: a deny-list would
-    have to enumerate every constant-true expression. A job may omit the key,
-    set an explicit `false`, or consult the matrix, which is how an
-    experimental leg is singled out.
-
-    Returns
-    -------
-    bool
-        True when the job's failure would still fail CI.
-    """
-    if "continue-on-error" not in job:
-        return True
-    tolerance = job["continue-on-error"]
-    if tolerance is False:
-        return True
-    return isinstance(tolerance, str) and "matrix." in tolerance
-
-
-def step_tolerance_is_acceptable(step: dict[str, object]) -> bool:
-    """Report whether a step's failure tolerance is acceptable for a gate.
-
-    Stricter than the job rule. A matrix expression on a job says which leg is
-    experimental; on a required step it would say this gate may fail.
-
-    Returns
-    -------
-    bool
-        True when the step's failure would still fail its job.
-    """
-    return "continue-on-error" not in step or step["continue-on-error"] is False
 
 
 def test_ci_triggers_on_pull_requests() -> None:
@@ -231,6 +200,38 @@ def _every_leg_experimental(document: Workflow) -> None:
         mapping(row, subject="matrix include row")["experimental"] = True
 
 
+def _checker_never_runs(document: Workflow) -> None:
+    """Ask GitHub to parse the gate's script without executing it."""
+    loom_step(document)["shell"] = "bash -n {0}"
+
+
+def _job_default_shell_never_runs(document: Workflow) -> None:
+    """Override the shell for every step of the job."""
+    jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
+    build_test = mapping(jobs.get("build-test"), subject="build-test job")
+    build_test["defaults"] = {"run": {"shell": "bash -n {0}"}}
+
+
+def _workflow_default_shell_never_runs(document: Workflow) -> None:
+    """Override the shell for every step of the workflow."""
+    document["defaults"] = {"run": {"shell": "bash -n {0}"}}
+
+
+def _excluded_only_required_leg(document: Workflow) -> None:
+    """Exclude the one leg that would still fail the job."""
+    jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
+    build_test = mapping(jobs.get("build-test"), subject="build-test job")
+    strategy = mapping(build_test.get("strategy"), subject="build-test strategy")
+    matrix = mapping(strategy.get("matrix"), subject="build-test matrix")
+    included = matrix.get("include")
+    if not isinstance(included, list):
+        msg = "build-test matrix must carry include rows"
+        raise TypeError(msg)
+    for row in included:
+        mapping(row, subject="matrix include row")["experimental"] = True
+    matrix["exclude"] = [{"experimental": False}]
+
+
 _LOOM_MUTATIONS = (
     pytest.param(_removed_loom_step, id="loom-step-removed"),
     pytest.param(_echoed_loom_step, id="loom-step-echoed"),
@@ -241,6 +242,13 @@ _LOOM_MUTATIONS = (
     pytest.param(_tolerated_on_every_leg, id="job-tolerated-every-leg"),
     pytest.param(_split_across_lines, id="loom-step-split-across-lines"),
     pytest.param(_every_leg_experimental, id="every-leg-experimental"),
+    pytest.param(_excluded_only_required_leg, id="excluded-only-required-leg"),
+    pytest.param(_checker_never_runs, id="loom-step-shell-never-runs"),
+    pytest.param(_job_default_shell_never_runs, id="job-default-shell-never-runs"),
+    pytest.param(
+        _workflow_default_shell_never_runs,
+        id="workflow-default-shell-never-runs",
+    ),
 )
 
 

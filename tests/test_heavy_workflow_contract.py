@@ -262,6 +262,22 @@ def _checker_given_no_command(document: Document) -> None:
     step["run"] = f"{run_text(step).split(' -- ')[0]} --"
 
 
+def _checker_shell_never_runs(document: Document) -> None:
+    """Ask GitHub to parse the step's script without executing it."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, LOOM_STEP, subject=HEAVY_JOB)["shell"] = "bash -n {0}"
+
+
+def _job_default_shell_never_runs(document: Document) -> None:
+    """Override the shell for every step of the heavy job."""
+    job(document, HEAVY_JOB)["defaults"] = {"run": {"shell": "bash -n {0}"}}
+
+
+def _workflow_default_shell_never_runs(document: Document) -> None:
+    """Override the shell for every step of the workflow."""
+    document["defaults"] = {"run": {"shell": "bash -n {0}"}}
+
+
 def _bound_overridden_in_command(document: Document) -> None:
     """Shadow the step's pinned bound with a larger command-local value."""
     found = job(document, HEAVY_JOB)
@@ -313,6 +329,12 @@ _MUTATIONS = (
     ),
     pytest.param(_checker_asked_for_help, id="checker-asked-for-help"),
     pytest.param(_checker_given_no_command, id="checker-given-no-command"),
+    pytest.param(_checker_shell_never_runs, id="checker-shell-never-runs"),
+    pytest.param(_job_default_shell_never_runs, id="job-default-shell-never-runs"),
+    pytest.param(
+        _workflow_default_shell_never_runs,
+        id="workflow-default-shell-never-runs",
+    ),
     pytest.param(_bound_overridden_in_command, id="bound-overridden-in-command"),
     pytest.param(_preemption_bound_changed, id="preemption-bound-changed"),
 )

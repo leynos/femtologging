@@ -22,6 +22,7 @@ from tests.heavy_workflow_document import (
     COMPILE_STEP,
     HEAVY_JOB,
     LOOM_STEP,
+    WORKFLOW,
     Job,
     env,
     run_text,
@@ -317,6 +318,48 @@ def preemption_problems(found: Job) -> list[str]:
             )
         ]
     return []
+
+
+def _defaults_shell(container: dict[str, object]) -> object:
+    """Return a workflow or job ``defaults.run.shell`` value, if one is set."""
+    defaults = container.get("defaults")
+    if not isinstance(defaults, dict):
+        return None
+    run = defaults.get("run")
+    if not isinstance(run, dict):
+        return None
+    return run.get("shell")
+
+
+def shell_problems(document: dict[str, object], found: Job) -> list[str]:
+    """Return complaints about overrides of how the execution step runs.
+
+    A ``shell`` template such as ``bash -n {0}`` makes GitHub parse the script
+    without executing it, so the step succeeds while no model runs. The
+    effective shell is the step's own setting, else the job's
+    ``defaults.run.shell``, else the workflow's; all three are refused.
+
+    Parameters
+    ----------
+    document : dict[str, object]
+        The parsed workflow, for the workflow-level defaults.
+    found : Job
+        The parsed heavy job.
+
+    Returns
+    -------
+    list[str]
+        One complaint per scope that overrides the shell.
+    """
+    problems: list[str] = []
+    step = _execution_step(found)
+    if step is not None and "shell" in step:
+        problems.append(f"the {LOOM_STEP!r} step must not override the shell")
+    if _defaults_shell(found) is not None:
+        problems.append(f"the {HEAVY_JOB!r} job must not set defaults.run.shell")
+    if _defaults_shell(document) is not None:
+        problems.append(f"{WORKFLOW} must not set defaults.run.shell")
+    return problems
 
 
 def loom_gate_problems(found: Job) -> list[str]:

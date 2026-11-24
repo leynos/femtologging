@@ -15,12 +15,15 @@ The document accessors live in :mod:`tests.make_contract_helpers`.
 
 from __future__ import annotations
 
-import re
 import shlex
 import typing as typ
 
 import yaml
 
+from tests.ci_gate_scope_contract import (
+    job_tolerance_is_acceptable,
+    step_tolerance_is_acceptable,
+)
 from tests.make_contract_helpers import mapping, repo_root
 
 type Tokens = tuple[str, ...]
@@ -50,95 +53,11 @@ FETCH_STEP: typ.Final = "Fetch locked dependencies"
 #: rules each out; naming them makes the refusal legible to a reader.
 MASK_FRAGMENTS: typ.Final[Tokens] = ("||", "&&", ";", "echo ", "#")
 
+
 #: The only matrix expression a required gate may be conditioned on: a bare
 #: property read. Anything with an operator, such as
 #: `${{ true || matrix.experimental }}`, evaluates to a constant and tolerates
 #: failure on every leg, including the required ones.
-_MATRIX_SELECTOR: typ.Final[re.Pattern[str]] = re.compile(
-    r"^\$\{\{\s*matrix\.(?P<property>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}$"
-)
-
-
-def _matrix_values(job: dict[str, object], property_name: str) -> list[object]:
-    """Return every value the matrix gives ``property_name``.
-
-    Both shapes a matrix may take are read: an axis list and `include` rows.
-    An unrecognised shape yields no values, which the caller treats as a
-    refusal rather than as an acceptable selector.
-
-    Returns
-    -------
-    list[object]
-        The property's values in document order, or an empty list when the
-        matrix does not define it.
-    """
-    strategy = job.get("strategy")
-    if not isinstance(strategy, dict):
-        return []
-    matrix = strategy.get("matrix")
-    if not isinstance(matrix, dict):
-        return []
-    values: list[object] = []
-    axis = matrix.get(property_name)
-    if isinstance(axis, list):
-        values.extend(axis)
-    include = matrix.get("include")
-    if isinstance(include, list):
-        values.extend(
-            row[property_name]
-            for row in include
-            if isinstance(row, dict) and property_name in row
-        )
-    return values
-
-
-def job_tolerance_is_acceptable(job: dict[str, object]) -> bool:
-    """Report whether a job's failure tolerance is acceptable for a gate.
-
-    An allow-list of shapes, not a deny-list of spellings: a deny-list would
-    have to enumerate every constant-true expression. A job may omit the key,
-    set an explicit `false`, or select a leg with a bare matrix property read,
-    which is how an experimental leg is singled out.
-
-    A string containing ``matrix.`` is not enough. GitHub evaluates
-    ``${{ true || matrix.experimental }}`` as logical OR, so it is true on
-    every leg and would tolerate failure everywhere; the whole value must be
-    the bare selector. The selector alone is not enough either: a matrix whose
-    every row sets the property true has no required leg left to fail, so at
-    least one of the property's values must be falsy.
-
-    Returns
-    -------
-    bool
-        True when the job's failure would still fail at least one leg.
-    """
-    if "continue-on-error" not in job:
-        return True
-    tolerance = job["continue-on-error"]
-    if tolerance is False:
-        return True
-    match = _MATRIX_SELECTOR.match(tolerance) if isinstance(tolerance, str) else None
-    if match is None:
-        return False
-    property_name = match.group("property")
-    values = _matrix_values(job, property_name)
-    return bool(values) and any(not value for value in values)
-
-
-def step_tolerance_is_acceptable(step: dict[str, object]) -> bool:
-    """Report whether a step's failure tolerance is acceptable for a gate.
-
-    Stricter than the job rule. A matrix expression on a job says which leg is
-    experimental; on a required step it would say this gate may fail.
-
-    Returns
-    -------
-    bool
-        True when the step's failure would still fail its job.
-    """
-    return "continue-on-error" not in step or step["continue-on-error"] is False
-
-
 def load_ci_workflow() -> Workflow:
     """Return the parsed pull-request workflow.
 
@@ -208,22 +127,64 @@ def _command_words(tokens: Tokens) -> Tokens:
 def _normalize_run(run: str) -> str:
     """Return a shell run value without line continuations or layout.
 
-    An unescaped newline is a command separator, not layout. Collapsing it to a
-    space would let a two-line script — an assignment on one line and the
-    command on the next — read as the single required command, while the shell
-    runs the assignment in a child of its own and Cargo never sees
-    ``--cfg loom``. Such a value is returned unchanged, so the whole-command
-    comparison refuses it.
+    Boundary whitespace is layout: a YAML ``run: |`` scalar keeps its final
+    newline, and that newline does not separate a second command. An internal
+    unescaped newline does: collapsing it to a space would let a two-line
+    script — an assignment on one line and the command on the next — read as
+    the single required command, while the shell runs the assignment in a
+    child of its own and Cargo never sees ``--cfg loom``. Such a value is
+    returned with the newline intact, so the whole-command comparison refuses
+    it.
 
     Returns
     -------
     str
-        The normalised command, or the original value when it contains an
-        unescaped newline.
+        The normalised command, or the boundary-stripped value when it
+        contains an internal unescaped newline.
     """
-    if "\n" in run.replace("\\\n", ""):
-        return run
-    return " ".join(run.replace("\\\n", " ").split())
+    stripped = run.strip()
+    if "\n" in stripped.replace("\\\n", ""):
+        return stripped
+    return " ".join(stripped.replace("\\\n", " ").split())
+
+
+def _defaults_shell(container: dict[str, object]) -> object:
+    """Return a workflow or job ``defaults.run.shell`` value, if one is set."""
+    defaults = container.get("defaults")
+    if not isinstance(defaults, dict):
+        return None
+    run = defaults.get("run")
+    if not isinstance(run, dict):
+        return None
+    return run.get("shell")
+
+
+def _shell_problems(
+    document: Workflow,
+    build_test: dict[str, object],
+    step: dict[str, object],
+) -> list[str]:
+    """Return complaints about overrides of how the gate's command runs.
+
+    A ``shell`` template such as ``bash -n {0}`` makes GitHub parse the script
+    without executing it, so the gate passes while Clippy never runs. The
+    effective shell is the step's own setting, else the job's
+    ``defaults.run.shell``, else the workflow's; all three are held to the
+    default executor by refusing an override at any of them.
+
+    Returns
+    -------
+    list[str]
+        One complaint per scope that overrides the shell.
+    """
+    problems: list[str] = []
+    if "shell" in step:
+        problems.append(f"the {CI_LOOM_CLIPPY_STEP!r} step must not override the shell")
+    if _defaults_shell(build_test) is not None:
+        problems.append(f"the {CI_JOB} job must not set defaults.run.shell")
+    if _defaults_shell(document) is not None:
+        problems.append(f"{CI_WORKFLOW} must not set defaults.run.shell")
+    return problems
 
 
 def _run_problems(step: dict[str, object]) -> list[str]:
@@ -350,4 +311,5 @@ def loom_clippy_problems(document: Workflow) -> list[str]:
         *_gate_problems(build_test, step),
         *_target_problems(step),
         *_order_problems(found_steps),
+        *_shell_problems(document, build_test, step),
     ]
