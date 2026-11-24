@@ -10,6 +10,7 @@ Makefile.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess  # ruff: ignore[suspicious-subprocess-import] contract tests invoke the pinned parser
 import typing as typ
@@ -21,6 +22,9 @@ import yaml.resolver
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+#: A shell assignment name: an identifier followed by `=`.
+_ASSIGNMENT_NAME: typ.Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 MAKEUTIL_COMMAND: typ.Final = ("makeutil", "parse")
 
@@ -263,7 +267,8 @@ def command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
         but assignments.
     """
     for index, token in enumerate(tokens):
-        if "=" not in token.split(" ", 1)[0]:
+        name, separator, _ = token.partition("=")
+        if not separator or not _ASSIGNMENT_NAME.match(name):
             return tokens[index:]
     return ()
 
@@ -288,9 +293,8 @@ def defaults_shell(container: cabc.Mapping[str, object]) -> object:
 def strict_safe_load(source: str) -> object:
     """Load YAML with `safe_load`, refusing any repeated mapping key.
 
-    `safe_load` cannot be told to use a subclass, so the strict constructor is
-    registered on a private subclass and restored afterwards; the global
-    `SafeLoader` is never modified.
+    The strict constructor is registered on a private `SafeLoader` subclass
+    passed explicitly to the loader, so no other YAML consumer sees it.
 
     Returns
     -------
@@ -298,18 +302,9 @@ def strict_safe_load(source: str) -> object:
         The parsed document; the strict constructor raises
         ``ConstructorError`` when a key is repeated.
     """
-    original = yaml.SafeLoader.yaml_constructors[
-        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG
-    ]
-    yaml.SafeLoader.add_constructor(
-        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping
-    )
-    try:
-        return yaml.safe_load(source)
-    finally:
-        yaml.SafeLoader.add_constructor(
-            yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, original
-        )
+    # The loader is a `SafeLoader` subclass: arbitrary objects cannot be
+    # instantiated, only the mapping constructor is stricter.
+    return yaml.load(source, Loader=_StrictLoader)  # ruff: ignore[unsafe-yaml-load]
 
 
 def construct_mapping(
@@ -342,6 +337,10 @@ def construct_mapping(
     )
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """Safe loader whose mappings refuse a repeated key."""
+
+
 class DuplicateKeyError(yaml.constructor.ConstructorError):
     """Report a repeated mapping key and the position of its second use."""
 
@@ -368,3 +367,8 @@ class DuplicateKeyError(yaml.constructor.ConstructorError):
             f"found duplicate key {key!r}",
             key_node.start_mark,
         )
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping
+)
