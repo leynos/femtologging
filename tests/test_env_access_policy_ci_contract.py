@@ -218,18 +218,20 @@ def _workflow_default_shell_never_runs(document: Workflow) -> None:
 
 
 def _excluded_only_required_leg(document: Workflow) -> None:
-    """Exclude the one leg that would still fail the job."""
+    """Make exclusion, not the include rows, remove the required leg.
+
+    `exclude` removes axis combinations before `include` rows are merged, so
+    the matrix is replaced with one axis and one exclusion: the gate has a
+    required leg without the exclusion and none with it.
+    """
     jobs = mapping(document.get("jobs"), subject=f"{CI_WORKFLOW} jobs")
     build_test = mapping(jobs.get("build-test"), subject="build-test job")
-    strategy = mapping(build_test.get("strategy"), subject="build-test strategy")
-    matrix = mapping(strategy.get("matrix"), subject="build-test matrix")
-    included = matrix.get("include")
-    if not isinstance(included, list):
-        msg = "build-test matrix must carry include rows"
-        raise TypeError(msg)
-    for row in included:
-        mapping(row, subject="matrix include row")["experimental"] = True
-    matrix["exclude"] = [{"experimental": False}]
+    build_test["strategy"] = {
+        "matrix": {
+            "experimental": [False, True],
+            "exclude": [{"experimental": False}],
+        }
+    }
 
 
 def _environment(container: dict[str, object], subject: str) -> dict[str, object]:
@@ -338,4 +340,26 @@ def test_a_mixed_hyphenated_matrix_keeps_a_required_leg() -> None:
     }
     assert not job_tolerance_is_acceptable(compound), (
         "a constant-true expression must be refused"
+    )
+
+
+def test_exclusion_alone_can_remove_the_last_required_leg() -> None:
+    """Scenario: `exclude` removes the only required axis combination.
+
+    Invariant: the same tolerance is accepted before the exclusion and refused
+    after it. The axis values are untouched, so only the exclusion changes the
+    verdict; a checker that ignored `exclude` would accept both.
+    """
+    job: dict[str, object] = {
+        "continue-on-error": "${{ matrix.experimental }}",
+        "strategy": {"matrix": {"experimental": [False, True]}},
+    }
+    assert job_tolerance_is_acceptable(job), (
+        "the required axis combination must be accepted before it is excluded"
+    )
+    strategy = typ.cast("dict[str, object]", job["strategy"])
+    matrix = typ.cast("dict[str, object]", strategy["matrix"])
+    matrix["exclude"] = [{"experimental": False}]
+    assert not job_tolerance_is_acceptable(job), (
+        "excluding the required combination must leave no required gate"
     )

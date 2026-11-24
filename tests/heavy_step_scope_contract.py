@@ -41,6 +41,13 @@ _ATTACHED_OPERATORS: typ.Final = re.compile(r"([&;|])")
 _HEAVY_TARGET: tuple[str, ...] = ("--test", "heavy")
 _NO_RUN: str = "--no-run"
 
+#: Shell control operators and the `wait` builtin: a compile step must be one
+#: foreground command whose failure the job sees.
+_CONTROL_TOKENS: tuple[str, ...] = ("&", ";", "|", "&&", "||", "wait")
+
+#: Options that make Cargo print help instead of compiling.
+_EARLY_EXITS: tuple[str, ...] = ("--help", "-h")
+
 
 def run_tokens(step: dict[str, object]) -> tuple[str, ...]:
     """Return the shell command of a step as operator-separated tokens.
@@ -193,6 +200,28 @@ def compile_command_problems(found: Job) -> list[str]:
     if step is None:
         return [f"the job must have a {COMPILE_STEP!r} step"]
     words = command_words(run_tokens(step))
+    return _compile_words_problems(words)
+
+
+def _compile_words_problems(words: tuple[str, ...]) -> list[str]:
+    """Return the complaints about the compile step's command tokens.
+
+    Returns
+    -------
+    list[str]
+        A complaint for a masked or backgrounded command, an early-exit
+        option, a program other than ``cargo test``, a missing heavy target or
+        a missing ``--no-run``.
+    """
+    if any(token in _CONTROL_TOKENS for token in words):
+        return [
+            (
+                f"the {COMPILE_STEP!r} step must run one foreground command "
+                "whose status is not masked"
+            )
+        ]
+    if any(option in _EARLY_EXITS for option in words):
+        return [f"the {COMPILE_STEP!r} step must not ask Cargo for help"]
     if words[:2] != ("cargo", "test"):
         return [
             (
