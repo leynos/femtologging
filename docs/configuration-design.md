@@ -953,6 +953,22 @@ configuration files, as per `logging.config.fileConfig`.
     - The `defaults` dictionary passed to `fileConfig()` will be used to
       substitute `%(key)s` placeholders in the INI file.
 
+    - **Linear Placeholder Scanning:** Placeholder matching is a forward-only
+      scan rather than a backtracking regular expression. For each position,
+      the scanner finds the earliest `%(` opener and the first `)` after it; a
+      candidate is a placeholder only when its name is non-empty and the
+      closer is followed by `s`. A failed candidate is abandoned at its own
+      closer, so malformed input is scanned once. This avoids the quadratic
+      suffix rescanning that an unanchored `%\(([^)]+)\)s` search performed on
+      text containing many unterminated openers.
+
+    - **Raw Parameter Size Limit:** A handler's raw `args` or `kwargs` value
+      is rejected with `ValueError` when it exceeds 65,536 Unicode code
+      points. The check runs before expansion, keeping the scanner's work and
+      the later literal parsing bounded. It applies to the raw option text,
+      not to the expanded result; a separate issue tracks cumulative expansion
+      size.
+
   - **Delegation to** `dictConfig`**:** Finally, the fully formed
     `dictConfig`-compatible dictionary is passed to
     `femtologging.dictConfig()`. This makes `fileConfig` a two-stage process:
