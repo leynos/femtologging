@@ -334,17 +334,15 @@ def dictConfig(
         ``allow_factories`` is ``False``; the message names the rejected
         filter.
 
-    Warns
-    -----
-    Security
-        A ``"()"`` filter entry is trusted-code-equivalent. A dotted string
-        imports modules during resolution and then invokes the resolved
-        callable; a direct callable object is invoked without that resolution
-        step. Both run code chosen by the configuration author, so lower-trust
-        configuration (tenants, HTTP APIs, remote configuration services,
-        writable files) must reject factory entries or pass
-        ``allow_factories=False``; checks after resolution or invocation are
-        too late.
+    Warnings
+    --------
+    A ``"()"`` filter entry is trusted-code-equivalent. A dotted string
+    imports modules during resolution and then invokes the resolved callable;
+    a direct callable object is invoked without that resolution step. Both run
+    code chosen by the configuration author, so lower-trust configuration
+    (tenants, HTTP APIs, remote configuration services, writable files) must
+    reject factory entries or pass ``allow_factories=False``; checks after
+    resolution or invocation are too late.
 
     Notes
     -----
