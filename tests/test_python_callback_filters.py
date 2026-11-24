@@ -332,6 +332,8 @@ def test_documented_callback_enrichment_example_enriches_records(
         "user_id": "42",
         "cache_hit": "False",
     }, f"the documented filter must enrich the record, got {key_values!r}"
+
+
 @pytest.mark.timeout(20)
 def test_clear_filters_runs_a_callback_finalizer_after_releasing_the_lock() -> None:
     """A callback filter finalizer may log to the same logger.
