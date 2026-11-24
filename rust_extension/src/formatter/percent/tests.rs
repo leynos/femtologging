@@ -1,5 +1,7 @@
 //! Tests for percent-style record formatting.
 
+mod performance;
+
 use std::{
     collections::BTreeMap,
     time::{Duration, UNIX_EPOCH},

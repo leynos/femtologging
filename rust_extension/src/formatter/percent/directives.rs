@@ -91,7 +91,84 @@ pub(super) enum Segment {
 /// );
 /// ```
 pub(super) fn compile(format: &str) -> Vec<Segment> {
+    #[cfg(test)]
+    instrumentation::record_compilation();
+
     Compiler::new(format).run()
+}
+
+#[cfg(test)]
+pub(crate) mod instrumentation {
+    //! Test-only counters that observe how much work compilation performs.
+    //!
+    //! The formatter promises that a format is compiled once and that
+    //! compilation is linear in its length, and neither promise is visible in
+    //! rendered output. These counters make the work observable, so a
+    //! regression fails a unit test instead of only a benchmark.
+    //!
+    //! Measurements are thread-local: each test's work belongs to the thread
+    //! that performed it, which keeps the numbers deterministic under parallel
+    //! test execution. The module is absent from production builds, so
+    //! compilation there carries no instrumentation and no synchronisation.
+
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Work recorded on this thread since the last [`reset`].
+        static MEASUREMENTS: Cell<Measurements> = const { Cell::new(Measurements::ZERO) };
+    }
+
+    /// Work observed while compiling format strings on one thread.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub(crate) struct Measurements {
+        /// Compilations started.
+        pub(crate) compilations: usize,
+        /// Fresh closing-parenthesis scans performed.
+        pub(crate) delimiter_searches: usize,
+        /// Bytes examined by those fresh scans.
+        pub(crate) scanned_bytes: usize,
+    }
+
+    impl Measurements {
+        /// A measurement with no work recorded.
+        const ZERO: Self = Self {
+            compilations: 0,
+            delimiter_searches: 0,
+            scanned_bytes: 0,
+        };
+    }
+
+    /// Clear this thread's measurements.
+    pub(crate) fn reset() {
+        MEASUREMENTS.with(|cell| cell.set(Measurements::ZERO));
+    }
+
+    /// Return this thread's measurements since the last reset.
+    pub(crate) fn measurements() -> Measurements {
+        MEASUREMENTS.with(Cell::get)
+    }
+
+    /// Record that one compilation started.
+    pub(crate) fn record_compilation() {
+        update(|measurements| measurements.compilations += 1);
+    }
+
+    /// Record one fresh closing-parenthesis scan of `scanned_bytes` bytes.
+    pub(crate) fn record_delimiter_search(scanned_bytes: usize) {
+        update(|measurements| {
+            measurements.delimiter_searches += 1;
+            measurements.scanned_bytes = measurements.scanned_bytes.saturating_add(scanned_bytes);
+        });
+    }
+
+    /// Apply `change` to this thread's measurements.
+    fn update(change: impl FnOnce(&mut Measurements)) {
+        MEASUREMENTS.with(|cell| {
+            let mut measurements = cell.get();
+            change(&mut measurements);
+            cell.set(measurements);
+        });
+    }
 }
 
 /// Working state for compiling one format string.
@@ -206,7 +283,12 @@ impl ClosingParenthesisSearch {
             return self.close;
         }
 
-        let close = format[from..].find(')').map(|relative| from + relative);
+        let suffix = &format[from..];
+        let close = suffix.find(')').map(|relative| from + relative);
+        #[cfg(test)]
+        instrumentation::record_delimiter_search(
+            close.map_or(suffix.len(), |close| close - from + 1),
+        );
         self.searched_from = Some(from);
         self.close = close;
         close
