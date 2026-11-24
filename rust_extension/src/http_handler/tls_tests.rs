@@ -175,12 +175,43 @@ fn the_production_agent_refuses_an_unknown_certificate() {
     let config = https_config(port);
     let agent = build_agent(config.connect_timeout, config.write_timeout);
 
-    let err = execute_attempt(&config, &agent, "msg=tls", config.write_timeout)
+    // The raw dependency error is inspected here, not logged. The production
+    // warning deliberately reports only a credential-free classification,
+    // which cannot distinguish a certificate refusal from any other I/O
+    // failure; this test's whole point is to make that distinction.
+    let err = agent
+        .get(&config.url)
+        .call()
         .expect_err("the production roots must not accept a throwaway certificate");
 
     assert!(
-        err.to_lowercase().contains("certificate"),
+        err.to_string().to_lowercase().contains("certificate"),
         "the refusal must be the certificate validation, not an unrelated failure: {err}"
     );
     server.join().expect("TLS fixture server should finish");
+}
+
+/// Scenario: the same refusal, sent through the production `execute` path.
+///
+/// Invariant: the caller receives a fixed classification rather than the
+/// dependency's message, and the failed URI is not part of it. ureq wraps a
+/// Rustls handshake refusal as `Io`, so the observed label is the I/O
+/// classification; the raw-error test above proves the cause is certificate
+/// validation, while this test proves the production path reports it safely.
+#[test]
+fn a_refused_certificate_is_reported_without_dependency_text() {
+    let ca = test_ca();
+    let (port, server) = spawn_tls_server(&ca).expect("spawn TLS fixture server");
+    let config = https_config(port);
+    let agent = build_agent(config.connect_timeout, config.write_timeout);
+
+    let err = execute_attempt(&config, &agent, "msg=tls", config.write_timeout)
+        .expect_err("the production roots must not accept a throwaway certificate");
+
+    server.join().expect("TLS fixture server should finish");
+    assert_eq!(err, "transport error (I/O error)");
+    assert!(
+        !err.contains("certificate"),
+        "the classification must not repeat the dependency's message: {err}"
+    );
 }

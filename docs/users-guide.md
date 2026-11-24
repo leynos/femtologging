@@ -808,6 +808,13 @@ socket_handler = (
   answering a POST, and a redirect whose `Location` is missing or not valid
   UTF-8. A fifth redirect is a transport failure, so the record follows the
   normal retry policy.
+- A transport failure logs a fixed classification instead of the HTTP client's
+  own error text, for example `transport error (invalid URL)`,
+  `transport error (DNS lookup failed)`, or `transport error (invalid header)`.
+  The classification never repeats the configured URL's userinfo or query
+  values, a rejected header's value, or a redirect target, so credentials
+  cannot reach the diagnostic output. The endpoint itself is omitted because
+  each handler has exactly one configured URL.
 - Authoritative fields (`name`, `levelname`, `msg`, `created`, `filename`,
   `lineno`, `module`, `thread`, and the optional `threadName`, `exc_info`, and
   `stack_info`) stay at the top level in both JSON and URL-encoded payloads.

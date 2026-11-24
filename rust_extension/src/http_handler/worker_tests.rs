@@ -1,4 +1,5 @@
-//! Unit tests for the HTTP worker's shutdown and drop accounting.
+//! Unit tests for the HTTP worker's shutdown and drop accounting, and for the
+//! credential-free transport classification its retry warning reports.
 //!
 //! Response classification has its own file, `response_classification_tests.rs`,
 //! and request construction has `transport_tests.rs`; neither is repeated here.

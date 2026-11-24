@@ -158,10 +158,10 @@ fn spawn_redirect_chain(
 }
 
 /// Run one attempt against a chain of `redirects` redirects.
-fn execute_redirect_chain(
+pub(super) fn execute_redirect_chain(
     listener: TcpListener,
     redirects: usize,
-) -> Result<ResponseClass, String> {
+) -> Result<ResponseClass, &'static str> {
     let (addr, server, _served) =
         spawn_redirect_chain(listener, redirects, Duration::ZERO).expect("spawn redirect chain");
     let config = post_config(format!("http://{addr}/hop0"), AuthConfig::None, &[]);
@@ -174,7 +174,7 @@ fn execute_redirect_chain(
 /// What one timed attempt against a delayed chain produced.
 struct TimedChain {
     /// The attempt's outcome.
-    result: Result<ResponseClass, String>,
+    result: Result<ResponseClass, &'static str>,
     /// How long the attempt took.
     elapsed: Duration,
     /// How many requests the server read.

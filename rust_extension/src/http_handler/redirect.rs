@@ -39,7 +39,10 @@ pub(super) enum NextHop {
     /// Return the response, whose status the caller classifies.
     Refuse,
     /// End the attempt as a transport error, as ureq 2 did.
-    Failed(String),
+    ///
+    /// The text is application-owned and static so a server-supplied
+    /// `Location` value can never reach the worker's retry warning.
+    Failed(&'static str),
 }
 
 /// One response in a redirect chain, as the redirect rules need to see it.
@@ -76,14 +79,14 @@ pub(super) fn next_hop(attempt: RedirectAttempt<'_>) -> NextHop {
         responses_seen,
     } = attempt;
     if responses_seen >= MAX_RESPONSES {
-        return NextHop::Failed(format!("reached max redirects ({MAX_RESPONSES})"));
+        return NextHop::Failed("reached max redirects");
     }
     let Some(location) = location.and_then(|value| value.to_str().ok()) else {
         return NextHop::Refuse;
     };
     let url = match base.join(location) {
         Ok(url) => url,
-        Err(err) => return NextHop::Failed(format!("invalid redirect location: {err}")),
+        Err(_) => return NextHop::Failed("invalid redirect location"),
     };
     match redirected_method(method, status) {
         Some(method) => NextHop::Follow { url, method },
