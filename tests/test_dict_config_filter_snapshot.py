@@ -172,7 +172,9 @@ def test_declarative_mode_constructs_from_the_entry_snapshot() -> None:
 
     app = get_logger("entry_snapshot_probe")
     app.set_level("DEBUG")
-    assert app.log("INFO", "from snapshot") is not None, (
+    # ERROR is rejected by a captured INFO maximum but accepted by the mutated
+    # ERROR maximum, so it distinguishes the snapshot from a live re-read.
+    assert app.log("ERROR", "from snapshot") is None, (
         "construction must use the INFO level captured during preflight"
     )
 
