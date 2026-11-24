@@ -45,15 +45,59 @@ class _FactoryProbe:
 type _ValueBuilder = cabc.Callable[[_FactoryProbe], object]
 type _EntryBuilder = cabc.Callable[[_FactoryProbe], cabc.Mapping[str, object]]
 
+
+def _counting_function(probe: _FactoryProbe) -> cabc.Callable[..., object]:
+    """Return a function that records any invocation on ``probe``."""
+
+    def _factory(**kwargs: object) -> object:
+        """Record the call and return an accepting filter."""
+        probe.invocations.append(kwargs)
+        return lambda _record: True
+
+    return _factory
+
+
+def _counting_class(probe: _FactoryProbe) -> type:
+    """Return a class whose construction records the invocation."""
+
+    class _CountingFactory:
+        """Record any construction attempt as a factory invocation."""
+
+        def __init__(self, **kwargs: object) -> None:
+            """Record the keyword arguments construction received."""
+            probe.invocations.append(kwargs)
+
+    return _CountingFactory
+
+
+def _counting_filter_class(probe: _FactoryProbe) -> type:
+    """Return a ``logging.Filter`` subclass that records construction."""
+
+    class _CountingFilter(logging.Filter):
+        """Record any construction attempt as a factory invocation."""
+
+        def __init__(self, **kwargs: object) -> None:
+            """Record the keyword arguments construction received."""
+            super().__init__()
+            probe.invocations.append(kwargs)
+
+    return _CountingFilter
+
+
+def _counting_lambda(probe: _FactoryProbe) -> cabc.Callable[..., object]:
+    """Return a lambda that records any invocation on ``probe``."""
+    return lambda **kwargs: probe.invocations.append(kwargs)
+
+
 _FACTORY_VALUE_BUILDERS: tuple[tuple[str, _ValueBuilder], ...] = (
     ("unimported-dotted", lambda _probe: "declarative_guard_missing.missing"),
     ("importable-dotted", lambda _probe: _FACTORY_PATH),
     ("module-dotted", lambda _probe: "tests.python_filter_support"),
-    ("function", lambda _probe: logging.getLevelName),
-    ("class", lambda _probe: logging.Formatter),
-    ("filter-class", lambda _probe: logging.Filter),
+    ("function", _counting_function),
+    ("class", _counting_class),
+    ("filter-class", _counting_filter_class),
     ("callable-instance", lambda probe: probe),
-    ("lambda", lambda _probe: lambda **_kwargs: None),
+    ("lambda", _counting_lambda),
     ("none", lambda _probe: None),
     ("zero", lambda _probe: 0),
     ("false", lambda _probe: False),

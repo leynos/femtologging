@@ -309,9 +309,9 @@ def _build_formatter(fcfg: cabc.Mapping[str, object]) -> object:
 def dictConfig(
     config: cabc.Mapping[str, object], *, allow_factories: bool = True
 ) -> None:
-    # ruff: ignore[docstring-extraneous-exception] ValueError is raised by the
-    # validation and section-processing helpers called below; documenting it
-    # here keeps the public contract accurate.
+    # ruff: ignore[docstring-extraneous-exception] TypeError and ValueError are
+    # raised by the validation and section-processing helpers called directly
+    # below; documenting them here keeps the public contract accurate.
     """Configure logging using a ``dictConfig``-style dictionary.
 
     Parameters
@@ -326,21 +326,29 @@ def dictConfig(
 
     Raises
     ------
+    TypeError
+        If ``allow_factories`` is not a bool, or a configured value has the
+        wrong type for its field.
     ValueError
         If ``config`` is malformed, or if it configures a filter factory while
         ``allow_factories`` is ``False``; the message names the rejected
         filter.
 
+    Warns
+    -----
+    Security
+        A ``"()"`` filter entry is trusted-code-equivalent. A dotted string
+        imports modules during resolution and then invokes the resolved
+        callable; a direct callable object is invoked without that resolution
+        step. Both run code chosen by the configuration author, so lower-trust
+        configuration (tenants, HTTP APIs, remote configuration services,
+        writable files) must reject factory entries or pass
+        ``allow_factories=False``; checks after resolution or invocation are
+        too late.
+
     Notes
     -----
-    **Security:** a ``"()"`` filter entry is trusted-code-equivalent. A dotted
-    string reference imports modules during resolution and then invokes the
-    resolved callable; a direct callable object is invoked without that
-    resolution step. Both run code chosen by the configuration author, so
-    lower-trust configuration (tenants, HTTP APIs, remote configuration
-    services, writable files) must reject factory entries or pass
-    ``allow_factories=False``; checks after resolution or invocation are too
-    late. ``allow_factories=False`` rejects filter factories only and applies no
+    ``allow_factories=False`` rejects filter factories only and applies no
     trust policy to the rest of the document, so callers must validate
     permitted handler classes and destinations separately. It is not a sandbox:
     permitted handlers still write files and open network connections. See

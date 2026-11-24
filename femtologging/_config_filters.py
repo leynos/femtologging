@@ -122,8 +122,10 @@ def build_filter_from_dict(
     resolved callable is invoked with the entry's remaining keys as keyword
     arguments. A direct callable object is invoked without resolution. Both
     forms run code chosen by the configuration author, so the entry is
-    trusted-code-equivalent. A non-string ``level`` or ``name``, or a factory
-    target that is not callable, raises ``TypeError`` from the builder helpers.
+    trusted-code-equivalent; see
+    ``docs/users-guide.md#filter-factory-trust-boundary``. A non-string
+    ``level`` or ``name``, or a factory target that is not callable, raises
+    ``TypeError`` from the builder helpers.
 
     Examples
     --------
