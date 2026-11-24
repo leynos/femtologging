@@ -17,6 +17,7 @@ from tests.feature_lane_step_readers import (
     effective_shell,
     shell_fails_fast,
     tokenize,
+    tokenize_statements,
 )
 
 
@@ -45,10 +46,38 @@ def test_the_errexit_reader_distinguishes_enabling_from_disabling(
     Invariant: only a genuine disabling form is reported. A reader that
     matched the substring ``set`` would flag ``set -e``, which is the opposite
     of the property, and a reader that ignored quoting would flag an argument.
+    A long option such as ``--noprofile`` is one word, so its ``e`` is not the
+    flag.
     """
-    assert [bool(disables_errexit(command)) for command in tokenize(script)] == [
-        expected
-    ], script
+    assert [
+        bool(disables_errexit(statement)) for statement in tokenize_statements(script)
+    ] == [expected], script
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        pytest.param("echo ready; set +e", True, id="after-semicolon"),
+        pytest.param("echo ready && set +e", True, id="after-and"),
+        pytest.param("echo ready || set +e", True, id="after-or"),
+        pytest.param("echo ready | set +e", True, id="after-pipe"),
+        pytest.param("echo 'a; b'", False, id="quoted-semicolon"),
+        pytest.param("echo a > out; set -e", False, id="after-redirection"),
+    ],
+)
+def test_the_statement_reader_finds_a_set_after_a_separator(
+    script: str, *, expected: bool
+) -> None:
+    """Scenario: ``set +e`` follows another command on the same line.
+
+    Invariant: the second command is inspected, so a line whose first word is
+    harmless cannot hide the option change. A separator inside quotes stays
+    part of its word.
+    """
+    assert (
+        any(disables_errexit(statement) for statement in tokenize_statements(script))
+        is expected
+    ), script
 
 
 @pytest.mark.parametrize(
@@ -109,8 +138,11 @@ def test_a_custom_job_shell_default_is_resolved() -> None:
         pytest.param("sh", True, id="built-in-sh"),
         pytest.param("bash -e {0}", True, id="explicit-fail-fast"),
         pytest.param("bash -euo pipefail {0}", True, id="grouped-fail-fast"),
+        pytest.param("bash --noprofile -e {0}", True, id="long-option-then-errexit"),
         pytest.param("bash {0}", False, id="template-without-errexit"),
+        pytest.param("bash --noprofile {0}", False, id="long-option-only"),
         pytest.param("bash -e +e {0}", False, id="later-disabling-wins"),
+        pytest.param("bash {0} -e", False, id="option-after-operand"),
         pytest.param("python {0}", False, id="no-shell-option"),
         pytest.param("bash -e", False, id="no-placeholder"),
     ],

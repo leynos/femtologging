@@ -35,6 +35,7 @@ from tests.feature_lane_step_readers import (
     run_text,
     shell_fails_fast,
     step,
+    tokenize_statements,
 )
 from tests.make_contract_helpers import repo_root, workflow_job
 
@@ -122,8 +123,16 @@ def test_the_script_never_disables_errexit_before_the_driver() -> None:
     fails the step. Without this, ``set +e`` followed by the driver and a
     passing ``pytest`` reports a green step while every selection may have
     failed.
+
+    Each simple command is inspected, not each line: ``echo ready; set +e``
+    is one line whose second command disables the option, and a reader that
+    looked only at the line's first word would accept it.
     """
-    offenders = [command for command in commands() if disables_errexit(command)]
+    offenders = [
+        statement
+        for statement in tokenize_statements(run_text())
+        if disables_errexit(statement)
+    ]
     assert not offenders, (
         f"the {_STEP!r} step must not disable exit-on-error, found {offenders!r}"
     )

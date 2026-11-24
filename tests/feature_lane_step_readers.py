@@ -64,23 +64,78 @@ def run_text() -> str:
     return command.replace("\\\n", " ")
 
 
-def tokenize(script: str) -> list[list[str]]:
-    """Return one script's tokens, one entry per command.
+#: Tokens that separate one shell command from the next. `shlex` keeps a
+#: quoted or escaped copy as part of its word, so `echo "a; b"` stays one
+#: command.
+_SEPARATORS: typ.Final[frozenset[str]] = frozenset({"&&", "||", ";", "|", "&"})
 
-    ``comments=True`` reads a trailing ``#`` as a comment, so a comment
-    containing an apostrophe does not open a quotation the line never closes.
-    Quoted ``#`` characters stay argument content. A comment-only line
-    tokenizes to nothing and is dropped.
+#: Tokens that redirect a command's streams. The command's argument list is
+#: not taken past one, because the names after it belong to the redirection.
+_REDIRECTIONS: typ.Final[frozenset[str]] = frozenset({">", ">>", "<", "<<", ">&"})
+
+
+def _lex(line: str) -> list[str]:
+    """Return one line's shell words, with separators kept as their own tokens.
+
+    ``punctuation_chars`` keeps ``;``, ``&&``, ``||`` and ``|`` as individual
+    tokens, so a command list is visible rather than being one long word list.
+    ``commenters="#"`` reads a trailing ``#`` as a comment, so a comment
+    containing an apostrophe does not open a quotation the line never closes;
+    a quoted ``#`` stays argument content.
 
     Returns
     -------
-        The tokenized commands, in the order the script runs them.
+        The line's words and separator tokens, in order.
     """
-    return [
-        tokens
-        for line in script.splitlines()
-        if (tokens := shlex.split(line, comments=True))
-    ]
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    return list(lexer)
+
+
+def tokenize(script: str) -> list[list[str]]:
+    """Return one script's tokens, one entry per line.
+
+    Separators are kept as their own tokens, so a line written as
+    ``uv run x || true`` is one entry ending in the suppression rather than
+    two commands. That is what lets a contract refuse a suppression suffix;
+    a reader that split on separators would see only ``uv run x`` and accept
+    it.
+
+    Returns
+    -------
+        The tokenized lines, in the order the script runs them.
+    """
+    return [tokens for line in script.splitlines() if (tokens := _lex(line))]
+
+
+def tokenize_statements(script: str) -> list[list[str]]:
+    """Return one script's tokens, one entry per simple command.
+
+    A line may hold several commands separated by ``;``, ``&&``, ``||``,
+    ``|`` or ``&``. Each is returned separately, because a reader that looked
+    only at a line's first word would miss a ``set +e`` written after another
+    command on the same line. A redirection ends the command it belongs to.
+
+    Returns
+    -------
+        The tokenized simple commands, in the order the script runs them.
+    """
+    statements: list[list[str]] = []
+    for tokens in tokenize(script):
+        current: list[str] = []
+        for token in tokens:
+            if token in _SEPARATORS:
+                if current:
+                    statements.append(current)
+                current = []
+            elif token in _REDIRECTIONS:
+                break
+            else:
+                current.append(token)
+        if current:
+            statements.append(current)
+    return statements
 
 
 def commands() -> list[list[str]]:
@@ -129,6 +184,11 @@ def errexit_state(options: cabc.Sequence[str]) -> bool | None:
             if name == "errexit":
                 state = option == "-o"
             continue
+        if option.startswith("--"):
+            # A long option is one word, not a group of short ones, so none
+            # of its letters is the `e` flag. `--noprofile` does not enable
+            # exit-on-error.
+            continue
         if option.startswith(("-", "+")) and "e" in option[1:]:
             state = option.startswith("-")
     return state
@@ -169,7 +229,10 @@ def shell_fails_fast(shell: object) -> bool:
     words = shlex.split(str(shell))
     if "{0}" not in words:
         return False
-    return errexit_state(words[1:]) is True
+    # Everything after the script operand is an argument to the script, not a
+    # shell option, so `bash {0} -e` runs without exit-on-error.
+    operand = words.index("{0}")
+    return errexit_state(words[1:operand]) is True
 
 
 def declared_shell(mapping: cabc.Mapping[str, object]) -> object:
