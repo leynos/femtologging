@@ -20,7 +20,11 @@ import shlex
 import tomllib
 import typing as typ
 
-from tests.make_contract_helpers import repo_root, sole_workflow_step
+from tests.make_contract_helpers import (
+    repo_root,
+    sole_workflow_step,
+    workflow_job,
+)
 
 _WORKFLOW: typ.Final = ".github/workflows/heavy-tests.yml"
 _JOB: typ.Final = "heavy"
@@ -107,16 +111,46 @@ def test_the_matrix_runs_through_the_python_driver() -> None:
     """Scenario: the lane is asked what runs the feature matrix.
 
     Invariant: the step invokes ``scripts/run_cargo_feature_tests.py`` under
-    ``uv run --script`` exactly once. Cargo itself must not be looped over
-    inline: a shell loop reports only its last command's status.
+    ``uv run --script`` exactly once, and that invocation is the whole
+    command. Cargo itself must not be looped over inline: a shell loop reports
+    only its last command's status. The whole-command check is what refuses a
+    suppression suffix such as ``|| true``, which would otherwise pass every
+    prefix assertion while discarding the driver's verdict.
     """
     drivers = [
         command
         for command in _commands()
         if command[:4] == ["uv", "run", "--script", _RUNNER]
     ]
-    assert len(drivers) == 1, (
-        f"the {_STEP!r} step must run {_RUNNER} once, found {drivers!r}"
+    assert drivers == [["uv", "run", "--script", _RUNNER]], (
+        f"the {_STEP!r} step must run {_RUNNER} once as the whole command, "
+        f"found {drivers!r}"
+    )
+
+
+def test_the_driver_failure_cannot_be_suppressed() -> None:
+    """Scenario: a selection fails and the step swallows the verdict.
+
+    Invariant: the step carries no ``if``, neither the step nor the job
+    tolerates its own failure, and the shell running it exits on error.
+    ``|| true`` is refused by requiring the driver to be the whole command;
+    these rules close the surrounding ways to lose the same failure.
+    """
+    step = _step()
+    assert "if" not in step, f"the {_STEP!r} step must run unconditionally"
+    assert step.get("continue-on-error") in {None, False}, (
+        f"the {_STEP!r} step must not tolerate its own failure"
+    )
+    job = workflow_job(_WORKFLOW, _JOB)
+    assert job.get("continue-on-error") in {None, False}, (
+        f"the {_JOB!r} job must not tolerate its own failure"
+    )
+    shell = step.get("shell")
+    # GitHub's default shell is `bash -e`, so an absent key is already
+    # error-exiting. The built-in `bash` and `sh` names also run with `-e`;
+    # a custom template has to say so itself.
+    assert shell is None or shell in {"bash", "sh"} or "-e" in str(shell), (
+        f"the {_STEP!r} step's shell must exit on error, saw {shell!r}"
     )
 
 
