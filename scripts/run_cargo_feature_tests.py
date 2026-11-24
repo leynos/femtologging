@@ -142,12 +142,20 @@ def run_feature_sets(plan: FeatureTestPlan, run: Runner = run_cargo) -> int:
     Returns
     -------
         The failing feature set's exit code, or 0 when every set passes. An
-        empty set list returns 2 rather than reporting a clean run it never
-        made.
+        empty set list or an empty harness selection returns 2 rather than
+        reporting a clean run that proved nothing.
     """
     if not plan.feature_sets:
         print(
             "no feature sets requested; refusing to report success",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
+    if not plan.test_args:
+        print(
+            "no harness arguments requested; refusing to run the ordinary suite "
+            "in place of the ignored one",
             file=sys.stderr,
             flush=True,
         )
