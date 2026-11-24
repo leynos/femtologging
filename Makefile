@@ -1,6 +1,7 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
         lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
-        check-fmt markdownlint tools nixie spelling spelling-helper-test \
+        check-fmt markdownlint tools nixie spelling spelling-config spelling-check \
+        spelling-integration-test \
         check-lock check-api-boundary test typecheck makeutil skylos skylos-allow \
         install-build-tools check-build-tools
 
@@ -30,10 +31,22 @@ MDTABLEFIX ?= mdtablefix
 MDTABLEFIX_SELECT = --git --include-untracked
 MDTABLEFIX_RULES = --wrap --renumber --breaks --ellipsis --fences
 NIXIE ?= nixie
-# Single source of truth for the typos version, keeping the Makefile and any
-# CI that shells out to this target from drifting apart.
-TYPOS_VERSION ?= 1.48.0
-TYPOS ?= $(UV_ENV) uv tool run typos@$(TYPOS_VERSION)
+# Pin the builder release, not the dictionary it fetches: the builder is
+# reviewed code, while the shared en-GB-oxendict dictionary stays live so a
+# dictionary fix reaches every consumer without a repin. The gate writes
+# typos.toml, then runs the pinned Typos binary and the shared phrase checks.
+#
+# The builder requires Python 3.14 or newer, so its interpreter is pinned here
+# as well. A hosted suite job exports `UV_PYTHON` for its own lane, and an
+# explicit `--python` beats that variable: without the pin the 3.12 and 3.13
+# lanes hand `uvx` an interpreter the builder refuses, and the spelling gate
+# fails on every one of their runs regardless of the repository's spelling.
+TYPOS_CONFIG_BUILDER ?= uvx --python 3.14 --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" typos-config-builder
+# The gate checks the Git index, so Markdown that is new and still unstaged has
+# to be checked separately. Running Typos from the same pinned release means
+# both stages use the identical spelling rules; pinning a Typos version here
+# instead would let the two stages disagree.
+TYPOS ?= uvx --quiet --python 3.14 --from "git+https://github.com/leynos/typos-config-builder.git@v0.1.3" typos
 WHITAKER ?= whitaker
 CARGO_BUILD_ENV ?= PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0
 TEST_THREADS ?= 1
@@ -244,10 +257,14 @@ lint-lanes-test: ## Unit-test the Rust lint lane driver
 	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
 		--target-version py313 $(LINT_LANES_SCRIPT) \
 		scripts/tests/test_lint_rust_lanes.py scripts/tests/conftest.py
+	# The driver itself is collected too: its docstring examples are the only
+	# executable record of how a lane selection resolves, and `--doctest-modules`
+	# is what turns them from comments into checks.
 	@LINT_LANES_TEST=1 PYTHONPATH=scripts $(UV_ENV) uv run --no-project \
 		--python 3.13 --with pytest==9.0.2 --with cmd-mox==0.2.0 \
 		--with cyclopts --with plumbum --with hypothesis==6.167.1 \
 		python -m pytest scripts/tests/test_lint_rust_lanes.py \
+		$(LINT_LANES_SCRIPT) --doctest-modules \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 
 LOOM_RUNNER_SCRIPT ?= scripts/run_loom_models.py
@@ -294,27 +311,70 @@ markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spellin
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(MDLINT) --
 
-spelling: spelling-helper-test ## Enforce en-GB-oxendict spelling in Markdown prose
-	@$(UV_ENV) uv run scripts/generate_typos_config.py
-	@git ls-files -z --cached --others --exclude-standard '*.md' | \
-		xargs -0 -r env $(UV_ENV) uv tool run typos@$(TYPOS_VERSION) \
-		--config typos.toml --force-exclude
+SPELLING_PHRASE_SCAN ?= $(TYPOS_CONFIG_BUILDER) check-phrases
 
-spelling-helper-test: ## Validate the shared spelling-policy integration
-	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
-		--target-version py313 --check scripts/generate_typos_config.py \
-		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
-		scripts/tests/test_typos_rollout.py
-	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
-		--target-version py313 scripts/generate_typos_config.py \
-		scripts/typos_rollout.py scripts/typos_rollout_cache.py \
-		scripts/tests/test_typos_rollout.py
-	@PYTHONPATH=scripts $(UV_ENV) uv run --no-project --python 3.13 \
-		--with pytest==9.0.2 --with pytest-cov==7.0.0 \
-		python -m pytest scripts/tests/test_typos_rollout.py \
-		-c /dev/null --rootdir=. -p no:cacheprovider \
-		--cov=generate_typos_config --cov=typos_rollout \
-		--cov=typos_rollout_cache --cov-fail-under=90
+spelling-config: ## Regenerate typos.toml from the live shared dictionary
+	# The write path, named for what it does: it refreshes the shared dictionary
+	# from the network and rewrites the tracked `typos.toml`. Run it after
+	# changing `typos.local.toml` or after the shared dictionary moves, then
+	# review and commit the regenerated file.
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) gate
+
+spelling-check: ## Report spelling drift without writing typos.toml
+	# The read-only counterpart. It fails when the committed `typos.toml` no
+	# longer matches the live shared dictionary instead of rewriting it.
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) --check gate
+
+spelling: ## Enforce en-GB-oxendict spelling and shared phrase corrections
+	# `make spelling` regenerates `typos.toml` and then checks the index. The
+	# write is deliberate: a stale configuration is repaired here so the check
+	# that follows runs against the current dictionary. `make spelling-check`
+	# reports the drift without writing; `make spelling-config` performs only
+	# the write. The split is documented in the developers guide.
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) gate
+	# The gate enumerates the Git index, so a new Markdown file would pass here
+	# and fail once it is committed. The gate has just regenerated `typos.toml`,
+	# so the same pinned Typos binary checks the remaining files with the same
+	# configuration. `--force-exclude` keeps that configuration's exclusions in
+	# force: Typos checks an explicitly named path even when the policy excludes
+	# it, so an untracked file under `node_modules` would otherwise fail the
+	# target although the gate ignores it. `env` passes the uv cache settings
+	# through `xargs`, which would otherwise read them as the command to run.
+	git ls-files -z --others --exclude-standard '*.md' | \
+		xargs -0 -r env $(UV_ENV) $(TYPOS) \
+			--config typos.toml --force-exclude --
+	# Typos tokenizes on punctuation, so it never sees a hyphenated prohibited
+	# phrase; the shared phrase corrections are the gate's other check, and that
+	# check also enumerates the index. The same configuration is therefore used
+	# to run it over the untracked Markdown as well, by adding those files to a
+	# throwaway index: the gate has already phrase-checked the tracked text, so
+	# an empty index is enough, and an intent-to-add entry is read from the
+	# worktree. The trap removes the index file without disturbing the exit
+	# statuses, so a finding still fails the target and an empty untracked list
+	# still runs the phrase check.
+	@spelling_index=$$(mktemp) && trap 'rm -f "$$spelling_index"' EXIT; \
+		GIT_INDEX_FILE="$$spelling_index" git read-tree --empty && \
+		{ git ls-files -z --others --exclude-standard '*.md' | \
+			xargs -0 -r env GIT_INDEX_FILE="$$spelling_index" \
+				git add --intent-to-add -- ; } && \
+		$(UV_ENV) GIT_INDEX_FILE="$$spelling_index" $(SPELLING_PHRASE_SCAN)
+
+SPELLING_INTEGRATION_ENV ?= FEMTOLOGGING_SPELLING_INTEGRATION=1
+
+spelling-integration-test: ## Exercise the pinned spelling builder end to end
+	# The end-to-end tests resolve the pinned builder from its Git tag, so they
+	# need the network on a cold cache and stay out of the ordinary suite.
+	# Provisioning the pin first makes a missing network this target's failure
+	# rather than a contributor's, and CI runs this after `make spelling`, where
+	# the cache is already warm.
+	@$(UV_ENV) $(TYPOS_CONFIG_BUILDER) --help > /dev/null
+	# `--noconftest` keeps the suite's shared conftest out of this run: it
+	# imports the compiled extension, which this target deliberately does not
+	# require, and none of these tests ask for a fixture it defines.
+	@$(SPELLING_INTEGRATION_ENV) PYTHONPATH=. $(UV_ENV) uv run --no-project \
+		--python 3.13 --with pytest==9.0.2 --with pytest-timeout==2.4.0 \
+		--with pyyaml python -m pytest tests/test_spelling_gate_end_to_end.py \
+		-c /dev/null --rootdir=. --noconftest -p no:cacheprovider
 
 nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
@@ -345,8 +405,7 @@ typecheck: check-build-tools build ## Static type analysis
 	# ty 0.0.75 runs outside the project venv, so point it at the interpreter
 	# that has the compiled extension installed; it does not reliably apply the
 	# equivalent `[tool.ty.environment]` settings.
-	# The spelling-policy helpers import siblings with PYTHONPATH=scripts.
-	$(TY) check --python .venv --extra-search-path scripts
+	$(TY) check --python .venv
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \

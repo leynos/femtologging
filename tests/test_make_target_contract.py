@@ -10,6 +10,7 @@ from tests.make_contract_helpers import (
     repo_root,
     sole_recipe_rule,
     text_sequence,
+    variable_tokens,
 )
 
 if typ.TYPE_CHECKING:
@@ -17,12 +18,6 @@ if typ.TYPE_CHECKING:
 
 type Tokens = tuple[str, ...]
 
-_SPELLING_SOURCES: Tokens = (
-    "scripts/generate_typos_config.py",
-    "scripts/typos_rollout.py",
-    "scripts/typos_rollout_cache.py",
-    "scripts/tests/test_typos_rollout.py",
-)
 _MARKDOWN_FILES: Tokens = (
     "git",
     "ls-files",
@@ -36,13 +31,53 @@ _MARKDOWN_FILES: Tokens = (
     "-0",
     "-r",
 )
+
+_UNTRACKED_MARKDOWN_FILES: Tokens = (
+    "git",
+    "ls-files",
+    "-z",
+    "--others",
+    "--exclude-standard",
+    "*.md",
+    "|",
+    "xargs",
+    "-0",
+    "-r",
+)
+
+#: The three commands `spelling` must run, in order: the builder gate, the
+#: same pinned release's Typos binary over the Markdown the gate cannot see,
+#: and the gate's phrase check over the same files through a throwaway index.
+#: The phrase check reads an index, and Typos cannot express the shared phrase
+#: corrections, so an intent-to-add entry is the only way to show it a file
+#: that is not staged without disturbing the real index.
 _SPELLING_COMMANDS: tuple[Tokens, ...] = (
-    ("@$(UV_ENV)", "uv", "run", "scripts/generate_typos_config.py"),
+    ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
     (
-        "@git",
+        *_UNTRACKED_MARKDOWN_FILES,
+        "env",
+        "$(UV_ENV)",
+        "$(TYPOS)",
+        "--config",
+        "typos.toml",
+        "--force-exclude",
+        "--",
+    ),
+    (
+        "@spelling_index=$$(mktemp)",
+        "&&",
+        "trap",
+        'rm -f "$$spelling_index"',
+        "EXIT;",
+        "GIT_INDEX_FILE=$$spelling_index",
+        "git",
+        "read-tree",
+        "--empty",
+        "&&",
+        "{",
+        "git",
         "ls-files",
         "-z",
-        "--cached",
         "--others",
         "--exclude-standard",
         "*.md",
@@ -51,16 +86,52 @@ _SPELLING_COMMANDS: tuple[Tokens, ...] = (
         "-0",
         "-r",
         "env",
+        "GIT_INDEX_FILE=$$spelling_index",
+        "git",
+        "add",
+        "--intent-to-add",
+        "--",
+        ";",
+        "}",
+        "&&",
         "$(UV_ENV)",
-        "uv",
-        "tool",
-        "run",
-        "typos@$(TYPOS_VERSION)",
-        "--config",
-        "typos.toml",
-        "--force-exclude",
+        "GIT_INDEX_FILE=$$spelling_index",
+        "$(SPELLING_PHRASE_SCAN)",
     ),
 )
+
+#: The two commands `spelling-integration-test` must run, in order.
+_SPELLING_INTEGRATION_COMMANDS: tuple[Tokens, ...] = (
+    ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "--help", ">", "/dev/null"),
+    (
+        "@$(SPELLING_INTEGRATION_ENV)",
+        "PYTHONPATH=.",
+        "$(UV_ENV)",
+        "uv",
+        "run",
+        "--no-project",
+        "--python",
+        "3.13",
+        "--with",
+        "pytest==9.0.2",
+        "--with",
+        "pytest-timeout==2.4.0",
+        "--with",
+        "pyyaml",
+        "python",
+        "-m",
+        "pytest",
+        "tests/test_spelling_gate_end_to_end.py",
+        "-c",
+        "/dev/null",
+        "--rootdir=.",
+        "--noconftest",
+        "-p",
+        "no:cacheprovider",
+    ),
+)
+
+
 _CHECK_API_BOUNDARY_COMMANDS: tuple[Tokens, ...] = (
     (
         "$(CARGO_BUILD_ENV)",
@@ -72,59 +143,6 @@ _CHECK_API_BOUNDARY_COMMANDS: tuple[Tokens, ...] = (
         "-o",
         "addopts=",
         "tests/test_release_api_boundary.py",
-    ),
-)
-_SPELLING_HELPER_COMMANDS: tuple[Tokens, ...] = (
-    (
-        "@$(UV_ENV)",
-        "uv",
-        "tool",
-        "run",
-        "ruff@$(RUFF_VERSION)",
-        "format",
-        "--isolated",
-        "--target-version",
-        "py313",
-        "--check",
-        *_SPELLING_SOURCES,
-    ),
-    (
-        "@$(UV_ENV)",
-        "uv",
-        "tool",
-        "run",
-        "ruff@$(RUFF_VERSION)",
-        "check",
-        "--isolated",
-        "--target-version",
-        "py313",
-        *_SPELLING_SOURCES,
-    ),
-    (
-        "@PYTHONPATH=scripts",
-        "$(UV_ENV)",
-        "uv",
-        "run",
-        "--no-project",
-        "--python",
-        "3.13",
-        "--with",
-        "pytest==9.0.2",
-        "--with",
-        "pytest-cov==7.0.0",
-        "python",
-        "-m",
-        "pytest",
-        "scripts/tests/test_typos_rollout.py",
-        "-c",
-        "/dev/null",
-        "--rootdir=.",
-        "-p",
-        "no:cacheprovider",
-        "--cov=generate_typos_config",
-        "--cov=typos_rollout",
-        "--cov=typos_rollout_cache",
-        "--cov-fail-under=90",
     ),
 )
 
@@ -169,9 +187,9 @@ def test_typecheck_recipe_uses_the_project_extension_environment() -> None:
         "typecheck must check the build tools, then build the extension, "
         "before static analysis"
     )
-    assert _commands("typecheck") == (
-        ("$(TY)", "check", "--python", ".venv", "--extra-search-path", "scripts"),
-    ), "typecheck must preserve its complete ty invocation"
+    assert _commands("typecheck") == (("$(TY)", "check", "--python", ".venv"),), (
+        "typecheck must preserve its complete ty invocation"
+    )
 
 
 def test_check_api_boundary_builds_then_runs_the_boundary_suite() -> None:
@@ -205,21 +223,86 @@ def test_markdownlint_recipe_requires_spelling_and_scans_repository_markdown() -
     )
 
 
-def test_spelling_recipe_generates_policy_and_runs_the_pinned_checker() -> None:
-    """`spelling` must validate helpers, regenerate policy, and run pinned typos."""
-    assert _prerequisites("spelling") == ("spelling-helper-test",), (
-        "spelling must validate policy helpers before regenerating typos.toml"
+def test_spelling_recipe_runs_the_pinned_config_builder_gate() -> None:
+    """`spelling` must gate the index, then check unstaged files and phrases."""
+    assert variable_tokens("TYPOS_CONFIG_BUILDER") == (
+        "uvx",
+        "--python",
+        "3.14",
+        "--from",
+        "git+https://github.com/leynos/typos-config-builder.git@v0.1.3",
+        "typos-config-builder",
+    ), (
+        "the builder must stay pinned to the reviewed release, on an "
+        "interpreter it accepts: it declares Python >= 3.14, while a hosted "
+        "suite job exports UV_PYTHON for its own lane"
+    )
+    assert variable_tokens("TYPOS") == (
+        "uvx",
+        "--quiet",
+        "--python",
+        "3.14",
+        "--from",
+        "git+https://github.com/leynos/typos-config-builder.git@v0.1.3",
+        "typos",
+    ), (
+        "the unstaged-file stage must run the Typos binary the builder pins, "
+        "from the same release, so both stages apply identical spelling rules"
+    )
+    assert variable_tokens("SPELLING_PHRASE_SCAN") == (
+        "$(TYPOS_CONFIG_BUILDER)",
+        "check-phrases",
+    ), (
+        "the phrase stage must ask the builder's own check, so the forbidden "
+        "phrases and their corrections come from the same shared table"
+    )
+    assert not _prerequisites("spelling"), (
+        "the gate owns dictionary refresh, generation and checking"
     )
     assert _commands("spelling") == _SPELLING_COMMANDS, (
-        "spelling must preserve its generator and pinned typos invocations"
+        "spelling must run the builder gate, then check the Markdown the gate "
+        "cannot see: new files that are not yet staged, with their file policy "
+        "still in force, and finally the phrase check over those files"
     )
 
 
-def test_spelling_helper_recipe_checks_format_lint_and_coverage() -> None:
-    """`spelling-helper-test` must validate its helpers before policy generation."""
-    assert not _prerequisites("spelling-helper-test"), (
-        "spelling helper validation must not depend on generated policy output"
+def test_spelling_config_target_is_the_only_write_path() -> None:
+    """`spelling-config` regenerates the file; `spelling-check` must not."""
+    assert _commands("spelling-config") == (
+        ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "gate"),
+    ), "the write path must be the builder gate, and nothing else"
+    assert _commands("spelling-check") == (
+        ("@$(UV_ENV)", "$(TYPOS_CONFIG_BUILDER)", "--check", "gate"),
+    ), (
+        "the read-only path must pass the builder-wide --check option before "
+        "the gate subcommand"
     )
-    assert _commands("spelling-helper-test") == _SPELLING_HELPER_COMMANDS, (
-        "spelling helper validation must retain all three complete commands"
+    assert not _prerequisites("spelling-config"), (
+        "regeneration must not depend on a check that would run first"
     )
+    assert not _prerequisites("spelling-check"), (
+        "the drift check must not regenerate anything on the way in"
+    )
+
+
+def test_the_phony_list_declares_the_new_spelling_targets() -> None:
+    """Both new targets must be phony, or a file of the same name shadows them."""
+    lines = (repo_root() / "Makefile").read_text("utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(".PHONY:"))
+    # The list is continued across lines; collect it until a line without the
+    # continuation backslash.
+    parts: list[str] = []
+    for line in lines[start:]:
+        parts.append(line)
+        if not line.rstrip().endswith("\\"):
+            break
+    phony = " ".join(parts)
+    assert "spelling-config" in phony, phony
+    assert "spelling-check" in phony, phony
+
+
+def test_spelling_integration_target_provisions_the_pinned_builder() -> None:
+    """The end-to-end target warms the pin and sets its integration flag."""
+    assert (
+        _commands("spelling-integration-test")[:2] == _SPELLING_INTEGRATION_COMMANDS
+    ), "the integration target must provision the pin, then run its tests"

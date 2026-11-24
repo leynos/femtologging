@@ -35,7 +35,8 @@ consistent, and easy to maintain across projects.
 - Company names are treated as collective nouns: "df12 Productions are
   releasing an update".
 - Avoid first and second person personal pronouns outside the `README.md`
-  file.
+  file and the generated `typos-config-builder` spelling block in `AGENTS.md`,
+  which is copied verbatim from the pinned release and must stay unedited.
 
 ## Headings
 

@@ -1235,7 +1235,7 @@ mind:
   helpful for identifying and running specific failing cases with
   `cargo test test_function_name::case_N`. Some IDEs or debuggers might require
   specific configurations or might not fully support stepping through the
-  macro-generated code as seamlessly as hand-written code, though support is
+  macro-generated code as seamlessly as handwritten code, though support is
   improving.
 - **Static Nature of Test Cases:** Test cases (e.g., from `#[case]` or
   `#[files]`) are defined and discovered at compile time.7 This means the
