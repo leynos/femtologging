@@ -20,11 +20,17 @@ import shlex
 import tomllib
 import typing as typ
 
+import pytest
+import yaml
+
 from tests.make_contract_helpers import (
     repo_root,
     sole_workflow_step,
     workflow_job,
 )
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 _WORKFLOW: typ.Final = ".github/workflows/heavy-tests.yml"
 _JOB: typ.Final = "heavy"
@@ -86,6 +92,25 @@ def _run_text() -> str:
     return command.replace("\\\n", " ")
 
 
+def _tokenize(script: str) -> list[list[str]]:
+    """Return one script's tokens, one entry per command.
+
+    ``comments=True`` reads a trailing ``#`` as a comment, so a comment
+    containing an apostrophe does not open a quotation the line never closes.
+    Quoted ``#`` characters stay argument content. A comment-only line
+    tokenizes to nothing and is dropped.
+
+    Returns
+    -------
+        The tokenized commands, in the order the script runs them.
+    """
+    return [
+        tokens
+        for line in script.splitlines()
+        if (tokens := shlex.split(line, comments=True))
+    ]
+
+
 def _commands() -> list[list[str]]:
     """Return the step's shell script tokens, one entry per command.
 
@@ -93,7 +118,7 @@ def _commands() -> list[list[str]]:
     -------
         The tokenized commands, in the order the step runs them.
     """
-    return [shlex.split(line) for line in _run_text().splitlines() if line.strip()]
+    return _tokenize(_run_text())
 
 
 def _environment() -> dict[str, object]:
@@ -128,6 +153,56 @@ def test_the_matrix_runs_through_the_python_driver() -> None:
     )
 
 
+def _declared_shell(mapping: cabc.Mapping[str, object]) -> object:
+    """Return one mapping's ``defaults.run.shell``, or ``None`` when absent.
+
+    The parameter is a ``Mapping`` rather than a ``dict``, which is invariant
+    in its value type: the parsed workflow's nested ``dict[str, Any]`` is not
+    a ``dict[str, object]``, and the narrower annotation rejects a real
+    workflow even though every value it reads is typed.
+
+    Returns
+    -------
+        The declared shell template, or ``None``.
+    """
+    defaults = mapping.get("defaults")
+    if not isinstance(defaults, dict):
+        return None
+    run = defaults.get("run")
+    if not isinstance(run, dict):
+        return None
+    return run.get("shell")
+
+
+def _effective_shell() -> object:
+    """Return the shell the step actually runs under.
+
+    GitHub resolves ``shell`` from the step, then the job's
+    ``defaults.run.shell``, then the workflow's, then the implicit default for
+    the runner's platform. Reading only the step would accept an absent key
+    while a job-level template replaced the fail-fast default.
+
+    Returns
+    -------
+        The effective shell template, or ``None`` for the built-in default.
+
+    Raises
+    ------
+    TypeError
+        If the workflow does not parse to a mapping.
+    """
+    document = yaml.safe_load((repo_root() / _WORKFLOW).read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        message = f"{_WORKFLOW} must parse to a mapping"
+        raise TypeError(message)
+    job = workflow_job(_WORKFLOW, _JOB)
+    return (
+        _step().get("shell")
+        or _declared_shell(job)
+        or _declared_shell(typ.cast("dict[str, object]", document))
+    )
+
+
 def test_the_driver_failure_cannot_be_suppressed() -> None:
     """Scenario: a selection fails and the step swallows the verdict.
 
@@ -135,6 +210,11 @@ def test_the_driver_failure_cannot_be_suppressed() -> None:
     tolerates its own failure, and the shell running it exits on error.
     ``|| true`` is refused by requiring the driver to be the whole command;
     these rules close the surrounding ways to lose the same failure.
+
+    The shell is resolved through the step, the job and the workflow, because
+    a ``defaults.run.shell`` template such as ``bash {0}`` replaces the
+    built-in ``bash -e {0}`` and an absent step-level key would otherwise read
+    as the safe default.
     """
     step = _step()
     assert "if" not in step, f"the {_STEP!r} step must run unconditionally"
@@ -145,12 +225,12 @@ def test_the_driver_failure_cannot_be_suppressed() -> None:
     assert job.get("continue-on-error") in {None, False}, (
         f"the {_JOB!r} job must not tolerate its own failure"
     )
-    shell = step.get("shell")
-    # GitHub's default shell is `bash -e`, so an absent key is already
-    # error-exiting. The built-in `bash` and `sh` names also run with `-e`;
-    # a custom template has to say so itself.
+    shell = _effective_shell()
+    # An absent shell means GitHub's built-in `bash -e {0}` on Linux, and the
+    # built-in `bash` and `sh` names also run with `-e`. A custom template has
+    # to say so itself.
     assert shell is None or shell in {"bash", "sh"} or "-e" in str(shell), (
-        f"the {_STEP!r} step's shell must exit on error, saw {shell!r}"
+        f"the {_STEP!r} step's effective shell must exit on error, saw {shell!r}"
     )
 
 
@@ -268,3 +348,53 @@ def test_the_driver_exists() -> None:
     Invariant: the driver file exists in the repository.
     """
     assert (repo_root() / _RUNNER).is_file(), f"{_RUNNER} must exist"
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"),
+    [
+        pytest.param(
+            "# Check the driver's result\nuv run --script x.py",
+            [["uv", "run", "--script", "x.py"]],
+            id="comment-apostrophe",
+        ),
+        pytest.param(
+            "uv run --script x.py  # trailing note",
+            [["uv", "run", "--script", "x.py"]],
+            id="trailing-comment",
+        ),
+        pytest.param(
+            'echo "a # b"',
+            [["echo", "a # b"]],
+            id="quoted-hash",
+        ),
+        pytest.param("# only a comment", [], id="comment-only"),
+    ],
+)
+def test_the_reader_ignores_shell_comments(
+    script: str, expected: list[list[str]]
+) -> None:
+    """Scenario: the step gains a comment, with or without an apostrophe.
+
+    Invariant: comments are not read as syntax, and a quoted ``#`` stays
+    argument content. Without comment handling, ``shlex.split`` raises on the
+    apostrophe and a comment-only workflow edit breaks the contract.
+    """
+    assert _tokenize(script) == expected, script
+
+
+def test_a_custom_job_shell_default_is_resolved() -> None:
+    """Scenario: the job declares a shell template that does not fail fast.
+
+    Invariant: the resolver reports the job's template rather than the absent
+    step-level key, so ``bash {0}`` cannot pass as the safe built-in default.
+    """
+    assert _effective_shell() is None, (
+        "the committed workflow must run under the built-in fail-fast shell"
+    )
+    job = {"defaults": {"run": {"shell": "bash {0}"}}}
+    assert _declared_shell(job) == "bash {0}", "a job-level shell default must be read"
+    workflow = {"defaults": {"run": {"shell": "python {0}"}}}
+    assert _declared_shell(workflow) == "python {0}", (
+        "a workflow-level shell default must be read"
+    )
