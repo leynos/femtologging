@@ -62,13 +62,52 @@ _PLACEHOLDER_CASES = [
     ),
 ]
 
-# Each builder constructs one input shape whose repeated unit stays well below
-# the handler parameter limit at the largest tested size.
+
+def _unterminated_openers(size: int) -> str:
+    """Return *size* ``%(`` openers with no closer at all."""
+    return "%(" * size
+
+
+def _failed_closers(size: int) -> str:
+    """Return *size* ``%(a)`` candidates whose closer is not followed by ``s``."""
+    return "%(a)" * size
+
+
+def _nested_openers(size: int) -> str:
+    """Return *size* nested openers resolved by one trailing ``)s``."""
+    return "%(x" * size + ")s"
+
+
+def _adjacent_valid(size: int) -> str:
+    """Return *size* adjacent well-formed placeholders named ``a``."""
+    return "%(a)s" * size
+
+
+def _no_matches(_size: int) -> list[tuple[int, int, str]]:
+    """Return the matches a shape holding no valid placeholder yields."""
+    return []
+
+
+def _one_spanning_match(size: int) -> list[tuple[int, int, str]]:
+    """Return the single match consuming the whole nested-opener input."""
+    name = "x" + "%(x" * (size - 1)
+    return [(0, len(_nested_openers(size)), name)]
+
+
+def _adjacent_matches(size: int) -> list[tuple[int, int, str]]:
+    """Return one five-character ``a`` match per adjacent placeholder."""
+    stride = len("%(a)s")
+    return [(stride * index, stride * index + stride, "a") for index in range(size)]
+
+
+# Each shape's expected matches are declared here rather than derived from the
+# regex oracle. The oracle is itself quadratic on the malformed shapes, so
+# calling it at these sizes would reintroduce the very cost under test.
 _SCAN_BUILDERS = [
-    pytest.param(lambda size: "%(" * size, id="unterminated-openers"),
-    pytest.param(lambda size: "%(a)" * size, id="failed-closers"),
-    pytest.param(lambda size: "%(x" * size + ")s", id="nested-openers"),
-    pytest.param(lambda size: "%(a)s" * size, id="adjacent-valid"),
+    pytest.param(_unterminated_openers, _no_matches, id="unterminated-openers"),
+    pytest.param(_failed_closers, _no_matches, id="failed-closers"),
+    pytest.param(_nested_openers, _one_spanning_match, id="nested-openers"),
+    pytest.param(_adjacent_valid, _adjacent_matches, id="adjacent-valid"),
 ]
 
 
@@ -159,17 +198,20 @@ def test_expand_placeholders_handles_many_unterminated_openers() -> None:
     )
 
 
-@pytest.mark.parametrize("build_value", _SCAN_BUILDERS)
+@pytest.mark.parametrize(("build_value", "expected_matches"), _SCAN_BUILDERS)
 @pytest.mark.parametrize("size", [1_000, 10_000, 30_000])
 def test_placeholder_search_work_is_bounded(
-    build_value: cabc.Callable[[int], str], size: int
+    build_value: cabc.Callable[[int], str],
+    expected_matches: cabc.Callable[[int], list[tuple[int, int, str]]],
+    size: int,
 ) -> None:
     """The scanner searches at most one input length regardless of shape.
 
     The old regex restarted at every ``%(`` because its name group accepted
     nested openers, so repeated malformed openers rescanned overlapping
     suffixes. Summing searched spans proves the bounded work without a timing
-    assertion.
+    assertion; expected matches are declared per shape rather than derived
+    from the regex oracle, which is itself quadratic here.
     """
     value = build_value(size)
     recorder = _RecordingFind(value)
@@ -183,10 +225,9 @@ def test_placeholder_search_work_is_bounded(
     assert recorder.calls <= len(value) + 2, (
         f"{recorder.calls} searches exceed the {len(value) + 2} allowed"
     )
-    assert matches == [
-        (match.start(), match.end(), match.group(1))
-        for match in _ORACLE.finditer(value)
-    ], "the bounded scan must still find the oracle's placeholders"
+    assert matches == expected_matches(size), (
+        "the bounded scan must still report the shape's placeholders"
+    )
 
 
 @pytest.mark.parametrize("field", ["args", "kwargs"])
