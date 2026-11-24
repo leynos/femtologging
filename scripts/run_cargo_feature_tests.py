@@ -54,6 +54,42 @@ CARGO = "cargo"
 NO_FEATURES = "none"
 #: The harness selection the heavy suite exists to run.
 DEFAULT_TEST_ARGS: typ.Final = ("--ignored",)
+#: The environment variable carrying the harness selection.
+TEST_ARGS_ENV: typ.Final = "INPUT_TEST_ARGS"
+
+
+def harness_selection(
+    test_args: list[str] | None, environment: cabc.Mapping[str, str]
+) -> tuple[str, ...] | None:
+    """Return the harness arguments to pass behind ``--``, or ``None``.
+
+    An omitted variable means the heavy suite's ``--ignored`` default. An
+    explicitly blank variable is a configuration error: Cyclopts discards the
+    empty value before :func:`main` sees it, so without this check it would
+    look like an omission and the run would proceed on the default.
+
+    Returns
+    -------
+        The harness arguments, or ``None`` when the variable was set but
+        blank.
+
+    Examples
+    --------
+    >>> harness_selection(None, {})
+    ('--ignored',)
+    >>> harness_selection(None, {"INPUT_TEST_ARGS": ""}) is None
+    True
+    >>> harness_selection(["--include-ignored"], {})
+    ('--include-ignored',)
+    """
+    if test_args is not None:
+        return tuple(test_args)
+    # Present-but-blank is not the same as absent: `None` means the variable
+    # was not set at all, while `""` means the caller set it to nothing.
+    configured = environment.get(TEST_ARGS_ENV)
+    if configured is not None and not configured:
+        return None
+    return DEFAULT_TEST_ARGS
 
 
 def feature_selection(feature_set: str) -> list[str]:
@@ -183,19 +219,29 @@ def main(
 
     ``test_args`` defaults to ``--ignored``, the selection the heavy suite
     exists to run: an omitted harness selection would run the ordinary tests
-    instead and pass without touching the ignored suite.
+    instead and pass without touching the ignored suite. A variable that is
+    set but blank is a configuration error rather than an omission, which
+    :func:`harness_selection` tells apart.
 
     Returns
     -------
-        The failing feature set's exit code, or 0 when every set passes.
+        The failing feature set's exit code, or 0 when every set passes, and 2
+        when the harness selection is blank.
     """
+    selected = harness_selection(test_args, os.environ)
+    if selected is None:
+        print(
+            f"{TEST_ARGS_ENV} is set but empty; omit it to run "
+            f"{' '.join(DEFAULT_TEST_ARGS)}, or name the harness selection",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
     return run_feature_sets(
         FeatureTestPlan(
             manifest=manifest,
             feature_sets=tuple(feature_sets),
-            test_args=(
-                tuple(test_args) if test_args is not None else DEFAULT_TEST_ARGS
-            ),
+            test_args=selected,
         )
     )
 

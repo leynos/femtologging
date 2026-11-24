@@ -288,13 +288,17 @@ def test_each_feature_set_selects_its_own_features(cmd_mox: CmdMox) -> None:
 
 
 @manual_lifecycle
-def test_the_default_harness_arguments_are_the_ignored_suite(cmd_mox: CmdMox) -> None:
+def test_the_default_harness_arguments_are_the_ignored_suite(
+    cmd_mox: CmdMox, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Scenario: the caller omits the harness selection.
 
     Invariant: ``--ignored`` still reaches the harness. An omitted selection
     would run the ordinary tests instead, which pass without touching the
-    ignored suite the heavy lane exists to run.
+    ignored suite the heavy lane exists to run. The variable is deleted
+    explicitly so a caller's own environment cannot change the outcome.
     """
+    monkeypatch.delenv("INPUT_TEST_ARGS", raising=False)
     spy = cmd_mox.spy("cargo").returns(exit_code=0)
 
     cmd_mox.replay()
@@ -307,6 +311,51 @@ def test_the_default_harness_arguments_are_the_ignored_suite(cmd_mox: CmdMox) ->
     assert invocations_in(spy)[0][-2:] == ["--", "--ignored"], (
         "an omitted harness selection must default to --ignored"
     )
+
+
+def test_a_blank_harness_variable_is_refused(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scenario: ``INPUT_TEST_ARGS`` is set but empty.
+
+    Invariant: the run fails and names the variable. Cyclopts discards a blank
+    environment value, so without this check it would look exactly like an
+    omission and the run would silently proceed on the default rather than
+    telling the caller the configuration is wrong.
+    """
+    monkeypatch.setenv("INPUT_TEST_ARGS", "")
+    status = run_cargo_feature_tests.main(
+        manifest=manifest_path(), feature_sets=["none"]
+    )
+    assert status == 2, "a blank harness variable must not report success"
+    assert "INPUT_TEST_ARGS is set but empty" in capsys.readouterr().err, (
+        "a blank harness variable must explain the refusal"
+    )
+
+
+@pytest.mark.parametrize(
+    ("test_args", "environment", "expected"),
+    [
+        pytest.param(None, {}, ("--ignored",), id="omitted"),
+        pytest.param(None, {"INPUT_TEST_ARGS": ""}, None, id="blank"),
+        pytest.param([], {}, (), id="explicitly-empty"),
+        pytest.param(["--include-ignored"], {}, ("--include-ignored",), id="given"),
+    ],
+)
+def test_the_harness_selection_tells_blank_from_omitted(
+    test_args: list[str] | None,
+    environment: dict[str, str],
+    expected: tuple[str, ...] | None,
+) -> None:
+    """Scenario: the harness selection arrives by environment or by API.
+
+    Invariant: only a blank variable yields ``None``; an omitted one takes
+    the ignored-suite default, and a value the caller passes is used as
+    given.
+    """
+    assert run_cargo_feature_tests.harness_selection(test_args, environment) == (
+        expected
+    ), f"test_args={test_args!r} environment={environment!r}"
 
 
 def test_an_empty_feature_set_list_is_not_success(
@@ -329,14 +378,12 @@ def test_an_empty_feature_set_list_is_not_success(
 def test_an_empty_harness_selection_is_not_success(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Scenario: the caller supplies an empty harness selection.
+    """Scenario: a caller passes an empty harness selection directly.
 
     Invariant: the run fails and says so. Cargo would accept the command and
     run the ordinary suite, which passes without touching the ignored tests.
-
-    ``test_args=[]`` models ``INPUT_TEST_ARGS=``, which Cyclopts reads as an
-    empty list rather than as an omission, so the ``None`` default does not
-    apply.
+    The environment path is covered separately: Cyclopts discards a blank
+    variable, so it reaches :func:`main` as ``None`` rather than as ``[]``.
     """
     status = run_cargo_feature_tests.main(
         manifest=manifest_path(), feature_sets=list(FEATURE_SETS), test_args=[]
