@@ -109,33 +109,47 @@ def tokenize(script: str) -> list[list[str]]:
     return [tokens for line in script.splitlines() if (tokens := _lex(line))]
 
 
+def _split_statement(tokens: cabc.Sequence[str]) -> list[list[str]]:
+    """Return one line's tokens, split into its simple commands.
+
+    A redirection ends the command it belongs to, because the words after it
+    name the redirection's target rather than the command's arguments.
+
+    Returns
+    -------
+        The line's simple commands, in order, with empty ones dropped.
+    """
+    statements: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _REDIRECTIONS:
+            break
+        if token in _SEPARATORS:
+            statements.append(current)
+            current = []
+        else:
+            current.append(token)
+    statements.append(current)
+    return [statement for statement in statements if statement]
+
+
 def tokenize_statements(script: str) -> list[list[str]]:
     """Return one script's tokens, one entry per simple command.
 
     A line may hold several commands separated by ``;``, ``&&``, ``||``,
     ``|`` or ``&``. Each is returned separately, because a reader that looked
     only at a line's first word would miss a ``set +e`` written after another
-    command on the same line. A redirection ends the command it belongs to.
+    command on the same line.
 
     Returns
     -------
         The tokenized simple commands, in the order the script runs them.
     """
-    statements: list[list[str]] = []
-    for tokens in tokenize(script):
-        current: list[str] = []
-        for token in tokens:
-            if token in _SEPARATORS:
-                if current:
-                    statements.append(current)
-                current = []
-            elif token in _REDIRECTIONS:
-                break
-            else:
-                current.append(token)
-        if current:
-            statements.append(current)
-    return statements
+    return [
+        statement
+        for tokens in tokenize(script)
+        for statement in _split_statement(tokens)
+    ]
 
 
 def commands() -> list[list[str]]:
