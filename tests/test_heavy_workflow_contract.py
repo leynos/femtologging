@@ -299,6 +299,19 @@ def _compile_step_removed(document: Document) -> None:
     found_steps.remove(named_step(found, COMPILE_STEP, subject=HEAVY_JOB))
 
 
+def _compile_step_echoes(document: Document) -> None:
+    """Keep the compile step's text but only print it."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, COMPILE_STEP, subject=HEAVY_JOB)
+    step["run"] = f"echo '{run_text(step)}'"
+
+
+def _compile_step_shell_never_runs(document: Document) -> None:
+    """Ask GitHub to parse the compile step without executing it."""
+    found = job(document, HEAVY_JOB)
+    named_step(found, COMPILE_STEP, subject=HEAVY_JOB)["shell"] = "bash -n {0}"
+
+
 _MUTATIONS = (
     pytest.param(_unlocked_sync, id="unlocked-sync"),
     pytest.param(_pip_install_returns, id="pip-install-returns"),
@@ -345,6 +358,11 @@ _MUTATIONS = (
     pytest.param(_checker_given_no_command, id="checker-given-no-command"),
     pytest.param(_checker_commented_out, id="checker-commented-out"),
     pytest.param(_compile_step_removed, id="compile-step-removed"),
+    pytest.param(_compile_step_echoes, id="compile-step-echoes"),
+    pytest.param(
+        _compile_step_shell_never_runs,
+        id="compile-step-shell-never-runs",
+    ),
     pytest.param(_checker_shell_never_runs, id="checker-shell-never-runs"),
     pytest.param(_job_default_shell_never_runs, id="job-default-shell-never-runs"),
     pytest.param(
