@@ -1,15 +1,17 @@
 //! Test-only constructors for [`FemtoLogger`].
 //!
-//! These seams exist because a logger's formatter, context snapshot provider
-//! and shard are fixed at construction. Tests that must observe or control one
-//! of them need a constructor rather than a public setter, and keeping them
-//! beside the production constructors would push that module past its size
-//! limit.
+//! These seams exist because a logger's formatter, context snapshot provider,
+//! context-capture warner and shard are fixed at construction. Tests that must
+//! observe or control one of them need a constructor rather than a public
+//! setter, and keeping them beside the production constructors would push that
+//! module past its size limit.
 
 use crate::formatter::SharedFormatter;
 #[cfg(feature = "python")]
 use crate::logger::context_snapshot::ContextSnapshotProvider;
 use crate::logger::dispatcher::Dispatcher;
+#[cfg(feature = "python")]
+use crate::rate_limited_warner::RateLimitedWarner;
 
 use super::{FemtoLogger, ShardHandle};
 
@@ -40,6 +42,23 @@ impl FemtoLogger {
             dispatcher.assign_shard(),
             context_snapshot_provider,
         )
+    }
+
+    /// Replace the context-capture warner with one whose clock a test controls.
+    ///
+    /// The warner is fixed at construction, and its clock decides whether a
+    /// second failed capture is reported or suppressed by the interval. A test
+    /// that asserts what happens to a suppressed count must supply that clock;
+    /// with the real one, a scheduler pause longer than the interval would let
+    /// the second capture report itself and leave the test asserting on an
+    /// empty warner.
+    #[cfg(feature = "python")]
+    pub(in crate::logger) fn with_context_capture_warner_for_test(
+        mut self,
+        warner: RateLimitedWarner,
+    ) -> Self {
+        self.context_capture_warner = warner;
+        self
     }
 
     /// Assemble a logger on a shard a test has chosen.

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use log::warn;
 
-use super::StreamCommand;
+use super::{StreamCommand, warning::warn_dropped};
 use crate::formatter::FemtoFormatter;
 use crate::handler::report_drops_then_acknowledge;
 use crate::log_record::FemtoLogRecord;
@@ -59,13 +59,9 @@ fn handle_flush_command<W: Write>(
 ) {
     let flush_result = writer.flush();
     let flush_failed = flush_result.is_err();
-    report_drops_then_acknowledge(
-        pending_drops,
-        |count| warn!("FemtoStreamHandler: {count} log records dropped in the last interval"),
-        || {
-            let _ = ack.send(flush_result);
-        },
-    );
+    report_drops_then_acknowledge(pending_drops, warn_dropped, || {
+        let _ = ack.send(flush_result);
+    });
     if flush_failed {
         warn!("FemtoStreamHandler flush error");
     }

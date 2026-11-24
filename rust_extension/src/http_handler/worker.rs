@@ -46,7 +46,10 @@ use crate::{
 
 use super::{
     config::{HTTPHandlerConfig, SerializationFormat},
-    queue::{HTTPCommand, discard_rest, warn_discarded, warn_drops},
+    queue::{
+        HTTPCommand, discard_rest, flush_drops, flush_drops_naming_cause, warn_cumulative_drops,
+        warn_discarded, warn_drops_naming_cause,
+    },
     response::ResponseClass,
     serialize::{serialize_json, serialize_url_encoded},
     transport::{build_agent, execute},
@@ -239,9 +242,7 @@ impl Worker {
             return false;
         }
         let Some(delay) = self.backoff.next_sleep(now) else {
-            warn_drops(&self.warner, |count| {
-                warn!("FemtoHTTPHandler dropped {count} records after exhausting retry deadline");
-            });
+            warn_drops_naming_cause(&self.warner, "retry deadline exhaustion");
             return false;
         };
         match self.signal.wait(delay) {
@@ -255,24 +256,18 @@ impl Worker {
 
     /// Count a serialization drop; invalid input increments the drop count.
     fn warn_serialization_drops(&self) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to serialization failures");
-        });
+        warn_drops_naming_cause(&self.warner, "serialization failure");
     }
 
     /// Count a permanent failure; a non-retryable 4xx increments the drop count.
     fn warn_permanent_drops(&self) {
-        warn_drops(&self.warner, |count| {
-            warn!("FemtoHTTPHandler dropped {count} records due to permanent errors");
-        });
+        warn_drops_naming_cause(&self.warner, "permanent error");
     }
 
     /// Count an abandoned retry; close increments the shutdown drop count.
     fn warn_shutdown_drops(&self) {
         self.warner.record_drop();
-        self.warner.flush(|count| {
-            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
-        });
+        flush_drops_naming_cause(&self.warner, "abandoned retry during shutdown");
     }
 
     /// Handles a flush command by immediately acknowledging completion.
@@ -289,11 +284,15 @@ impl Worker {
     ///
     /// The drop count the handler moved here is reported before the
     /// acknowledgement is sent, so a caller that observes the flush succeed
-    /// cannot do so before the report it carried has been emitted.
+    /// cannot do so before the report it carried has been emitted. The
+    /// worker's own suppressed count is reported first, for the same reason:
+    /// it is a drop the handler-side warner never saw, so a normal flush is
+    /// the only report it will get while the interval holds it back.
     fn handle_flush_command(&mut self, ack: Sender<()>, pending_drops: Option<u64>) {
+        flush_drops(&self.warner);
         report_drops_then_acknowledge(
             pending_drops,
-            |count| warn!("FemtoHTTPHandler dropped {count} records in the last interval"),
+            |count| warn_cumulative_drops(count, None),
             || {
                 // Ignore send error: if the receiver has dropped, there's nothing to do.
                 let _ = ack.send(());
@@ -312,9 +311,7 @@ impl Worker {
     fn drain_pending(&mut self, rx: &Receiver<HTTPCommand>, shutdown_ack: Option<Sender<()>>) {
         let (discarded, shutdown_acks) = self.discard_queued_commands(rx);
         warn_discarded(discarded);
-        self.warner.flush(|count| {
-            warn!("FemtoHTTPHandler dropped {count} records during shutdown");
-        });
+        flush_drops(&self.warner);
         // Keep every shutdown acknowledgement behind the last request and
         // cleanup. The final send is the worker's final action.
         acknowledge_shutdowns(shutdown_acks, shutdown_ack);

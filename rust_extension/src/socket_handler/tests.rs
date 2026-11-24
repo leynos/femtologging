@@ -219,6 +219,16 @@ fn handler_flushes_pending_records_on_close(tcp_listener: io::Result<TcpListener
 #[path = "close_tests.rs"]
 mod close;
 
+// What the handler reports when it drops records, including the drops it
+// refuses after close.
+#[path = "drop_reporting_tests.rs"]
+mod drop_reporting;
+
+// The worker-side count a normal flush must report, kept apart from
+// `drop_reporting` so both files stay clear of the size limit.
+#[path = "worker_flush_reporting_tests.rs"]
+mod worker_flush_reporting;
+
 // Contracts for what the worker does with the shutdown signal, as opposed to
 // what the handler does with the acknowledgement.
 #[path = "drain_tests.rs"]

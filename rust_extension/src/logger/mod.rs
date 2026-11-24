@@ -289,6 +289,10 @@ impl FemtoLogger {
 
 impl Drop for FemtoLogger {
     fn drop(&mut self) {
+        // Report losses before the logger goes quiet for good: after this point
+        // nothing is left to warn on the logger's behalf, so a suppressed
+        // interval would take its final count with it.
+        self.flush_drop_warners();
         // A model's shard is the logger's own, so the drop is what ends the
         // model thread and, by joining it, what guarantees the queued records
         // were handled.

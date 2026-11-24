@@ -6,7 +6,9 @@
 //! The expired-budget cases show that a connect or write whose
 //! `ShutdownSignal` budget has already run out drops the current record rather
 //! than starting work. `shutdown_drop_is_logged_inside_the_warning_interval`
-//! covers the warning path in `Worker::warn_shutdown_drops`.
+//! covers the warning path in `Worker::warn_shutdown_drops`, and
+//! `a_flush_reports_the_workers_suppressed_drop_before_acknowledging` pins the
+//! worker-side count a normal flush reports before acknowledging.
 
 use super::*;
 use std::{
@@ -18,11 +20,32 @@ use std::{
 };
 
 use crate::{
+    handlers::file::test_support::{install_test_logger, take_logged_messages, wait_for_message},
     level::FemtoLevel,
     log_record::FemtoLogRecord,
+    rate_limited_warner::Clock,
     shutdown_signal::ShutdownSignal,
     socket_handler::transport::{SocketTransport, TcpTransport, TlsOptions},
 };
+
+/// A clock that never advances, so the warning interval cannot elapse.
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now_millis(&self) -> u64 {
+        0
+    }
+}
+
+/// The warning a record abandoned by the shutdown budget emits.
+///
+/// The worker counts into the same cumulative warner as the handler, and a
+/// refusal at the shutdown deadline is the last chance to report its count, so
+/// the wording names the cause that triggered the flush.
+const SHUTDOWN_DROP: &str = concat!(
+    "FemtoSocketHandler dropped 1 records since the last report; ",
+    "triggering cause: abandoned retry during shutdown"
+);
 
 #[test]
 #[serial_test::serial]
@@ -110,11 +133,11 @@ fn expired_connect_budget_counts_the_current_record_as_a_shutdown_drop() {
     ));
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(messages.iter().any(|entry| {
-        entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
-    }));
+    assert!(
+        messages
+            .iter()
+            .any(|entry| entry.message.contains(SHUTDOWN_DROP))
+    );
 }
 
 #[test]
@@ -133,11 +156,60 @@ fn expired_write_budget_counts_the_current_record_as_a_shutdown_drop() {
     worker.send_frame_to_connection(b"frame", Instant::now());
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(messages.iter().any(|entry| {
-        entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
-    }));
+    assert!(
+        messages
+            .iter()
+            .any(|entry| entry.message.contains(SHUTDOWN_DROP))
+    );
+}
+
+/// The worker's own suppressed count is reported before it acknowledges.
+///
+/// The handler and the worker keep separate warners, and the flush marker
+/// carries only the handler-side count, so a worker-side drop that the interval
+/// suppresses reaches the caller only if the worker reports its own warner when
+/// it handles the marker.
+///
+/// The acknowledgement is sent on a rendezvous channel, so its send cannot
+/// complete until this test receives. A worker that acknowledged before
+/// reporting would therefore sit in the send with no report in the buffer, and
+/// the wait below would time out; only a report made first lets it be found.
+#[test]
+#[serial_test::serial]
+fn a_flush_reports_the_workers_suppressed_drop_before_acknowledging() {
+    install_test_logger();
+    let mut worker = Worker::new(
+        SocketHandlerConfig::default(),
+        Arc::new(ShutdownSignal::new()),
+    );
+    worker.warner = RateLimitedWarner::with_clock(Duration::from_secs(5), Arc::new(FixedClock));
+    // Two drops the handler never sees: the first warns, the second is
+    // suppressed and stays pending, which a flush has to report. Recorded
+    // through the production helper so the count and the interval behave as
+    // they do for a real worker-side failure.
+    warn_drops_naming_cause(&worker.warner, "serialization failure");
+    warn_drops_naming_cause(&worker.warner, "serialization failure");
+    let _ = take_logged_messages();
+
+    let (ack_tx, ack_rx) = bounded(0);
+    let flush = thread::spawn(move || worker.handle_flush_command(ack_tx, None));
+
+    let reported = wait_for_message(
+        "FemtoSocketHandler dropped 1 records since the last report",
+        Duration::from_secs(2),
+    );
+    assert!(
+        reported
+            .iter()
+            .any(|entry| entry.message
+                == "FemtoSocketHandler dropped 1 records since the last report"),
+        "the worker's suppressed drop must be reported before the acknowledgement: {reported:?}"
+    );
+    ack_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the flush must still acknowledge")
+        .expect("a flush with no pending writes reports success");
+    flush.join().expect("the worker flush should return");
 }
 
 #[test]
@@ -154,9 +226,9 @@ fn shutdown_drop_is_logged_inside_the_warning_interval() {
     worker.warn_shutdown_drops();
 
     let messages = crate::handlers::file::test_support::take_logged_messages();
-    assert!(messages.iter().any(|entry| {
-        entry
-            .message
-            .contains("FemtoSocketHandler dropped 1 records during shutdown")
-    }));
+    assert!(
+        messages
+            .iter()
+            .any(|entry| entry.message.contains(SHUTDOWN_DROP))
+    );
 }

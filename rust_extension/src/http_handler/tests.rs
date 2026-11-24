@@ -341,6 +341,16 @@ fn spawn_retry_server(
 #[path = "close_tests.rs"]
 mod close;
 
+// What the handler reports when it drops records, including the drops it
+// refuses after close.
+#[path = "drop_reporting_tests.rs"]
+mod drop_reporting;
+
+// The worker-side count a normal flush must report, kept apart from
+// `drop_reporting` so both files stay clear of the size limit.
+#[path = "worker_flush_reporting_tests.rs"]
+mod worker_flush_reporting;
+
 #[path = "retry_tests.rs"]
 mod retry;
 // Contracts for what the worker does with the shutdown signal, as opposed to

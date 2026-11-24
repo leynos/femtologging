@@ -18,6 +18,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use log::warn;
+
 use crate::handler::FemtoHandlerTrait;
 #[cfg(all(test, not(loom)))]
 use crate::monotonic_clock::MonotonicClock;
@@ -221,6 +223,25 @@ impl FemtoLogger {
         })
     }
 
+    /// Report any drops this logger has recorded but not yet warned about.
+    ///
+    /// Called at destruction only. The warners are rate limited, so a suppressed
+    /// interval would otherwise leave the counts pending until a due moment that
+    /// a logger about to disappear may never reach; reporting here makes the
+    /// destruction mean "say what has been lost". An explicit flush cannot do
+    /// this: it is deadline-bound, and the process-wide `log` sink invoked here
+    /// writes synchronously, so a blocking sink would hold the caller past the
+    /// deadline that bounds the whole call.
+    pub(super) fn flush_drop_warners(&self) {
+        self.drop_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records; reported by flush");
+        });
+        #[cfg(feature = "python")]
+        self.context_capture_warner.flush(|count| {
+            warn!("FemtoLogger: dropped {count} records after context capture failed");
+        });
+    }
+
     /// Run the real barrier with a supplied clock for deterministic stage tests.
     #[cfg(all(test, not(loom)))]
     pub(super) fn flush_handlers_with_clock(
@@ -239,6 +260,10 @@ impl FemtoLogger {
             Err(FlushFailureStage::DeadlineUnrepresentable)
         };
         let barrier_completed_at = timing.now();
+        // The logger-side warners are deliberately not flushed here: this path
+        // is deadline-bound, and a synchronous sink can hold it past the whole
+        // call's timeout. Those counts are reported at destruction, which has
+        // no caller deadline to overrun.
         BarrierOutcome {
             result,
             timing,

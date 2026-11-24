@@ -12,6 +12,7 @@ use log::warn;
 use crate::handler::report_drops_then_acknowledge;
 
 use super::SocketCommand;
+use crate::socket_handler::warning::warn_pending_drops;
 
 /// Throw away everything left in the queue, without touching the network.
 ///
@@ -28,21 +29,15 @@ pub(super) fn discard_rest(
         match rx.try_recv() {
             Ok(SocketCommand::Record(_)) => discarded += 1,
             Ok(SocketCommand::Flush(ack, pending_drops)) => {
-                report_drops_then_acknowledge(
-                    pending_drops,
-                    |count| {
-                        warn!("FemtoSocketHandler dropped {count} records in the last interval")
-                    },
-                    || {
-                        // The backlog is being discarded rather than written,
-                        // so this marker was not flushed. Report that rather
-                        // than confirm a flush that never touched the socket.
-                        let _ = ack.send(Err(io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "socket worker discarded the flush marker during shutdown",
-                        )));
-                    },
-                );
+                report_drops_then_acknowledge(pending_drops, warn_pending_drops, || {
+                    // The backlog is being discarded rather than written,
+                    // so this marker was not flushed. Report that rather
+                    // than confirm a flush that never touched the socket.
+                    let _ = ack.send(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "socket worker discarded the flush marker during shutdown",
+                    )));
+                });
             }
             Ok(SocketCommand::Shutdown(ack)) => shutdown_acks.push(ack),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return discarded,

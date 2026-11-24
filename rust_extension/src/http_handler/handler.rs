@@ -38,7 +38,7 @@ use crate::test_utils::test_worker::TestWorker;
 
 use super::{
     config::HTTPHandlerConfig,
-    queue::{HTTPCommand, enqueue_record},
+    queue::{HTTPCommand, enqueue_record, flush_drops, warn_drops_naming_cause},
     worker::spawn_worker,
 };
 
@@ -169,8 +169,15 @@ impl FemtoHTTPHandler {
     /// about rather than swallowed. Two handlers with the same lifecycle
     /// should not answer the same question differently.
     ///
+    /// Any pending handler-side drop warning is reported before shutdown.
+    ///
+    /// That report is not covered by `flush_timeout`: the process-wide `log`
+    /// sink's synchronous write cannot be bounded here without discarding the
+    /// count, so a blocking sink can delay `close` beyond the budget above.
+    ///
     /// [`FemtoStreamHandler::close`]: crate::FemtoStreamHandler::close
     pub fn close(&mut self) {
+        flush_drops(&self.warner);
         match self.request_shutdown() {
             ShutdownOutcome::Finished => self.join_worker(),
             ShutdownOutcome::TimedOut => self.abandon_worker(),
@@ -281,10 +288,7 @@ impl FemtoHTTPHandler {
 impl FemtoHandlerTrait for FemtoHTTPHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                log::warn!("FemtoHTTPHandler dropped {count} records after shutdown");
-            });
+            warn_drops_naming_cause(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         // Intentional suppression, not a drop: queueing one of our own
@@ -322,7 +326,11 @@ impl FemtoHandlerTrait for FemtoHTTPHandler {
 #[cfg(not(loom))]
 impl Drop for FemtoHTTPHandler {
     fn drop(&mut self) {
+        // A handler whose worker is gone has nobody left to report the drops
+        // refused after an earlier close, and no later warning comes. While a
+        // worker is still present, `close()` reports them itself.
         if self.handle.lock().is_none() {
+            flush_drops(&self.warner);
             return;
         }
         if Python::try_attach(|py| py.detach(|| self.close())).is_none() {

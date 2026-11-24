@@ -36,6 +36,7 @@ use crate::{
 use super::{
     SocketTransport,
     config::SocketHandlerConfig,
+    warning::{flush_drops, warn_drops_naming_cause},
     worker::{SocketCommand, enqueue_record, spawn_worker},
 };
 
@@ -165,7 +166,16 @@ impl FemtoSocketHandler {
     /// begins after the deadline, each queued record gets one attempt, and
     /// whatever is still queued at the deadline is discarded with a warning
     /// rather than written.
+    ///
+    /// Pending handler-side drop warnings are reported before shutdown, ahead
+    /// of the deadline that covers the rest of the call. That report is not
+    /// covered by the budget: it runs through the process-wide `log` adapter,
+    /// whose sink the embedding process supplies. The only ways to bound a
+    /// blocking sink are to discard the count or to leave a reporting thread
+    /// running after the handler is gone, so the deadline starts after the
+    /// report returns.
     pub fn close(&mut self) {
+        flush_drops(&self.warner);
         match self.request_shutdown() {
             ShutdownOutcome::Finished => self.join_worker(),
             ShutdownOutcome::TimedOut => self.abandon_worker(),
@@ -301,10 +311,7 @@ enum ShutdownOutcome {
 impl FemtoHandlerTrait for FemtoSocketHandler {
     fn handle(&self, record: FemtoLogRecord) -> Result<(), HandlerError> {
         let Some(tx) = self.sender() else {
-            self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                log::warn!("FemtoSocketHandler dropped {count} records after shutdown");
-            });
+            warn_drops_naming_cause(&self.warner, "handler closed");
             return Err(HandlerError::Closed);
         };
         enqueue_record(&tx, record, &self.warner)
@@ -325,10 +332,12 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
 
 /// Drop the handler, closing it with the GIL released.
 ///
-/// A handler whose worker has already gone has nothing to close, so the check
-/// keeps that case out of the GIL's way entirely. When Python can be attached,
-/// the close runs detached; during interpreter shutdown, the Rust-only close
-/// runs without attaching and remains bounded by the same budget.
+/// A handler whose worker has already gone has nothing to close, but it may
+/// still hold drops refused after an earlier close. When Python can be
+/// attached, both that report and the close run detached, so a slow warning
+/// sink cannot block other interpreter threads. During interpreter shutdown the
+/// Rust-only path runs without attaching, so nothing here can initialize an
+/// interpreter that is being torn down.
 ///
 /// Under `--cfg loom` there is no interpreter to attach to: no model builds one
 /// of these handlers, and attaching would initialize Python on a Loom
@@ -336,7 +345,13 @@ impl FemtoHandlerTrait for FemtoSocketHandler {
 #[cfg(not(loom))]
 impl Drop for FemtoSocketHandler {
     fn drop(&mut self) {
+        // A handler whose worker is gone has nobody left to report the drops
+        // refused after an earlier close, and no later warning comes. While a
+        // worker is still present, `close()` reports them itself.
         if self.handle.lock().is_none() {
+            if Python::try_attach(|py| py.detach(|| flush_drops(&self.warner))).is_none() {
+                flush_drops(&self.warner);
+            }
             return;
         }
         if Python::try_attach(|py| py.detach(|| self.close())).is_none() {

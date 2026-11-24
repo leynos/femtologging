@@ -5,13 +5,11 @@
 
 use std::any::Any;
 
-use log::warn;
-
 use crate::handler::{FemtoHandlerTrait, HandlerError};
 use crate::log_record::FemtoLogRecord;
 use crate::sync::TrySendError;
 
-use super::{FemtoStreamHandler, StreamCommand};
+use super::{FemtoStreamHandler, StreamCommand, warning::warn_dropped};
 
 #[cfg(test)]
 #[path = "flush_deadline_tests.rs"]
@@ -23,25 +21,19 @@ impl FemtoHandlerTrait for FemtoStreamHandler {
         // must not hold the lock that close needs to take the sender.
         let Some(tx) = self.tx.lock().clone() else {
             self.warner.record_drop();
-            self.warner.warn_if_due(|count| {
-                warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-            });
+            self.warner.warn_if_due(warn_dropped);
             return Err(HandlerError::Closed);
         };
         match tx.try_send(StreamCommand::Record(record)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::QueueFull)
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.warner.record_drop();
-                self.warner.warn_if_due(|count| {
-                    warn!("FemtoStreamHandler: {count} log records dropped in the last interval");
-                });
+                self.warner.warn_if_due(warn_dropped);
                 Err(HandlerError::Closed)
             }
         }
