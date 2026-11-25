@@ -1,4 +1,13 @@
-"""Filter helpers for ``dictConfig`` parsing."""
+"""Build one ``dictConfig`` filter, including the trust-boundary checks.
+
+:func:`build_filter_from_dict` is called from
+:mod:`femtologging.config_sections` and by direct callers. It turns a declarative
+``level`` or ``name`` entry into a native filter builder, and an enabled
+``"()"`` entry into a resolved and invoked callback filter. With
+``allow_factories=False`` it rejects a ``"()"`` key before reading, copying,
+importing or invoking the target, which makes the module the second line of
+defence behind the section preflight.
+"""
 
 from __future__ import annotations
 

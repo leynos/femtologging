@@ -1,4 +1,12 @@
-"""Helpers for stdlib-style ``dictConfig`` filter factories."""
+"""Resolve stdlib-style ``dictConfig`` filter factory paths.
+
+:func:`resolve_factory` is used by :func:`femtologging._config_filters.
+build_filter_from_dict` when a ``"()"`` entry names a dotted string. Resolution
+imports modules and reads attributes, so importing the target module already
+runs its import-time code before any factory call. That makes the path
+trusted-code-equivalent and is why lower-trust callers reject ``"()"`` entries
+outright. See ``docs/users-guide.md#filter-factory-trust-boundary``.
+"""
 
 from __future__ import annotations
 

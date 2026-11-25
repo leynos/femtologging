@@ -16,6 +16,8 @@ import typing as typ
 import uuid
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 import femtologging._config_filters as config_filters
 import femtologging.config as config_module
@@ -287,3 +289,84 @@ def test_build_filter_from_dict_rejects_factory_forms(
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
         build_filter_from_dict("f", dict(entry_builder(probe)), allow_factories=False)
     assert not probe.invocations, "the direct guard must not invoke callables"
+
+
+class _LateFactoryEntry(cabc.Mapping[str, object]):
+    """Hide ``"()"`` from the pre-copy scan but expose it to the copy.
+
+    ``build_filter_from_dict`` scans ``iter(data)`` before copying, then
+    re-checks the copied dict. ``dict(mapping)`` builds through ``keys()``, so
+    disagreeing with ``__iter__`` here reaches the post-copy guard, while the
+    plain ``"()"`` tables above are all rejected by the pre-copy scan.
+    """
+
+    def __init__(self, value: object) -> None:
+        """Serve ``level`` to iteration and the factory only through ``keys``."""
+        self._value = value
+        self.keys_calls = 0
+
+    @typ.override
+    def __getitem__(self, key: str) -> object:
+        """Return the level or the factory value the copy will request."""
+        if key == "()":
+            return self._value
+        if key == "level":
+            return "INFO"
+        raise KeyError(key)
+
+    @typ.override
+    def __iter__(self) -> cabc.Iterator[str]:
+        """Yield only ``level``, hiding ``"()"`` from the pre-copy scan."""
+        return iter(("level",))
+
+    @typ.override
+    def __len__(self) -> int:
+        """Report the single key iteration yields."""
+        return 1
+
+    # Deliberately disagrees with __iter__: dict() copies through keys(), so
+    # this is the only way to reach the post-copy guard from a Mapping.
+    # The override is what the test is about, not a workaround.
+    def keys(self) -> cabc.KeysView[str]:
+        """Report ``"()"`` as well, which is what ``dict()`` copies."""
+        self.keys_calls += 1
+        return typ.cast("cabc.KeysView[str]", {"level", "()"})
+
+
+def test_build_filter_from_dict_rejects_a_key_added_during_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The post-copy guard rejects a key the pre-copy scan could not see."""
+    probe = _FactoryProbe()
+    monkeypatch.setattr(
+        config_filters, "resolve_factory", _unexpected_call("resolve_factory")
+    )
+    monkeypatch.setattr(
+        importlib, "import_module", _unexpected_call("importlib.import_module")
+    )
+    entry = _LateFactoryEntry(probe)
+
+    with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
+        build_filter_from_dict("f", entry, allow_factories=False)
+
+    assert entry.keys_calls >= 1, "the copy must have consulted keys()"
+    assert not probe.invocations, "the late factory must never be invoked"
+
+
+@given(
+    value=st.one_of(st.text(), st.integers(), st.none(), st.booleans()),
+    siblings=st.dictionaries(
+        keys=st.text(min_size=1).filter(lambda key: key not in {"()", "level", "name"}),
+        values=st.one_of(st.text(), st.integers(), st.none()),
+        max_size=3,
+    ),
+)
+def test_any_factory_entry_is_rejected_on_the_direct_guard(
+    value: object, siblings: dict[str, object]
+) -> None:
+    """Any ``"()"`` entry is rejected by the direct guard, whatever it carries."""
+    probe = _FactoryProbe()
+    entry: dict[str, object] = {"()": value, **siblings}
+    with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
+        build_filter_from_dict("f", entry, allow_factories=False)
+    assert not probe.invocations, "a rejected factory target must not be invoked"

@@ -14,8 +14,11 @@ import dataclasses
 import typing as typ
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from femtologging import dictConfig, get_logger
+from femtologging._config_policy import validate_allow_factories
 from tests.python_filter_support import (
     ContextFilterFactory,
     RecordCollector,
@@ -159,6 +162,21 @@ def test_dict_config_rejects_non_bool_policy(policy: object) -> None:
     config = _UnreadableConfig()
     with pytest.raises(TypeError, match="allow_factories must be a bool"):
         dictConfig(config, allow_factories=typ.cast("bool", policy))
+
+
+@given(policy=st.from_type(object).filter(lambda value: not isinstance(value, bool)))
+def test_policy_rejects_every_non_bool_value(policy: object) -> None:
+    """The policy validator rejects any non-bool, whichever object is supplied."""
+    with pytest.raises(TypeError, match="allow_factories must be a bool"):
+        validate_allow_factories(policy)
+
+
+@given(policy=st.booleans())
+def test_policy_returns_bools_unchanged(*, policy: bool) -> None:
+    """A genuine bool passes through the validator unchanged."""
+    assert validate_allow_factories(policy) is policy, (
+        f"validate_allow_factories must return {policy!r} unchanged"
+    )
 
 
 @pytest.mark.parametrize(

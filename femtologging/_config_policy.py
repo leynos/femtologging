@@ -1,4 +1,13 @@
-"""Trust-boundary policy helpers for ``dictConfig`` filter factories."""
+"""Trust-boundary policy helpers for ``dictConfig`` filter factories.
+
+:mod:`femtologging.config` calls :func:`validate_allow_factories` before it
+reads the configuration, and both :mod:`femtologging.config_sections` and
+:mod:`femtologging._config_filters` use :func:`factory_disallowed_message` when
+they reject a ``"()"`` entry. The module holds no state and performs no I/O, so
+the policy can be read and tested on its own. See
+``docs/users-guide.md#filter-factory-trust-boundary`` for the user-facing
+contract.
+"""
 
 from __future__ import annotations
 

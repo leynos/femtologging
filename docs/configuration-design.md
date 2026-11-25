@@ -892,6 +892,16 @@ original attribute value is restored. Values are limited to ``str``, ``int``,
 with bounds of 64 keys, 64 UTF-8 bytes per key, 1,024 UTF-8 bytes per value,
 and 16 KiB total per record.
 
+The declared filters phase is a preflight, not only a loop. With
+`allow_factories=False`, every entry in the `filters` section is checked for a
+``"()"`` key and accepted entries are snapshotted before any builder exists, so
+a mapping that mutates between reads cannot introduce a factory later. With
+factories enabled, each entry is read as it is constructed, which keeps the
+standard library's loop semantics for a trusted factory that adjusts a later
+entry. The module split behind this behaviour and the internal
+`build_filter_from_dict(..., allow_factories=...)` contract are recorded in the
+[developers guide](developers-guide.md#configuration-module-layout).
+
 The ADR defines the conflict rules for mixed declarative and factory syntax:
 
 - If a filter entry uses `"()"`, it is treated as a factory entry and must not
