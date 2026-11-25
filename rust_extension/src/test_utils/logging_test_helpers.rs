@@ -13,6 +13,15 @@
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(all(
+    not(loom),
+    any(
+        all(feature = "python", feature = "log-compat"),
+        all(feature = "python", feature = "tracing-compat")
+    )
+))]
+use std::process::Output;
+
 static LOGGER_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Supply a logger name unique within this test binary.
@@ -58,6 +67,25 @@ pub(crate) fn log_max_level() {
 ))]
 pub(crate) fn run_isolated_child(test_filter: &str) -> std::io::Result<()> {
     let output = crate::test_utils::isolated_child::run_isolated_test(test_filter)?;
+    judge_child_output(test_filter, &output)
+}
+
+/// Return `Ok` only when a child ran and passed the test its filter named.
+///
+/// The rule is separated from process launching so it can be exercised with
+/// synthetic output: a child that exits successfully but reports `0 passed`,
+/// or `2 passed`, did not run the one test the caller meant to isolate.
+///
+/// The gate matches its only caller's. `Output` itself is only imported under
+/// that feature set, and the rule has no caller elsewhere.
+#[cfg(all(
+    not(loom),
+    any(
+        all(feature = "python", feature = "log-compat"),
+        all(feature = "python", feature = "tracing-compat")
+    )
+))]
+fn judge_child_output(test_filter: &str, output: &Output) -> std::io::Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status.success() && stdout.contains("1 passed") {
         return Ok(());
@@ -67,4 +95,61 @@ pub(crate) fn run_isolated_child(test_filter: &str) -> std::io::Result<()> {
         output.status,
         String::from_utf8_lossy(&output.stderr),
     )))
+}
+
+// The rule itself is platform-neutral, but the test builds a synthetic
+// `ExitStatus`, which only Unix exposes a constructor for.
+#[cfg(all(
+    unix,
+    not(loom),
+    any(
+        all(feature = "python", feature = "log-compat"),
+        all(feature = "python", feature = "tracing-compat")
+    )
+))]
+#[cfg(test)]
+mod tests {
+    //! The child-output rule, exercised without launching a process.
+
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+
+    use super::judge_child_output;
+
+    /// Build an `Output` with the given exit code and stdout.
+    fn output(code: i32, stdout: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_child_reporting_one_passed_is_accepted() {
+        assert!(judge_child_output("chosen", &output(0, "test chosen ... ok\n1 passed")).is_ok());
+    }
+
+    #[test]
+    fn a_successful_child_that_ran_nothing_is_refused() {
+        let error = judge_child_output("chosen", &output(0, "0 passed; 3 filtered out"))
+            .expect_err("a filter that selects no test must not report success");
+        assert!(error.to_string().contains("must run and pass"), "{error}");
+    }
+
+    #[test]
+    fn a_successful_child_that_ran_two_tests_is_refused() {
+        assert!(
+            judge_child_output("chosen", &output(0, "2 passed")).is_err(),
+            "a filter that admits a sibling test must not report success"
+        );
+    }
+
+    #[test]
+    fn a_failing_child_is_refused_even_when_it_reports_a_pass() {
+        assert!(
+            judge_child_output("chosen", &output(101, "1 passed")).is_err(),
+            "a non-zero exit status must not be reported as success"
+        );
+    }
 }

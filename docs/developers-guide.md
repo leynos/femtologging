@@ -2451,8 +2451,14 @@ assertions reusable without expanding the runtime API:
 - `logging_test_helpers.rs` provides the `unique_logger_name` and
   `log_max_level` fixtures and `run_isolated_child`, which reruns one ignored
   test in a child process and returns `io::Result<()>` rather than panicking.
-  Its items carry narrower feature gates than the module, so a suite should
-  take only the ones its own feature set provides.
+  It returns `Ok(())` only when the child both exits successfully and reports
+  the harness's `1 passed` line: a filter that selects no test still exits
+  zero and prints `0 passed`, so the status alone would let a renamed or
+  filtered-out child report a passing parent that ran nothing. The rule is
+  `judge_child_output`, separate from process launching so a unit test
+  exercises it with synthetic output. Its items carry narrower feature gates
+  than the module, so a suite should take only the ones its own feature set
+  provides.
 - `isolated_child.rs` launches that child, preserving the dynamic-library
   search path Cargo supplied to the parent.
 
