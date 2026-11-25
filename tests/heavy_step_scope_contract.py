@@ -245,6 +245,7 @@ def formatter_command_problems(found: Job) -> list[str]:
         *_missing_formatter_command_problems(executed),
         *_formatter_mask_problems(executed),
         *_pipeline_problems(executed),
+        *_background_problems(executed),
     ]
 
 
@@ -353,6 +354,29 @@ def _pipeline_problems(executed: list[str]) -> list[str]:
             if line.startswith(command) and "|" in line[len(command) :]:
                 problems.append(
                     f"the {FORMATTERS_STEP!r} step must not pipe `{command}`"
+                )
+                break
+    return problems
+
+
+def _background_problems(executed: list[str]) -> list[str]:
+    """Return a complaint per required command that is backgrounded.
+
+    A trailing `&` starts the command in the background and returns zero at
+    once, so the shell continues and the step succeeds even when the gate
+    command fails. The scripts here never need to background a gate command.
+
+    Returns
+    -------
+    list[str]
+        One complaint per required command that ends with a background `&`.
+    """
+    problems: list[str] = []
+    for command in _REQUIRED_FORMATTER_COMMANDS:
+        for line in executed:
+            if line.startswith(command) and line[len(command) :].strip() == "&":
+                problems.append(
+                    f"the {FORMATTERS_STEP!r} step must not background `{command}`"
                 )
                 break
     return problems

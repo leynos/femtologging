@@ -86,6 +86,15 @@ def _loom_clippy_inside_if_false(document: Document) -> None:
     )
 
 
+def _loom_clippy_backgrounded(document: Document) -> None:
+    """Background the Loom Clippy invocation, so the shell returns at once."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "--all-targets -- -D warnings", "--all-targets -- -D warnings &"
+    )
+
+
 def _loom_clippy_piped_to_tee(document: Document) -> None:
     """Pipe the Loom Clippy invocation into `tee`, which reports its own status."""
     found = job(document, HEAVY_JOB)
@@ -120,4 +129,5 @@ FORMATTER_MUTATIONS = (
     pytest.param(_loom_clippy_inside_if_false, id="loom-clippy-if-false"),
     pytest.param(_loom_clippy_piped_to_true, id="loom-clippy-piped-truthy"),
     pytest.param(_loom_clippy_piped_to_tee, id="loom-clippy-piped-tee"),
+    pytest.param(_loom_clippy_backgrounded, id="loom-clippy-backgrounded"),
 )
