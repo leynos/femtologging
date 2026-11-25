@@ -211,16 +211,53 @@ def formatter_command_problems(found: Job) -> list[str]:
     )
     if step is None:
         return [f"the job must have a {FORMATTERS_STEP!r} step"]
-    lines = [line.strip() for line in run_text(step).splitlines()]
-    executed = [line for line in lines if line and not line.startswith("#")]
-    problems = [
+    executed = _executed_lines(run_text(step))
+    return [
+        *_missing_formatter_command_problems(executed),
+        *_formatter_mask_problems(executed),
+    ]
+
+
+def _executed_lines(script: str) -> list[str]:
+    """Return the script's non-blank, non-comment lines, stripped.
+
+    Returns
+    -------
+    list[str]
+        The lines the shell would actually run.
+    """
+    return [
+        line.strip()
+        for line in script.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _missing_formatter_command_problems(executed: list[str]) -> list[str]:
+    """Return one complaint per required command no executed line begins.
+
+    Returns
+    -------
+    list[str]
+        The complaints, in the required-command order.
+    """
+    return [
         f"the {FORMATTERS_STEP!r} step must run `{command}`"
         for command in _REQUIRED_FORMATTER_COMMANDS
         if not any(line.startswith(command) for line in executed)
     ]
-    problems.extend(
+
+
+def _formatter_mask_problems(executed: list[str]) -> list[str]:
+    """Return one complaint per masking fragment an executed line contains.
+
+    Returns
+    -------
+    list[str]
+        The complaints, in the fragment order.
+    """
+    return [
         f"the {FORMATTERS_STEP!r} step must not mask a failure with {fragment!r}"
         for fragment in _FORMATTER_MASK_FRAGMENTS
         if any(fragment in line for line in executed)
-    )
-    return problems
+    ]
