@@ -2427,6 +2427,20 @@ leading `%` as literal text and scanning resumes after that `%`. Formatter
 objects and filters are therefore both resolved before the configuration
 transaction commits.
 
+`rust_extension/src/formatter/percent/directives.rs` owns format compilation.
+`Compiler` turns the format text into the literal and directive segments that
+`PercentFormatter` stores, and `ClosingParenthesisSearch` remembers the last
+closing-parenthesis lookup so a malformed start reuses it instead of rescanning
+an already examined suffix. Keep new directive syntax and recovery rules in
+that module so the linear-work argument stays in one place.
+
+The same module holds a `#[cfg(test)]`-only `instrumentation` child module with
+counters for compilations, fresh delimiter searches and scanned bytes. It is
+the seam `percent/tests/performance.rs` uses to assert the compile-once and
+linear-parsing guarantees, which rendered output cannot show. The counters are
+absent from production builds, so compilation there carries no instrumentation
+and no synchronization.
+
 ## Shared Rust test helpers and fixtures
 
 Crate unit-test support is owned by `rust_extension/src/test_utils/` and is

@@ -109,7 +109,7 @@ pub(crate) mod instrumentation {
     //! Measurements are thread-local: each test's work belongs to the thread
     //! that performed it, which keeps the numbers deterministic under parallel
     //! test execution. The module is absent from production builds, so
-    //! compilation there carries no instrumentation and no synchronisation.
+    //! compilation there carries no instrumentation and no synchronization.
 
     use std::cell::Cell;
 
