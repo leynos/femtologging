@@ -58,16 +58,12 @@ fn rendering_reuses_the_segments_compiled_at_construction() {
     );
 }
 
-#[test]
-fn malformed_starts_sharing_a_closing_parenthesis_scan_it_once() {
-    let format = shared_close_format(64);
-    let measurements = measure_compilation(&format);
+/// Require that `format` compiled in one search and scanned a linear amount.
+fn assert_single_search(format: &str, memo_explanation: &str) {
+    let measurements = measure_compilation(format);
 
     assert_eq!(measurements.compilations, 1, "the probe compiles once");
-    assert_eq!(
-        measurements.delimiter_searches, 1,
-        "the memo must answer every later start from the first search"
-    );
+    assert_eq!(measurements.delimiter_searches, 1, "{memo_explanation}");
     assert!(
         measurements.scanned_bytes <= format.len(),
         "scanned {} bytes of a {} byte format",
@@ -77,20 +73,18 @@ fn malformed_starts_sharing_a_closing_parenthesis_scan_it_once() {
 }
 
 #[test]
-fn malformed_starts_without_a_closing_parenthesis_scan_the_suffix_once() {
-    let format = missing_close_format(64);
-    let measurements = measure_compilation(&format);
-
-    assert_eq!(measurements.compilations, 1, "the probe compiles once");
-    assert_eq!(
-        measurements.delimiter_searches, 1,
-        "a missing delimiter must be remembered for every later start"
+fn malformed_starts_sharing_a_closing_parenthesis_scan_it_once() {
+    assert_single_search(
+        &shared_close_format(64),
+        "the memo must answer every later start from the first search",
     );
-    assert!(
-        measurements.scanned_bytes <= format.len(),
-        "scanned {} bytes of a {} byte format",
-        measurements.scanned_bytes,
-        format.len()
+}
+
+#[test]
+fn malformed_starts_without_a_closing_parenthesis_scan_the_suffix_once() {
+    assert_single_search(
+        &missing_close_format(64),
+        "a missing delimiter must be remembered for every later start",
     );
 }
 
