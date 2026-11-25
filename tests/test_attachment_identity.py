@@ -119,6 +119,39 @@ def test_a_reattached_handler_never_inherits_a_dropped_identity(
     )
 
 
+def test_removing_an_unattached_handler_returns_false(
+    reset_logger_state: None,
+) -> None:
+    """``remove_handler`` reports whether anything was actually detached.
+
+    The return value is the only signal a caller has that the handler it named
+    was attached. Returning ``True`` for a handler the logger never held would
+    make a successful detach and a misspelt one indistinguishable, and a caller
+    that logs the outcome would report a removal that never happened.
+    """
+    logger = get_logger("identity.remove")
+    attached = _RecordingHandler()
+    stranger = _RecordingHandler()
+    logger.add_handler(attached)
+
+    assert logger.remove_handler(stranger) is False, (
+        "a handler the logger never held must not report a removal"
+    )
+    assert len(logger.handler_identities_for_test()) == 1, (
+        "a missed removal must leave the attachment in place"
+    )
+
+    assert logger.remove_handler(attached) is True, (
+        "the attached handler must still be removable afterwards"
+    )
+    assert logger.handler_identities_for_test() == [], (
+        "the attached handler must actually be gone"
+    )
+    assert logger.remove_handler(attached) is False, (
+        "a second removal of the same handler must report nothing was detached"
+    )
+
+
 def test_filter_identities_follow_the_configured_filters(core_config: None) -> None:
     """Filter tokens are ordered, stable, and distinct from handler tokens."""
     core = get_logger("core")

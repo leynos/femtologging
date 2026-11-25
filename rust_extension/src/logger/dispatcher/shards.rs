@@ -61,3 +61,7 @@ impl Shards {
             .unwrap_or(&self.first)
     }
 }
+
+#[cfg(all(test, not(loom)))]
+#[path = "shards_tests.rs"]
+mod shards_tests;

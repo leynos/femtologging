@@ -153,6 +153,17 @@ impl LoggerBudget {
         self.in_flight.load(Ordering::Acquire)
     }
 
+    /// Return the generation a release must carry to affect this budget.
+    ///
+    /// A test drives `release` directly to prove that a release with no charge
+    /// held saturates at zero rather than underflowing, and that path is only
+    /// reached with a generation the budget still accepts. Reading it here
+    /// keeps the private counter private while letting the guard be exercised.
+    #[cfg(all(test, not(loom)))]
+    pub(super) fn generation_for_test(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
     /// Charge one record against the logger's budget, or refuse it.
     ///
     /// Takes no lock and never waits. A logger at its budget is already holding
@@ -253,3 +264,7 @@ impl Drop for Permit {
 #[cfg(all(test, not(loom)))]
 #[path = "budget_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(loom)))]
+#[path = "budget_property_tests.rs"]
+mod budget_property_tests;

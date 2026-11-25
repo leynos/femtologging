@@ -13,7 +13,12 @@ use super::super::{FemtoLogger, QueuedRecord};
 /// record's handlers; the caller then counts and warns about the dropped
 /// record. Taking the record out of the refusal also keeps the payload in use
 /// in the library build, where the dispatch path never inspects it.
-fn is_admitted(admission: Result<(), AdmissionRefusal>) -> bool {
+///
+/// `UnexpectedJob` cannot be produced by a real send: `Shard::admit` sends only
+/// records, and the variant exists to keep its match total. A test therefore
+/// passes it in directly, which is why this is `pub(super)` rather than private
+/// to the module — the arm is otherwise unreachable from any test at all.
+pub(super) fn is_admitted(admission: Result<(), AdmissionRefusal>) -> bool {
     match admission {
         Ok(()) => true,
         Err(AdmissionRefusal::Record(refused)) => {
@@ -82,3 +87,7 @@ impl FemtoLogger {
         });
     }
 }
+
+#[cfg(all(test, not(loom)))]
+#[path = "admission_tests.rs"]
+mod admission_tests;

@@ -7,7 +7,7 @@
 
 use super::super::pid_reservation::PidReservation;
 use super::shard::Shard;
-use super::{Dispatcher, shards_for};
+use super::{Dispatcher, DispatcherError, shards_for};
 
 /// The default the pool falls back to when the machine reports no limit.
 const DEFAULT: usize = super::DEFAULT_SHARD_COUNT;
@@ -180,3 +180,12 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
         "releasing a retry reservation must leave the word free"
     );
 }
+
+// `DispatcherError::new` and `invalid_pool` are `const`, which is what lets a
+// refusal be described where it is raised. Both are crate-private, so an
+// external `trybuild` fixture cannot name them; a compile-time binding here is
+// the enforcing test. A `const fn` that quietly loses its qualifier still
+// passes every behavioural test.
+const _: fn(usize, usize, std::io::Error) -> DispatcherError = DispatcherError::new;
+#[cfg(not(loom))]
+const _: fn(std::io::Error) -> DispatcherError = DispatcherError::invalid_pool;

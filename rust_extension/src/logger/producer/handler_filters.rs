@@ -125,3 +125,10 @@ fn filter_handler_attachment(
         }
     })
 }
+
+// `FilterChainOutcome::as_str` is `const`, and it labels a bounded trace field.
+// It is only compiled with the tracing bridge, and it is private to this
+// module, so an external `trybuild` fixture cannot name it. A compile-time
+// binding here fails the build if the qualifier is lost.
+#[cfg(all(test, feature = "tracing-compat"))]
+const _: fn(FilterChainOutcome) -> &'static str = FilterChainOutcome::as_str;

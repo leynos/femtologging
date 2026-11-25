@@ -141,7 +141,22 @@ impl FemtoLogger {
     /// attached before it arrives, and every stage from here on carries it
     /// unchanged through filtering, the handler-filter snapshot and parent
     /// propagation.
-    pub(crate) fn log_prebuilt(&self, mut record: FemtoLogRecord) -> Option<String> {
+    pub(crate) fn log_prebuilt(&self, record: FemtoLogRecord) -> Option<String> {
+        self.log_prebuilt_to(std::io::stderr(), record)
+    }
+
+    /// Log a record the caller has already assembled, reporting to `writer`.
+    ///
+    /// The writer is the seam that makes the invalid-context diagnostic
+    /// observable: [`Self::log_prebuilt`] supplies the process's stderr, which
+    /// a test cannot read without redirecting a file descriptor, while a test
+    /// supplies a `Vec` and asserts the exact bytes. Everything else is shared,
+    /// so a test cannot pass by exercising a path production does not take.
+    pub(crate) fn log_prebuilt_to(
+        &self,
+        mut writer: impl std::io::Write,
+        mut record: FemtoLogRecord,
+    ) -> Option<String> {
         if self.refuse_if_disabled() {
             return None;
         }
@@ -156,9 +171,9 @@ impl FemtoLogger {
                     // No `log` backend is installed by default, so a warning sent
                     // through the facade would be dropped and a caller that never
                     // installed the bridge would lose the only diagnostic for a
-                    // record this path discards. A failed stderr write must not
-                    // take down the logging path, so its result is discarded.
-                    drop(report_context_drop(std::io::stderr(), &err));
+                    // record this path discards. A failed write must not take
+                    // down the logging path, so its result is discarded.
+                    drop(report_context_drop(&mut writer, &err));
                     return None;
                 }
             };
@@ -428,3 +443,11 @@ pub(crate) fn report_context_drop(
 #[cfg(test)]
 #[path = "report_context_drop_tests.rs"]
 mod report_context_drop_tests;
+
+#[cfg(all(test, feature = "python"))]
+#[path = "log_prebuilt_drop_tests.rs"]
+mod log_prebuilt_drop_tests;
+
+#[cfg(test)]
+#[path = "producer_const_eval_tests.rs"]
+mod producer_const_eval_tests;
