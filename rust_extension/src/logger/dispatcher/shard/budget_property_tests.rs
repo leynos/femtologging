@@ -102,9 +102,9 @@ proptest! {
         let budget = Arc::new(LoggerBudget::new(limit));
 
         let mut held: Vec<Permit> = (0..limit)
-            .map(|index| {
+            .map(|_| {
                 Permit::take(&permits, &budget)
-                    .unwrap_or_else(|| panic!("charge {index} of {limit} must be admitted"))
+                    .expect("a fresh budget must admit its full limit")
             })
             .collect();
 

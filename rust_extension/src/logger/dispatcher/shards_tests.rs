@@ -22,9 +22,9 @@ const _: fn(&Shards) -> usize = Shards::len;
 fn pool_of(count: usize) -> Shards {
     let started = (0..count)
         .map(|index| {
-            Shard::start(index, 8).unwrap_or_else(|error| {
-                panic!("shard {index} of {count} should start, got {error}")
-            })
+            Shard::start(index, 8)
+                .map_err(|error| format!("shard {index} of {count} did not start: {error}"))
+                .expect("every shard of a test pool must start")
         })
         .collect();
     Shards::from_started(started).expect("a pool of at least one shard is valid")
