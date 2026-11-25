@@ -193,8 +193,25 @@ _REQUIRED_FORMATTER_COMMANDS: tuple[str, ...] = (
 
 #: Fragments that mask a failed command's status anywhere in the script. `||`
 #: is refused outright rather than only `|| true`, because `|| :` and any other
-#: no-op right-hand side discards the left-hand status just as effectively.
-_FORMATTER_MASK_FRAGMENTS: tuple[str, ...] = ("||", "set +e", "| cat", "exit 0")
+#: no-op right-hand side discards the left-hand status just as effectively. A
+#: bare `|` is refused too: GitHub's default `bash -e {0}` shell does not set
+#: `pipefail`, so `clippy | true` reports the right-hand status and hides a
+#: Clippy failure.
+_FORMATTER_MASK_FRAGMENTS: tuple[str, ...] = (
+    "||",
+    "| true",
+    "set +e",
+    "| cat",
+    "exit 0",
+)
+
+#: Constructs that make a command conditional on something false. A command
+#: inside one is never executed, so a line-prefix match would be satisfied
+#: while the lane never runs.
+_NEVER_RUNNING_BLOCKS: tuple[tuple[str, str], ...] = (
+    ("if false; then", "fi"),
+    ("if false", "fi"),
+)
 
 
 def formatter_command_problems(found: Job) -> list[str]:
@@ -224,6 +241,7 @@ def formatter_command_problems(found: Job) -> list[str]:
         return [f"the job must have a {FORMATTERS_STEP!r} step"]
     executed = _executed_lines(run_text(step))
     return [
+        *_conditional_skip_problems(executed),
         *_missing_formatter_command_problems(executed),
         *_formatter_mask_problems(executed),
     ]
@@ -293,3 +311,26 @@ def _formatter_mask_problems(executed: list[str]) -> list[str]:
         for fragment in _FORMATTER_MASK_FRAGMENTS
         if any(fragment in line for line in executed)
     ]
+
+
+def _conditional_skip_problems(executed: list[str]) -> list[str]:
+    """Return a complaint when a command sits in an `if false` block.
+
+    The contract matches a required command by its line prefix, which a
+    command nested in a block the shell never enters would still satisfy. The
+    scripts here have no legitimate `if false` block, so one is refused
+    outright rather than parsed.
+
+    Returns
+    -------
+    list[str]
+        A complaint when an `if false` block appears in the script.
+    """
+    problems: list[str] = []
+    for opener, closer in _NEVER_RUNNING_BLOCKS:
+        if any(line.startswith(opener) for line in executed):
+            problems.append(
+                f"the {FORMATTERS_STEP!r} step must not wrap commands in "
+                f"`{opener} ... {closer}`"
+            )
+    return problems
