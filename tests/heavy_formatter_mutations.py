@@ -79,10 +79,19 @@ def _loom_clippy_inside_if_false(document: Document) -> None:
         run_text(step)
         .replace(
             'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy',
-            "if false; then "
+            "if false; then\n"
             'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy',
         )
         .replace("--all-targets -- -D warnings", "--all-targets -- -D warnings; fi")
+    )
+
+
+def _loom_clippy_piped_to_tee(document: Document) -> None:
+    """Pipe the Loom Clippy invocation into `tee`, which reports its own status."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "--all-targets -- -D warnings", "--all-targets -- -D warnings | tee /dev/null"
     )
 
 
@@ -110,4 +119,5 @@ FORMATTER_MUTATIONS = (
     pytest.param(_loom_clippy_masked, id="loom-clippy-masked"),
     pytest.param(_loom_clippy_inside_if_false, id="loom-clippy-if-false"),
     pytest.param(_loom_clippy_piped_to_true, id="loom-clippy-piped-truthy"),
+    pytest.param(_loom_clippy_piped_to_tee, id="loom-clippy-piped-tee"),
 )

@@ -199,19 +199,19 @@ _REQUIRED_FORMATTER_COMMANDS: tuple[str, ...] = (
 #: Clippy failure.
 _FORMATTER_MASK_FRAGMENTS: tuple[str, ...] = (
     "||",
-    "| true",
     "set +e",
-    "| cat",
     "exit 0",
 )
 
+#: Any pipe on a required command is refused. GitHub's default `bash -e {0}`
+#: shell does not set `pipefail`, so *any* right-hand side, not only `true` or
+#: `cat`, can report success while the gate command failed.
+
 #: Constructs that make a command conditional on something false. A command
 #: inside one is never executed, so a line-prefix match would be satisfied
-#: while the lane never runs.
-_NEVER_RUNNING_BLOCKS: tuple[tuple[str, str], ...] = (
-    ("if false; then", "fi"),
-    ("if false", "fi"),
-)
+#: while the lane never runs. The opener is matched as a whole statement so a
+#: multi-line block whose body begins with the required command is caught too.
+_NEVER_RUNNING_BLOCKS: tuple[str, ...] = ("if false; then", "if false")
 
 
 def formatter_command_problems(found: Job) -> list[str]:
@@ -244,6 +244,7 @@ def formatter_command_problems(found: Job) -> list[str]:
         *_conditional_skip_problems(executed),
         *_missing_formatter_command_problems(executed),
         *_formatter_mask_problems(executed),
+        *_pipeline_problems(executed),
     ]
 
 
@@ -326,11 +327,32 @@ def _conditional_skip_problems(executed: list[str]) -> list[str]:
     list[str]
         A complaint when an `if false` block appears in the script.
     """
+    return [
+        f"the {FORMATTERS_STEP!r} step must not wrap a command in `{opener} ... fi`"
+        for opener in _NEVER_RUNNING_BLOCKS
+        if any(line.startswith(opener) for line in executed)
+    ]
+
+
+def _pipeline_problems(executed: list[str]) -> list[str]:
+    """Return a complaint per required command that is piped.
+
+    Without `pipefail`, a pipeline reports its last command's status, so a
+    suffix as innocuous as `| tee /dev/null` hides a failure. The scripts here
+    never need to pipe a gate command, so any pipe on a required command is
+    refused rather than judged for its right-hand side.
+
+    Returns
+    -------
+    list[str]
+        One complaint per required command that is piped.
+    """
     problems: list[str] = []
-    for opener, closer in _NEVER_RUNNING_BLOCKS:
-        if any(line.startswith(opener) for line in executed):
-            problems.append(
-                f"the {FORMATTERS_STEP!r} step must not wrap commands in "
-                f"`{opener} ... {closer}`"
-            )
+    for command in _REQUIRED_FORMATTER_COMMANDS:
+        for line in executed:
+            if line.startswith(command) and "|" in line[len(command) :]:
+                problems.append(
+                    f"the {FORMATTERS_STEP!r} step must not pipe `{command}`"
+                )
+                break
     return problems
