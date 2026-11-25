@@ -1145,6 +1145,17 @@ linker itself:
   is the isolation boundary: it takes none of the development standard (no
   `mold` flag and no inherited `RUSTFLAGS`).
 
+Cognitive complexity is gated by Whitaker, not by Clippy. Clippy's
+`cognitive_complexity` scores code after macro expansion, so it counts
+branching a macro generated, and neither `Cargo.toml` nor `clippy.toml` enables
+it. Whitaker's experimental `macro_aware_cognitive_complexity` gates it at
+`max_complexity = 9`, CodeScene's ceiling. `rust_extension/dylint.toml` opts in
+with `[whitaker] experimental = ["macro_aware_cognitive_complexity"]`. Fix a
+finding by extracting named helpers, never by raising the threshold. A Whitaker
+suite installed before the lint existed (v0.2.12 or earlier) does not register
+it and silently leaves the gate inactive, so rerun `whitaker-installer` to
+refresh the suite after updating a checkout.
+
 ### Whitaker duplicate dylint registration
 
 The installer revision this repository previously pinned registered the
