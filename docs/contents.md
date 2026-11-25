@@ -9,6 +9,9 @@ libraries. Use the links below to explore each topic.
   - Describes Makefile commands for building, linting, formatting and tests.
 - [developers-guide.md](./developers-guide.md)
   - Records developer toolchain ownership and validation boundaries.
+- [repository-layout.md](./repository-layout.md)
+  - Maps the important paths to their responsibilities and says where new
+    filters, sections, shape checks, and trust-boundary rules belong.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Describes structured logging additions, the bounded logger and shared
     dispatch changes, the bounded handler `close()` contract, recursive schema

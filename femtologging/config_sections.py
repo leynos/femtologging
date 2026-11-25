@@ -4,18 +4,18 @@ This module handles the processing of filters, formatters, handlers,
 loggers, and root logger sections in ``dictConfig``-style configuration
 dictionaries.
 
-The entry points are :func:`_process_filters`, :func:`_process_formatters`,
-:func:`_process_handlers`, :func:`_process_loggers`, and
-:func:`_process_root_logger`, called from
-:func:`femtologging.config.dictConfig`.
+The entry points are :func:`_collect_filters`, :func:`_process_sections`, and
+:func:`_process_root_logger`, called from :func:`femtologging.config.dictConfig`.
 """
 
 from __future__ import annotations
 
 import collections.abc as cabc
+import dataclasses
 import typing as typ
 
 from ._config_filters import build_filter_from_dict
+from ._config_policy import factory_disallowed_message
 from .config import (
     _build_formatter,
     _build_handler_from_dict,
@@ -74,58 +74,107 @@ def _iter_section_items(
         )
 
 
-def _process_filters(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SectionSpec:
+    """Describe a section whose entries each build one configured object."""
+
+    section: str
+    item_name: str
+    attach: cabc.Callable[
+        [_ConfigBuilder, str, cabc.Mapping[str, object]], _ConfigBuilder
+    ]
+    key_err_tmpl: str | None = None
+
+
+_SECTION_SPECS: tuple[_SectionSpec, ...] = (
+    _SectionSpec(
+        "formatters",
+        "formatter",
+        lambda builder, fid, cfg: builder.with_formatter(fid, _build_formatter(cfg)),
+    ),
+    _SectionSpec(
+        "handlers",
+        "handler",
+        lambda builder, hid, cfg: builder.with_handler(
+            hid, _build_handler_from_dict(hid, cfg)
+        ),
+    ),
+    _SectionSpec(
+        "loggers",
+        "logger",
+        lambda builder, lname, cfg: builder.with_logger(
+            lname, _build_logger_from_dict(lname, cfg)
+        ),
+        key_err_tmpl="loggers section key {name} must be a string",
+    ),
+)
+
+
+def _attach_section(
+    builder: _ConfigBuilder,
+    config: cabc.Mapping[str, object],
+    spec: _SectionSpec,
 ) -> _ConfigBuilder:
-    """Attach filter builders to ``builder``."""
-    for fid, filter_cfg in _iter_section_items(
-        config,
-        "filters",
-        "filter",
+    """Attach every validated item in ``spec``'s section."""
+    for item_id, item_cfg in _iter_section_items(
+        config, spec.section, spec.item_name, key_err_tmpl=spec.key_err_tmpl
     ):
+        builder = spec.attach(builder, item_id, item_cfg)
+    return builder
+
+
+def _collect_filters(
+    config: cabc.Mapping[str, object], *, allow_factories: bool
+) -> cabc.Iterable[tuple[str, cabc.Mapping[str, object]]]:
+    """Return the filter entries to construct, rejecting factories if asked."""
+    entries = _iter_section_items(config, "filters", "filter")
+    if allow_factories:
+        # A trusted factory may change a later entry before it is read, which
+        # the stdlib loop allows. Read each entry only when it is constructed.
+        return entries
+    collected: dict[str, dict[str, object]] = {}
+    for fid, filter_cfg in entries:
+        # Iterate keys instead of testing membership: a custom mapping's
+        # ``__contains__`` would read the "()" value, which the policy
+        # promises never to inspect.
+        keys = list(filter_cfg)
+        if "()" in keys:
+            msg = factory_disallowed_message(fid)
+            raise ValueError(msg)
+        # The snapshot is what construction consumes, so a mapping that
+        # changes between reads cannot introduce a factory afterwards.
+        collected[fid] = {key: filter_cfg[key] for key in keys}
+    return collected.items()
+
+
+def _process_filters(
+    builder: _ConfigBuilder,
+    filters: cabc.Iterable[tuple[str, cabc.Mapping[str, object]]],
+    *,
+    allow_factories: bool = True,
+) -> _ConfigBuilder:
+    """Attach filter builders for the collected ``filters`` entries."""
+    for fid, filter_cfg in filters:
+        # The per-entry guard is defence in depth for direct callers of
+        # ``build_filter_from_dict`` and for any unscreened future caller.
         builder = builder.with_filter(
-            fid, build_filter_from_dict(fid, dict(filter_cfg))
+            fid,
+            build_filter_from_dict(fid, filter_cfg, allow_factories=allow_factories),
         )
     return builder
 
 
-def _process_formatters(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
+def _process_sections(
+    builder: _ConfigBuilder,
+    config: cabc.Mapping[str, object],
+    filters: cabc.Iterable[tuple[str, cabc.Mapping[str, object]]],
+    *,
+    allow_factories: bool = True,
 ) -> _ConfigBuilder:
-    """Attach formatter builders to ``builder``."""
-    for fid, fmt_cfg in _iter_section_items(
-        config,
-        "formatters",
-        "formatter",
-    ):
-        builder = builder.with_formatter(fid, _build_formatter(fmt_cfg))
-    return builder
-
-
-def _process_handlers(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
-) -> _ConfigBuilder:
-    """Attach handler builders to ``builder``."""
-    for hid, handler_cfg in _iter_section_items(
-        config,
-        "handlers",
-        "handler",
-    ):
-        builder = builder.with_handler(hid, _build_handler_from_dict(hid, handler_cfg))
-    return builder
-
-
-def _process_loggers(
-    builder: _ConfigBuilder, config: cabc.Mapping[str, object]
-) -> _ConfigBuilder:
-    """Attach logger configurations to ``builder``."""
-    for lname, logger_cfg in _iter_section_items(
-        config,
-        "loggers",
-        "logger",
-        key_err_tmpl="loggers section key {name} must be a string",
-    ):
-        builder = builder.with_logger(lname, _build_logger_from_dict(lname, logger_cfg))
+    """Attach the filter, formatter, handler, and logger sections."""
+    builder = _process_filters(builder, filters, allow_factories=allow_factories)
+    for spec in _SECTION_SPECS:
+        builder = _attach_section(builder, config, spec)
     return builder
 
 

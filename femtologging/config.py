@@ -1,10 +1,15 @@
 """Configuration via logging-style dictionaries.
 
 This module implements :func:`dictConfig`, a restricted variant of
-``logging.config.dictConfig``. Handler ``level`` and incremental
-configuration are unsupported. Top-level, handler, and logger-level
-``filters`` lists are supported; each filter must
-contain exactly one of ``level`` or ``name``.
+``logging.config.dictConfig`` with no handler ``level`` or incremental
+configuration. Filters may be declarative (``level`` or ``name``) or use the
+``"()"`` factory form.
+
+Factory entries are trusted-code-equivalent input: a dotted string imports a
+module and invokes the resolved callable, and a direct callable is invoked as
+given. Lower-trust configuration must exclude them with
+``allow_factories=False``; see
+``docs/users-guide.md#filter-factory-trust-boundary``.
 
 Example:
 -------
@@ -29,6 +34,15 @@ from . import _femtologging_rs as rust
 # Re-export BasicConfig, basicConfig, and fileConfig for backward compatibility
 # (these are also available from the top-level femtologging package)
 from ._basic_config import BasicConfig, basicConfig
+from ._config_policy import validate_allow_factories
+
+# Re-exported for the section modules that have historically imported these
+# from here. New code should import them from _config_validation directly.
+from ._config_validation import (
+    _validate_mapping_type,
+    _validate_string_keys,
+    _validate_string_list,
+)
 from ._timed_handler_config import parse_timed_args
 from .file_config import fileConfig
 from .overflow_policy import OverflowPolicy
@@ -80,30 +94,11 @@ def _evaluate_string_safely(value: str, context: str) -> object:
         raise ValueError(msg) from exc
 
 
-def _validate_mapping_type(value: object, name: str) -> cabc.Mapping[object, object]:
-    """Ensure ``value`` is a mapping and not bytes-like."""
-    if isinstance(value, (bytes, bytearray)) or not isinstance(value, cabc.Mapping):
-        msg = f"{name} must be a mapping"
-        raise TypeError(msg)
-    return typ.cast("cabc.Mapping[object, object]", value)
-
-
 def _validate_no_bytes(value: object, name: str) -> None:
     """Reject ``bytes`` or ``bytearray`` for ``value``."""
     if isinstance(value, (bytes, bytearray)):
         msg = f"{name} must not be bytes or bytearray"
         raise TypeError(msg)
-
-
-def _validate_string_keys(
-    mapping: cabc.Mapping[object, object], name: str
-) -> cabc.Mapping[str, object]:
-    """Ensure all keys in ``mapping`` are strings."""
-    for key in mapping:
-        if not isinstance(key, str):
-            msg = f"{name} keys must be strings"
-            raise TypeError(msg)
-    return typ.cast("cabc.Mapping[str, object]", mapping)
 
 
 def _coerce_args(args: object, ctx: str) -> list[object]:
@@ -220,20 +215,6 @@ def _build_handler_from_dict(hid: str, data: cabc.Mapping[str, object]) -> objec
     return builder
 
 
-def _validate_string_list(
-    value: object, label: str, *, owner: str = "logger"
-) -> list[str]:
-    """Validate that ``value`` is a list or tuple of strings."""
-    if not isinstance(value, (list, tuple)):
-        msg = f"{owner} {label} must be a list or tuple of strings"
-        raise TypeError(msg)
-    seq = typ.cast("cabc.Sequence[object]", value)
-    if not all(isinstance(item, str) for item in seq):
-        msg = f"{owner} {label} must be a list or tuple of strings"
-        raise TypeError(msg)
-    return list(typ.cast("cabc.Sequence[str]", seq))
-
-
 def _validate_logger_config_keys(name: str, data: cabc.Mapping[str, object]) -> None:
     """Ensure ``data`` uses only supported logger keys."""
     allowed = {"level", "handlers", "propagate", "filters"}
@@ -325,14 +306,51 @@ def _build_formatter(fcfg: cabc.Mapping[str, object]) -> object:
 
 
 # ruff: ignore[invalid-function-name] name mirrors stdlib logging.config.dictConfig
-def dictConfig(config: cabc.Mapping[str, object]) -> None:
+def dictConfig(
+    config: cabc.Mapping[str, object], *, allow_factories: bool = True
+) -> None:
+    # ruff: ignore[docstring-extraneous-exception] TypeError and ValueError are
+    # raised by the validation and section-processing helpers called directly
+    # below; documenting them here keeps the public contract accurate.
     """Configure logging using a ``dictConfig``-style dictionary.
 
     Parameters
     ----------
     config : cabc.Mapping[str, object]
         A dictionary compatible with :mod:`logging.config`. Unsupported
-        features (handler ``level``) raise ``ValueError``.
+        features raise ``ValueError``.
+    allow_factories : bool, default=True
+        Whether filter entries may use the stdlib factory form ``{"()": ...}``;
+        ``False`` accepts only declarative ``level`` and ``name`` filters.
+        Non-bool values raise ``TypeError``.
+
+    Raises
+    ------
+    TypeError
+        If ``allow_factories`` is not a bool, or a configured value has the
+        wrong type for its field.
+    ValueError
+        If ``config`` is malformed, or if it configures a filter factory while
+        ``allow_factories`` is ``False``; the message names the rejected
+        filter.
+
+    Warnings
+    --------
+    A ``"()"`` filter entry is trusted-code-equivalent. A dotted string
+    imports modules during resolution and then invokes the resolved callable;
+    a direct callable object is invoked without that resolution step. Both run
+    code chosen by the configuration author, so lower-trust configuration
+    (tenants, HTTP APIs, remote configuration services, writable files) must
+    reject factory entries or pass ``allow_factories=False``; checks after
+    resolution or invocation are too late.
+
+    Notes
+    -----
+    ``allow_factories=False`` rejects filter factories only and applies no
+    trust policy to the rest of the document, so callers must validate
+    permitted handler classes and destinations separately. It is not a sandbox:
+    permitted handlers still write files and open network connections. See
+    ``docs/users-guide.md#filter-factory-trust-boundary``.
 
     Examples
     --------
@@ -347,12 +365,13 @@ def dictConfig(config: cabc.Mapping[str, object]) -> None:
     """
     from . import config_sections
 
+    allow_factories = validate_allow_factories(allow_factories)
     version = _validate_dict_config(config)
+    filters = config_sections._collect_filters(config, allow_factories=allow_factories)
     builder = typ.cast("typ.Any", _create_config_builder(version, config))
-    builder = config_sections._process_filters(builder, config)
-    builder = config_sections._process_formatters(builder, config)
-    builder = config_sections._process_handlers(builder, config)
-    builder = config_sections._process_loggers(builder, config)
+    builder = config_sections._process_sections(
+        builder, config, filters, allow_factories=allow_factories
+    )
     builder = config_sections._process_root_logger(builder, config)
     builder.build_and_init()
 

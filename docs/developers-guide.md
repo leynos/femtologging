@@ -2390,8 +2390,31 @@ manager lock is dropped, `build_and_init` calls
 `displaced.drop_without_gil(py)`, so handler teardown that flushes or joins a
 worker runs without the GIL.
 
-`dictConfig` and `fileConfig` use this same builder path, so their validation
-and transaction boundary match direct builder use.
+`dictConfig` and `fileConfig` use this same builder path, so their
+builder-level validation and commit semantics match direct builder use. Only a
+`dictConfig` document can carry ``"()"`` filter entries; `fileConfig` has no
+filter section. Declarative-only mode also rejects those entries in Python
+before the builder is created. When factories are enabled and processing
+reaches such an entry, its resolution and invocation happen before this
+transaction boundary and are not undone by a rejection. See the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary).
+
+### Configuration module layout
+
+The per-path responsibility map for the configuration modules lives in
+[the repository layout](repository-layout.md#python-configuration-modules). Two
+contracts are recorded here because they constrain any edit to those modules.
+
+`build_filter_from_dict` carries a keyword-only `allow_factories` parameter as
+defence in depth for direct callers, so it rejects a ``"()"`` entry even when
+the section preflight was bypassed.
+
+Declarative-only ordering is part of the contract. With `allow_factories=False`,
+`_collect_filters` checks every entry for ``"()"`` and snapshots each accepted
+entry before any builder is created or any factory is resolved. Factory-enabled
+mode instead reads each entry lazily when it is constructed, matching the
+standard library's loop. The public behaviour is recorded in
+[the configuration design](configuration-design.md#22-dictconfig).
 
 At runtime, each handler is paired with its resolved filter chain in a
 `HandlerAttachment`. The logger evaluates that chain on the producer thread

@@ -27,6 +27,8 @@
     "femtologging/_basic_config.py",
     "femtologging/_compat.py",
     "femtologging/_config_filters.py",
+    "femtologging/_config_policy.py",
+    "femtologging/_config_validation.py",
     "femtologging/_femtologging_rs.cpython-<platform>.so",
     "femtologging/_femtologging_rs.pyi",
     "femtologging/_filter_factory.py",

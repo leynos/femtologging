@@ -30,6 +30,7 @@ ______________________________________________________________________
 | Review if enabled  | Handler filters and formatters  | Move shared enrichment to handler filters and registered formatters.                                                                                                                             |
 | Review if enabled  | File handlers                   | Add explicit synchronization wherever a file-handler call was relied on to exclude other Python threads.                                                                                         |
 | Review if enabled  | `disable_existing_loggers`      | Name every logger that must keep emitting; `disable_existing_loggers=False` preserves but does not re-enable an earlier-disabled logger.                                                         |
+| Review if enabled  | `dictConfig` filter factories   | Pass `allow_factories=False` for lower-trust configuration so `"()"` filter entries are rejected before import, resolution or invocation.                                                        |
 | Review if enabled  | Socket and HTTP handlers        | Call `flush()` before `close()` and accept that a stalled worker drops queued records at the single shutdown deadline.                                                                           |
 | Review if enabled  | HTTP handlers                   | Expect `HandlerConfigError` for an invalid endpoint or header, and check the four-redirect limit and credential stripping.                                                                       |
 | Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                                                                                   |
@@ -466,6 +467,20 @@ For migration, move application-wide enrichment from individual logger filters
 to a filter attached to the shared handler. For output formatting, replace
 unsupported `basicConfig(format=..., datefmt=...)` arguments with a handler
 builder and either a direct `FormatterBuilder` or a registered formatter.
+
+`dictConfig` also gains a keyword-only `allow_factories` option. It defaults to
+`True`, which keeps the standard library's `"()"` factory form working. Passing
+`allow_factories=False` rejects every filter entry containing `"()"` before the
+target is imported, resolved or invoked, while declarative `level` and `name`
+filters keep working. A `"()"` entry is trusted-code-equivalent: a dotted
+string imports a module and calls the resolved object, and a direct callable is
+called as given. Pass `allow_factories=False` wherever the configuration comes
+from tenants, HTTP APIs, remote configuration services, or writable files, and
+validate handler classes and destinations separately, because the option is not
+a sandbox. See the users' guide section on the
+[filter factory trust boundary](users-guide.md#filter-factory-trust-boundary)
+for the full guidance, including which factories run when a live
+reconfiguration is applied.
 
 ______________________________________________________________________
 

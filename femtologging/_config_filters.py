@@ -1,15 +1,34 @@
-"""Filter helpers for ``dictConfig`` parsing."""
+"""Build one ``dictConfig`` filter, including the trust-boundary checks.
+
+:func:`build_filter_from_dict` is called from
+:mod:`femtologging.config_sections` and by direct callers. It turns a declarative
+``level`` or ``name`` entry into a native filter builder, and an enabled
+``"()"`` entry into a resolved and invoked callback filter.
+
+With ``allow_factories=False`` it guards the entry twice. The first scan walks
+the mapping's keys without reading any value, so an ordinary entry is rejected
+before any value accessor runs. A mapping that reports different keys to that
+scan than to the copy, such as one overriding ``keys()``, reaches the copy;
+the post-copy re-check then rejects it before validation, resolution or
+invocation. Either way a rejected factory target is never imported, resolved or
+invoked, which makes this module the second line of defence behind the section
+preflight.
+"""
 
 from __future__ import annotations
 
 import typing as typ
 
+from ._config_policy import factory_disallowed_message
 from ._femtologging_rs import (
     LevelFilterBuilder,
     NameFilterBuilder,
     PythonCallbackFilterBuilder,
 )
 from ._filter_factory import resolve_factory
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
 
 _DECLARATIVE_KEYS: frozenset[str] = frozenset({"level", "name"})
 
@@ -80,9 +99,75 @@ def _build_declarative_filter(fid: str, data: dict[str, object]) -> object:
     return NameFilterBuilder().with_prefix(name)
 
 
-def build_filter_from_dict(fid: str, data: dict[str, object]) -> object:
-    """Create a filter builder from ``dictConfig`` filter data."""
-    validate_filter_config_keys(fid, data)
-    if "()" in data:
-        return _build_factory_filter(fid, data)
-    return _build_declarative_filter(fid, data)
+def build_filter_from_dict(
+    fid: str, data: cabc.Mapping[str, object], *, allow_factories: bool = True
+) -> object:
+    """Create a filter builder from ``dictConfig`` filter data.
+
+    Parameters
+    ----------
+    fid
+        Filter identifier used in error messages and registry lookups.
+    data
+        Filter entry body. A ``"()"`` key selects the stdlib factory form; an
+        entry without it must declare exactly one of ``level`` or ``name``.
+    allow_factories
+        When ``False``, reject any entry carrying a ``"()"`` key. The initial
+        key scan rejects before any value is read, so a factory target it sees
+        is never read, resolved, or invoked. A key that the copy reveals
+        instead, such as one a ``keys()`` override adds, is copied and then
+        rejected before validation, so it is never resolved or invoked, though
+        the copy itself read its value. Declarative ``level`` and ``name``
+        entries still work.
+
+    Returns
+    -------
+    object
+        A ``LevelFilterBuilder``, ``NameFilterBuilder``, or
+        ``PythonCallbackFilterBuilder``.
+
+    Raises
+    ------
+    ValueError
+        If the entry is malformed, mixes factory and declarative forms, or
+        uses a factory while ``allow_factories`` is ``False``.
+
+    Notes
+    -----
+    When ``allow_factories`` is ``True`` (the default), a ``"()"`` entry uses
+    the stdlib factory form: a dotted string is imported and resolved, and the
+    resolved callable is invoked with the entry's remaining keys as keyword
+    arguments. A direct callable object is invoked without resolution. Both
+    forms run code chosen by the configuration author, so the entry is
+    trusted-code-equivalent; see
+    ``docs/users-guide.md#filter-factory-trust-boundary``. A non-string
+    ``level`` or ``name``, or a factory target that is not callable, raises
+    ``TypeError`` from the builder helpers.
+
+    Examples
+    --------
+    >>> from femtologging._config_filters import build_filter_from_dict
+    >>> type(build_filter_from_dict("lvl", {"level": "INFO"})).__name__
+    'LevelFilterBuilder'
+    >>> build_filter_from_dict("f", {"()": "pkg.Factory"}, allow_factories=False)
+    Traceback (most recent call last):
+    ...
+    ValueError: filter 'f' uses a '()' factory, rejected by allow_factories=False
+
+    """
+    # Scan keys first: copying a mapping reads every value, so a check after
+    # the copy would run a hostile value accessor before the policy rejection.
+    if not allow_factories and "()" in list(data):
+        msg = factory_disallowed_message(fid)
+        raise ValueError(msg)
+    # Copy once so the policy re-check, validation, and dispatch all inspect the
+    # same keys, even if a dict subclass mutates its mapping during validation.
+    entry = dict(data)
+    has_factory = "()" in entry
+    if not allow_factories and has_factory:
+        msg = factory_disallowed_message(fid)
+        raise ValueError(msg)
+    validate_filter_config_keys(fid, entry)
+    if has_factory:
+        return _build_factory_filter(fid, entry)
+    return _build_declarative_filter(fid, entry)
