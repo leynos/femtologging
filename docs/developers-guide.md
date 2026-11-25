@@ -1097,7 +1097,9 @@ states the provisioning rules and consumes the other three.
 [`tests/test_workflow_contract_properties.py`](../tests/test_workflow_contract_properties.py)
 is the Hypothesis suite that checks those readers against independent models,
 and [`tests/make_contract_helpers.py`](../tests/make_contract_helpers.py)
-supplies `prerequisite_map()`, the Makeutil-backed prerequisite map.
+supplies `prerequisite_map()`, the Makeutil-backed prerequisite map, alongside
+`strict_safe_load`, the duplicate-key-refusing YAML loader the CI contracts
+read workflows through.
 
 The readers take their outside inputs from the caller rather than reaching for
 them: `depends_on_preflight` accepts a prerequisite map and `workflow_jobs`
@@ -1507,15 +1509,35 @@ tests when `--cfg loom` is dropped, when the filter matches nothing, when
 checker fails each. `make loom-runner-test` tests it. A scheduled failure is
 not left silent: the workflow's `notify-failure` job comments on, or opens, the
 `heavy-tests nightly failure` issue with the run URL, commit and run date.
-`tests/test_heavy_workflow_contract.py`, with its rules in
-`tests/heavy_workflow_contract_helpers.py` and its document accessors in
-`tests/heavy_workflow_document.py`, pins that the job installs from `uv.lock`
-before building, keeps the Loom step last, and runs only for a scheduled
-failure. It also refuses an explicit condition or a tolerated failure on the
-job or either named Loom step, refuses a checker command whose exit status is
-masked, and pins `LOOM_MAX_PREEMPTIONS` to `3`. Every rule is also applied to a
-deliberately broken copy of the workflow, so a check that reports nothing
-cannot pass by accident.
+`tests/test_heavy_workflow_contract.py` pins that the job installs from
+`uv.lock` before building, keeps the Loom step last, and runs only for a
+scheduled failure. It also refuses an explicit condition or a tolerated failure
+on the job or either named Loom step, refuses a checker command whose exit
+status is masked, and pins `LOOM_MAX_PREEMPTIONS` to `3`. Every rule is also
+applied to a deliberately broken copy of the workflow, so a check that reports
+nothing cannot pass by accident.
+
+The rules are split by the scope each one judges. Each module also owns the
+mutations that prove it bites.
+
+- `tests/heavy_workflow_contract_helpers.py` composes them and adds the
+  install, notification and ordering rules.
+- `tests/heavy_workflow_document.py` parses the YAML and offers the job and
+  step accessors, so a rule names a step instead of walking the document.
+- `tests/heavy_compile_gate_contract.py` requires the compile step to build
+  the `heavy` target under `--cfg loom` without running it.
+- `tests/heavy_formatter_gate_contract.py` requires each deterministic lane in
+  `Run formatters and tests` to be a whole executed line: no appended argument,
+  mask, pipe, background or never-entered block.
+- `tests/heavy_step_scope_contract.py` refuses a step or job `shell` override
+  and any condition or tolerated failure on a gate step.
+- `tests/heavy_loom_gate_contract.py` requires the model checker invocation,
+  rejects a masked status, and refuses every option that would run nothing.
+- `tests/heavy_encoded_flags_contract.py` refuses a
+  `CARGO_ENCODED_RUSTFLAGS` declaration at step, job or workflow scope, since
+  it outranks the inline `RUSTFLAGS` a Loom step relies on.
+- `tests/heavy_workflow_mutations.py`, `heavy_compile_mutations.py` and
+  `heavy_formatter_mutations.py` hold the deliberately broken workflows.
 
 The scheduled configuration is also a pull-request gate. `build-test` runs the
 same command before `make lint`:
@@ -1542,8 +1564,26 @@ call type-checks.
 `tests/test_env_access_policy_ci_contract.py` requires that exact command as
 the step's whole `run` value, and its mutation tests reject a removed, echoed,
 commented, masked (`|| true`), conditional or tolerated gate.
-`tests/test_build_standard_contract.py` requires the step after the Rust and
-`mold` setup and requires the linker flag to be restated.
+`tests/ci_loom_gate_contract.py` holds the pull-request gate's own rules, and
+`tests/ci_gate_scope_contract.py` supplies the tolerance judgement both CI
+contracts share. `tests/test_build_standard_contract.py` requires the step
+after the Rust and `mold` setup and requires the linker flag to be restated.
+
+`ci_gate_scope_contract`'s matrix judgement follows GitHub's expansion order.
+It forms the cartesian product of the axes, applies each `exclude` row, then
+merges each `include` row into the combinations it matches or appends it as a
+leg of its own. Only then does it ask whether a bare `matrix.<property>`
+selector still resolves to a falsy leg, which is what makes the job fail
+somewhere. Matrix names are compared case-insensitively, as GitHub compares
+them. A row whose names collide after folding, and a matrix whose values
+contain a `${{ }}` expression, are refused rather than judged, because the
+helper cannot enumerate what GitHub would run.
+
+`tests/make_contract_helpers.py` also supplies `strict_safe_load` and
+`DuplicateKeyError`. The CI contract tests read workflows through that loader:
+PyYAML's default loader silently keeps the last of two identical mapping keys,
+so a contract could judge a value the file no longer shows. It refuses a
+repeated key at any depth. Other YAML consumers keep the existing loader.
 
 Both steps build into `target/loom` under their own cache key, which names the
 toolchain, the lockfile, the feature selection and the flags, apart from the
