@@ -5,7 +5,6 @@
 //! counted as dropped, so a slow handler slows the loggers sharing its shard
 //! rather than the code doing the logging.
 
-use std::io::Write;
 use std::sync::Arc;
 
 use crate::filters::FilterContext;
@@ -159,11 +158,7 @@ impl FemtoLogger {
                     // installed the bridge would lose the only diagnostic for a
                     // record this path discards. A failed stderr write must not
                     // take down the logging path, so its result is discarded.
-                    drop(writeln!(
-                        std::io::stderr(),
-                        "{}",
-                        context_drop_diagnostic(&err)
-                    ));
+                    drop(report_context_drop(std::io::stderr(), &err));
                     return None;
                 }
             };
@@ -408,3 +403,28 @@ impl FemtoLogger {
 pub(crate) fn context_drop_diagnostic(error: &log_context::LogContextError) -> String {
     format!("FemtoLogger: dropping record due to invalid context payload: {error}")
 }
+
+/// Write the drop diagnostic for `error` to `writer`.
+///
+/// Split from the logging path so a test can hand it a writer and read back
+/// exactly what a caller sees. The production call site passes
+/// [`std::io::stderr`] and discards the result: a full or closed diagnostic
+/// stream must not fail the logging call that triggered it.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut written = Vec::new();
+/// report_context_drop(&mut written, &err).expect("a Vec accepts the write");
+/// assert_eq!(String::from_utf8(written).unwrap().lines().count(), 1);
+/// ```
+pub(crate) fn report_context_drop(
+    mut writer: impl std::io::Write,
+    error: &log_context::LogContextError,
+) -> std::io::Result<()> {
+    writeln!(writer, "{}", context_drop_diagnostic(error))
+}
+
+#[cfg(test)]
+#[path = "report_context_drop_tests.rs"]
+mod report_context_drop_tests;

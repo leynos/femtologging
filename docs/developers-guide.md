@@ -2728,6 +2728,12 @@ assertions reusable without expanding the runtime API:
   only the ones its own feature set provides.
 - `isolated_child.rs` launches that child, preserving the dynamic-library
   search path Cargo supplied to the parent.
+- `stderr_capture.rs` provides `with_captured_stderr`, which redirects
+  Python's `sys.stderr` around a test body and returns the text written there.
+  It only sees writes made through the interpreter, such as `PyErr::print`; a
+  `writeln!` to `std::io::stderr()` reaches descriptor 2 directly, so assert
+  those through a formatting helper instead. Its items are gated on
+  `feature = "python"`.
 
 One further data file is test-only without being a module:
 `rust_extension/src/logger/producer_tracing_expected_tables.rs` holds the

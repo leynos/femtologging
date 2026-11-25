@@ -60,7 +60,7 @@ pub use dispatcher::DispatcherError;
     any(feature = "log-compat", feature = "tracing-compat")
 ))]
 pub(crate) use dispatcher::worker_count_for_test;
-pub(crate) use dispatcher::{DrainOutcome, LoggerBudget, Shard};
+pub(crate) use dispatcher::{LoggerBudget, Shard};
 // The convenience-function test is the only caller of the diagnostic wording;
 // without the gate, `-D unused-imports` fails a build with tests compiled out.
 #[cfg(test)]

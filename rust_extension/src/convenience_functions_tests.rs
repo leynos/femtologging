@@ -215,7 +215,7 @@ fn invalid_merged_context_drops_record(unique_logger_name: LoggerName) {
 }
 
 #[rstest]
-fn invalid_merged_context_reports_its_drop_diagnostic(unique_logger_name: LoggerName) {
+fn invalid_merged_context_is_dropped_and_counted(unique_logger_name: LoggerName) {
     Python::attach(|py| {
         let (logger, handler) = logger_with_collecting_handler(py, unique_logger_name.as_str())
             .expect("logger should be created");
@@ -236,7 +236,8 @@ fn invalid_merged_context_reports_its_drop_diagnostic(unique_logger_name: Logger
         );
         // The diagnostic goes to the process's stderr descriptor, which
         // redirecting Python's `sys.stderr` cannot observe. The count proves
-        // the reporting arm ran; the assertion below pins what it wrote.
+        // the reporting arm ran; `report_context_drop_tests` pins the exact
+        // bytes it writes through an injected writer.
         assert_eq!(
             logger.borrow(py).get_context_dropped(),
             1,
