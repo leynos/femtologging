@@ -1,5 +1,6 @@
 //! Behavioural tests for the rotating strategy.
 
+use super::visibility::wait_until_file_matches;
 use crate::formatter::DefaultFormatter;
 use crate::handler::FemtoHandlerTrait;
 use crate::handlers::file::{FemtoFileHandler, HandlerConfig, TestConfig};
@@ -258,18 +259,17 @@ fn rotating_handler_performs_size_based_rotation() {
     handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "second"))
         .expect("second record queued");
-    // `handle` only queues records. The drop waits at most one second for the
-    // worker before detaching it, so assert the flush instead of assuming the
-    // write completed.
-    assert!(
-        handler.flush(),
-        "queued records must flush before checking rotation"
-    );
+    // `handle` only queues records, and the drop waits at most one second for
+    // the worker before detaching it, so the drop is not a flush. Wait on the
+    // files the worker publishes instead of assuming any single attempt
+    // completed inside its own deadline.
+    let backup = path.with_extension("log.1");
+    wait_until_file_matches(&path, |primary| primary.contains("second"));
+    wait_until_file_matches(&backup, |backup| backup.contains("first"));
     drop(handler);
 
     let primary = fs::read_to_string(&path).expect("primary log file must be readable");
     assert!(primary.contains("second"));
-    let backup = path.with_extension("log.1");
     assert!(backup.exists(), "expected first backup file");
     let backup_contents = fs::read_to_string(backup).expect("backup file must be readable");
     assert!(backup_contents.contains("first"));
@@ -295,11 +295,9 @@ fn rotating_handler_respects_test_builder_defaults() {
     handler
         .handle(FemtoLogRecord::new("core", FemtoLevel::Info, "message"))
         .expect("record queued");
-    // As above, the drop is not a flush: assert completion before reading.
-    assert!(
-        handler.flush(),
-        "queued record must flush before checking the written contents"
-    );
+    // As above, the drop is not a flush: wait for the record the worker writes
+    // rather than assuming one flush attempt beat its own deadline.
+    wait_until_file_matches(&path, |contents| contents == "core [INFO] message\n");
     drop(handler);
 
     let contents = fs::read_to_string(&path).expect("log file must be readable");
