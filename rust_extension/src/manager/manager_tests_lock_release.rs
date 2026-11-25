@@ -331,3 +331,37 @@ fn a_commit_that_fails_partway_drops_built_ancestors_after_unlocking() {
         );
     });
 }
+
+/// A staging failure drops the partially built map after the read guard.
+///
+/// `stage_loggers` builds while holding `MANAGER` for reading, so a logger built
+/// before the failure must survive that guard. The probe's `Drop` records
+/// `try_write` at the instant the map is destroyed: while a reader holds the
+/// lock, `try_write` fails, so a map dropped inside the guard fails this test.
+#[test]
+#[serial]
+fn a_staging_failure_drops_the_partial_map_after_releasing_the_read_guard() {
+    use super::registry::{reset_ancestor_probe, set_injected_construction_failure};
+
+    Python::attach(|py| {
+        reset_manager();
+        reset_ancestor_probe();
+        // `staged.one` is built first; the seam fails the second name.
+        let previous = set_injected_construction_failure(Some("staged.two".to_string()));
+
+        let result = stage_loggers(py, ["staged.one", "staged.two"].into_iter());
+
+        set_injected_construction_failure(previous);
+
+        assert!(result.is_err(), "the injected failure must abort staging");
+        assert_eq!(
+            super::registry::ANCESTOR_DROPS.load(Ordering::SeqCst),
+            1,
+            "the logger built before the failure must be destroyed exactly once",
+        );
+        assert!(
+            super::registry::ANCESTOR_DROP_SAW_FREE_LOCK.load(Ordering::SeqCst),
+            "the partial staged map must be destroyed after the read guard is released",
+        );
+    });
+}

@@ -51,18 +51,15 @@ pub(crate) fn stage_loggers<'a>(
     for name in requested_names {
         let logger = match mgr.loggers.get(&name) {
             Some(logger) => logger.clone_ref(py),
-            None => {
-                let built = FemtoLogger::with_parent(name.clone(), calculate_parent_name(&name))
-                    .map_err(pyo3::PyErr::from)
-                    .and_then(|logger| Py::new(py, logger));
-                match built {
-                    Ok(logger) => logger,
-                    Err(error) => {
-                        construction_error = Some(error);
-                        break;
-                    }
+            // The same test-only wrapper the commit path uses, so one seam
+            // covers both fallible construction sites.
+            None => match construct_ancestor(py, &name) {
+                Ok(logger) => logger,
+                Err(error) => {
+                    construction_error = Some(error);
+                    break;
                 }
-            }
+            },
         };
         staged.insert(name, logger);
     }
@@ -174,6 +171,16 @@ pub(crate) static ANCESTOR_DROP_SAW_FREE_LOCK: std::sync::atomic::AtomicBool =
 #[cfg(test)]
 pub(crate) static ANCESTOR_DROPS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
+
+/// Clear the probe counters before a test starts observing them.
+///
+/// The counters are process-wide, so a test resets them inside its serialised
+/// section; otherwise a logger destroyed by an earlier test would be counted.
+#[cfg(test)]
+pub(crate) fn reset_ancestor_probe() {
+    ANCESTOR_DROP_SAW_FREE_LOCK.store(true, std::sync::atomic::Ordering::SeqCst);
+    ANCESTOR_DROPS.store(0, std::sync::atomic::Ordering::SeqCst);
+}
 
 /// Handler attached to every test-built ancestor to observe its destruction.
 ///
