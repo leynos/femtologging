@@ -2443,8 +2443,26 @@ handler builder compiles that formatter for the handler. Passing a formatter ID
 instead defers resolution to `ConfigBuilder`, which resolves the registered
 builder during configuration; `dictConfig` formatter definitions use the same
 registered-ID path. A configured percent formatter reads standard record fields
-and structured values from `metadata.key_values`. Formatter objects and filters
-are therefore both resolved before the configuration transaction commits.
+and structured values from `metadata.key_values`. It compiles its format string
+once when the formatter is constructed, so rendering a record walks literal and
+directive segments without reparsing; an unsupported directive contributes its
+leading `%` as literal text and scanning resumes after that `%`. Formatter
+objects and filters are therefore both resolved before the configuration
+transaction commits.
+
+`rust_extension/src/formatter/percent/directives.rs` owns format compilation.
+`Compiler` turns the format text into the literal and directive segments that
+`PercentFormatter` stores, and `ClosingParenthesisSearch` remembers the last
+closing-parenthesis lookup so a malformed start reuses it instead of rescanning
+an already examined suffix. Keep new directive syntax and recovery rules in
+that module so the linear-work argument stays in one place.
+
+The same module holds a `#[cfg(test)]`-only `instrumentation` child module with
+counters for compilations, fresh delimiter searches and scanned bytes. It is
+the seam `percent/tests/performance.rs` uses to assert the compile-once and
+linear-parsing guarantees, which rendered output cannot show. The counters are
+absent from production builds, so compilation there carries no instrumentation
+and no synchronization.
 
 ## Shared Rust test helpers and fixtures
 
