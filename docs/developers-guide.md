@@ -2278,26 +2278,13 @@ transaction boundary and are not undone by a rejection. See the
 
 ### Configuration module layout
 
-The `dictConfig` implementation is split by responsibility, so a change in one
-concern does not reopen the others:
+The per-path responsibility map for the configuration modules lives in
+[the repository layout](repository-layout.md#python-configuration-modules). Two
+contracts are recorded here because they constrain any edit to those modules.
 
-- `femtologging/_config_policy.py` owns the factory trust-boundary policy:
-  `validate_allow_factories` rejects a non-bool policy before any configuration
-  is read, and `factory_disallowed_message` produces the rejection text.
-- `femtologging/_config_validation.py` holds the shared shape validators
-  (`_validate_mapping_type`, `_validate_string_keys`, `_validate_string_list`).
-  `femtologging/config.py` imports them and re-exports them under their private
-  names, and `config_sections.py` and `config_socket_opts.py` import them from
-  `femtologging.config` as they always have. A new module that needs the same
-  checks should import `_config_validation` directly rather than widening that
-  compatibility re-export.
-- `femtologging/config_sections.py` walks the sections through `_SectionSpec`,
-  `_SECTION_SPECS`, and `_attach_section`, with `_collect_filters` and
-  `_process_sections` as the entry points called from `dictConfig`.
-- `femtologging/_config_filters.py` builds one filter. `build_filter_from_dict`
-  carries a keyword-only `allow_factories` parameter as defence in depth for
-  direct callers, so it rejects a ``"()"`` entry even when the section
-  preflight was bypassed.
+`build_filter_from_dict` carries a keyword-only `allow_factories` parameter as
+defence in depth for direct callers, so it rejects a ``"()"`` entry even when
+the section preflight was bypassed.
 
 Declarative-only ordering is part of the contract. With `allow_factories=False`,
 `_collect_filters` checks every entry for ``"()"`` and snapshots each accepted
