@@ -3,10 +3,16 @@
 :func:`build_filter_from_dict` is called from
 :mod:`femtologging.config_sections` and by direct callers. It turns a declarative
 ``level`` or ``name`` entry into a native filter builder, and an enabled
-``"()"`` entry into a resolved and invoked callback filter. With
-``allow_factories=False`` it rejects a ``"()"`` key before reading, copying,
-importing or invoking the target, which makes the module the second line of
-defence behind the section preflight.
+``"()"`` entry into a resolved and invoked callback filter.
+
+With ``allow_factories=False`` it guards the entry twice. The first scan walks
+the mapping's keys without reading any value, so an ordinary entry is rejected
+before any value accessor runs. A mapping that reports different keys to that
+scan than to the copy, such as one overriding ``keys()``, reaches the copy;
+the post-copy re-check then rejects it before validation, resolution or
+invocation. Either way a rejected factory target is never imported, resolved or
+invoked, which makes this module the second line of defence behind the section
+preflight.
 """
 
 from __future__ import annotations
@@ -108,9 +114,11 @@ def build_filter_from_dict(
     allow_factories
         When ``False``, reject any entry carrying a ``"()"`` key. The initial
         key scan rejects before any value is read, so a factory target it sees
-        is never read, resolved, or invoked. A key that appears only during
-        copying is rejected before dispatch, so it is never resolved or
-        invoked. Declarative ``level`` and ``name`` entries still work.
+        is never read, resolved, or invoked. A key that the copy reveals
+        instead, such as one a ``keys()`` override adds, is copied and then
+        rejected before validation, so it is never resolved or invoked, though
+        the copy itself read its value. Declarative ``level`` and ``name``
+        entries still work.
 
     Returns
     -------
