@@ -12,7 +12,7 @@ pub(super) enum StreamTarget {
 impl StreamTarget {
     /// Return the Python configuration identifier for this destination.
     #[cfg(feature = "python")]
-    pub(super) fn as_str(&self) -> &'static str {
+    pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::Stdout => "stdout",
             Self::Stderr => "stderr",

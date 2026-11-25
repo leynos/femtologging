@@ -63,6 +63,9 @@ libraries. Use the links below to explore each topic.
 - [adrs/adr-0010-spelling-config-builder.md](./adrs/adr-0010-spelling-config-builder.md)
   - Records adoption of the release-pinned spelling configuration builder, the
     live shared dictionary and the Python 3.14 interpreter pin.
+- [adrs/adr-0011-builder-setter-const-contract.md](./adrs/adr-0011-builder-setter-const-contract.md)
+  - Records the builders' `const` and `#[must_use]` setter contract, its
+    compile-time fixtures and the disclosed `missing_const_for_fn` deferral.
 
 ## Logging Architecture
 

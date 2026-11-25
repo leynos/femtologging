@@ -250,6 +250,7 @@ macro_rules! builder_methods {
 
     (@rust_method_tokens $doc:expr, $rust_name:ident, ( $( $rarg:ident : $rty:ty ),* ), $self_ident:ident, $body:block) => {
         #[doc = $doc]
+        #[must_use]
         pub fn $rust_name(mut self $(, $rarg : $rty )* ) -> Self {
             let $self_ident = &mut self;
             $body

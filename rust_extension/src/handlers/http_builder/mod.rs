@@ -25,7 +25,8 @@ use super::{HandlerBuildError, HandlerBuilderTrait, common::ensure_filter_ids_re
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
         $(#[$meta])*
-        pub fn $fn_name(mut self, value: $ty) -> Self {
+        #[must_use]
+        pub const fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
         }
@@ -82,23 +83,27 @@ pub struct HTTPHandlerBuilder {
 
 impl HTTPHandlerBuilder {
     /// Create a new builder with no URL configured.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the target URL for HTTP requests (required).
+    #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
     }
 
     /// Set the HTTP method (GET or POST). Defaults to POST.
-    pub fn with_method(mut self, method: HTTPMethod) -> Self {
+    #[must_use]
+    pub const fn with_method(mut self, method: HTTPMethod) -> Self {
         self.method = Some(method);
         self
     }
 
     /// Configure HTTP Basic authentication.
+    #[must_use]
     pub fn with_basic_auth(
         mut self,
         username: impl Into<String>,
@@ -112,6 +117,7 @@ impl HTTPHandlerBuilder {
     }
 
     /// Configure Bearer token authentication.
+    #[must_use]
     pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
         self.auth = Some(AuthConfig::Bearer {
             token: token.into(),
@@ -125,12 +131,14 @@ impl HTTPHandlerBuilder {
     /// add individual headers without replacing existing ones.
     ///
     /// [`with_header`]: HTTPHandlerBuilder::with_header
+    #[must_use]
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.headers = headers;
         self
     }
 
     /// Add a single custom HTTP header.
+    #[must_use]
     pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());
         self
@@ -156,24 +164,28 @@ impl HTTPHandlerBuilder {
     );
 
     /// Override backoff timings using the provided overrides.
-    pub fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
+    #[must_use]
+    pub const fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
         self.backoff = overrides;
         self
     }
 
     /// Enable JSON serialization format instead of URL-encoded.
-    pub fn with_json_format(mut self) -> Self {
+    #[must_use]
+    pub const fn with_json_format(mut self) -> Self {
         self.format = SerializationFormat::Json;
         self
     }
 
     /// Limit serialized output to the specified fields.
+    #[must_use]
     pub fn with_record_fields(mut self, fields: Vec<String>) -> Self {
         self.record_fields = Some(fields);
         self
     }
 
     /// Attach filters by identifier.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,

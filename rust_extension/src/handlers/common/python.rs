@@ -42,8 +42,8 @@ use crate::handlers::file::OverflowPolicy;
 /// Format an [`OverflowPolicy`] for Python `__repr__`.
 fn format_overflow_policy(policy: &OverflowPolicy) -> String {
     match policy {
-        OverflowPolicy::Drop => "OverflowPolicy.drop()".to_string(),
-        OverflowPolicy::Block => "OverflowPolicy.block()".to_string(),
+        OverflowPolicy::Drop => "OverflowPolicy.drop()".to_owned(),
+        OverflowPolicy::Block => "OverflowPolicy.block()".to_owned(),
         OverflowPolicy::Timeout(duration) => {
             format!("OverflowPolicy.timeout({})", duration.as_millis())
         }
@@ -56,7 +56,10 @@ fn write_overflow_policy_fields(d: &Bound<'_, PyDict>, policy: &OverflowPolicy) 
         OverflowPolicy::Drop => d.set_item("overflow_policy", "drop")?,
         OverflowPolicy::Block => d.set_item("overflow_policy", "block")?,
         OverflowPolicy::Timeout(duration) => {
-            d.set_item("timeout_ms", duration.as_millis() as u64)?;
+            d.set_item(
+                "timeout_ms",
+                u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+            )?;
             d.set_item("overflow_policy", "timeout")?;
         }
     }
@@ -76,7 +79,7 @@ pub struct PyOverflowPolicy {
 impl PyOverflowPolicy {
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
-    fn drop() -> Self {
+    const fn drop() -> Self {
         Self {
             inner: OverflowPolicy::Drop,
         }
@@ -84,7 +87,7 @@ impl PyOverflowPolicy {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     #[staticmethod]
-    fn block() -> Self {
+    const fn block() -> Self {
         Self {
             inner: OverflowPolicy::Block,
         }
@@ -113,25 +116,21 @@ impl PyOverflowPolicy {
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
     fn __richcmp__<'py>(&'py self, other: &Bound<'py, PyAny>, op: CompareOp) -> PyResult<bool> {
-        let other_policy = other.extract::<PyRef<'py, PyOverflowPolicy>>().ok();
+        let other_policy = other.extract::<PyRef<'py, Self>>().ok();
 
         match op {
-            CompareOp::Eq => Ok(other_policy
-                .map(|policy| self.inner == policy.inner)
-                .unwrap_or(false)),
-            CompareOp::Ne => Ok(other_policy
-                .map(|policy| self.inner != policy.inner)
-                .unwrap_or(true)),
+            CompareOp::Eq => Ok(other_policy.is_some_and(|policy| self.inner == policy.inner)),
+            CompareOp::Ne => Ok(other_policy.is_none_or(|policy| self.inner != policy.inner)),
             _ => Err(PyTypeError::new_err("ordering not supported")),
         }
     }
 
     /// Maintains handler construction and delivery contracts so configuration is validated before asynchronous runtime state is published.
-    fn __hash__(&self) -> PyResult<isize> {
+    fn __hash__(&self) -> PyResult<u64> {
         let mut hasher = DefaultHasher::new();
         self.inner.hash(&mut hasher);
 
-        Ok(hasher.finish() as isize)
+        Ok(hasher.finish())
     }
 }
 
@@ -163,8 +162,7 @@ impl CommonBuilder {
                 let callable_msg = callable_err
                     .value(py)
                     .repr()
-                    .map(|r| r.to_string())
-                    .unwrap_or_else(|_| "<unknown>".to_string());
+                    .map_or_else(|_| "<unknown>".to_owned(), |r| r.to_string());
 
                 let msg = format!(
                     "invalid formatter: expected a string identifier or callable.\n\
@@ -217,5 +215,67 @@ impl FileLikeBuilderState {
             d.set_item("flush_after_records", flush.get())?;
         }
         write_overflow_policy_fields(d, &self.overflow_policy)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the Python-visible overflow policy fields.
+
+    use std::time::Duration;
+
+    use proptest::prelude::*;
+
+    use super::*;
+
+    // The written millisecond count must be the duration truncated to
+    // milliseconds, saturating at `u64::MAX` rather than wrapping. `nanos`
+    // stays below one second so `Duration::new` cannot carry into `secs` and
+    // overflow for a `secs` near `u64::MAX`.
+    proptest! {
+        #[test]
+        fn timeout_ms_is_the_truncated_millisecond_count(
+            secs in any::<u64>(),
+            nanos in 0_u32..1_000_000_000,
+        ) {
+            let duration = Duration::new(secs, nanos);
+            let policy = OverflowPolicy::Timeout(duration);
+            let expected = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+
+            let written = Python::attach(|py| -> PyResult<u64> {
+                let fields = PyDict::new(py);
+                write_overflow_policy_fields(&fields, &policy)?;
+                fields
+                    .get_item("timeout_ms")?
+                    .expect("timeout_ms must be present")
+                    .extract::<u64>()
+            })
+            .expect("writing the timeout fields must succeed");
+
+            prop_assert_eq!(written, expected);
+        }
+    }
+
+    #[test]
+    fn overflowing_timeout_saturates_instead_of_failing() {
+        Python::attach(|py| {
+            let fields = PyDict::new(py);
+            let policy = OverflowPolicy::Timeout(Duration::from_secs(u64::MAX));
+
+            write_overflow_policy_fields(&fields, &policy)
+                .expect("an overflowing timeout must still be written");
+
+            let timeout = fields
+                .get_item("timeout_ms")
+                .expect("reading the field must not raise")
+                .expect("timeout_ms must be present")
+                .extract::<u64>()
+                .expect("timeout_ms must be an integer");
+            assert_eq!(
+                timeout,
+                u64::MAX,
+                "a timeout beyond u64 milliseconds must saturate rather than wrap"
+            );
+        });
     }
 }

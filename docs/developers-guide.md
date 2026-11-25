@@ -383,8 +383,43 @@ verifies the sdist constraint.
 
 For `rust_extension/tests/compile_tests.rs`, use
 `TRYBUILD=overwrite cargo test --test compile_tests` after rustc or PyO3
-changes to refresh `invalid_pymodule_return.stderr` and the other `.stderr`
-fixtures.
+changes to refresh `invalid_pymodule_return.stderr`, the builder-setter
+fixtures listed below, and the other `.stderr` fixtures.
+
+### Handler builder setters: `const` and `#[must_use]`
+
+The handler builders' scalar setters consume and return the builder, and the
+handwritten ones are `const fn` as well as `#[must_use]`. The `option_setter!`
+expansion emits both qualifiers. The Rust setter that `builder_methods!`
+generates is `#[must_use]` but cannot be `const`: its body binds `&mut self` to
+a by-value local, which rustc rejects in a `const fn` with E0493. That one
+finding is disclosed rather than suppressed, and
+[ADR 0011](adrs/adr-0011-builder-setter-const-contract.md) records the
+disposition and its deferral to the `harden-lint-config` layer.
+
+Neither quality is visible to the run-time tests, so both are pinned at compile
+time:
+
+- `rust_extension/tests/ui/pass/builder_const_setters.rs` applies each
+  externally nameable `const` chain to a builder passed in as a parameter. The
+  chains cannot start from `new(..)` because every builder constructor
+  allocates.
+- `rust_extension/tests/ui/fail/unused_socket_http_setters.rs` and
+  `rust_extension/tests/ui/fail/unused_overflow_policy.rs` discard a setter
+  result under `#![deny(unused_must_use)]`.
+- `rust_extension/src/handlers/socket_builder/const_eval_tests.rs` and
+  `rust_extension/src/handlers/formatter_id.rs` pin, in-crate, the `const`
+  accessors and setters whose types are not re-exported (`BackoffOverrides` and
+  `FormatterId`), which an external fixture cannot name.
+
+Refresh the recorded diagnostics with
+`TRYBUILD=overwrite cargo test --test compile_tests`, and review the `.stderr`
+diff before committing it.
+
+The `BackoffOverrides` internal fields are named `base_delay`, `max_delay`,
+`reset_after` and `deadline`, without the `_ms` suffix their Python-facing
+dictionary keys keep. The Python dictionary keys and keyword arguments are
+unchanged; only the Rust field names differ.
 
 ### Maturin build features
 

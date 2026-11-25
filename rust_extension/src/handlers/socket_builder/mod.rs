@@ -60,13 +60,14 @@ struct TlsConfig {
 #[derive(Clone, Debug, Default)]
 pub struct BackoffOverrides {
     /// Initial retry delay in milliseconds; zero is rejected when applied.
-    base_ms: Option<u64>,
+    base_delay: Option<u64>,
     /// Maximum retry delay in milliseconds.
-    cap_ms: Option<u64>,
-    /// Idle period after which retry delay returns to its initial value.
-    reset_after_ms: Option<u64>,
+    max_delay: Option<u64>,
+    /// Idle period after which retry delay returns to its initial value, in
+    /// milliseconds.
+    reset_after: Option<u64>,
     /// Absolute retry deadline in milliseconds.
-    deadline_ms: Option<u64>,
+    deadline: Option<u64>,
 }
 
 /// Applies validated optional fields to a worker-owned backoff policy.
@@ -81,73 +82,78 @@ macro_rules! apply_backoff_field {
 
 impl BackoffOverrides {
     /// Create overrides with no custom values.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get the base jitter override if configured.
-    pub fn base_ms(&self) -> Option<u64> {
-        self.base_ms
+    pub const fn base_ms(&self) -> Option<u64> {
+        self.base_delay
     }
     /// Get the cap override if configured.
-    pub fn cap_ms(&self) -> Option<u64> {
-        self.cap_ms
+    pub const fn cap_ms(&self) -> Option<u64> {
+        self.max_delay
     }
     /// Get the reset-after override if configured.
-    pub fn reset_after_ms(&self) -> Option<u64> {
-        self.reset_after_ms
+    pub const fn reset_after_ms(&self) -> Option<u64> {
+        self.reset_after
     }
     /// Get the deadline override if configured.
-    pub fn deadline_ms(&self) -> Option<u64> {
-        self.deadline_ms
+    pub const fn deadline_ms(&self) -> Option<u64> {
+        self.deadline
     }
     /// Override the base jitter duration in milliseconds.
-    pub fn with_base_ms(mut self, base_ms: u64) -> Self {
-        self.base_ms = Some(base_ms);
+    #[must_use]
+    pub const fn with_base_ms(mut self, base_ms: u64) -> Self {
+        self.base_delay = Some(base_ms);
         self
     }
     /// Override the cap duration in milliseconds.
-    pub fn with_cap_ms(mut self, cap_ms: u64) -> Self {
-        self.cap_ms = Some(cap_ms);
+    #[must_use]
+    pub const fn with_cap_ms(mut self, cap_ms: u64) -> Self {
+        self.max_delay = Some(cap_ms);
         self
     }
     /// Override the reset-after duration in milliseconds.
-    pub fn with_reset_after_ms(mut self, reset_after_ms: u64) -> Self {
-        self.reset_after_ms = Some(reset_after_ms);
+    #[must_use]
+    pub const fn with_reset_after_ms(mut self, reset_after_ms: u64) -> Self {
+        self.reset_after = Some(reset_after_ms);
         self
     }
     /// Override the deadline duration in milliseconds.
-    pub fn with_deadline_ms(mut self, deadline_ms: u64) -> Self {
-        self.deadline_ms = Some(deadline_ms);
+    #[must_use]
+    pub const fn with_deadline_ms(mut self, deadline_ms: u64) -> Self {
+        self.deadline = Some(deadline_ms);
         self
     }
     /// Constructs overrides from Python values without applying them yet.
     #[cfg(feature = "python")]
-    pub(crate) fn from_options(
+    pub(crate) const fn from_options(
         base_ms: Option<u64>,
         cap_ms: Option<u64>,
         reset_after_ms: Option<u64>,
         deadline_ms: Option<u64>,
     ) -> Self {
         Self {
-            base_ms,
-            cap_ms,
-            reset_after_ms,
-            deadline_ms,
+            base_delay: base_ms,
+            max_delay: cap_ms,
+            reset_after: reset_after_ms,
+            deadline: deadline_ms,
         }
     }
     /// Applies each configured duration in order; a later invalid value can leave earlier assignments in `policy`.
     pub(crate) fn apply(&self, policy: &mut BackoffPolicy) -> Result<(), HandlerBuildError> {
-        apply_backoff_field!(self, base_ms, policy, base, "backoff_base_ms");
-        apply_backoff_field!(self, cap_ms, policy, cap, "backoff_cap_ms");
+        apply_backoff_field!(self, base_delay, policy, base, "backoff_base_ms");
+        apply_backoff_field!(self, max_delay, policy, cap, "backoff_cap_ms");
         apply_backoff_field!(
             self,
-            reset_after_ms,
+            reset_after,
             policy,
             reset_after,
             "backoff_reset_after_ms"
         );
-        apply_backoff_field!(self, deadline_ms, policy, deadline, "backoff_deadline_ms");
+        apply_backoff_field!(self, deadline, policy, deadline, "backoff_deadline_ms");
         Ok(())
     }
 }
@@ -155,7 +161,8 @@ impl BackoffOverrides {
 macro_rules! option_setter {
     ($(#[$meta:meta])* $fn_name:ident, $field:ident, $ty:ty) => {
         $(#[$meta])*
-        pub fn $fn_name(mut self, value: $ty) -> Self {
+        #[must_use]
+        pub const fn $fn_name(mut self, value: $ty) -> Self {
             self.$field = Some(value);
             self
         }
@@ -184,10 +191,12 @@ pub struct SocketHandlerBuilder {
 }
 impl SocketHandlerBuilder {
     /// Create a new builder with no transport configured.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
     /// Configure the builder to use TCP.
+    #[must_use]
     pub fn with_tcp(mut self, host: impl Into<String>, port: u16) -> Self {
         self.transport = Some(TransportConfig::Tcp {
             host: host.into(),
@@ -196,11 +205,13 @@ impl SocketHandlerBuilder {
         self
     }
     /// Configure the builder to use a Unix domain socket.
+    #[must_use]
     pub fn with_unix_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.transport = Some(TransportConfig::Unix { path: path.into() });
         self
     }
     /// Configure TLS using the provided domain and validation policy.
+    #[must_use]
     pub fn with_tls(mut self, domain: Option<String>, insecure: bool) -> Self {
         self.tls = Some(TlsConfig { domain, insecure });
         self
@@ -233,11 +244,13 @@ impl SocketHandlerBuilder {
     ///
     /// See [`BackoffOverrides`] for fluent helpers when constructing the
     /// override set from Rust.
-    pub fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
+    #[must_use]
+    pub const fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {
         self.backoff = overrides;
         self
     }
     /// Attach filters by identifier.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -311,7 +324,7 @@ impl SocketHandlerBuilder {
         Ok(config)
     }
     /// Copies only explicitly provided scalar overrides into the destination config.
-    fn apply_optional_fields(&self, config: &mut SocketHandlerConfig) {
+    const fn apply_optional_fields(&self, config: &mut SocketHandlerConfig) {
         if let Some(capacity) = self.capacity {
             config.capacity = capacity;
         }
@@ -373,3 +386,8 @@ impl HandlerBuilderTrait for SocketHandlerBuilder {
 }
 #[cfg(feature = "python")]
 mod python_bindings;
+
+// Kept in its own file: this module pushes `mod.rs` close to the 400-line
+// bound that the Whitaker `module-max-lines` lint enforces.
+#[cfg(test)]
+mod const_eval_tests;
