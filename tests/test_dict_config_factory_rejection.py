@@ -16,7 +16,7 @@ import typing as typ
 import uuid
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import femtologging._config_filters as config_filters
@@ -353,20 +353,35 @@ def test_build_filter_from_dict_rejects_a_key_added_during_copy(
     assert not probe.invocations, "the late factory must never be invoked"
 
 
-@given(
-    value=st.one_of(st.text(), st.integers(), st.none(), st.booleans()),
-    siblings=st.dictionaries(
-        keys=st.text(min_size=1).filter(lambda key: key not in {"()", "level", "name"}),
-        values=st.one_of(st.text(), st.integers(), st.none()),
-        max_size=3,
-    ),
+_SIBLING_KEYS = st.one_of(
+    st.sampled_from(["level", "name", "request_id", "extra"]),
+    st.text(min_size=1).filter(lambda key: key != "()"),
+    st.integers().map(lambda key: typ.cast("str", key)),
 )
+_SIBLING_VALUES = st.one_of(st.text(), st.integers(), st.none(), st.booleans())
+
+
+@given(
+    use_probe=st.booleans(),
+    value=st.one_of(st.text(), st.integers(), st.none(), st.booleans()),
+    siblings=st.dictionaries(keys=_SIBLING_KEYS, values=_SIBLING_VALUES, max_size=3),
+)
+@settings(max_examples=100, deadline=None)
 def test_any_factory_entry_is_rejected_on_the_direct_guard(
-    value: object, siblings: dict[str, object]
+    value: object, siblings: dict[object, object], *, use_probe: bool
 ) -> None:
-    """Any ``"()"`` entry is rejected by the direct guard, whatever it carries."""
+    """Any ``"()"`` entry is rejected by the direct guard, whatever it carries.
+
+    Half the examples use the counting probe as the factory target, so the
+    zero-invocation assertion can actually observe a call if one happened.
+    Sibling keys include ``level``, ``name``, and non-string keys, because
+    those change which validation error would otherwise be raised.
+    """
     probe = _FactoryProbe()
-    entry: dict[str, object] = {"()": value, **siblings}
+    factory_value = probe if use_probe else value
+    entry: dict[object, object] = {"()": factory_value, **siblings}
     with pytest.raises(ValueError, match=_FILTER_ERROR_PATTERN):
-        build_filter_from_dict("f", entry, allow_factories=False)
+        build_filter_from_dict(
+            "f", typ.cast("cabc.Mapping[str, object]", entry), allow_factories=False
+        )
     assert not probe.invocations, "a rejected factory target must not be invoked"

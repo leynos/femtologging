@@ -2286,8 +2286,11 @@ concern does not reopen the others:
   is read, and `factory_disallowed_message` produces the rejection text.
 - `femtologging/_config_validation.py` holds the shared shape validators
   (`_validate_mapping_type`, `_validate_string_keys`, `_validate_string_list`).
-  Section modules import them from there; `femtologging.config` re-exports them
-  only for compatibility with earlier call sites.
+  `femtologging/config.py` imports them and re-exports them under their private
+  names, and `config_sections.py` and `config_socket_opts.py` import them from
+  `femtologging.config` as they always have. A new module that needs the same
+  checks should import `_config_validation` directly rather than widening that
+  compatibility re-export.
 - `femtologging/config_sections.py` walks the sections through `_SectionSpec`,
   `_SECTION_SPECS`, and `_attach_section`, with `_collect_filters` and
   `_process_sections` as the entry points called from `dictConfig`.
