@@ -13,6 +13,7 @@ import typing as typ
 import pytest
 
 from tests.heavy_compile_mutations import COMPILE_MUTATIONS
+from tests.heavy_formatter_mutations import FORMATTER_MUTATIONS
 from tests.heavy_workflow_document import (
     BUILD_STEP,
     HEAVY_JOB,
@@ -381,4 +382,4 @@ CORE_MUTATIONS = (
 )
 
 #: Every deliberate break, core and compile, in one sequence.
-MUTATIONS = (*CORE_MUTATIONS, *COMPILE_MUTATIONS)
+MUTATIONS = (*CORE_MUTATIONS, *COMPILE_MUTATIONS, *FORMATTER_MUTATIONS)

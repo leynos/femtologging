@@ -22,6 +22,7 @@ SYNC_STEP: typ.Final[str] = "Install locked test dependencies"
 BUILD_STEP: typ.Final[str] = "Build editable extension"
 COMPILE_STEP: typ.Final[str] = "Compile Loom heavy tests"
 LOOM_STEP: typ.Final[str] = "Run Loom models"
+FORMATTERS_STEP: typ.Final[str] = "Run formatters and tests"
 SYNC_COMMAND: typ.Final[tuple[str, ...]] = (
     "uv",
     "sync",

@@ -15,7 +15,7 @@ The document accessors live in :mod:`tests.heavy_workflow_document`.
 from __future__ import annotations
 
 from tests.heavy_step_scope_contract import (
-    LOOM_GATE_STEPS,
+    GATE_STEPS,
     command_words,
     loom_condition_problems,
     loom_tolerance_problems,
@@ -305,7 +305,7 @@ def step_presence_problems(found: Job) -> list[str]:
     """
     names = [step.get("name") for step in steps(found, subject=HEAVY_JOB)]
     problems: list[str] = []
-    for name in LOOM_GATE_STEPS:
+    for name in GATE_STEPS:
         count = names.count(name)
         if count == 0:
             problems.append(f"the {name!r} step must remain in the {HEAVY_JOB!r} job")

@@ -21,6 +21,7 @@ if typ.TYPE_CHECKING:
 
 from tests.heavy_workflow_document import (
     COMPILE_STEP,
+    FORMATTERS_STEP,
     HEAVY_JOB,
     LOOM_STEP,
     WORKFLOW,
@@ -39,7 +40,11 @@ __all__ = [
 ]
 
 #: The steps the scheduled job must keep and must not make skippable.
-LOOM_GATE_STEPS: tuple[str, ...] = (COMPILE_STEP, LOOM_STEP)
+#:
+#: `Run formatters and tests` carries the deterministic Rust and Python lanes
+#: the issue forbids weakening, so a condition or tolerated failure there is as
+#: much a gate failure as one on either Loom step.
+GATE_STEPS: tuple[str, ...] = (COMPILE_STEP, LOOM_STEP, FORMATTERS_STEP)
 
 #: Operators that also bind without surrounding whitespace. The shell keeps
 #: `&wait` attached to the preceding word, so each token is split on these
@@ -95,7 +100,7 @@ def shell_problems(document: cabc.Mapping[str, object], found: Job) -> list[str]
     without executing it, so the step succeeds while nothing runs. The
     effective shell is the step's own setting, else the job's
     ``defaults.run.shell``, else the workflow's; all three are refused, for
-    both named Loom steps.
+    every named gate step.
 
     Returns
     -------
@@ -104,7 +109,7 @@ def shell_problems(document: cabc.Mapping[str, object], found: Job) -> list[str]
     """
     problems: list[str] = []
     named = {step.get("name"): step for step in steps(found, subject=HEAVY_JOB)}
-    for step_name in LOOM_GATE_STEPS:
+    for step_name in GATE_STEPS:
         step = named.get(step_name)
         if step is not None and "shell" in step:
             problems.append(f"the {step_name!r} step must not override the shell")
@@ -116,41 +121,44 @@ def shell_problems(document: cabc.Mapping[str, object], found: Job) -> list[str]
 
 
 def loom_condition_problems(found: Job) -> list[str]:
-    """Return one complaint per condition on the heavy job or a Loom step.
+    """Return one complaint per condition on the heavy job or a gate step.
 
     A condition is never judged by its value: ``if: false`` and a
     prior-success expression skip the gate equally, and the workflow's step
-    conditions are evaluated before the step runs. A Loom gate that can be
-    skipped while the job reports success is not a gate.
+    conditions are evaluated before the step runs. A gate that can be skipped
+    while the job reports success is not a gate. `Run formatters and tests`
+    carries the deterministic Rust and Python lanes the issue requires be
+    kept, so it is covered alongside the two Loom steps.
 
     Returns
     -------
     list[str]
-        A complaint for the job or each named Loom step that carries ``if``.
+        A complaint for the job or each named gate step that carries ``if``.
     """
     problems: list[str] = []
     if "if" in found:
         problems.append(f"the {HEAVY_JOB!r} job must carry no condition")
     found_steps = steps(found, subject=HEAVY_JOB)
     problems.extend(
-        f"the Loom step {step.get('name')!r} must carry no condition"
+        f"the gate step {step.get('name')!r} must carry no condition"
         for step in found_steps
-        if step.get("name") in LOOM_GATE_STEPS and "if" in step
+        if step.get("name") in GATE_STEPS and "if" in step
     )
     return problems
 
 
 def loom_tolerance_problems(found: Job) -> list[str]:
-    """Return one complaint per Loom gate that tolerates its own failure.
+    """Return one complaint per gate step that tolerates its own failure.
 
-    The heavy job may not tolerate failure at all, and neither named Loom step
-    may. Without this rule, ``continue-on-error: true`` on the execution step
-    would report a failing model run as a successful job.
+    The heavy job may not tolerate failure at all, and neither may any named
+    gate step. Without this rule, ``continue-on-error: true`` on the execution
+    step would report a failing model run as a successful job, and the same on
+    `Run formatters and tests` would hide a failing Rust or Python lane.
 
     Returns
     -------
     list[str]
-        A complaint for the job or each named Loom step that tolerates
+        A complaint for the job or each named gate step that tolerates
         failure.
     """
     problems: list[str] = []
@@ -158,9 +166,61 @@ def loom_tolerance_problems(found: Job) -> list[str]:
         problems.append(f"the {HEAVY_JOB!r} job must not tolerate failure")
     found_steps = steps(found, subject=HEAVY_JOB)
     problems.extend(
-        f"the Loom step {step.get('name')!r} must not tolerate failure"
+        f"the gate step {step.get('name')!r} must not tolerate failure"
         for step in found_steps
-        if step.get("name") in LOOM_GATE_STEPS
+        if step.get("name") in GATE_STEPS
         and step.get("continue-on-error", False) is not False
+    )
+    return problems
+
+
+#: Commands the `Run formatters and tests` script must invoke, each on a line of
+#: its own. The issue forbids removing or weakening these lanes.
+_REQUIRED_FORMATTER_COMMANDS: tuple[str, ...] = (
+    "cargo fmt --manifest-path rust_extension/Cargo.toml -- --check",
+    "make lint-rust-clippy",
+    "uv run --locked pytest -q",
+)
+
+#: Fragments that mask a failed command's status inside that script.
+_FORMATTER_MASK_FRAGMENTS: tuple[str, ...] = ("|| true", "set +e", "| cat", "exit 0")
+
+
+def formatter_command_problems(found: Job) -> list[str]:
+    """Return complaints about the formatter-and-test step's script.
+
+    The step is a gate in its own right: it runs the deterministic Rust
+    formatting, Clippy and pytest lanes, and the issue forbids removing or
+    weakening them. A commented-out command keeps the text a naive substring
+    search would match, so each required command must begin a line that is not
+    a comment, and no line may mask a failure's exit status.
+
+    Returns
+    -------
+    list[str]
+        One complaint per missing or commented-out command, and one per masking
+        fragment.
+    """
+    step = next(
+        (
+            step
+            for step in steps(found, subject=HEAVY_JOB)
+            if step.get("name") == FORMATTERS_STEP
+        ),
+        None,
+    )
+    if step is None:
+        return [f"the job must have a {FORMATTERS_STEP!r} step"]
+    lines = [line.strip() for line in run_text(step).splitlines()]
+    executed = [line for line in lines if line and not line.startswith("#")]
+    problems = [
+        f"the {FORMATTERS_STEP!r} step must run `{command}`"
+        for command in _REQUIRED_FORMATTER_COMMANDS
+        if not any(line.startswith(command) for line in executed)
+    ]
+    problems.extend(
+        f"the {FORMATTERS_STEP!r} step must not mask a failure with {fragment!r}"
+        for fragment in _FORMATTER_MASK_FRAGMENTS
+        if any(fragment in line for line in executed)
     )
     return problems
