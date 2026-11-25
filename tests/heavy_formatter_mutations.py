@@ -150,6 +150,35 @@ def _formatter_step_encoded_flags(document: Document) -> None:
     environment[ENCODED_FLAGS] = "-Cdebuginfo=0"
 
 
+def _quoted_hash_hides_set_plus_e(document: Document) -> None:
+    """Disable `-e` on a line whose `set +e` hides behind a quoted `#`."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "cargo fmt --manifest-path", ": ' #'; set +e\ncargo fmt --manifest-path", 1
+    )
+
+
+def _required_commands_inside_a_never_true_block(document: Document) -> None:
+    """Wrap every required command in a block the shell never enters."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    lines = run_text(step).splitlines(keepends=True)
+    first = next(
+        at
+        for at, line in enumerate(lines)
+        if line.startswith(("cargo fmt ", "make lint-rust-clippy"))
+    )
+    last = next(
+        at
+        for at, line in enumerate(lines)
+        if line.startswith("uv run --locked pytest -q")
+    )
+    lines[first:first] = ["if ! true; then\n"]
+    lines[last + 1 : last + 1] = ["fi\n"]
+    step["run"] = "".join(lines)
+
+
 FORMATTER_MUTATIONS = (
     pytest.param(_formatter_step_conditioned, id="formatter-step-conditioned"),
     pytest.param(_formatter_step_tolerant, id="formatter-step-tolerant"),
@@ -174,4 +203,9 @@ FORMATTER_MUTATIONS = (
     pytest.param(_pytest_collects_without_running, id="pytest-collect-only"),
     pytest.param(_loom_clippy_caps_lints, id="loom-clippy-cap-lints-allow"),
     pytest.param(_formatter_step_encoded_flags, id="formatter-step-encoded-flags"),
+    pytest.param(_quoted_hash_hides_set_plus_e, id="quoted-hash-hides-set-plus-e"),
+    pytest.param(
+        _required_commands_inside_a_never_true_block,
+        id="required-commands-in-never-true-block",
+    ),
 )

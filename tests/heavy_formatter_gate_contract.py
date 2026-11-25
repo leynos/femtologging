@@ -99,14 +99,76 @@ def formatter_command_problems(
     if step is None:
         return [f"the job must have a {FORMATTERS_STEP!r} step"]
     executed = _executed_lines(run_text(step))
+    # A gate command must sit at the script's top level. Inside any conditional
+    # or loop body its execution depends on the guard, and a guard the helper
+    # cannot evaluate (`if ! true`) would otherwise be accepted while the shell
+    # skips the command.
+    top_level = _top_level_lines(executed)
     return [
         *_conditional_skip_problems(executed),
-        *_missing_formatter_command_problems(executed),
+        *_missing_formatter_command_problems(top_level),
         *_formatter_mask_problems(executed),
-        *_pipeline_problems(executed),
-        *_background_problems(executed),
+        *_pipeline_problems(top_level),
+        *_background_problems(top_level),
         *encoded_flags_problems(FORMATTERS_STEP, step, found, document),
     ]
+
+
+#: Keywords that open a shell block, each paired with the word that closes it.
+_BLOCK_OPENERS: tuple[str, ...] = ("if", "for", "while", "until", "case")
+_BLOCK_CLOSERS: tuple[str, ...] = ("fi", "done", "esac")
+
+
+def _opens_block(line: str) -> bool:
+    """Return whether `line` opens a shell block.
+
+    The scripts here put the opener and its `then`, `do` or `in` on one line,
+    which is what the end-of-line test recognises. A construct this helper
+    cannot classify is treated as opening a block, so a command after it is not
+    accepted as top level; refusing an unfamiliar shape is the safe direction.
+
+    Returns
+    -------
+    bool
+        True when the line starts a conditional, loop or case block.
+    """
+    words = line.split()
+    if not words or words[0] not in _BLOCK_OPENERS:
+        return False
+    return line.endswith(("then", "do", "in"))
+
+
+def _closes_block(line: str) -> bool:
+    """Return whether `line` closes a shell block.
+
+    Returns
+    -------
+    bool
+        True when the line's first word is a closing keyword.
+    """
+    words = line.split()
+    return bool(words) and words[0] in _BLOCK_CLOSERS
+
+
+def _top_level_lines(executed: list[str]) -> list[str]:
+    """Return the executed lines that are not inside a block.
+
+    Returns
+    -------
+    list[str]
+        The lines the shell reaches unconditionally, in script order.
+    """
+    depth = 0
+    top_level: list[str] = []
+    for line in executed:
+        if _closes_block(line):
+            depth = max(0, depth - 1)
+            continue
+        if depth == 0:
+            top_level.append(line)
+        if _opens_block(line):
+            depth += 1
+    return top_level
 
 
 def _executed_lines(script: str) -> list[str]:
@@ -133,16 +195,29 @@ def _executed_lines(script: str) -> list[str]:
 def _strip_comment(line: str) -> str:
     """Return `line` without a trailing shell comment, stripped.
 
-    A `#` only begins a comment at the start of a word, so `${{ ... }}` and a
-    quoted `#` are left alone; the scripts here never quote one.
+    A `#` begins a comment only at the start of a word and outside quotes. The
+    quote state is tracked because a quoted `#` is data, not a comment: cutting
+    at it would drop everything after it from the judge's view, so a line such
+    as `: ' #'; set +e` would lose its `set +e` and the mask check would never
+    see it. Escapes are not modelled; the scripts here never use one.
 
     Returns
     -------
     str
         The code part of the line.
     """
-    code = line.split(" #", 1)[0]
-    return code.strip()
+    quote: str | None = None
+    previous = " "
+    for index, character in enumerate(line):
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {"'", '"'}:
+            quote = character
+        elif character == "#" and previous.isspace():
+            return line[:index].strip()
+        previous = character
+    return line.strip()
 
 
 def _missing_formatter_command_problems(executed: list[str]) -> list[str]:

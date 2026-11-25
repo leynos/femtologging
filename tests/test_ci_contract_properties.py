@@ -66,13 +66,24 @@ def test_a_single_mixed_case_exclusion_always_removes_the_required_leg(
 
 
 @settings(max_examples=50, deadline=None)
-@given(names=st.lists(st.sampled_from(_AXIS_NAMES), min_size=1, max_size=3))
-def test_a_matrix_without_exclusions_keeps_its_required_leg(
-    names: list[str],
+@given(
+    axis=st.sampled_from(_AXIS_NAMES),
+    selector=st.sampled_from(_AXIS_NAMES),
+)
+def test_any_spelling_of_the_axis_and_selector_keeps_its_required_leg(
+    axis: str, selector: str
 ) -> None:
-    """Removing the exclusion restores the required leg, whatever the spelling."""
-    job = _job(exclude=None)
-    assert job_tolerance_is_acceptable(job), names
+    """A matrix without exclusions keeps a required leg in any spelling pair.
+
+    The axis name and the selector name are generated independently, so the
+    property covers GitHub's case-insensitive match rather than one fixed
+    spelling with an unused generated value.
+    """
+    job: Job = {
+        "continue-on-error": f"${{{{ matrix.{selector} }}}}",
+        "strategy": {"matrix": {axis: [False, True]}},
+    }
+    assert job_tolerance_is_acceptable(job), (axis, selector)
 
 
 def _formatter_job(run: str) -> Job:

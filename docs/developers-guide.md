@@ -1580,10 +1580,13 @@ contain a `${{ }}` expression, are refused rather than judged, because the
 helper cannot enumerate what GitHub would run.
 
 `tests/make_contract_helpers.py` also supplies `strict_safe_load` and
-`DuplicateKeyError`. The CI contract tests read workflows through that loader:
-PyYAML's default loader silently keeps the last of two identical mapping keys,
-so a contract could judge a value the file no longer shows. It refuses a
-repeated key at any depth. Other YAML consumers keep the existing loader.
+`DuplicateKeyError`. PyYAML's default loader silently keeps the last of two
+identical mapping keys, so a contract could judge a value the file no longer
+shows; `strict_safe_load` refuses a repeated key at any depth. The pull-request
+Loom gate in `tests/ci_loom_gate_contract.py` reads `.github/workflows/ci.yml`
+through it, as does the duplicate-key case in
+`tests/test_env_access_policy_ci_contract.py`. Consumers that never judge a
+key's value keep `yaml.safe_load`, including `tests/heavy_workflow_document.py`.
 
 Both steps build into `target/loom` under their own cache key, which names the
 toolchain, the lockfile, the feature selection and the flags, apart from the
