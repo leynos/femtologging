@@ -2352,6 +2352,16 @@ because the error value would be forced to drop the partial batch in place. Its
 `build_batch` helper is what leaves the loop with the error instead of being
 dropped by it.
 
+The Python `remove_handler` needs a strategy of its own, because matching a
+Python object means calling each attachment's `as_any`, which is arbitrary code
+that may itself call `remove_handler`. Selection therefore runs outside every
+guard through `select_py_handlers`, and each scan tries every match it found
+through `remove_selected_handler`. A re-entrant caller can take a selected
+attachment first, which costs that one target rather than the whole call's
+remaining budget. `MAX_REMOVAL_SCANS` (4) bounds how many times the call
+rescans after a re-entrant caller removes everything a scan found, so sustained
+re-entry can still make the call return `false` once the bound is exhausted.
+
 ## Configuration transaction
 
 `ConfigBuilder::build_and_init` splits into a fallible preparation step and a
