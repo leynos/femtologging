@@ -362,19 +362,21 @@ def _pipeline_problems(executed: list[str]) -> list[str]:
 def _background_problems(executed: list[str]) -> list[str]:
     """Return a complaint per required command that is backgrounded.
 
-    A trailing `&` starts the command in the background and returns zero at
-    once, so the shell continues and the step succeeds even when the gate
-    command fails. The scripts here never need to background a gate command.
+    A `&` anywhere after the command starts it in the background. A bare `&`
+    returns zero at once, and `& wait` returns the status of `wait` itself,
+    which is zero for an argument-free call even when the background job
+    failed. Either way the shell continues and the step succeeds while the gate
+    command failed. The scripts here never need to background a gate command.
 
     Returns
     -------
     list[str]
-        One complaint per required command that ends with a background `&`.
+        One complaint per required command that carries a background `&`.
     """
     problems: list[str] = []
     for command in _REQUIRED_FORMATTER_COMMANDS:
         for line in executed:
-            if line.startswith(command) and line[len(command) :].strip() == "&":
+            if line.startswith(command) and "&" in line[len(command) :]:
                 problems.append(
                     f"the {FORMATTERS_STEP!r} step must not background `{command}`"
                 )
