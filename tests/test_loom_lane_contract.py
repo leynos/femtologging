@@ -57,8 +57,9 @@ _TEST_FUNCTION: typ.Final = re.compile(r"#\[test\]\s*fn\s+(?P<name>\w+)")
 
 # The environment variable that bounds how much of the state space Loom
 # explores. Without it a multi-threaded model does not fail, it fails to
-# finish.
+# finish. The value is pinned to the one the successful nightly run used.
 _PREEMPTION_BOUND: typ.Final = "LOOM_MAX_PREEMPTIONS"
+_PREEMPTION_BOUND_VALUE: typ.Final = "3"
 
 
 def _step_tokens(step_name: str) -> tuple[str, ...]:
@@ -309,10 +310,10 @@ def test_the_execution_step_bounds_loom_s_exploration() -> None:
         f"the {_EXECUTE_STEP!r} step must set {_PREEMPTION_BOUND}, "
         f"its environment is {environment!r}"
     )
-    assert str(bound).isdigit(), (
-        f"{_PREEMPTION_BOUND} must be a whole number, saw {bound!r}"
+    assert str(bound) == _PREEMPTION_BOUND_VALUE, (
+        f"{_PREEMPTION_BOUND} must stay at the exercised bound "
+        f"{_PREEMPTION_BOUND_VALUE!r}, saw {bound!r}"
     )
-    assert int(bound) > 0, f"{_PREEMPTION_BOUND} must be positive, saw {bound!r}"
 
 
 def test_the_execution_step_pins_the_python_pyo3_links() -> None:

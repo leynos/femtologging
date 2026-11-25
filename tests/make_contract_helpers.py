@@ -10,15 +10,21 @@ Makefile.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess  # ruff: ignore[suspicious-subprocess-import] contract tests invoke the pinned parser
 import typing as typ
 from pathlib import Path
 
 import yaml
+import yaml.constructor
+import yaml.resolver
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+#: A shell assignment name: an identifier followed by `=`.
+_ASSIGNMENT_NAME: typ.Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 MAKEUTIL_COMMAND: typ.Final = ("makeutil", "parse")
 
@@ -246,3 +252,123 @@ def sole_workflow_step(
         )
         raise AssertionError(msg)
     return matches[0]
+
+
+def command_words(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the tokens after any leading ``NAME=value`` assignments.
+
+    A shell command may be prefixed with environment assignments, so a rule
+    that asks what program a step runs has to skip them first.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The command and its arguments, or ``()`` when the command is nothing
+        but assignments.
+    """
+    for index, token in enumerate(tokens):
+        name, separator, _ = token.partition("=")
+        if not separator or not _ASSIGNMENT_NAME.match(name):
+            return tokens[index:]
+    return ()
+
+
+def defaults_shell(container: cabc.Mapping[str, object]) -> object:
+    """Return a workflow or job ``defaults.run.shell`` value, if one is set.
+
+    Returns
+    -------
+    object
+        The configured shell template, or ``None`` when no default is set.
+    """
+    defaults = container.get("defaults")
+    if not isinstance(defaults, dict):
+        return None
+    run = defaults.get("run")
+    if not isinstance(run, dict):
+        return None
+    return run.get("shell")
+
+
+def strict_safe_load(source: str) -> object:
+    """Load YAML with `safe_load`, refusing any repeated mapping key.
+
+    The strict constructor is registered on a private `SafeLoader` subclass
+    passed explicitly to the loader, so no other YAML consumer sees it.
+
+    Returns
+    -------
+    object
+        The parsed document; the strict constructor raises
+        ``ConstructorError`` when a key is repeated.
+    """
+    # The loader is a `SafeLoader` subclass: arbitrary objects cannot be
+    # instantiated, only the mapping constructor is stricter.
+    return yaml.load(source, Loader=_StrictLoader)  # ruff: ignore[unsafe-yaml-load]
+
+
+def construct_mapping(
+    loader: yaml.SafeLoader,
+    node: yaml.nodes.MappingNode,
+    *,
+    deep: bool = False,
+) -> dict[object, object]:
+    """Build a mapping, refusing any key that appears twice.
+
+    Returns
+    -------
+    dict[object, object]
+        The constructed mapping.
+
+    Raises
+    ------
+    DuplicateKeyError
+        If two keys in the node are equal.
+    """
+    loader.flatten_mapping(node)
+    seen: set[object] = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise DuplicateKeyError(key, node, key_node)
+        seen.add(key)
+    return typ.cast(
+        "dict[object, object]", yaml.SafeLoader.construct_mapping(loader, node, deep)
+    )
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """Safe loader whose mappings refuse a repeated key."""
+
+
+class DuplicateKeyError(yaml.constructor.ConstructorError):
+    """Report a repeated mapping key and the position of its second use."""
+
+    def __init__(
+        self,
+        key: object,
+        node: yaml.nodes.MappingNode,
+        key_node: yaml.nodes.Node,
+    ) -> None:
+        """Record the key and the position of its second use.
+
+        Parameters
+        ----------
+        key
+            The repeated key.
+        node
+            The mapping node that contains the repeat.
+        key_node
+            The node of the second occurrence.
+        """
+        super().__init__(
+            "while constructing a mapping",
+            node.start_mark,
+            f"found duplicate key {key!r}",
+            key_node.start_mark,
+        )
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping
+)

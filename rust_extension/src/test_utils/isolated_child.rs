@@ -19,6 +19,14 @@ use std::ffi::OsString;
 /// Cargo supplies the dynamic-library search path when it launches test
 /// binaries. Preserve that one value so the child can load the same Python
 /// shared library while keeping unrelated ambient configuration out.
+///
+/// Only the Python bridge saturation tests call this, so it is absent from a
+/// build with neither bridge feature; the retention helper below is
+/// feature-independent.
+#[cfg(any(
+    all(feature = "python", feature = "log-compat"),
+    all(feature = "python", feature = "tracing-compat")
+))]
 pub(crate) fn run_isolated_test(test_filter: &str) -> io::Result<Output> {
     isolated_command(test_filter)?.output()
 }
@@ -29,7 +37,7 @@ pub(crate) fn run_isolated_test(test_filter: &str) -> io::Result<Output> {
 /// A test that resolves a bare file name against the current directory needs a
 /// directory of its own, because the working directory is global to the test
 /// binary. Everything else, including the cleared environment, matches
-/// [`run_isolated_test`].
+/// `run_isolated_test`.
 pub(crate) fn run_isolated_test_in(
     test_filter: &str,
     working_directory: &Path,

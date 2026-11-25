@@ -18,13 +18,10 @@ pub struct CollectingHandler {
 
 impl CollectingHandler {
     /// Create a new empty handler.
-    #[cfg_attr(
-        loom,
-        expect(
-            dead_code,
-            reason = "its callers, the logger unit tests, build only outside `--cfg loom`"
-        )
-    )]
+    ///
+    /// The Loom-configured test build calls this through `logger::test_identity`
+    /// as well as through the ordinary logger tests, so it is not dead code in
+    /// any tested configuration.
     pub fn new() -> Self {
         Self::default()
     }

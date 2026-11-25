@@ -117,6 +117,10 @@ impl FlushDeadline {
     }
 
     /// Whether the sampled time is strictly after the deadline.
+    ///
+    /// Only the non-Loom dispatch-resolution paths consult it: under Loom the
+    /// deadline is never formed from a timer, so no model observes lateness.
+    #[cfg(not(loom))]
     pub(super) fn is_late(&self) -> bool {
         self.deadline.is_none_or(|deadline| self.now() > deadline)
     }

@@ -27,7 +27,9 @@ mod test_support;
 mod worker;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(not(loom))]
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::handler::FemtoHandlerTrait;
 use crate::logger::QueuedRecord;
@@ -45,7 +47,10 @@ use worker::run_worker;
 /// How long a drain-on-drop barrier waits for the shard to acknowledge it.
 ///
 /// Flush calls supply their own deadline through [`Self::flush_handlers_until`].
-/// The bound is ignored under Loom, so no model depends on it firing.
+/// Only the non-Loom drain paths and their unit tests use it: a Loom build
+/// replaces the timed barrier with an unbounded one, so the bound would be
+/// dead code there.
+#[cfg(not(loom))]
 const BARRIER_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 /// A job for a shard.
@@ -95,6 +100,11 @@ enum Job {
 /// channel means the shard is gone for good, while a timed-out barrier means
 /// the worker is still alive but did not finish the work ahead in time. The two
 /// need different diagnoses, so the flush path records them separately.
+///
+/// Only the non-Loom shard exposes the yes-or-no wait that returns this; a
+/// Loom build drains through the flush marker instead, so the type is unused
+/// there.
+#[cfg(not(loom))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DrainOutcome {
     /// The worker handled every queued job ahead of the barrier.

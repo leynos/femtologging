@@ -19,6 +19,7 @@ use camino::Utf8Path;
 use cap_std::ambient_authority;
 use cap_std::fs_utf8::Dir;
 use pyo3::Python;
+use serial_test::serial;
 
 use super::support::{RequestObservation, TestCollector};
 
@@ -36,6 +37,12 @@ const QUIET_WINDOW: Duration = Duration::from_millis(500);
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Run the POST plus JSON variant of the regression.
+///
+/// Both children configure the process-global logger and manager, so they must
+/// not overlap. The heavy workflow's ignored lanes run with default test
+/// threads, and a concurrent sibling would point the logger at the other
+/// child's collector.
+#[serial]
 #[test]
 #[ignore = "run in a fresh process because the global logger and manager are process-global"]
 fn post_json_transport_feedback_child() {
@@ -43,6 +50,7 @@ fn post_json_transport_feedback_child() {
 }
 
 /// Run the GET plus URL-encoded variant of the regression.
+#[serial]
 #[test]
 #[ignore = "run in a fresh process because the global logger and manager are process-global"]
 fn get_url_encoded_transport_feedback_child() {

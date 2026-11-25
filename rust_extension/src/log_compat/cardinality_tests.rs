@@ -1,6 +1,7 @@
 //! Isolated high-cardinality tests for the Rust `log` bridge.
 
 use pyo3::prelude::*;
+use serial_test::serial;
 use std::fmt::Arguments;
 use std::sync::Arc;
 
@@ -117,6 +118,11 @@ fn the_log_bridge_keeps_valid_target_cardinality_bounded() {
         .expect("the isolated bridge test should start");
 }
 
+// The registry this child saturates is process-global, so it must not overlap
+// another ignored test that resets or saturates it. The heavy workflow's
+// ignored lanes run with default test threads, and a previous child in the same
+// process leaves the registry full, so the test resets it before measuring.
+#[serial]
 #[test]
 #[ignore = "run in a fresh process because the manager is process-global"]
 fn log_bridge_saturation_child() {
@@ -126,6 +132,9 @@ fn log_bridge_saturation_child() {
     );
 
     Python::attach(|py| {
+        // Start from a clean registry so this child measures its own budget
+        // rather than one a sibling has already spent.
+        manager::reset_manager();
         let root = manager::get_logger(py, "root").expect("root should be available");
         let initial_worker_count = worker_count_for_test();
         assert!(initial_worker_count > 0, "resolving root starts the pool");

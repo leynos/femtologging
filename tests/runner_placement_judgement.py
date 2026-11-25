@@ -27,9 +27,12 @@ HOSTED_CONDITION: typ.Final = f"({FORK_CONDITION} || {DEPENDABOT_CONDITION})"
 PLACEMENTS: typ.Final = (
     ("build-wheels.yml", "build-linux", "ubicloud-standard-4", 40),
     ("build-wheels.yml", "verify-wheel-install", "ubicloud-standard-4", 40),
-    # 50 covers the API-boundary check, which builds its own release wheel on
-    # the 3.12 lane on top of an already 37-minute gate run.
-    ("ci.yml", "build-test", "ubicloud-standard-4", 50),
+    # 50 covered the API-boundary check, which builds its own release wheel on
+    # the 3.12 lane on top of an already 37-minute gate run. Sixty adds the
+    # Loom all-targets Clippy, which compiles every target again into its own
+    # cold `target/loom`; the first gated pull requests reached the old
+    # 40-minute ceiling on every leg (run 45275965962).
+    ("ci.yml", "build-test", "ubicloud-standard-4", 60),
     # The baseline publisher runs only on a push to main, where the expression
     # falls through to Ubicloud: that is the cache store the pull-request
     # lanes restore the baseline from.

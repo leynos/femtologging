@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc debbc645c91d6b3ef82c79e5788b544aa66182465c85a82d8c7659cf42761802 # shrinks to ref messages = ["\u{b}"], ref logger_names = ["A"], ref log_levels = [Info]

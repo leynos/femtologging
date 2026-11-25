@@ -4,6 +4,7 @@ The nightly lane must install its Python test tools from ``uv.lock`` rather
 than resolving them at run time, and it must make a red run visible. Each rule
 returns one complaint per violation, so the contract test can prove every
 judgement against a deliberately broken copy as well as the real file. The
+Loom gates' own rules live in :mod:`tests.heavy_loom_gate_contract`, and the
 document accessors these rules build on live in
 :mod:`tests.heavy_workflow_document`.
 """
@@ -12,6 +13,13 @@ from __future__ import annotations
 
 import re
 
+from tests.heavy_compile_gate_contract import (
+    compile_command_problems,
+    compile_loom_flag_problems,
+)
+from tests.heavy_formatter_gate_contract import formatter_command_problems
+from tests.heavy_loom_gate_contract import loom_gate_problems, step_presence_problems
+from tests.heavy_step_scope_contract import shell_problems
 from tests.heavy_workflow_document import (
     BUILD_STEP,
     HEAVY_JOB,
@@ -348,5 +356,11 @@ def workflow_problems(document: Document) -> list[str]:
     return [
         *install_problems(heavy),
         *notification_problems(document),
+        *step_presence_problems(heavy),
+        *compile_command_problems(heavy),
+        *compile_loom_flag_problems(document, heavy),
+        *formatter_command_problems(document, heavy),
+        *loom_gate_problems(heavy),
+        *shell_problems(document, heavy),
         *loom_position_problems(heavy),
     ]

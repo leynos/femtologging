@@ -20,7 +20,9 @@ HEAVY_JOB: typ.Final[str] = "heavy"
 NOTIFY_JOB: typ.Final[str] = "notify-failure"
 SYNC_STEP: typ.Final[str] = "Install locked test dependencies"
 BUILD_STEP: typ.Final[str] = "Build editable extension"
+COMPILE_STEP: typ.Final[str] = "Compile Loom heavy tests"
 LOOM_STEP: typ.Final[str] = "Run Loom models"
+FORMATTERS_STEP: typ.Final[str] = "Run formatters and tests"
 SYNC_COMMAND: typ.Final[tuple[str, ...]] = (
     "uv",
     "sync",
@@ -31,6 +33,11 @@ SYNC_COMMAND: typ.Final[tuple[str, ...]] = (
 TEST_UTIL_CONFIG: typ.Final[str] = ".github/uv-test-util.toml"
 ISSUE_TITLE: typ.Final[str] = "heavy-tests nightly failure"
 TEST_UTIL_FEATURES: typ.Final[str] = "--features python,test-util"
+
+#: Cargo's encoded-flags variable, which outranks `RUSTFLAGS` everywhere.
+#: Shared by the compile-gate and formatter-gate rules so both refuse it by the
+#: same name.
+ENCODED_FLAGS: typ.Final[str] = "CARGO_ENCODED_RUSTFLAGS"
 
 # YAML leaves values untyped until a rule inspects them, so the leaf type stays
 # `Any`; the aliases only name the container shapes the accessors narrow to.
