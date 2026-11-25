@@ -56,6 +56,10 @@ mod shards_property_tests;
 #[cfg(not(loom))]
 use super::flush_clock::FlushDeadline;
 pub(crate) use shard::{AdmissionRefusal, LoggerBudget, Shard};
+// Gated with the module it draws from: `mod shards` is `not(loom)`, so an
+// ungated import is an unresolved path in the Loom build, which CI lints with
+// `-D warnings`.
+#[cfg(not(loom))]
 use shards::Shards;
 #[cfg(not(loom))]
 use std::ptr::NonNull;

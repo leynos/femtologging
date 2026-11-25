@@ -280,14 +280,17 @@ impl Shard {
                     queued: returned, ..
                 } => AdmissionRefusal::Record(returned),
                 // `admit` sends nothing but records, so the queue cannot
-                // return a barrier or a stop here. Dropping the job returns
-                // the permit, and the refusal is reported rather than
-                // panicked on, so a logic error costs one record instead of
-                // the process.
-                #[cfg(not(loom))]
+                // return a barrier, a flush marker or a stop here. Dropping
+                // the job returns the permit, and the refusal is reported
+                // rather than panicked on, so a logic error costs one record
+                // instead of the process.
+                //
+                // `Flush` and `Barrier` exist in every configuration, so they
+                // are named ungated; only `Stop` is Loom-only, and leaving it
+                // out of the Loom match is a non-exhaustive pattern.
                 Job::Barrier { .. } | Job::Flush { .. } => AdmissionRefusal::UnexpectedJob,
                 #[cfg(loom)]
-                Job::Barrier { .. } | Job::Stop => AdmissionRefusal::UnexpectedJob,
+                Job::Stop => AdmissionRefusal::UnexpectedJob,
             }),
         }
     }
