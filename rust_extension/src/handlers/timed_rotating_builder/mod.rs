@@ -52,12 +52,14 @@ impl TimedRotatingFileHandlerBuilder {
     }
 
     /// Set the overflow policy for queue saturation.
+    #[must_use]
     pub fn with_overflow_policy(mut self, policy: OverflowPolicy) -> Self {
         self.common.set_overflow_policy(policy);
         self
     }
 
     /// Attach a formatter instance or identifier.
+    #[must_use]
     pub fn with_formatter<F>(mut self, formatter: F) -> Self
     where
         F: IntoFormatterConfig,
@@ -67,6 +69,7 @@ impl TimedRotatingFileHandlerBuilder {
     }
 
     /// Attach filters by identifier.
+    #[must_use]
     pub fn with_filters<I, S>(mut self, filter_ids: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -92,12 +95,14 @@ impl TimedRotatingFileHandlerBuilder {
     }
 
     /// Set the bounded channel capacity.
+    #[must_use]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.common.set_capacity(capacity);
         self
     }
 
     /// Set the flush threshold measured in records.
+    #[must_use]
     pub fn with_flush_after_records(mut self, interval: NonZeroU64) -> Self {
         self.common.set_flush_after_records(interval);
         self
@@ -115,6 +120,12 @@ impl TimedRotatingFileHandlerBuilder {
     }
 
     /// Set the timed rotation cadence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HandlerBuildError::InvalidConfig`] when `when` is not a
+    /// supported cadence, or when the currently configured `at_time` is
+    /// incompatible with the new cadence.
     pub fn with_when(mut self, when: impl AsRef<str>) -> Result<Self, HandlerBuildError> {
         self.when =
             TimedRotationWhen::parse(when.as_ref()).map_err(HandlerBuildError::InvalidConfig)?;
@@ -123,19 +134,22 @@ impl TimedRotatingFileHandlerBuilder {
     }
 
     /// Set the timed rotation interval.
-    pub fn with_interval(mut self, interval: NonZeroU64) -> Self {
+    #[must_use]
+    pub const fn with_interval(mut self, interval: NonZeroU64) -> Self {
         self.interval = interval;
         self
     }
 
     /// Set how many timestamped backup files to retain.
-    pub fn with_backup_count(mut self, backup_count: usize) -> Self {
+    #[must_use]
+    pub const fn with_backup_count(mut self, backup_count: usize) -> Self {
         self.backup_count = backup_count;
         self
     }
 
     /// Select UTC instead of local time for schedule calculations.
-    pub fn with_utc(mut self, use_utc: bool) -> Self {
+    #[must_use]
+    pub const fn with_utc(mut self, use_utc: bool) -> Self {
         self.use_utc = use_utc;
         self
     }
@@ -146,6 +160,11 @@ impl TimedRotatingFileHandlerBuilder {
     /// preserved internally. The getter formats the stored value with
     /// `NaiveTime::to_string`, which includes subsecond digits only when
     /// they are non-zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HandlerBuildError::InvalidConfig`] when `at_time` is set for a
+    /// cadence that does not support a time-of-day trigger.
     pub fn with_at_time(mut self, at_time: Option<NaiveTime>) -> Result<Self, HandlerBuildError> {
         self.at_time = at_time;
         self.validate_at_time_supported()?;
@@ -155,7 +174,7 @@ impl TimedRotatingFileHandlerBuilder {
     /// Defines timed rotation scheduling where the worker, not a producer, decides rollover boundaries and preserves clock semantics.
     fn schedule(&self) -> Result<TimedRotationSchedule, HandlerBuildError> {
         let interval = u32::try_from(self.interval.get()).map_err(|_| {
-            HandlerBuildError::InvalidConfig("interval exceeds supported range".to_string())
+            HandlerBuildError::InvalidConfig("interval exceeds supported range".to_owned())
         })?;
         TimedRotationSchedule::new(self.when, interval, self.use_utc, self.at_time)
             .map_err(HandlerBuildError::InvalidConfig)
@@ -209,7 +228,7 @@ impl HandlerBuilderTrait for TimedRotatingFileHandlerBuilder {
                 self.build_handler_with_formatter(DefaultFormatter, cfg, schedule)
             }
             Some(FormatterConfig::Id(FormatterId::Custom(other))) => Err(
-                HandlerBuildError::InvalidConfig(format!("unknown formatter id: {other}",)),
+                HandlerBuildError::InvalidConfig(format!("unknown formatter id: {other}")),
             ),
         }
     }

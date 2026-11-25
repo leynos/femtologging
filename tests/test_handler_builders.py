@@ -10,6 +10,7 @@ import pytest
 from femtologging import (
     FileHandlerBuilder,
     HandlerConfigError,
+    HandlerIOError,
     HTTPHandlerBuilder,
     OverflowPolicy,
     RotatingFileHandlerBuilder,
@@ -82,21 +83,9 @@ _FLUSH_CASES: typ.Final = {
     "stream": (_configure_stream_flush, "flush_after_ms"),
 }
 
-flush_config_cases = pytest.mark.parametrize(
+flush_cases = pytest.mark.parametrize(
     ("configure_flush", "config_key"),
     [pytest.param(*case, id=name) for name, case in _FLUSH_CASES.items()],
-)
-
-flush_zero_cases = pytest.mark.parametrize(
-    ("configure_flush", "zero_error"),
-    [
-        pytest.param(
-            configure_flush,
-            f"{config_key} must be greater than zero",
-            id=name,
-        )
-        for name, (configure_flush, config_key) in _FLUSH_CASES.items()
-    ],
 )
 
 flush_setter_cases = pytest.mark.parametrize(
@@ -105,13 +94,13 @@ flush_setter_cases = pytest.mark.parametrize(
 )
 
 
-@flush_zero_cases
+@flush_cases
 def test_flush_setter_rejects_zero(
     configure_flush: cabc.Callable[[int], dict[str, object]],
-    zero_error: str,
+    config_key: str,
 ) -> None:
     """Zero flush intervals are invalid and name the offending parameter."""
-    with pytest.raises(ValueError, match=zero_error):
+    with pytest.raises(ValueError, match=f"{config_key} must be greater than zero"):
         configure_flush(0)
 
 
@@ -126,7 +115,7 @@ def test_flush_setter_rejects_negative(
         configure_flush(value)
 
 
-@flush_config_cases
+@flush_cases
 @pytest.mark.parametrize(
     "interval",
     [
@@ -152,7 +141,7 @@ def test_flush_interval_round_trips_named_examples(
     )
 
 
-@flush_config_cases
+@flush_cases
 @_FLUSH_INTERVAL_PROPERTY
 def test_flush_interval_round_trips_for_any_valid_value(
     configure_flush: cabc.Callable[[int], dict[str, object]],
@@ -180,7 +169,6 @@ def test_flush_after_records_above_u64_max_overflows() -> None:
 def test_with_max_bytes_negative_raises(tmp_path: Path, max_bytes: int) -> None:
     """Negative max_bytes values must be rejected."""
     builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
-
     with pytest.raises(ValueError, match="max_bytes"):
         builder.with_max_bytes(max_bytes)
 
@@ -189,7 +177,6 @@ def test_with_max_bytes_negative_raises(tmp_path: Path, max_bytes: int) -> None:
 def test_with_backup_count_negative_raises(tmp_path: Path, backup_count: int) -> None:
     """Negative backup_count values must be rejected."""
     builder = RotatingFileHandlerBuilder(str(tmp_path / "test.log"))
-
     with pytest.raises(ValueError, match="backup"):
         builder.with_backup_count(backup_count)
 
@@ -199,6 +186,43 @@ def test_timed_builder_invalid_when_raises(tmp_path: Path) -> None:
     builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed.log"))
     with pytest.raises(ValueError, match="unsupported timed rotation value"):
         builder.with_when("fortnight")
+
+
+@pytest.mark.parametrize("field", ["capacity", "interval"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_timed_builder_numeric_setters_reject_non_positive(
+    tmp_path: Path, field: str, value: int
+) -> None:
+    """Zero and negative capacity or interval values name the field."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed_numeric.log"))
+    with pytest.raises(ValueError, match=f"{field} must be greater than zero"):
+        getattr(builder, f"with_{field}")(value)
+
+
+@pytest.mark.parametrize("field", ["capacity", "interval"])
+def test_timed_builder_setters_reject_overflow(tmp_path: Path, field: str) -> None:
+    """Values wider than u64 raise ``OverflowError`` naming the field."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "timed_overflow.log"))
+    with pytest.raises(OverflowError, match=f"{field} exceeds the allowable range"):
+        getattr(builder, f"with_{field}")(2**64)
+
+
+@pytest.mark.parametrize("field", ["capacity", "max_bytes", "backup_count"])
+def test_rotating_builder_setters_reject_overflow(tmp_path: Path, field: str) -> None:
+    """Values wider than u64 raise ``OverflowError`` naming the field."""
+    builder = RotatingFileHandlerBuilder(str(tmp_path / "rotating_overflow.log"))
+    with pytest.raises(OverflowError, match=f"{field} exceeds the allowable range"):
+        getattr(builder, f"with_{field}")(2**64)
+
+
+def test_timed_builder_build_reports_io_failure(tmp_path: Path) -> None:
+    """Building against an unopenable path raises ``HandlerIOError``."""
+    builder = TimedRotatingFileHandlerBuilder(str(tmp_path / "missing" / "timed.log"))
+    # Windows reports an absent parent directory as "The system cannot find
+    # the path specified", so errno's wording alone would fail there.
+    unopenable = "No such file or directory|cannot find the path"
+    with pytest.raises(HandlerIOError, match=unopenable):
+        builder.build()
 
 
 def test_timed_builder_rejects_at_time_for_hourly(tmp_path: Path) -> None:

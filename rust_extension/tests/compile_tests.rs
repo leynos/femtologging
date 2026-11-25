@@ -14,6 +14,7 @@ fn compile_time_ui() {
     test_cases.pass("tests/ui/pass/queued_record_context.rs");
     test_cases.pass("tests/ui/pass/file_test_support.rs");
     test_cases.pass("tests/ui/pass/handler_formatter_builder.rs");
+    test_cases.pass("tests/ui/pass/rotation_builder_const.rs");
     test_cases.pass("tests/ui/pass/immutable_handler_close.rs");
     test_cases.pass("tests/ui/pass/femto_logger_fallible_construction.rs");
     test_cases.pass("tests/ui/pass/handler_flush_until.rs");
@@ -33,6 +34,7 @@ fn compile_time_ui() {
     #[cfg(all(feature = "python", feature = "tracing-compat"))]
     test_cases.pass("tests/ui/pass/tracing_layer_const.rs");
     test_cases.pass("tests/ui/pass/pyo3_from_py_with.rs");
+    test_cases.pass("tests/ui/pass/pyo3_builder_shapes.rs");
     test_cases.pass("tests/ui/pass/promoted_const_fns.rs");
     test_cases.pass("tests/ui/pass/schema_version_error_wildcard.rs");
     test_cases.compile_fail("tests/ui/fail/*.rs");

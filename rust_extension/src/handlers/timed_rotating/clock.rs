@@ -26,22 +26,23 @@ mod injected {
     //! Injected-time queue used by tests to make rotation deterministic.
 
     use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
 
     use chrono::{DateTime, TimeZone, Utc};
-    use once_cell::sync::Lazy;
 
     /// Queues test-supplied epoch milliseconds behind a mutex so concurrent
     /// workers consume deterministic clock values safely.
-    static INJECTED_TIMES: Lazy<Mutex<VecDeque<i64>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
+    static INJECTED_TIMES: LazyLock<Mutex<VecDeque<i64>>> =
+        LazyLock::new(|| Mutex::new(VecDeque::new()));
 
     /// Replaces the queued test times; available only to deterministic test
     /// builds.
     #[cfg(feature = "test-util")]
     pub(super) fn set(epoch_millis: Vec<i64>) {
-        *INJECTED_TIMES
+        let mut queue = INJECTED_TIMES
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = epoch_millis.into_iter().collect();
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *queue = epoch_millis.into_iter().collect();
     }
 
     /// Discards all queued test times before the next deterministic scenario.
@@ -49,7 +50,7 @@ mod injected {
     pub(super) fn clear() {
         INJECTED_TIMES
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
     }
 
@@ -58,7 +59,7 @@ mod injected {
     pub(super) fn take() -> Option<DateTime<Utc>> {
         let mut guard = INJECTED_TIMES
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard
             .pop_front()
             .and_then(|epoch_millis| Utc.timestamp_millis_opt(epoch_millis).single())
@@ -109,7 +110,7 @@ impl SequenceClock {
         let remaining: std::collections::VecDeque<_> = times.into_iter().collect();
         let fallback = remaining
             .back()
-            .cloned()
+            .copied()
             .unwrap_or_else(|| Utc::now() + chrono::Duration::hours(1));
         Self {
             remaining,

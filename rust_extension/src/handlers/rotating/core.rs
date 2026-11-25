@@ -68,6 +68,29 @@ impl RotationConfig {
     }
 }
 
+// Pins the constructors as `const fn`: these initializers are evaluated at
+// compile time, so dropping the qualifier breaks the build. The builder
+// setters are pinned by `tests/ui/pass/rotation_builder_const.rs`, and their
+// Python surface by `tests/ui/pass/pyo3_builder_shapes.rs`. The strategy's
+// constructor is crate-private, so it is pinned here; the path arrives as a
+// parameter because constructing one cannot run in a const item.
+const _: () = {
+    assert!(RotationConfig::new(1, 0).max_bytes == 1);
+    assert!(RotationConfig::disabled().backup_count == 0);
+};
+
+/// Calls [`FileRotationStrategy::new`] in const context, so dropping its
+/// `const` qualifier breaks the build.
+const fn strategy_with(
+    path: std::path::PathBuf,
+    max_bytes: u64,
+    backup_count: usize,
+) -> FileRotationStrategy {
+    FileRotationStrategy::new(path, max_bytes, backup_count)
+}
+
+const _: fn(std::path::PathBuf, u64, usize) -> FileRotationStrategy = strategy_with;
+
 impl Default for RotationConfig {
     fn default() -> Self {
         Self::disabled()
@@ -94,7 +117,7 @@ impl FemtoRotatingFileHandler {
     ///
     /// Internal visibility allows the builder to construct instances whilst
     /// preventing external crates from bypassing validation.
-    pub(crate) fn new_with_rotation_limits(
+    pub(crate) const fn new_with_rotation_limits(
         inner: FemtoFileHandler,
         max_bytes: u64,
         backup_count: usize,
@@ -107,11 +130,15 @@ impl FemtoRotatingFileHandler {
     }
 
     /// Return the configured rotation thresholds.
-    pub(crate) fn rotation_limits(&self) -> (u64, usize) {
+    pub(crate) const fn rotation_limits(&self) -> (u64, usize) {
         (self.max_bytes, self.backup_count)
     }
 
     /// Build a rotating handler with the supplied configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error from opening or creating the configured `path`.
     pub fn with_capacity_flush_policy<P, F>(
         path: P,
         formatter: F,
