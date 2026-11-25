@@ -54,17 +54,17 @@ struct FieldVisitor {
 impl Visit for FieldVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         self.fields
-            .insert(field.name().to_string(), value.to_string());
+            .insert(field.name().to_owned(), value.to_owned());
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
         self.fields
-            .insert(field.name().to_string(), value.to_string());
+            .insert(field.name().to_owned(), value.to_string());
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         self.fields
-            .insert(field.name().to_string(), format!("{value:?}"));
+            .insert(field.name().to_owned(), format!("{value:?}"));
     }
 }
 
@@ -79,7 +79,7 @@ where
             .lock()
             .expect("event collector must not be poisoned")
             .push(CapturedEvent {
-                target: event.metadata().target().to_string(),
+                target: event.metadata().target().to_owned(),
                 fields: visitor.fields,
             });
     }
@@ -109,9 +109,11 @@ fn capture_one_wait(outcome: WaitOutcome) -> Vec<CapturedEvent> {
 fn a_recorded_wait_emits_one_internal_event() {
     let events = capture_one_wait(WaitOutcome::FlushAckTimedOut);
 
-    assert_eq!(events.len(), 1, "one wait must emit one event: {events:?}");
+    let [event] = events.as_slice() else {
+        panic!("one wait must emit one event: {events:?}");
+    };
     assert_eq!(
-        events[0].target, "femtologging::internal",
+        event.target, "femtologging::internal",
         "the event must use the target the tracing bridge ignores",
     );
 }
@@ -120,16 +122,34 @@ fn a_recorded_wait_emits_one_internal_event() {
 #[test]
 fn the_event_fields_are_bounded() {
     let events = capture_one_wait(WaitOutcome::FlushAckTimedOut);
-    let event = &events[0];
+    let [event] = events.as_slice() else {
+        panic!("one wait must emit one event: {events:?}");
+    };
 
-    assert_eq!(event.fields["operation"], "handler_flush");
-    assert_eq!(event.fields["handler_kind"], "file");
-    assert_eq!(event.fields["policy_bucket"], "timeout");
-    assert_eq!(event.fields["wait_outcome"], "flush_ack_timed_out");
+    assert_eq!(
+        event.fields.get("operation").map(String::as_str),
+        Some("handler_flush"),
+        "the event must name its operation",
+    );
+    assert_eq!(
+        event.fields.get("handler_kind").map(String::as_str),
+        Some("file"),
+        "the event must name the handler kind",
+    );
+    assert_eq!(
+        event.fields.get("policy_bucket").map(String::as_str),
+        Some("timeout"),
+        "the event must name the policy in force",
+    );
+    assert_eq!(
+        event.fields.get("wait_outcome").map(String::as_str),
+        Some("flush_ack_timed_out"),
+        "the event must name the wait outcome",
+    );
+    let elapsed = event.fields.get("elapsed_us");
     assert!(
-        event.fields["elapsed_us"].parse::<u64>().is_ok(),
-        "elapsed_us must be numeric, got {:?}",
-        event.fields["elapsed_us"],
+        elapsed.is_some_and(|value| value.parse::<u64>().is_ok()),
+        "elapsed_us must be numeric, got {elapsed:?}",
     );
     assert_eq!(
         event

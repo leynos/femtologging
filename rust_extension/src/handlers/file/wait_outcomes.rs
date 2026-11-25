@@ -42,7 +42,7 @@ impl EnqueueFailure {
     /// `Closed` and `Disconnected` both become [`HandlerError::Closed`]: the
     /// public contract has always reported a lost worker as a closed handler,
     /// and the distinction exists only for the bounded diagnostics.
-    pub(crate) fn into_handler_error(self) -> HandlerError {
+    pub(crate) const fn into_handler_error(self) -> HandlerError {
         match self {
             Self::QueueFull => HandlerError::QueueFull,
             Self::TimedOut(duration) => HandlerError::Timeout(duration),
@@ -81,7 +81,7 @@ pub(crate) enum ShutdownOutcome {
 impl WorkerShutdown {
     /// Pair an optional join handle with the shared completion signal and the
     /// worker's terminal verdict.
-    pub(crate) fn new(
+    pub(crate) const fn new(
         handle: Option<JoinHandle<()>>,
         completion: Arc<ShutdownCompletion>,
         terminal: Arc<TerminalStatus>,
@@ -168,7 +168,7 @@ impl From<ShutdownOutcome> for WaitOutcome {
 /// responses: a full queue is back-pressure, a timeout is a slow worker, a
 /// closed handler is an expected post-shutdown call, and a disconnected
 /// channel is a worker that died while the handler still looked open.
-pub(crate) fn classify_enqueue(result: &Result<(), EnqueueFailure>) -> WaitOutcome {
+pub(crate) const fn classify_enqueue(result: &Result<(), EnqueueFailure>) -> WaitOutcome {
     match result {
         Ok(()) => WaitOutcome::HandleAccepted,
         Err(EnqueueFailure::QueueFull) => WaitOutcome::HandleQueueFull,
@@ -177,3 +177,18 @@ pub(crate) fn classify_enqueue(result: &Result<(), EnqueueFailure>) -> WaitOutco
         Err(EnqueueFailure::Disconnected) => WaitOutcome::HandleDisconnected,
     }
 }
+
+// Pins `classify_enqueue` as a `const fn`: this initializer is evaluated at
+// compile time, so dropping the qualifier breaks the build. trybuild cannot
+// stand in for the pin because the helper is crate-private, and a UI fixture
+// compiles as an external crate.
+const _: () = {
+    assert!(matches!(
+        classify_enqueue(&Ok(())),
+        WaitOutcome::HandleAccepted
+    ));
+    assert!(matches!(
+        classify_enqueue(&Err(EnqueueFailure::QueueFull)),
+        WaitOutcome::HandleQueueFull
+    ));
+};

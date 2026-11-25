@@ -62,7 +62,7 @@ impl Failure {
     /// An enqueue timeout only exists under a timed policy, and an enqueue
     /// refusal only exists under `drop`; the remaining cases are driven by the
     /// wait deadline and use `block` so the queue is never the cause.
-    fn policy(self) -> OverflowPolicy {
+    const fn policy(self) -> OverflowPolicy {
         match self {
             Self::HandleTimedOut => OverflowPolicy::Timeout(Duration::from_millis(20)),
             Self::FlushEnqueueTimedOut => OverflowPolicy::Drop,
@@ -175,20 +175,31 @@ fn assert_failure_event(events: &[CapturedEvent], case: &FailureCase) {
     );
     let matching: Vec<_> = events
         .iter()
-        .filter(|event| event.fields["wait_outcome"] == case.failure.outcome())
+        .filter(|event| {
+            event.fields.get("wait_outcome").map(String::as_str) == Some(case.failure.outcome())
+        })
         .collect();
+    let [event] = matching.as_slice() else {
+        panic!(
+            "one wait must emit one {} event: {events:?}",
+            case.failure.outcome(),
+        );
+    };
     assert_eq!(
-        matching.len(),
-        1,
-        "one wait must emit one {} event: {events:?}",
-        case.failure.outcome(),
-    );
-    assert_eq!(
-        matching[0].fields["handler_kind"], case.expected_kind,
+        event.fields.get("handler_kind").map(String::as_str),
+        Some(case.expected_kind),
         "the failure must carry the wrapper's own kind: {events:?}",
     );
-    assert_eq!(matching[0].fields["operation"], case.failure.operation());
-    assert_eq!(matching[0].fields["policy_bucket"], case.failure.bucket());
+    assert_eq!(
+        event.fields.get("operation").map(String::as_str),
+        Some(case.failure.operation()),
+        "the failure must name its operation",
+    );
+    assert_eq!(
+        event.fields.get("policy_bucket").map(String::as_str),
+        Some(case.failure.bucket()),
+        "the failure must name the policy in force",
+    );
 }
 
 /// A wrapper's failing wait is counted and labelled with its own kind.

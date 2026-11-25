@@ -123,7 +123,7 @@ impl FemtoHandlerTrait for FemtoFileHandler {
     }
 
     fn flush(&self) -> bool {
-        FemtoFileHandler::flush(self)
+        Self::flush(self)
     }
 
     fn flush_until(&self, context: &FlushContext) -> bool {

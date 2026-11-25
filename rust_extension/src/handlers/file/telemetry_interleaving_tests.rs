@@ -143,7 +143,7 @@ impl Schedule {
     /// call needs a policy that waits, so those run only under their own
     /// policy. Every other schedule's outcome must not depend on the policy, so
     /// it runs under all three.
-    fn policies(self) -> &'static [OverflowPolicy] {
+    const fn policies(self) -> &'static [OverflowPolicy] {
         match self {
             Self::RefusedHandleThenRetry => &DROP_ONLY,
             Self::TimedOutHandleThenRetry => &TIMEOUT_ONLY,
@@ -155,14 +155,14 @@ impl Schedule {
     /// Play the whole schedule out and assert the counters it must leave.
     fn run(self, case: &Case<'_>) {
         match self {
-            Self::OverlappingClosers => self.overlap(case),
-            Self::RetryAfterTimeout => self.retry_after_timeout(case),
-            Self::CallsAfterClose => self.calls_after_close(case),
+            Self::OverlappingClosers => Self::overlap(case),
+            Self::RetryAfterTimeout => Self::retry_after_timeout(case),
+            Self::CallsAfterClose => Self::calls_after_close(case),
             Self::RefusedHandleThenRetry | Self::TimedOutHandleThenRetry => {
                 self.refused_handle_then_retry(case);
             }
-            Self::WaitingFlush => self.waiting_flush(case),
-            Self::BlockedHandleThenShutdown => self.blocked_handle_then_shutdown(case),
+            Self::WaitingFlush => Self::waiting_flush(case),
+            Self::BlockedHandleThenShutdown => Self::blocked_handle_then_shutdown(case),
         }
     }
 }

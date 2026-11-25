@@ -1632,18 +1632,22 @@ their bindings give the interpreter lock back for the duration of those waits.
 The `flush()` and `close()` boundary is described in
 [Python-facing `flush()` and `close()` waits](#python-facing-flush-and-close-waits);
 this section covers `handle()`, whose wait is the unbounded one, and the
-mechanics all three operations share. `FemtoFileHandler`'s `#[pymethods]`
-block, and the rotating and timed-rotating wrappers that delegate to it, take a
-`py: Python<'_>` token and use `py.detach(...)` around the operation.
-`handle()` waits on channel capacity, unbounded under `OverflowPolicy::Block`
-(`Sender::send`) and bounded by the deadline under `OverflowPolicy::Timeout`
-(`send_timeout`). Other Python-exposed handler families also have operations
-that may block. The stream, socket and HTTP bindings detach both their
-`flush()` and their `close()` waits. The socket and HTTP `close()` methods take
-an exclusive PyO3 borrow (`&mut self`) for the whole wait, so a second
-`close()`, or a `close()` overlapping a detached `flush()`, is refused by the
-borrow check rather than queued; the file and stream families use a shared
-borrow and allow those overlaps.
+mechanics all three operations share. `FemtoFileHandler::py_handle`, and the
+rotating and timed-rotating wrappers' `handle()` bindings, take the
+`py: Python<'_>` token PyO3 injects into a `#[pymethods]` function, as their
+`flush()` and `close()` boundaries do, and use `py.detach(...)` around the
+operation. The file binding's detached enqueue lives in `enqueue_detached`, a
+private helper that takes the same token, so the bound method keeps the token
+visible in its signature without holding it across the wait. `handle()` waits
+on channel capacity, unbounded under `OverflowPolicy::Block` (`Sender::send`)
+and bounded by the deadline under `OverflowPolicy::Timeout` (`send_timeout`).
+Other Python-exposed handler families also have operations that may block. The
+stream, socket and HTTP bindings detach both their `flush()` and their
+`close()` waits. The socket and HTTP `close()` methods take an exclusive PyO3
+borrow (`&mut self`) for the whole wait, so a second `close()`, or a `close()`
+overlapping a detached `flush()`, is refused by the borrow check rather than
+queued; the file and stream families use a shared borrow and allow those
+overlaps.
 
 The native-handler flush and the socket and HTTP `flush()` and `close()` waits
 go through `rust_extension/src/py_detach.rs`. Its `pub(crate)` helper
@@ -1684,12 +1688,13 @@ reintroducing a wait on the locked side.
 Because `--cfg loom` builds `--no-default-features`, the `#[pymethods]` blocks
 still compile in that lane: PyO3 is an unconditional dependency, and the
 `python` feature only governs extension-module linking. Detaching here needs no
-`cfg(not(loom))` guard, unlike the logger worker's join: these methods receive
-their `Python<'_>` token from the caller and never attach, so a Loom model that
-somehow reached them would fail on the borrow or the token rather than
-initializing an interpreter on a Loom coroutine's small stack. The heavy lane's
-file model drives the Rust API (`with_writer_for_test`) and never reaches the
-bindings at all.
+`cfg(not(loom))` guard, unlike the logger worker's join. Every binding method —
+`handle()`, `flush()` and `close()` — receives its `Python<'_>` token from the
+caller and never attaches, so a Loom model that somehow reached one would fail
+on the borrow rather than initializing an interpreter on a Loom coroutine's
+small stack. A model must not initialize an interpreter to supply that token,
+for the same reason. The heavy lane's file model drives the Rust API
+(`with_writer_for_test`) and never reaches the bindings at all.
 
 ### Testing the boundary
 

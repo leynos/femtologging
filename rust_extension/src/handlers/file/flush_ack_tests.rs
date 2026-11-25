@@ -89,10 +89,10 @@ fn flush_waits_for_its_own_acknowledgement() {
         .expect("second flush worker thread must complete cleanly");
 
     writer.release_all_flushes();
-    let Ok(handler) = Arc::try_unwrap(handler) else {
+    let Ok(owned_handler) = Arc::try_unwrap(handler) else {
         panic!("flush test must release all handler references before shutdown");
     };
-    handler.close();
+    owned_handler.close();
 }
 
 /// The supplied deadline, not the handler's one-second timeout, bounds an

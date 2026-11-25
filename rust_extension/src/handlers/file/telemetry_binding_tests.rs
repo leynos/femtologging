@@ -10,9 +10,8 @@
 //!
 //! Every case runs through [`observe`]: it builds the handler, runs the
 //! binding under a collector, and reports the counter and events the call
-//! left behind. The cases differ only in the writer, the overflow policy and
-//! the outcome they expect, so the "release the gauge before recording"
-//! sequence is exercised in one place.
+//! left behind. The cases differ only in the writer, policy and expected
+//! outcome, so the "release the gauge before recording" sequence runs once.
 
 use super::scripted_writer::{ScriptedWriter, Stage, expect_stage, handler_with};
 use super::telemetry_event_tests::{CapturedEvent, EventCollector};
@@ -70,17 +69,17 @@ fn observe(
 
     let collector = EventCollector::default();
     let subscriber = tracing_subscriber::registry().with(collector.clone());
-    let (recorded, handler) = tracing::subscriber::with_default(subscriber, || {
+    let (recorded, py_handler) = tracing::subscriber::with_default(subscriber, || {
         Python::attach(|py| {
-            let handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
-            act(py, &handler, &entered_rx);
-            let recorded = public_count(handler.bind(py), counter);
-            (recorded, handler)
+            let py_handler = Py::new(py, handler).expect("the handler must be a valid pyclass");
+            act(py, &py_handler, &entered_rx);
+            let recorded = public_count(py_handler.bind(py), counter);
+            (recorded, py_handler)
         })
     });
 
     Observation {
-        handler,
+        handler: py_handler,
         writer,
         recorded,
         events: collector.captured(),
@@ -98,11 +97,12 @@ pub(super) fn call_handle(handler: &Py<PyAny>, message: &str) {
 
 /// Call a handler's `handle()` and return the error it raised.
 pub(super) fn call_handle_error(handler: &Py<PyAny>, message: &str) -> pyo3::PyErr {
-    Python::attach(|py| {
-        handler
-            .call_method1(py, "handle", ("core", "INFO", message))
-            .expect_err("a call the handler cannot take must raise")
-    })
+    Python::attach(
+        |py| match handler.call_method1(py, "handle", ("core", "INFO", message)) {
+            Ok(_) => panic!("a call the handler cannot take must raise"),
+            Err(err) => err,
+        },
+    )
 }
 
 /// Assert a refused call surfaces the handler's public error.
@@ -113,10 +113,8 @@ pub(super) fn call_handle_error(handler: &Py<PyAny>, message: &str) -> pyo3::PyE
 pub(super) fn assert_handler_error(error: &pyo3::PyErr, context: &str) {
     Python::attach(|py| {
         let message = error.value(py).to_string();
-        assert!(
-            message.starts_with("Handler error: "),
-            "{context}: {message}",
-        );
+        let is_handler_error = message.starts_with("Handler error: ");
+        assert!(is_handler_error, "{context}: {message}");
     });
 }
 
@@ -147,10 +145,8 @@ pub(super) fn flush_fails(handler: &Bound<'_, PyAny>) {
         .expect("flush must not raise")
         .extract()
         .expect("flush must return a bool");
-    assert!(
-        !acknowledged,
-        "a flush that cannot be confirmed must return False",
-    );
+    let reason = "a flush that cannot be confirmed must return False";
+    assert!(!acknowledged, "{reason}");
 }
 
 /// Fill the queue while the worker is parked inside its write.
@@ -216,17 +212,26 @@ fn assert_recorded(observation: &Observation, expected: &Expected) {
     let matching: Vec<_> = observation
         .events
         .iter()
-        .filter(|event| event.fields["wait_outcome"] == expected.outcome)
+        .filter(|event| {
+            event.fields.get("wait_outcome").map(String::as_str) == Some(expected.outcome)
+        })
         .collect();
+    let [event] = matching.as_slice() else {
+        panic!(
+            "one wait must emit one {} event: {:?}",
+            expected.outcome, observation.events,
+        );
+    };
     assert_eq!(
-        matching.len(),
-        1,
-        "one wait must emit one {} event: {:?}",
-        expected.outcome,
-        observation.events,
+        event.fields.get("operation").map(String::as_str),
+        Some(expected.operation),
+        "the wait must name its Python operation",
     );
-    assert_eq!(matching[0].fields["operation"], expected.operation);
-    assert_eq!(matching[0].fields["policy_bucket"], expected.bucket);
+    assert_eq!(
+        event.fields.get("policy_bucket").map(String::as_str),
+        Some(expected.bucket),
+        "the wait must name the policy in force",
+    );
 }
 
 /// Release the parked worker and close the handler, leaving no thread behind.
