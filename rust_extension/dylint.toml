@@ -1,5 +1,15 @@
 # Whitaker lint configuration.
 #
+# `macro_aware_cognitive_complexity` gates cognitive complexity. It skips
+# branching a macro generated and holds CodeScene's ceiling of 9. It is
+# experimental, so the suite loads it only on request. The tracker is
+# https://github.com/leynos/whitaker/issues/504.
+[whitaker]
+experimental = ["macro_aware_cognitive_complexity"]
+
+[macro_aware_cognitive_complexity]
+max_complexity = 9
+
 # Crates excluded from the no_std_fs_operations lint because they legitimately
 # require ambient std::fs access:
 # - femtologging_rs: the library's public contract mirrors CPython's logging
