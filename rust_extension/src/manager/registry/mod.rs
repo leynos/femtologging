@@ -37,6 +37,10 @@ mod config;
 
 #[cfg(all(test, feature = "python"))]
 pub(crate) use config::build_batch;
+#[cfg(all(test, feature = "python"))]
+pub(crate) use config::{
+    ANCESTOR_DROP_SAW_FREE_LOCK, ANCESTOR_DROPS, set_injected_construction_failure,
+};
 #[cfg(feature = "python")]
 pub(crate) use config::{AncestorRegistrationError, register_missing_ancestors, stage_loggers};
 

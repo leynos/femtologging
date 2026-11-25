@@ -263,3 +263,71 @@ fn a_refused_commit_drops_staged_handlers_after_unlocking() {
         );
     });
 }
+
+/// A commit that fails partway hands its built ancestors to an unlocked drop.
+///
+/// The capacity refusal builds nothing, so it cannot show what happens to an
+/// ancestor that already exists when construction fails. The injected seam
+/// makes the second name fail, which is the branch `register_missing_ancestors`
+/// exists to serve: the partial batch must leave the guarded scope intact and
+/// be destroyed only after the manager guard is released.
+#[test]
+#[serial]
+fn a_commit_that_fails_partway_drops_built_ancestors_after_unlocking() {
+    use super::registry::set_injected_construction_failure;
+
+    Python::attach(|py| {
+        reset_manager();
+        // The staged name supplies the chain; `deep` then `deep.middle` are the
+        // missing ancestors, and the second one is made to fail.
+        let staged = stage_loggers(py, std::iter::once("deep.middle.leaf"))
+            .expect("one staged logger fits an empty registry");
+        let staged_logger = staged
+            .get("deep.middle.leaf")
+            .expect("the staged map holds the requested name")
+            .clone_ref(py);
+        let previous = set_injected_construction_failure(Some("deep.middle".to_string()));
+
+        let result = commit_configuration(
+            py,
+            PreparedConfiguration {
+                loggers: vec![PreparedLogger {
+                    name: "deep.middle.leaf".to_string(),
+                    logger: staged_logger,
+                    handlers: Vec::new(),
+                    filters: Vec::new(),
+                    handler_ids: Vec::new(),
+                    filter_ids: Vec::new(),
+                    level: None,
+                    propagate: None,
+                }],
+                disable_existing: false,
+                keep_names: HashSet::new(),
+                handler_registry: BTreeMap::new(),
+                handler_filter_ids: BTreeMap::new(),
+                filter_registry: BTreeMap::new(),
+            },
+        );
+        set_injected_construction_failure(previous);
+
+        assert!(
+            result.is_err(),
+            "the injected failure must refuse the commit"
+        );
+        // The probe recorded the lock state at the instant the batch dropped,
+        // so this fails if the batch is destroyed under the manager guard.
+        assert!(
+            super::registry::ANCESTOR_DROP_SAW_FREE_LOCK.load(Ordering::SeqCst),
+            "the partial batch must be destroyed after MANAGER is released",
+        );
+        assert_eq!(
+            super::registry::ANCESTOR_DROPS.load(Ordering::SeqCst),
+            1,
+            "the ancestor built before the failure must be destroyed exactly once",
+        );
+        assert!(
+            MANAGER.read().loggers.is_empty(),
+            "a commit that failed partway must register nothing",
+        );
+    });
+}
