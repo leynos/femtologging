@@ -118,12 +118,24 @@ def _flat_axes(matrix: dict[str, object]) -> dict[str, list[object]] | None:
     for axis, axis_values in matrix.items():
         if _FOLD(axis) in {"include", "exclude"}:
             continue
-        if not isinstance(axis_values, list) or any(
-            isinstance(value, (dict, list)) for value in axis_values
-        ):
+        if not _is_scalar_axis(axis_values):
             return None
-        axes[_FOLD(axis)] = axis_values
+        axes[_FOLD(axis)] = typ.cast("list[object]", axis_values)
     return axes
+
+
+def _is_scalar_axis(value: object) -> bool:
+    """Return whether `value` is an axis this helper can enumerate.
+
+    Returns
+    -------
+    bool
+        True for a list of scalars; False for anything else, including a list
+        holding a nested mapping or list.
+    """
+    return isinstance(value, list) and not any(
+        isinstance(item, (dict, list)) for item in value
+    )
 
 
 def _axis_combinations(axes: dict[str, list[object]]) -> list[dict[str, object]]:
@@ -154,20 +166,14 @@ def _exclude_combinations(
         The surviving combinations, or ``None`` when `exclude` is not a list
         of mappings.
     """
-    rows = _mapping_list(excluded)
+    rows = _folded_rows(excluded)
     if rows is None:
         return None
     for row in rows:
-        try:
-            folded = _fold_names(row)
-        except ValueError:
-            # A row GitHub cannot represent unambiguously must not be judged
-            # as if its exclusions applied.
-            return None
         combinations = [
             combination
             for combination in combinations
-            if not _matches(combination, folded)
+            if not _matches(combination, row)
         ]
     return combinations
 
@@ -189,15 +195,30 @@ def _include_combinations(
         The final combinations, or ``None`` when `include` is not a list of
         mappings.
     """
-    rows = _mapping_list(included)
+    rows = _folded_rows(included)
+    if rows is None:
+        return None
+    appended = [dict(row) for row in rows if not _merge_row(combinations, axes, row)]
+    return [*combinations, *appended]
+
+
+def _folded_rows(value: object) -> list[dict[str, object]] | None:
+    """Return `include` or `exclude` rows keyed by :data:`_FOLD`.
+
+    Returns
+    -------
+    list[dict[str, object]] | None
+        The folded rows, or ``None`` when `value` is not a list of mappings or
+        a row names one property twice in different case. Such a row would be
+        read differently by GitHub, so it is refused rather than judged.
+    """
+    rows = _mapping_list(value)
     if rows is None:
         return None
     try:
-        folded = [_fold_names(row) for row in rows]
+        return [_fold_names(row) for row in rows]
     except ValueError:
         return None
-    appended = [dict(row) for row in folded if not _merge_row(combinations, axes, row)]
-    return [*combinations, *appended]
 
 
 def _mapping_list(value: object) -> list[dict[str, object]] | None:
