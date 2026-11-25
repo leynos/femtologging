@@ -3047,9 +3047,12 @@ under [Coverage publication](#coverage-publication).
 An Ubicloud runner is a self-hosted just-in-time runner, so GitHub's six-hour
 cap for hosted jobs does not bound it and a hung job would hold a billable
 runner. Every job whose `runs-on` can select Ubicloud therefore states its own
-`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 50
-minutes: warm `standard-4` runs reached 37 minutes (run 44118816542), and the
-`3.12` lane additionally builds a release wheel for `make check-api-boundary`.
+`timeout-minutes`, twice a measured warm Ubicloud run. `build-test` is at 60
+minutes: warm `standard-4` runs reached 37 minutes (run 44118816542), the
+`3.12` lane additionally builds a release wheel for `make check-api-boundary`,
+and the Loom all-targets Clippy compiles every target again under `--cfg loom`
+into its own cold `target/loom`, which pushed every leg past the former
+40-minute ceiling (run 45275965962).
 
 The uv cache is the caller's. `generate-coverage` is given
 `cache-provider: external`, because its own uv cache is keyed on the operating
