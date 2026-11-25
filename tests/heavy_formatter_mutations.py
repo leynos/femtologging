@@ -13,8 +13,10 @@ import typing as typ
 import pytest
 
 from tests.heavy_workflow_document import (
+    ENCODED_FLAGS,
     FORMATTERS_STEP,
     HEAVY_JOB,
+    env,
     job,
     named_step,
     run_text,
@@ -122,6 +124,32 @@ def _loom_clippy_piped_to_true(document: Document) -> None:
     )
 
 
+def _pytest_collects_without_running(document: Document) -> None:
+    """Ask pytest to collect the suite without executing any of it."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "uv run --locked pytest -q", "uv run --locked pytest -q --collect-only"
+    )
+
+
+def _loom_clippy_caps_lints(document: Document) -> None:
+    """Append `--cap-lints allow`, which silences every Clippy lint."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "--all-targets -- -D warnings", "--all-targets -- -D warnings --cap-lints allow"
+    )
+
+
+def _formatter_step_encoded_flags(document: Document) -> None:
+    """Displace the inline Loom flags with an encoded value on the step."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    environment = env(step)
+    environment[ENCODED_FLAGS] = "-Cdebuginfo=0"
+
+
 FORMATTER_MUTATIONS = (
     pytest.param(_formatter_step_conditioned, id="formatter-step-conditioned"),
     pytest.param(_formatter_step_tolerant, id="formatter-step-tolerant"),
@@ -143,4 +171,7 @@ FORMATTER_MUTATIONS = (
         _loom_clippy_backgrounded_and_waited,
         id="loom-clippy-backgrounded-wait",
     ),
+    pytest.param(_pytest_collects_without_running, id="pytest-collect-only"),
+    pytest.param(_loom_clippy_caps_lints, id="loom-clippy-cap-lints-allow"),
+    pytest.param(_formatter_step_encoded_flags, id="formatter-step-encoded-flags"),
 )

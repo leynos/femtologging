@@ -16,9 +16,14 @@ import typing as typ
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+from tests.heavy_encoded_flags_contract import (
+    declares_environment,
+    encoded_flags_problems,
+)
 from tests.heavy_step_scope_contract import command_words, run_tokens
 from tests.heavy_workflow_document import (
     COMPILE_STEP,
+    ENCODED_FLAGS,
     HEAVY_JOB,
     Job,
     steps,
@@ -33,7 +38,6 @@ _LOOM_CONFIG_FORM: str = "--cfg=loom"
 
 #: The flag variable and its higher-precedence encoded form.
 _FLAGS_VARIABLE: str = "RUSTFLAGS"
-_ENCODED_FLAGS: str = "CARGO_ENCODED_RUSTFLAGS"
 
 #: Shell control operators and the `wait` builtin.
 _CONTROL_TOKENS: tuple[str, ...] = ("&", ";", "|", "&&", "||", "wait")
@@ -154,19 +158,10 @@ def compile_loom_flag_problems(
         problems.append(
             f"the {COMPILE_STEP!r} step must set {_LOOM_CONFIG} in {_FLAGS_VARIABLE}"
         )
-    encodings = (
-        ("step", step),
-        ("job", found),
-        ("workflow", document),
-    )
-    problems.extend(
-        f"the {COMPILE_STEP!r} step's {scope} must not set {_ENCODED_FLAGS}"
-        for scope, container in encodings
-        if _declares_environment(container, _ENCODED_FLAGS)
-    )
-    if _ENCODED_FLAGS in _inline_assignments(run_tokens(step)):
+    problems.extend(encoded_flags_problems(COMPILE_STEP, step, found, document))
+    if ENCODED_FLAGS in _inline_assignments(run_tokens(step)):
         problems.append(
-            f"the {COMPILE_STEP!r} step must not set {_ENCODED_FLAGS} in its command"
+            f"the {COMPILE_STEP!r} step must not set {ENCODED_FLAGS} in its command"
         )
     return problems
 
@@ -212,7 +207,7 @@ def _effective_value(
     if inline is not None:
         return inline
     for container in (step, found, document):
-        if not _declares_environment(container, name):
+        if not declares_environment(container, name):
             continue
         # The first scope that declares the variable decides. A null or
         # non-string declaration still exports an empty value, so it must not
@@ -251,18 +246,3 @@ def _environment_value(container: cabc.Mapping[str, object], name: str) -> str |
         return None
     value = environment.get(name)
     return value if isinstance(value, str) else None
-
-
-def _declares_environment(container: cabc.Mapping[str, object], name: str) -> bool:
-    """Return whether a container's environment declares `name`.
-
-    The key's presence is what matters: a null declaration still exports an
-    empty value, which would displace the inline flags just as a value does.
-
-    Returns
-    -------
-    bool
-        True when the container's `env` mapping defines `name`.
-    """
-    environment = container.get("env")
-    return isinstance(environment, dict) and name in environment

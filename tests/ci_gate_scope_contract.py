@@ -73,24 +73,56 @@ def _matrix_combinations(job: dict[str, object]) -> list[dict[str, object]] | No
     return _include_combinations(combinations, axes, matrix.get("include", []))
 
 
+#: GitHub compares matrix variable names case-insensitively, so every name in
+#: this module is folded before it is compared. One rule for an axis, its
+#: `include` and `exclude` rows, and the selector a job reads is what keeps an
+#: exclusion GitHub honours from removing no leg here and leaving a matrix
+#: with no required leg looking acceptable.
+_FOLD = str.casefold
+
+
+def _fold_names(row: cabc.Mapping[str, object]) -> dict[str, object]:
+    """Return `row` with every matrix name replaced by its folded key.
+
+    Returns
+    -------
+    dict[str, object]
+        The row keyed by :data:`_FOLD`.
+
+    Raises
+    ------
+    ValueError
+        If two names in the row fold to the same key. GitHub would keep one
+        of them, so a row this helper cannot read must not be judged.
+    """
+    folded: dict[str, object] = {}
+    for name, value in row.items():
+        key = _FOLD(name)
+        if key in folded:
+            message = f"matrix names in {row!r} differ only in case"
+            raise ValueError(message)
+        folded[key] = value
+    return folded
+
+
 def _flat_axes(matrix: dict[str, object]) -> dict[str, list[object]] | None:
     """Return the matrix axes, or ``None`` for a shape this helper cannot read.
 
     Returns
     -------
     dict[str, list[object]] | None
-        Every axis and its scalar values, or ``None`` when an axis holds a
-        structured or expression value.
+        Every axis and its scalar values keyed by :data:`_FOLD`, or ``None``
+        when an axis holds a structured or expression value.
     """
     axes: dict[str, list[object]] = {}
     for axis, axis_values in matrix.items():
-        if axis in {"include", "exclude"}:
+        if _FOLD(axis) in {"include", "exclude"}:
             continue
         if not isinstance(axis_values, list) or any(
             isinstance(value, (dict, list)) for value in axis_values
         ):
             return None
-        axes[axis] = axis_values
+        axes[_FOLD(axis)] = axis_values
     return axes
 
 
@@ -122,15 +154,20 @@ def _exclude_combinations(
         The surviving combinations, or ``None`` when `exclude` is not a list
         of mappings.
     """
-    if not isinstance(excluded, list):
+    rows = _mapping_list(excluded)
+    if rows is None:
         return None
-    for row in excluded:
-        if not isinstance(row, dict):
+    for row in rows:
+        try:
+            folded = _fold_names(row)
+        except ValueError:
+            # A row GitHub cannot represent unambiguously must not be judged
+            # as if its exclusions applied.
             return None
         combinations = [
             combination
             for combination in combinations
-            if not _matches(combination, row)
+            if not _matches(combination, folded)
         ]
     return combinations
 
@@ -155,7 +192,11 @@ def _include_combinations(
     rows = _mapping_list(included)
     if rows is None:
         return None
-    appended = [dict(row) for row in rows if not _merge_row(combinations, axes, row)]
+    try:
+        folded = [_fold_names(row) for row in rows]
+    except ValueError:
+        return None
+    appended = [dict(row) for row in folded if not _merge_row(combinations, axes, row)]
     return [*combinations, *appended]
 
 
@@ -229,11 +270,8 @@ def _matrix_values(job: dict[str, object], property_name: str) -> list[object] |
     combinations = _matrix_combinations(job)
     if combinations is None:
         return None
-    values = [
-        combination[property_name]
-        for combination in combinations
-        if property_name in combination
-    ]
+    key = _FOLD(property_name)
+    values = [combination[key] for combination in combinations if key in combination]
     return values or None
 
 

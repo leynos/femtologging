@@ -34,6 +34,11 @@ TEST_UTIL_CONFIG: typ.Final[str] = ".github/uv-test-util.toml"
 ISSUE_TITLE: typ.Final[str] = "heavy-tests nightly failure"
 TEST_UTIL_FEATURES: typ.Final[str] = "--features python,test-util"
 
+#: Cargo's encoded-flags variable, which outranks `RUSTFLAGS` everywhere.
+#: Shared by the compile-gate and formatter-gate rules so both refuse it by the
+#: same name.
+ENCODED_FLAGS: typ.Final[str] = "CARGO_ENCODED_RUSTFLAGS"
+
 # YAML leaves values untyped until a rule inspects them, so the leaf type stays
 # `Any`; the aliases only name the container shapes the accessors narrow to.
 type Document = dict[str, typ.Any]

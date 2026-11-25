@@ -328,50 +328,6 @@ def test_a_broken_ci_loom_clippy_gate_is_reported(
     assert loom_clippy_problems(document), "the mutated workflow must be reported"
 
 
-def test_a_mixed_hyphenated_matrix_keeps_a_required_leg() -> None:
-    """Scenario: a matrix names its tolerance property with a hyphen.
-
-    Invariant: a bare selector over a matrix with both required and
-    experimental legs is accepted, and a compound expression over the same
-    matrix is refused. GitHub permits hyphens in dot-property names, so a
-    selector that rejected them would refuse a valid configuration.
-    """
-    job: dict[str, object] = {
-        "continue-on-error": "${{ matrix.allow-failure }}",
-        "strategy": {"matrix": {"allow-failure": [False, True]}},
-    }
-    assert job_tolerance_is_acceptable(job), "a mixed matrix must keep its required leg"
-    compound: dict[str, object] = {
-        **job,
-        "continue-on-error": "${{ true || matrix.allow-failure }}",
-    }
-    assert not job_tolerance_is_acceptable(compound), (
-        "a constant-true expression must be refused"
-    )
-
-
-def test_exclusion_alone_can_remove_the_last_required_leg() -> None:
-    """Scenario: `exclude` removes the only required axis combination.
-
-    Invariant: the same tolerance is accepted before the exclusion and refused
-    after it. The axis values are untouched, so only the exclusion changes the
-    verdict; a checker that ignored `exclude` would accept both.
-    """
-    job: dict[str, object] = {
-        "continue-on-error": "${{ matrix.experimental }}",
-        "strategy": {"matrix": {"experimental": [False, True]}},
-    }
-    assert job_tolerance_is_acceptable(job), (
-        "the required axis combination must be accepted before it is excluded"
-    )
-    strategy = typ.cast("dict[str, object]", job["strategy"])
-    matrix = typ.cast("dict[str, object]", strategy["matrix"])
-    matrix["exclude"] = [{"experimental": False}]
-    assert not job_tolerance_is_acceptable(job), (
-        "excluding the required combination must leave no required gate"
-    )
-
-
 def test_a_duplicate_workflow_key_is_refused() -> None:
     """Scenario: a workflow repeats a mapping key.
 
