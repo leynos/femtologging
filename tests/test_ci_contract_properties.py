@@ -106,17 +106,13 @@ def test_the_generated_control_script_is_accepted() -> None:
 @settings(max_examples=50, deadline=None)
 @given(
     suffix=st.sampled_from(_MASKS),
-    line=st.sampled_from(
-        (
-            "make lint-rust-clippy",
-            "uv run --locked pytest -q",
-            "--all-targets -- -D warnings",
-        )
-    ),
+    line=st.sampled_from((
+        "make lint-rust-clippy",
+        "uv run --locked pytest -q",
+        "--all-targets -- -D warnings",
+    )),
 )
-def test_a_masking_suffix_on_a_gate_command_is_refused(
-    suffix: str, line: str
-) -> None:
+def test_a_masking_suffix_on_a_gate_command_is_refused(suffix: str, line: str) -> None:
     """Appending any mask to a required line is reported, never accepted."""
     mutated = _BASE_SCRIPT.replace(line, f"{line}{suffix}")
     assert mutated != _BASE_SCRIPT, suffix
@@ -126,9 +122,7 @@ def test_a_masking_suffix_on_a_gate_command_is_refused(
 
 @settings(max_examples=50, deadline=None)
 @given(
-    extra=st.text(
-        alphabet=st.characters(whitelist_categories=("Ll", "Nd")), max_size=8
-    )
+    extra=st.text(alphabet=st.characters(whitelist_categories=("Ll", "Nd")), max_size=8)
 )
 def test_an_appended_argument_on_pytest_is_refused(extra: str) -> None:
     """No appended argument leaves the pytest lane matching its required line."""
