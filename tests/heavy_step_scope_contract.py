@@ -174,16 +174,27 @@ def loom_tolerance_problems(found: Job) -> list[str]:
     return problems
 
 
-#: Commands the `Run formatters and tests` script must invoke, each on a line of
-#: its own. The issue forbids removing or weakening these lanes.
+#: Commands the `Run formatters and tests` script must invoke, each beginning an
+#: executed line after line continuations are joined. The issue forbids
+#: removing or weakening these lanes, so the separate scheduled Loom
+#: all-targets Clippy invocation is required here too: a `|| :` suffix or a
+#: `#`-prefixed copy would otherwise pass the pull-request text assertion while
+#: no Loom Clippy ran on the scheduled path.
 _REQUIRED_FORMATTER_COMMANDS: tuple[str, ...] = (
     "cargo fmt --manifest-path rust_extension/Cargo.toml -- --check",
     "make lint-rust-clippy",
+    (
+        'RUSTFLAGS="--cfg loom -C link-arg=-fuse-ld=mold" cargo clippy '
+        "--manifest-path rust_extension/Cargo.toml --no-default-features "
+        "--all-targets -- -D warnings"
+    ),
     "uv run --locked pytest -q",
 )
 
-#: Fragments that mask a failed command's status inside that script.
-_FORMATTER_MASK_FRAGMENTS: tuple[str, ...] = ("|| true", "set +e", "| cat", "exit 0")
+#: Fragments that mask a failed command's status anywhere in the script. `||`
+#: is refused outright rather than only `|| true`, because `|| :` and any other
+#: no-op right-hand side discards the left-hand status just as effectively.
+_FORMATTER_MASK_FRAGMENTS: tuple[str, ...] = ("||", "set +e", "| cat", "exit 0")
 
 
 def formatter_command_problems(found: Job) -> list[str]:
@@ -219,18 +230,39 @@ def formatter_command_problems(found: Job) -> list[str]:
 
 
 def _executed_lines(script: str) -> list[str]:
-    """Return the script's non-blank, non-comment lines, stripped.
+    """Return the script's logicssal lines, joined and stripped.
+
+    Backslash-newline continuations are joined first, so a command wrapped
+    across lines is one entry; whitespace is then collapsed, because the shell
+    treats any run of it as one separator. The script's own trailing `#`
+    comments are dropped as a shell would drop them.
 
     Returns
     -------
     list[str]
-        The lines the shell would actually run.
+        The lines the shell would actually run, without comments.
     """
+    joined = script.replace("\\\n", " ")
     return [
-        line.strip()
-        for line in script.splitlines()
-        if line.strip() and not line.strip().startswith("#")
+        " ".join(code.split())
+        for line in joined.splitlines()
+        if (code := _strip_comment(line)) and not code.startswith("#")
     ]
+
+
+def _strip_comment(line: str) -> str:
+    """Return `line` without a trailing shell comment, stripped.
+
+    A `#` only begins a comment at the start of a word, so `${{ ... }}` and a
+    quoted `#` are left alone; the scripts here never quote one.
+
+    Returns
+    -------
+    str
+        The code part of the line.
+    """
+    code = line.split(" #", 1)[0]
+    return code.strip()
 
 
 def _missing_formatter_command_problems(executed: list[str]) -> list[str]:

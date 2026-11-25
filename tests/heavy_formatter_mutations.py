@@ -53,6 +53,24 @@ def _formatter_step_command_masked(document: Document) -> None:
     )
 
 
+def _loom_clippy_commented(document: Document) -> None:
+    """Comment out the scheduled Loom Clippy invocation."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        'RUSTFLAGS="--cfg loom', '# RUSTFLAGS="--cfg loom'
+    )
+
+
+def _loom_clippy_masked(document: Document) -> None:
+    """Keep the Loom Clippy invocation but discard its exit status."""
+    found = job(document, HEAVY_JOB)
+    step = named_step(found, FORMATTERS_STEP, subject=HEAVY_JOB)
+    step["run"] = run_text(step).replace(
+        "--all-targets -- -D warnings", "--all-targets -- -D warnings || :"
+    )
+
+
 FORMATTER_MUTATIONS = (
     pytest.param(_formatter_step_conditioned, id="formatter-step-conditioned"),
     pytest.param(_formatter_step_tolerant, id="formatter-step-tolerant"),
@@ -64,4 +82,6 @@ FORMATTER_MUTATIONS = (
         _formatter_step_command_masked,
         id="formatter-step-command-masked",
     ),
+    pytest.param(_loom_clippy_commented, id="loom-clippy-commented"),
+    pytest.param(_loom_clippy_masked, id="loom-clippy-masked"),
 )
