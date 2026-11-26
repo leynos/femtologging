@@ -16,6 +16,7 @@ use crate::level::FemtoLevel;
 use crate::log_record::FemtoLogRecord;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
@@ -148,15 +149,36 @@ fn rotation_waits_past_a_one_second_worker_stall() {
         .expect("second record queued");
 
     // Park the worker inside the formatter for longer than the one-second
-    // deadline a single `flush()` call would wait. The wait must not give up
-    // while the worker is alive but stalled.
+    // deadline a single `flush()` call would wait. The wait must already be
+    // running when the worker is stalled, so a separate thread releases the
+    // worker only after the first poll has happened.
     formatter.wait_for_entry(Duration::from_secs(5));
-    std::thread::sleep(Duration::from_millis(1_200));
-    formatter.release();
+    let first_poll = Arc::new(AtomicBool::new(false));
+    let releaser = {
+        let formatter = formatter.clone();
+        let first_poll = Arc::clone(&first_poll);
+        std::thread::spawn(move || {
+            let polled_at = Instant::now();
+            while !first_poll.load(Ordering::SeqCst) {
+                assert!(
+                    polled_at.elapsed() < Duration::from_secs(5),
+                    "the wait never polled the log file"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            std::thread::sleep(Duration::from_millis(1_200));
+            formatter.release();
+        })
+    };
 
     let backup = path.with_extension("log.1");
-    wait_until_file_matches(&path, |primary| primary.contains("second"));
+    let polled = Arc::clone(&first_poll);
+    wait_until_file_matches(&path, move |primary| {
+        polled.store(true, Ordering::SeqCst);
+        primary.contains("second")
+    });
     wait_until_file_matches(&backup, |backup| backup.contains("first"));
+    releaser.join().expect("the releaser must finish");
     drop(handler);
 
     let primary = fs::read_to_string(&path).expect("primary log file must be readable");
