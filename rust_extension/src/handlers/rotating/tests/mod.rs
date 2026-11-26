@@ -3,3 +3,4 @@
 mod behaviour;
 mod concurrency;
 mod fresh_failure;
+mod visibility;
