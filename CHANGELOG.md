@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.0-beta1] - 2026-11-27
+## [0.2.0-beta1] - 2026-11-28
 
 _First pre-release of 0.2.0. Applications upgrading from 0.1 should follow the
 [0.2.0 migration guide](docs/v0-2-0-migration-guide.md). Known issue: a second
