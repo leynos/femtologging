@@ -99,7 +99,7 @@ impl Default for RotationConfig {
 
 /// File handler variant configured for size-based rotation.
 ///
-/// For file-backed handlers, this wrapper wires [`FileRotationStrategy`] into
+/// For file-backed handlers, this wrapper wires `FileRotationStrategy` into
 /// [`FemtoFileHandler`] so rollover executes on the worker thread. The wrapper
 /// owns rotation thresholds and delegates queueing, flushing, and shutdown to
 /// [`FemtoFileHandler`].
@@ -187,7 +187,7 @@ impl FemtoRotatingFileHandler {
     ///
     /// This delegates to [`FemtoFileHandler::with_writer_for_test`], which
     /// accepts arbitrary writers and therefore does not attach
-    /// [`FileRotationStrategy`]. Rotation is disabled for this constructor.
+    /// `FileRotationStrategy`. Rotation is disabled for this constructor.
     ///
     /// The constructor exists only for unit tests and builds that opt in to
     /// `test-util`.

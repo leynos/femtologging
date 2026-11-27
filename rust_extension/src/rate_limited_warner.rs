@@ -9,11 +9,11 @@
 //! The warner decides *which* drops are due for a warning and *when* the next
 //! warning may be emitted. It does not carry them anywhere: the flush transport
 //! that caps a handler's deadline and puts the count on a marker lives in
-//! [`flush_handler_until`](crate::handler::flush_handler_until). A handler asks
-//! for the pending count with [`RateLimitedWarner::take_pending`] and hands it
-//! back with [`RateLimitedWarner::restore_drops`] if the marker never entered
+//! `flush_handler_until` in the handler module. A handler asks
+//! for the pending count with `RateLimitedWarner::take_pending` and hands it
+//! back with `RateLimitedWarner::restore_drops` if the marker never entered
 //! its queue. Ordinary warnings keep the interval: they ask
-//! [`RateLimitedWarner::take_due`], which declines while the interval runs.
+//! `RateLimitedWarner::take_due`, which declines while the interval runs.
 //! Retry bookkeeping stays here because a restored count is not merely pending
 //! again: reporting it restarts the warning interval, which is rate-limit
 //! policy.
@@ -26,7 +26,7 @@
 //! absolute [`Instant`]: a deadline must be compared against another absolute
 //! instant, and a counter whose epoch belongs to one object cannot express
 //! that. The two seams answer different questions, so they stay separate; see
-//! the [`monotonic_clock`](crate::monotonic_clock) module for the same
+//! the `monotonic_clock` module for the same
 //! reasoning from that side.
 
 use std::sync::Arc;
@@ -80,10 +80,10 @@ pub const DEFAULT_WARN_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Helper that rate limits dropped-record warnings.
 ///
-/// The caller increments the drop counter via [`record_drop`]. The next call to
-/// [`warn_if_due`] emits a warning using the provided callback if the configured
-/// interval has elapsed. [`flush`] emits a warning immediately if any records
-/// have been dropped since the last emission.
+/// The caller increments the drop counter via [`Self::record_drop`]. The next
+/// call to [`Self::warn_if_due`] emits a warning using the provided callback if
+/// the configured interval has elapsed. [`Self::flush`] emits a warning
+/// immediately if any records have been dropped since the last emission.
 pub struct RateLimitedWarner {
     /// Millisecond timestamp of the last warning, updated atomically by emitters.
     last_warn: AtomicU64,

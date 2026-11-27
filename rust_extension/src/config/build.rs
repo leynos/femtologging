@@ -59,7 +59,7 @@ impl ConfigBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`] for an unsupported version, missing root,
+    /// Returns `ConfigError` for an unsupported version, missing root,
     /// malformed logger name, unknown or duplicate resource ID, failed
     /// handler/filter construction, incompatible Python handler dispatch, or a
     /// logger set that no longer fits the registry. Every such error leaves

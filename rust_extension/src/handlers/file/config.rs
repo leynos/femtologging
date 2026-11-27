@@ -24,7 +24,7 @@ pub enum OverflowPolicy {
     Timeout(Duration),
 }
 
-/// Configuration options for constructing a [`FemtoFileHandler`].
+/// Configuration options for constructing a `FileHandlerBuilder`.
 #[derive(Clone, Copy)]
 pub struct HandlerConfig {
     /// Bounded queue size for records waiting to be written.

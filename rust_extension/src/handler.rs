@@ -257,9 +257,9 @@ pub trait FemtoHandlerTrait: Send + Sync + Any {
 
     /// Return whether this handler invokes Python while dispatching records.
     ///
-    /// Python-backed handlers must override [`Self::handle_with_context`] to
-    /// use the supplied context and return `true` from
-    /// [`Self::provides_context_dispatch`] to declare that capability.
+    /// Python-backed handlers must override `handle_with_context` to use the
+    /// supplied context and return `true` from `provides_context_dispatch` to
+    /// declare that capability.
     fn is_python_backed(&self) -> bool {
         false
     }

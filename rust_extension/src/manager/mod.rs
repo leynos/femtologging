@@ -13,8 +13,8 @@
 //! `"root"` is exempt from the cap: it is the fallback destination the Rust
 //! bridges resolve to, so the registry must always be able to hold it.
 //!
-//! The two concerns live in submodules — [`validation`] owns the name rules
-//! and [`registry`] owns the map and the cap — while this module re-exports
+//! The two concerns live in submodules — `validation` owns the name rules
+//! and `registry` owns the map and the cap — while this module re-exports
 //! them as the one path callers already use.
 
 #[cfg(feature = "python")]

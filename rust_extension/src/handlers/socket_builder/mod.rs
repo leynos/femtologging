@@ -242,7 +242,7 @@ impl SocketHandlerBuilder {
     );
     /// Override backoff timings using the provided overrides.
     ///
-    /// See [`BackoffOverrides`] for fluent helpers when constructing the
+    /// See `BackoffOverrides` for fluent helpers when constructing the
     /// override set from Rust.
     #[must_use]
     pub const fn with_backoff(mut self, overrides: BackoffOverrides) -> Self {

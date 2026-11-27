@@ -13,7 +13,7 @@
 //!
 //! Completion alone says the worker stopped, not that it stopped cleanly. A
 //! closer that no longer owns the join handle cannot call `join`, so
-//! [`TerminalStatus`] records the verdict from inside the worker's own exit
+//! `TerminalStatus` records the verdict from inside the worker's own exit
 //! path, where a panic is still observable.
 
 use std::{
@@ -270,7 +270,7 @@ where
     }
 }
 
-/// Expose [`run_worker_guarded`] to the Loom shutdown models.
+/// Expose `run_worker_guarded` to the Loom shutdown models.
 ///
 /// The models drive the same helper the stream worker uses, so they check the
 /// real teardown ordering rather than a copy of it that could drift.

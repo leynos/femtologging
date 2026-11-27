@@ -88,10 +88,10 @@ impl RuntimeConfigBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::InvalidMutation`] when a supplied handler or
+    /// Returns `ConfigError::InvalidMutation` when a supplied handler or
     /// filter is unreachable from the resulting logger graph, when collection
     /// operations conflict, or when a mutation requires runtime metadata that
-    /// is unavailable. Returns [`ConfigError::UnknownIds`] when an attachment
+    /// is unavailable. Returns `ConfigError::UnknownIds` when an attachment
     /// or handler-level filter references an identifier absent from both the
     /// manager and this transaction.
     ///

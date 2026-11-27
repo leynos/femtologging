@@ -263,7 +263,7 @@ impl FemtoLogger {
 
     /// Return whether configuration has disabled this logger.
     ///
-    /// Only the emitting logger checks this flag; [`Self::dispatch_to_handlers`]
+    /// Only the emitting logger checks this flag; `Self::dispatch_to_handlers`
     /// deliberately does not, so an *enabled* logger still reaches ancestor
     /// handlers after propagation.
     pub fn is_disabled(&self) -> bool {

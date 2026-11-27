@@ -36,17 +36,17 @@ use crate::formatter::SharedFormatter;
 /// ```
 #[derive(Clone, Debug)]
 pub enum HandlerBuilder {
-    /// Build a [`FemtoStreamHandler`].
+    /// Build a [`StreamHandlerBuilder`].
     Stream(StreamHandlerBuilder),
-    /// Build a [`FemtoFileHandler`].
+    /// Build a [`FileHandlerBuilder`].
     File(FileHandlerBuilder),
-    /// Build a [`FemtoRotatingFileHandler`].
+    /// Build a `RotatingHandlerBuilder`.
     Rotating(RotatingFileHandlerBuilder),
-    /// Build a [`FemtoTimedRotatingFileHandler`].
+    /// Build a `TimedRotatingHandlerBuilder`.
     TimedRotating(TimedRotatingFileHandlerBuilder),
-    /// Build a [`FemtoSocketHandler`].
+    /// Build a [`SocketHandlerBuilder`].
     Socket(SocketHandlerBuilder),
-    /// Build a [`FemtoHTTPHandler`] from an [`HTTPHandlerBuilder`].
+    /// Build a [`HTTPHandlerBuilder`] from an [`HTTPHandlerBuilder`].
     ///
     /// Filter IDs set on the builder are resolved by `ConfigBuilder` before
     /// the HTTP handler is attached to a logger.

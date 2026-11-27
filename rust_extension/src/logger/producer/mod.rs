@@ -104,7 +104,7 @@ impl FemtoLogger {
 
     /// Log a message with explicit source location metadata.
     ///
-    /// Used by the [`femtolog_info!`] family of macros and the Python
+    /// Used by the `femtolog_info!` family of macros and the Python
     /// convenience functions to attach caller-captured source information
     /// (filename, line number, module path) to the record before filtering
     /// and dispatch.

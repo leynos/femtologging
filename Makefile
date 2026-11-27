@@ -291,6 +291,35 @@ lint-rust-clippy: check-build-tools ## Run standard Rust Clippy feature lanes ac
 		INPUT_LINT_ARGS="$(RUST_LINT_ARGS)" \
 		uv run --script $(LINT_LANES_SCRIPT)
 
+# Rustdoc is a lint surface of its own: it catches broken intra-doc links,
+# bare URLs and unescaped backticks that no compile ever reports. `--no-deps`
+# keeps the run to this crate's own documentation, and `-D warnings` promotes
+# every rustdoc diagnostic to a failure so the gate is a gate.
+#
+# The lane list mirrors the documentation surface the crate exposes.
+# `extension-module` is deliberately absent: it is a linking mode rather than a
+# documentation surface, and enabling it changes the pyo3 crate's own
+# compilation without adding any documented item.
+RUST_DOC_FEATURE_LANES ?= none python log-compat tracing-compat all
+RUST_DOC_ARGS ?= --no-deps
+
+lint-rust-doc: check-build-tools ## Build the Rust documentation with warnings denied
+	@set -e; \
+	for features in $(RUST_DOC_FEATURE_LANES); do \
+		printf 'rustdoc lane %s\n' "$$features"; \
+		if [ "$$features" = "none" ]; then \
+			$(CARGO_BUILD_ENV) RUSTDOCFLAGS="-D warnings" $(CARGO) doc \
+				--manifest-path $(RUST_MANIFEST) $(RUST_DOC_ARGS) --no-default-features; \
+		elif [ "$$features" = "all" ]; then \
+			$(CARGO_BUILD_ENV) RUSTDOCFLAGS="-D warnings" $(CARGO) doc \
+				--manifest-path $(RUST_MANIFEST) $(RUST_DOC_ARGS) --all-features; \
+		else \
+			$(CARGO_BUILD_ENV) RUSTDOCFLAGS="-D warnings" $(CARGO) doc \
+				--manifest-path $(RUST_MANIFEST) $(RUST_DOC_ARGS) --no-default-features \
+				--features "$$features"; \
+		fi; \
+	done
+
 lint-rust-test-docs: check-build-tools ## Check Rust test-support type and field documentation
 	@$(CARGO_BUILD_ENV) $(CARGO) test --manifest-path $(RUST_MANIFEST) \
 		--test test_support_docs --all-features
@@ -301,7 +330,7 @@ lint-rust-private-docs-policy-test: ## Exercise private-doc policy through Make'
 		python -m pytest tests/test_private_docs_lint_contract.py \
 		-c /dev/null --rootdir=. --noconftest -p no:cacheprovider
 
-lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy lint-rust-test-docs lint-rust-private-docs-policy-test ## Run Rust lint lanes, private-doc policy, and the Whitaker Dylint suite
+lint-rust: lint-lanes-test lint-env-policy lint-rust-clippy lint-rust-doc lint-rust-test-docs lint-rust-private-docs-policy-test ## Run Rust lint lanes, rustdoc, private-doc policy, and the Whitaker Dylint suite
 	RUSTFLAGS="-D warnings" PYO3_USE_ABI3_FORWARD_COMPATIBILITY=0 $(WHITAKER) --all --manifest-path $(RUST_MANIFEST) -- --all-targets --all-features
 
 markdownlint: spelling ## Lint Markdown files and enforce en-GB-oxendict spelling

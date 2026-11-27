@@ -123,7 +123,7 @@ impl TimedRotatingFileHandlerBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`HandlerBuildError::InvalidConfig`] when `when` is not a
+    /// Returns `HandlerBuildError::InvalidConfig` when `when` is not a
     /// supported cadence, or when the currently configured `at_time` is
     /// incompatible with the new cadence.
     pub fn with_when(mut self, when: impl AsRef<str>) -> Result<Self, HandlerBuildError> {
@@ -163,7 +163,7 @@ impl TimedRotatingFileHandlerBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`HandlerBuildError::InvalidConfig`] when `at_time` is set for a
+    /// Returns `HandlerBuildError::InvalidConfig` when `at_time` is set for a
     /// cadence that does not support a time-of-day trigger.
     pub fn with_at_time(mut self, at_time: Option<NaiveTime>) -> Result<Self, HandlerBuildError> {
         self.at_time = at_time;

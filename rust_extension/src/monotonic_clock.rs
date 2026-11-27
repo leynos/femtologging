@@ -137,13 +137,12 @@ impl MonotonicClock for ManualClock {
     }
 }
 
-/// The clock a [`ShutdownSignal`] was built with.
+/// The clock a shutdown signal was built with.
 ///
 /// A named alias rather than a bare `Arc<dyn ...>` so the field and the
 /// constructor signature read as "the signal's clock" instead of as a
 /// trait-object incantation repeated at each site.
 ///
-/// [`ShutdownSignal`]: crate::shutdown_signal::ShutdownSignal
 pub type SharedClock = Arc<dyn MonotonicClock>;
 
 /// The production clock, shared by every signal that was not given one.

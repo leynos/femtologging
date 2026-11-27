@@ -88,7 +88,7 @@ pub trait HandlerBuilderTrait: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`HandlerBuildError`] when the configuration is invalid or an I/O
+    /// Returns `HandlerBuildError` when the configuration is invalid or an I/O
     /// setup step fails.
     fn build_inner(&self) -> Result<Self::Handler, HandlerBuildError>;
 

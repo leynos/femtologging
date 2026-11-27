@@ -28,11 +28,8 @@ use super::{FemtoLogger, PyHandler, validate_handler};
 impl FemtoLogger {
     /// Create a new logger with the given name.
     ///
-    /// Names must satisfy the same rules as
-    /// [`crate::manager::get_logger`]: at most
-    /// [`MAX_LOGGER_NAME_BYTES`](crate::manager::MAX_LOGGER_NAME_BYTES) bytes,
-    /// at most
-    /// [`MAX_LOGGER_NAME_SEGMENTS`](crate::manager::MAX_LOGGER_NAME_SEGMENTS)
+    /// Names must satisfy the same rules the manager applies: at most
+    /// `MAX_LOGGER_NAME_BYTES` bytes, at most `MAX_LOGGER_NAME_SEGMENTS`
     /// dot-separated segments, no leading or trailing dot, no empty segment,
     /// and no line-breaking character: any control character (C0, DEL or C1),
     /// or the Unicode line and paragraph separators. A logger built this way
