@@ -242,7 +242,6 @@ impl Walker<'_> {
         if !at.is_root {
             return Vec::new();
         }
-        marker.args_truncated |= rendered.truncated;
         message::retain_args(rendered, &mut self.budget, marker)
     }
 

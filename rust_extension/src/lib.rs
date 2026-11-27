@@ -83,6 +83,8 @@ mod traceback_capture_argument_repr_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_budget_tests;
 #[cfg(all(test, feature = "python"))]
+mod traceback_capture_container_tests;
+#[cfg(all(test, feature = "python"))]
 mod traceback_capture_containment_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_frame_tests;

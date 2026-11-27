@@ -71,6 +71,42 @@ pub(super) fn inherits_exception_str(value: &Bound<'_, PyAny>) -> bool {
     actual.is(&inherited)
 }
 
+/// Return `true` when `value` inherits `object.__str__`.
+///
+/// Only then does `str(value)` fall back to `repr`, which the bounded
+/// container renderer reproduces. A subclass with its own `__str__` keeps that
+/// representation instead.
+pub(super) fn inherits_object_str(value: &Bound<'_, PyAny>) -> bool {
+    let py = value.py();
+    let object = py.get_type::<PyAny>();
+    let Some(inherited) = class_attribute(object.as_any(), "__str__") else {
+        return false;
+    };
+    let Some(actual) = class_attribute(value.get_type().as_any(), "__str__") else {
+        return false;
+    };
+    actual.is(&inherited)
+}
+
+/// Return `true` when `value` inherits `method` unchanged from `native`.
+///
+/// Used to decide whether a built-in type's own representation applies: an
+/// inherited method can be replaced by the bounded renderer, while a genuine
+/// override must keep the representation the application defined.
+pub(super) fn inherits_native_method(
+    value: &Bound<'_, PyAny>,
+    native: &Bound<'_, PyAny>,
+    method: &str,
+) -> bool {
+    let Some(inherited) = class_attribute(native, method) else {
+        return false;
+    };
+    let Some(actual) = class_attribute(value.get_type().as_any(), method) else {
+        return false;
+    };
+    actual.is(&inherited)
+}
+
 /// Read a class attribute through `type.__getattribute__`.
 fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
     let py = class.py();

@@ -17,7 +17,7 @@
 //! representation is what the caller expects to see.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFrozenSet, PyIterator, PyList, PySet, PyTuple};
+use pyo3::types::{PyDict, PyFrozenSet, PyIterator, PyList, PySet, PyTuple, PyType};
 
 use crate::traceback_capture::limits::TRUNCATION_SUFFIX;
 use crate::traceback_capture::values::{BoundedText, clamp, repr_bounded_at};
@@ -42,17 +42,19 @@ pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Op
         return Some(clamp(empty_form(kind).to_string(), limit));
     }
     let (open, close) = delimiters(kind);
-    // The marker is written after a separator, so both are reserved.
-    let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len() + 2;
-    if depth >= MAX_CONTAINER_DEPTH || limit < fixed {
-        return Some(summary(open, close, limit));
+    if depth >= MAX_CONTAINER_DEPTH {
+        // A depth stop is not a byte cut: the summary itself may fit.
+        return Some(summary(open, close, limit, false));
+    }
+    let fixed = open.len() + close.len();
+    if limit <= fixed {
+        return Some(summary(open, close, limit, true));
     }
     if let Some(length) = exact_len(value, kind)
         && length > MAX_CONTAINER_ITEMS.saturating_add(1)
     {
-        // A container known to be oversized is summarised without copying a
-        // prefix that only the summary would replace.
-        return Some(summary(open, close, limit));
+        // The item ceiling, not the byte ceiling, stops this container.
+        return Some(summary(open, close, limit, false));
     }
     let Some(entries) = snapshot(value, kind) else {
         return Some(BoundedText::failure("<container unavailable>", limit));
@@ -68,38 +70,52 @@ pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Op
 /// not reported as truncated.
 fn snapshot<'py>(value: &Bound<'py, PyAny>, kind: ContainerKind) -> Option<Vec<Piece<'py>>> {
     let mut entries = Vec::with_capacity(MAX_CONTAINER_ITEMS.min(4));
-    if matches!(kind, ContainerKind::List) {
-        // A list subclass can override `__iter__`, so the native iterator is
-        // requested from the `list` type itself; that reads the real storage.
-        let iterator = native_list_iterator(value)?;
-        for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
-            entries.push(Piece::Value(item.ok()?));
-        }
-        return Some(entries);
-    }
     if matches!(kind, ContainerKind::Dict) {
-        let dict = value.cast::<PyDict>().ok()?;
-        for (key, entry) in dict.iter().take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
-            entries.push(Piece::Entry(key, entry));
+        // A subclass can override `items`, so the view is requested from the
+        // native `dict` type. Pairing happens before any element is rendered.
+        let dict_type = value.py().get_type::<PyDict>();
+        let items = dict_type.getattr("items").ok()?.call1((value,)).ok()?;
+        let iterator = PyIterator::from_object(&items).ok()?;
+        for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
+            let pair = item.ok()?.cast_into::<PyTuple>().ok()?;
+            entries.push(Piece::Entry(pair.get_item(0).ok()?, pair.get_item(1).ok()?));
         }
         return Some(entries);
     }
-    let iterator = PyIterator::from_object(value).ok()?;
+    // A subclass can override `__iter__`, so the native iterator is requested
+    // from the built-in type itself; that reads the real storage.
+    let native = match kind {
+        ContainerKind::List => value.py().get_type::<PyList>(),
+        ContainerKind::Tuple => value.py().get_type::<PyTuple>(),
+        ContainerKind::Set => value.py().get_type::<PySet>(),
+        ContainerKind::FrozenSet => value.py().get_type::<PyFrozenSet>(),
+        ContainerKind::Dict => unreachable!("dict handled above"),
+    };
+    let iterator_object = native.getattr("__iter__").ok()?.call1((value,)).ok()?;
+    let iterator = PyIterator::from_object(&iterator_object).ok()?;
     for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
         entries.push(Piece::Value(item.ok()?));
     }
     Some(entries)
 }
 
-/// Read the exact length of a built-in container without iterating it.
+/// Read the length of a built-in container without invoking a subclass hook.
 fn exact_len(value: &Bound<'_, PyAny>, kind: ContainerKind) -> Option<usize> {
-    match kind {
-        ContainerKind::List => native_list_len(value),
-        ContainerKind::Tuple => value.cast::<PyTuple>().ok().map(|tuple| tuple.len()),
-        ContainerKind::Dict => value.cast::<PyDict>().ok().map(|dict| dict.len()),
-        ContainerKind::Set => value.cast::<PySet>().ok().map(|set| set.len()),
-        ContainerKind::FrozenSet => value.cast::<PyFrozenSet>().ok().map(|set| set.len()),
-    }
+    let py = value.py();
+    let native = match kind {
+        ContainerKind::List => py.get_type::<PyList>(),
+        ContainerKind::Tuple => py.get_type::<PyTuple>(),
+        ContainerKind::Dict => py.get_type::<PyDict>(),
+        ContainerKind::Set => py.get_type::<PySet>(),
+        ContainerKind::FrozenSet => py.get_type::<PyFrozenSet>(),
+    };
+    native
+        .getattr("__len__")
+        .ok()?
+        .call1((value,))
+        .ok()?
+        .extract()
+        .ok()
 }
 
 /// Render a snapshotted container inside `open`/`close`.
@@ -111,9 +127,7 @@ fn render_entries(
     limit: usize,
     depth: usize,
 ) -> BoundedText {
-    // The marker is written after a separator, so both are reserved.
-    let fixed = open.len() + close.len() + TRUNCATION_SUFFIX.len() + 2;
-    let body_budget = limit - fixed;
+    let body_budget = limit - open.len() - close.len();
     let mut body = String::new();
     let mut shortened = false;
     let mut byte_cut = false;
@@ -141,8 +155,9 @@ fn render_entries(
         }
         kept += 1;
     }
-    let body = finish_body(body, kind, kept, entries.len(), shortened);
-    let mut text = String::with_capacity(body.len() + fixed);
+    let (body, reclaimed) = finish_body(body, kind, kept, entries.len(), shortened, body_budget);
+    byte_cut |= reclaimed;
+    let mut text = String::with_capacity(body.len() + open.len() + close.len());
     text.push_str(open);
     text.push_str(&body);
     text.push_str(close);
@@ -156,28 +171,53 @@ fn render_entries(
     }
 }
 
-/// Add the marker and any singleton or empty-container form to a rendered body.
+/// Add the marker, reclaiming complete entries when the byte ceiling is full.
 ///
-/// A singleton tuple keeps its trailing comma, and an empty `set` renders as
-/// `set()` rather than as an empty dict. Both are decided here because they
-/// depend on what the entry loop actually kept.
+/// Entries are rendered into the space the delimiters leave. When the result
+/// turns out to be shortened, the marker and its separator must also fit, so
+/// entries are removed from the end at their separators until they do. Returns
+/// the body and whether the byte ceiling forced an entry out.
 fn finish_body(
     mut body: String,
     kind: ContainerKind,
-    kept: usize,
+    mut kept: usize,
     offered: usize,
     shortened: bool,
-) -> String {
-    if shortened {
-        if kept > 0 {
-            body.push_str(", ");
+    budget: usize,
+) -> (String, bool) {
+    if !shortened {
+        if is_single_tuple(kind, kept, offered) {
+            // `(1)` is not a tuple; CPython prints `(1,)`.
+            body.push(',');
         }
-        body.push_str(TRUNCATION_SUFFIX);
-    } else if is_single_tuple(kind, kept, offered) {
-        // `(1)` is not a tuple; CPython prints `(1,)`.
-        body.push(',');
+        return (body, false);
     }
-    body
+    let mut reclaimed = false;
+    loop {
+        let separator = usize::from(kept > 0) * 2;
+        if body.len() + separator + TRUNCATION_SUFFIX.len() <= budget {
+            break;
+        }
+        if kept == 0 {
+            // The marker alone does not fit; keep the part of it the ceiling
+            // allows rather than overflowing.
+            let room = budget.min(TRUNCATION_SUFFIX.len());
+            body.clear();
+            body.push_str(&TRUNCATION_SUFFIX[..room]);
+            return (body, true);
+        }
+        reclaimed = true;
+        kept -= 1;
+        match body.rfind(", ") {
+            Some(index) => body.truncate(index),
+            None => body.clear(),
+        }
+    }
+    if kept > 0 {
+        body.push_str(", ");
+    }
+    body.push_str(TRUNCATION_SUFFIX);
+    (body, reclaimed)
 }
 
 /// Return `true` when a complete one-entry rendering is a singleton tuple.
@@ -246,60 +286,47 @@ enum ContainerKind {
     FrozenSet,
 }
 
-/// Classify `value` by its exact type.
+/// Classify `value` by its built-in container type.
+///
+/// An exact instance always qualifies. A subclass qualifies only when it
+/// inherits the native `__repr__` unchanged; a genuine override keeps the
+/// general path, because that representation is what the application chose to
+/// expose.
 fn container_kind(value: &Bound<'_, PyAny>) -> Option<ContainerKind> {
-    if value.is_exact_instance_of::<PyList>() {
-        return Some(ContainerKind::List);
-    }
-    if value.is_exact_instance_of::<PyTuple>() {
-        return Some(ContainerKind::Tuple);
-    }
-    if value.is_exact_instance_of::<PyDict>() {
-        return Some(ContainerKind::Dict);
-    }
-    if value.is_exact_instance_of::<PySet>() {
-        return Some(ContainerKind::Set);
-    }
-    if inherits_list_repr(value) {
-        return Some(ContainerKind::List);
-    }
-    if value.is_exact_instance_of::<PyFrozenSet>() {
-        return Some(ContainerKind::FrozenSet);
+    let py = value.py();
+    let candidates = [
+        (py.get_type::<PyList>(), ContainerKind::List),
+        (py.get_type::<PyTuple>(), ContainerKind::Tuple),
+        (py.get_type::<PyDict>(), ContainerKind::Dict),
+        (py.get_type::<PySet>(), ContainerKind::Set),
+        (py.get_type::<PyFrozenSet>(), ContainerKind::FrozenSet),
+    ];
+    for (native, kind) in candidates {
+        if value.get_type().is(&native) {
+            return Some(kind);
+        }
+        if value.get_type().is_subclass(&native).unwrap_or(false)
+            && inherits_native(value, &native, "__repr__")
+        {
+            return Some(kind);
+        }
     }
     None
 }
 
-/// Read a list subclass's length through the native `list` type.
-fn native_list_len(value: &Bound<'_, PyAny>) -> Option<usize> {
-    let len = value.py().get_type::<PyList>().getattr("__len__").ok()?;
-    len.call1((value,)).ok()?.extract().ok()
-}
-
-/// Iterate a list subclass's storage without invoking its `__iter__`.
-fn native_list_iterator<'py>(value: &Bound<'py, PyAny>) -> Option<Bound<'py, PyIterator>> {
-    let iter = value.py().get_type::<PyList>().getattr("__iter__").ok()?;
-    let iterator = iter.call1((value,)).ok()?;
-    iterator.cast_into::<PyIterator>().ok()
-}
-
-/// Return `true` for a list subclass that inherits `list.__repr__`.
+/// Return `true` when `value` inherits `method` unchanged from `native`.
 ///
-/// Such a subclass renders every entry through the inherited C
-/// implementation, so it needs the same bounded element walk as an exact list.
-/// A subclass with its own `__repr__` keeps the general path: that
-/// representation is what the application chose to expose.
-fn inherits_list_repr(value: &Bound<'_, PyAny>) -> bool {
+/// The comparison uses `type.__getattribute__` so a metaclass cannot fake the
+/// lookup. A genuine override keeps the general path: that representation is
+/// what the application chose to expose.
+fn inherits_native(value: &Bound<'_, PyAny>, native: &Bound<'_, PyType>, method: &str) -> bool {
     let py = value.py();
-    let list_type = py.get_type::<PyList>();
-    if !value.get_type().is_subclass(&list_type).unwrap_or(false) {
-        return false;
-    }
-    let type_type = py.get_type::<pyo3::types::PyType>();
+    let type_type = py.get_type::<PyType>();
     let Ok(getattribute) = type_type.getattr("__getattribute__") else {
         return false;
     };
-    let inherited = getattribute.call1((&list_type, "__repr__")).ok();
-    let actual = getattribute.call1((value.get_type(), "__repr__")).ok();
+    let inherited = getattribute.call1((native, method)).ok();
+    let actual = getattribute.call1((value.get_type(), method)).ok();
     match (inherited, actual) {
         (Some(inherited), Some(actual)) => actual.is(&inherited),
         _ => false,
@@ -329,61 +356,12 @@ fn delimiters(kind: ContainerKind) -> (&'static str, &'static str) {
 }
 
 /// A fixed summary used when a container is too deep or its ceiling too small.
-fn summary(open: &str, close: &str, limit: usize) -> BoundedText {
+fn summary(open: &str, close: &str, limit: usize, byte_cut: bool) -> BoundedText {
     let bounded = clamp(format!("{open}{TRUNCATION_SUFFIX}{close}"), limit);
     BoundedText {
         text: bounded.text,
         truncated: true,
         failed: false,
-        clipped: bounded.clipped,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Container rendering at the item and byte ceilings.
-
-    use super::*;
-    use pyo3::types::{PyFrozenSet, PySet};
-
-    #[test]
-    fn a_marker_separator_fits_inside_the_ceiling() {
-        Python::attach(|py| {
-            let list = PyList::new(py, ["12345", "6"]).expect("list should build");
-            let rendered = render(list.as_any(), 12, 0).expect("a list should render");
-
-            assert!(
-                rendered.text.len() <= 12,
-                "the marker separator must be part of the ceiling: {:?}",
-                rendered.text
-            );
-            assert!(rendered.clipped, "the byte ceiling caused the cut");
-        });
-    }
-
-    #[test]
-    fn a_complete_container_is_not_reported_as_clipped() {
-        Python::attach(|py| {
-            let list = PyList::new(py, [1, 2]).expect("list should build");
-            let rendered = render(list.as_any(), 32, 0).expect("a list should render");
-
-            assert_eq!(rendered.text, "[1, 2]");
-            assert!(!rendered.truncated);
-            assert!(!rendered.clipped);
-        });
-    }
-
-    #[test]
-    fn singleton_tuples_and_empty_sets_keep_their_forms() {
-        Python::attach(|py| {
-            let tuple = PyTuple::new(py, [1]).expect("tuple should build");
-            assert_eq!(render(tuple.as_any(), 16, 0).unwrap().text, "(1,)");
-
-            let set = PySet::empty(py).expect("set should build");
-            assert_eq!(render(set.as_any(), 16, 0).unwrap().text, "set()");
-
-            let frozen = PyFrozenSet::empty(py).expect("frozenset should build");
-            assert_eq!(render(frozen.as_any(), 16, 0).unwrap().text, "frozenset()");
-        });
+        clipped: byte_cut || bounded.clipped,
     }
 }

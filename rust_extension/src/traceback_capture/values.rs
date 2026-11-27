@@ -205,14 +205,26 @@ fn native_prefix<'py>(value: &Bound<'py, PyString>, stop: usize) -> Option<Bound
 pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> BoundedText {
     // Only the exact type takes the copy path: a subclass may override
     // `__str__`, and `str(argument)` is the semantic this function reproduces.
-    if value.is_exact_instance_of::<PyString>()
-        && let Ok(text) = value.cast::<PyString>()
-    {
-        return bounded_string(text, limit);
+    if let Ok(text) = value.cast::<PyString>() {
+        let is_exact = value.is_exact_instance_of::<PyString>();
+        // A `str` subclass that inherits `str.__str__` returns its own content,
+        // so the bounded slice is exactly `str(value)`. A custom `__str__`
+        // keeps its own representation instead.
+        if is_exact
+            || super::types::inherits_native_method(
+                value,
+                value.py().get_type::<PyString>().as_any(),
+                "__str__",
+            )
+        {
+            return bounded_string(text, limit);
+        }
     }
-    // `str` of an exact built-in container is its `repr`, so the same bounded
-    // element rendering applies without going through Python.
-    if let Some(rendered) = container::render(value, limit, 0) {
+    // `str` of a built-in container is its `repr` only when the subclass has
+    // not defined a `__str__` of its own.
+    if super::types::inherits_object_str(value)
+        && let Some(rendered) = container::render(value, limit, 0)
+    {
         return rendered;
     }
     if let Some((rendered, truncated)) = render_byte_like(value) {
@@ -243,10 +255,16 @@ fn render_builtin(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText>
 /// can expand it past the ceiling; a longer source is sliced first. Both cases
 /// end in the literal-aware clipping that keeps the closing quote.
 fn render_long_string(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
-    if !value.is_exact_instance_of::<PyString>() {
+    let text = value.cast::<PyString>().ok()?;
+    let inherits_repr = value.is_exact_instance_of::<PyString>()
+        || super::types::inherits_native_method(
+            value,
+            value.py().get_type::<PyString>().as_any(),
+            "__repr__",
+        );
+    if !inherits_repr {
         return None;
     }
-    let text = value.cast::<PyString>().ok()?;
     let Ok(code_points) = text.code_point_len() else {
         // A non-canonical string cannot be sliced here; the general `repr`
         // path still produces a usable representation.

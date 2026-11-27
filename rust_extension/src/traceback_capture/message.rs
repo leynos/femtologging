@@ -58,6 +58,8 @@ use crate::exception_schema::PayloadTruncation;
 pub(super) struct RenderedArgs {
     /// Representations read so far, one per argument rendered.
     texts: Vec<String>,
+    /// Whether each representation in [`Self::texts`] was shortened.
+    shortened: Vec<bool>,
     /// How many arguments the exception actually carries.
     total: usize,
     /// How many argument representations raised and were skipped.
@@ -79,6 +81,7 @@ impl RenderedArgs {
     fn none() -> Self {
         Self {
             texts: Vec::new(),
+            shortened: Vec::new(),
             total: 0,
             failed: 0,
             first_failed: None,
@@ -155,6 +158,7 @@ pub(super) fn render_args(
     }
     let mut rendered = RenderedArgs {
         texts: Vec::with_capacity(total.min(limits.max_args)),
+        shortened: Vec::with_capacity(total.min(limits.max_args)),
         total,
         failed: 0,
         first_failed: None,
@@ -169,6 +173,7 @@ pub(super) fn render_args(
             let members = group_members_text(&arg, limits);
             rendered.truncated |= members.text.truncated;
             rendered.failed = rendered.failed.saturating_add(members.failed);
+            rendered.shortened.push(members.text.truncated);
             rendered.texts.push(members.text.text);
             continue;
         }
@@ -181,6 +186,7 @@ pub(super) fn render_args(
             continue;
         }
         rendered.truncated |= text.truncated;
+        rendered.shortened.push(text.truncated);
         rendered.texts.push(text.text);
     }
     rendered
@@ -281,9 +287,14 @@ pub(super) fn retain_args(
     marker: &mut PayloadTruncation,
 ) -> Vec<String> {
     let mut retained = Vec::with_capacity(rendered.texts.len());
-    for text in rendered.texts {
+    for (index, text) in rendered.texts.into_iter().enumerate() {
         if !budget.charge_bytes(text.len()) {
             break;
+        }
+        // Shortening describes a representation the payload actually keeps;
+        // an argument the charge refuses is reported as omitted instead.
+        if rendered.shortened.get(index).copied().unwrap_or(false) {
+            marker.args_truncated = true;
         }
         retained.push(text);
     }

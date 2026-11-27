@@ -7,8 +7,10 @@ use super::*;
 
 /// Build a `RenderedArgs` from `texts` and a larger total.
 fn rendered(texts: &[&str], total: usize) -> RenderedArgs {
+    let texts: Vec<String> = texts.iter().map(|text| (*text).to_string()).collect();
     RenderedArgs {
-        texts: texts.iter().map(|text| (*text).to_string()).collect(),
+        shortened: vec![false; texts.len()],
+        texts,
         total,
         ..RenderedArgs::none()
     }
@@ -30,6 +32,7 @@ fn argument_tuples_render_as_a_prefix(
 fn a_failed_representation_in_the_middle_leaves_a_gap() {
     let args = RenderedArgs {
         texts: vec!["'a'".to_string(), "'c'".to_string()],
+        shortened: vec![false, false],
         total: 3,
         failed: 1,
         first_failed: Some(1),
@@ -46,6 +49,7 @@ fn a_failed_representation_in_the_middle_leaves_a_gap() {
 fn failed_renders_do_not_mark_unretained_args_as_truncated() {
     let args = RenderedArgs {
         texts: Vec::new(),
+        shortened: Vec::new(),
         total: 0,
         failed: 3,
         truncated: true,
@@ -171,4 +175,47 @@ fn a_shortened_keyerror_representation_marks_the_message_as_truncated() {
             "a shortened key representation shortens the message too"
         );
     });
+}
+
+#[test]
+fn a_dropped_shortened_argument_is_not_reported_as_truncated() {
+    let limits = CaptureLimits::default();
+    let args = RenderedArgs {
+        texts: vec!["x".repeat(32)],
+        shortened: vec![true],
+        total: 1,
+        ..RenderedArgs::none()
+    };
+    let mut budget = CaptureBudget::new(&CaptureLimits {
+        max_aggregate_bytes: 8,
+        ..limits
+    });
+    let mut marker = PayloadTruncation::default();
+
+    let retained = retain_args(args, &mut budget, &mut marker);
+
+    assert!(retained.is_empty());
+    assert_eq!(marker.args_omitted, 1);
+    assert!(
+        !marker.args_truncated,
+        "a representation the budget dropped is omitted, not retained-and-shortened"
+    );
+}
+
+#[test]
+fn a_retained_shortened_argument_is_reported_as_truncated() {
+    let args = RenderedArgs {
+        texts: vec!["x".repeat(4)],
+        shortened: vec![true],
+        total: 1,
+        ..RenderedArgs::none()
+    };
+    let mut budget = CaptureBudget::new(&CaptureLimits::default());
+    let mut marker = PayloadTruncation::default();
+
+    let retained = retain_args(args, &mut budget, &mut marker);
+
+    assert_eq!(retained.len(), 1);
+    assert_eq!(marker.args_omitted, 0);
+    assert!(marker.args_truncated);
 }

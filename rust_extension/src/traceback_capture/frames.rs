@@ -265,9 +265,18 @@ fn caller_frame(py: Python<'_>) -> PyResult<Option<Bound<'_, PyAny>>> {
     let sys = py.import("sys")?;
     match sys.call_method1("_getframe", (0,)) {
         Ok(frame) => Ok((!frame.is_none()).then_some(frame)),
-        // `ValueError` is how "no Python frame" reports itself; any other
-        // failure, such as an audit hook refusing the call, is a real loss.
-        Err(error) if error.is_instance_of::<PyValueError>(py) => Ok(None),
+        // `ValueError` is how "no Python frame" reports itself, but an audit
+        // hook can raise the same type. Only the interpreter's own message
+        // means the stack is shallow; anything else is a lost stack.
+        Err(error)
+            if error.is_instance_of::<PyValueError>(py)
+                && error.value(py).str().is_ok_and(|text| {
+                    text.to_string_lossy()
+                        .contains("call stack is not deep enough")
+                }) =>
+        {
+            Ok(None)
+        }
         Err(error) => Err(error),
     }
 }

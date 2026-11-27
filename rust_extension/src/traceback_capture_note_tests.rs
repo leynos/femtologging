@@ -220,3 +220,40 @@ raise error
         );
     });
 }
+
+#[rstest]
+fn an_exact_note_list_with_a_non_note_tail_reports_no_omission() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+error = ValueError('note')
+error.__notes__ = ['a', 'b', 0]
+raise error
+",
+            &tiny_limits(),
+        );
+
+        assert_eq!(payload.notes, vec!["a", "b"]);
+        let omitted = payload.truncation.map_or(0, |marker| marker.notes_omitted);
+        assert_eq!(omitted, 0, "an unclassified tail is not a dropped note");
+    });
+}
+
+#[rstest]
+fn an_exact_note_list_with_a_note_tail_reports_the_omission() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+error = ValueError('note')
+error.__notes__ = ['a', 'b', 'c']
+raise error
+",
+            &tiny_limits(),
+        );
+
+        assert_eq!(payload.notes, vec!["a", "b"]);
+        assert_eq!(marker(&payload).notes_omitted, 1);
+    });
+}

@@ -54,7 +54,9 @@ fn probe_tail(
     }
     match iterator.next() {
         None => false,
-        Some(Ok(_)) => true,
+        // Only a string proves a note was dropped; an unclassified item leaves
+        // the tail unknown, which is not reported as an omitted note.
+        Some(Ok(item)) => item.cast::<PyString>().is_ok(),
         Some(Err(_)) => {
             marker.failed_elements = marker.failed_elements.saturating_add(1);
             false
@@ -95,10 +97,8 @@ pub(super) fn retain_notes(
         marker.failed_elements = marker.failed_elements.saturating_add(1);
         return (Vec::new(), false);
     };
-    let scan_limit = known_len.map_or_else(
-        || limits.max_notes.saturating_add(1),
-        |length| length.min(limits.max_notes),
-    );
+    let probe_limit = limits.max_notes.saturating_add(1);
+    let scan_limit = known_len.map_or(probe_limit, |length| length.min(probe_limit));
     let mut retained = Vec::with_capacity(scan_limit.min(limits.max_notes));
     let mut visited = 0usize;
     let mut exhausted = false;
@@ -151,23 +151,17 @@ pub(super) fn retain_notes(
         iteration_failed,
         iterator_ended,
     };
-    let scan_incomplete = probe_tail(completed, &mut iterator, marker);
-    let omitted = known_len.map_or_else(
-        || {
-            // A tail is only proven when retention stopped because the ceiling
-            // was already full. An extra position consumed by a non-note, or
-            // by the last retained note, shows no missing note.
-            usize::from(tail_after_retention || exhausted || scan_incomplete)
-        },
-        |length| {
-            // Unvisited positions are exact omissions; a failed conversion is
-            // reported through `failed_elements` and is not a ceiling drop, and
-            // a budget stop leaves the current position unretained.
-            length
-                .saturating_sub(visited)
-                .saturating_add(usize::from(exhausted))
-        },
-    );
+    let probed_note = probe_tail(completed, &mut iterator, marker);
+    // A note is only counted as omitted when a probed position proves one was
+    // dropped, or when the budget refused a note it had already rendered.
+    // With an exact length and a proven string tail, every remaining position
+    // is a note, so the count is exact. Otherwise unclassified positions stay
+    // unknown instead of being guessed at from the raw length.
+    let omitted = match known_len {
+        Some(length) if tail_after_retention => length.saturating_sub(retained.len()),
+        Some(_) => usize::from(exhausted),
+        None => usize::from(tail_after_retention || probed_note || exhausted),
+    };
     marker.notes_omitted = marker.notes_omitted.saturating_add(as_u32(omitted));
     (retained, exhausted)
 }

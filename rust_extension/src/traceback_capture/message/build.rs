@@ -8,7 +8,7 @@
 
 use pyo3::exceptions::{PyOSError, PySyntaxError};
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple, PyType};
+use pyo3::types::{PyString, PyType};
 
 use crate::traceback_capture::limits::{STR_FAILURE_SENTINEL, TRUNCATION_SUFFIX};
 use crate::traceback_capture::types;
@@ -104,13 +104,14 @@ fn os_error_container_message(exception: &Bound<'_, PyAny>, limit: usize) -> Opt
     if !actual.is(&inherited) {
         return None;
     }
-    let args = super::exception_args(exception).ok()?;
-    let args = args.cast::<PyTuple>().ok()?;
-    if args.len() != 2 {
+    // The writable `errno` and `strerror` attributes are what `__str__`
+    // formats, and they can differ from the constructor arguments.
+    let errno = exception.getattr("errno").ok()?;
+    let errno: i64 = errno.extract().ok()?;
+    let strerror = exception.getattr("strerror").ok()?;
+    if strerror.is_none() {
         return None;
     }
-    let errno: i64 = args.get_item(0).ok()?.extract().ok()?;
-    let strerror = args.get_item(1).ok()?;
     let bounded = values::bounded_container(&strerror, limit.saturating_sub(16).max(1))?;
     let mut text = format!("[Errno {errno}] {}", bounded.text);
     let mut shortened = bounded.truncated;

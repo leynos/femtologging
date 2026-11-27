@@ -86,7 +86,16 @@ fn oversized_blob() -> (String, bool) {
 /// an escape and drop the closing quote.
 pub(super) fn bounded_rendered(rendered: String, was_truncated: bool, limit: usize) -> BoundedText {
     if was_truncated || rendered.len() > limit {
-        return BoundedText::ok(truncate_literal(&rendered, limit), true);
+        // `clipped` describes only a cut made by this byte ceiling; a summary
+        // that was already shortened for another reason fits here and is not
+        // evidence that the aggregate budget ran out.
+        let clipped = rendered.len() > limit;
+        return BoundedText {
+            text: truncate_literal(&rendered, limit),
+            truncated: true,
+            failed: false,
+            clipped,
+        };
     }
     BoundedText::ok(rendered, false)
 }
