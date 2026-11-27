@@ -951,7 +951,8 @@ configuration files, as per `logging.config.fileConfig`.
       across both configuration flows.
 
     - The `defaults` dictionary passed to `fileConfig()` will be used to
-      substitute `%(key)s` placeholders in the INI file.
+      substitute `%(key)s` placeholders in handler `args` and `kwargs`
+      values. Other handler options and logger values are not expanded.
 
     - **Linear Placeholder Scanning:** Placeholder matching is a forward-only
       scan rather than a backtracking regular expression. For each position,

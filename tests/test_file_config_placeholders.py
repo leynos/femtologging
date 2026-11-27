@@ -47,6 +47,14 @@ _PLACEHOLDER_CASES = [
     pytest.param("%(a", {}, "%(a", id="missing-closer"),
     pytest.param("%(a)", {}, "%(a)", id="missing-suffix"),
     pytest.param("%(a)d", {}, "%(a)d", id="wrong-suffix"),
+    pytest.param("%(name) s", {}, "%(name) s", id="space-before-suffix"),
+    pytest.param(
+        "%(bad)q%(name)s",
+        {"name": "N"},
+        "%(bad)qN",
+        id="failed-candidate-before-valid",
+    ),
+    pytest.param("%((name)s", {"(name": "X"}, "X", id="double-open-paren"),
     pytest.param("%()s", {}, "%()s", id="empty-name"),
     pytest.param("%(x)%(a)s", {"a": "A"}, "%(x)A", id="failed-candidate-then-valid"),
     pytest.param(
