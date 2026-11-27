@@ -126,7 +126,7 @@ fn adapter_flush_releases_manager_for_python_handlers(unique_logger_name: String
             let logger_ref: &crate::FemtoLogger = &borrowed_logger;
             py.detach(|| logger_ref.flush_handlers())
         };
-        logger.borrow(py).py_remove_handler(handler.bind(py));
+        logger.borrow(py).py_remove_handler(handler.clone_ref(py));
         let helper_joined = py.detach(|| lock_probe.join()).is_ok();
 
         if !helper_joined {
