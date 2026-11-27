@@ -183,9 +183,20 @@ fn an_injected_pool_start_failure_releases_its_reservation_for_retry() {
 
 // `DispatcherError::new` and `invalid_pool` are `const`, which is what lets a
 // refusal be described where it is raised. Both are crate-private, so an
-// external `trybuild` fixture cannot name them; a compile-time binding here is
-// the enforcing test. A `const fn` that quietly loses its qualifier still
-// passes every behavioural test.
-const _: fn(usize, usize, std::io::Error) -> DispatcherError = DispatcherError::new;
+// external `trybuild` fixture cannot name them.
+//
+// A `std::io::Error` cannot be built in a const item, so the constructors are
+// reached through `const fn` wrappers that take the error as a parameter. A
+// `const fn` body is checked for const-evaluability when it is defined, so the
+// wrapped call must be `const` or this file stops compiling. Binding the
+// function pointer instead would accept a non-`const` `fn` and pin nothing.
+const fn error_with(started: usize, total: usize, source: std::io::Error) -> DispatcherError {
+    DispatcherError::new(started, total, source)
+}
 #[cfg(not(loom))]
-const _: fn(std::io::Error) -> DispatcherError = DispatcherError::invalid_pool;
+const fn invalid_with(source: std::io::Error) -> DispatcherError {
+    DispatcherError::invalid_pool(source)
+}
+const _: fn(usize, usize, std::io::Error) -> DispatcherError = error_with;
+#[cfg(not(loom))]
+const _: fn(std::io::Error) -> DispatcherError = invalid_with;

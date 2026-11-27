@@ -4,6 +4,20 @@ use std::sync::Arc;
 
 use super::{LoggerBudget, Permit, Permits};
 
+// `LoggerBudget::new` and its limit accessor are `const`, which is what lets a
+// budget be sized where it is declared. The wrapper below evaluates both in a
+// const context, so losing either qualifier stops this file compiling.
+// `limit_for_test` forwards to `limit`, so pinning the one pins both.
+//
+// A function-pointer binding would not do: it accepts a non-`const` `fn` and
+// would pin the signature only. A `const` item holding a budget would not do
+// either — the atomics are interior-mutable state, which clippy rightly
+// refuses to see promoted to a constant.
+const fn budget_limit(limit: usize) -> usize {
+    LoggerBudget::new(limit).limit_for_test()
+}
+const _: fn(usize) -> usize = budget_limit;
+
 #[test]
 fn inherited_permit_cannot_release_a_child_budget_charge() {
     let permits = Arc::new(Permits::new(2));

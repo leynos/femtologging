@@ -5,9 +5,11 @@
 //! unreachable through a real send and therefore untestable through the shard.
 //! These tests pass the refusal in directly, which is the only way to prove the
 //! arm classifies an admission as refused rather than accidentally accepting
-//! it.
+//! it, and that it reports rather than failing silently.
 
-use super::is_admitted;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::{UNEXPECTED_JOB_DIAGNOSTIC, is_admitted, is_admitted_reporting};
 use crate::logger::dispatcher::AdmissionRefusal;
 
 /// An unexpected job is refused, not accepted.
@@ -34,5 +36,76 @@ fn a_successful_admission_is_accepted() {
     assert!(
         is_admitted(Ok(())),
         "an accepted admission must be classified as accepted",
+    );
+}
+
+/// The refusal reports through the injected reporter exactly once.
+///
+/// This is what proves the arm is diagnosable rather than silent. The counter
+/// separates "reported" from "not reported at all" and from "reported twice",
+/// and the assertion on the return value keeps the report from replacing the
+/// refusal classification.
+#[test]
+fn an_unexpected_job_reports_through_the_reporter_once() {
+    let reported = AtomicUsize::new(0);
+
+    let admitted = is_admitted_reporting(Err(AdmissionRefusal::UnexpectedJob), || {
+        reported.fetch_add(1, Ordering::SeqCst);
+    });
+
+    assert!(!admitted, "an unexpected job must still be refused");
+    assert_eq!(
+        reported.load(Ordering::SeqCst),
+        1,
+        "the refusal must report exactly once",
+    );
+}
+
+/// No other admission outcome reports.
+///
+/// An accepted admission and a capacity refusal are both ordinary. If either
+/// reported, the diagnostic would fire on every busy shard and stop being a
+/// signal at all.
+#[test]
+fn ordinary_outcomes_do_not_report() {
+    let reported = AtomicUsize::new(0);
+    let report = || {
+        reported.fetch_add(1, Ordering::SeqCst);
+    };
+
+    assert!(is_admitted_reporting(Ok(()), report));
+    assert_eq!(
+        reported.load(Ordering::SeqCst),
+        0,
+        "acceptance must not report"
+    );
+
+    // A capacity refusal needs a record to hand back, which this module cannot
+    // build. `admission` is covered for that case in `shard::budget_tests`;
+    // here it is enough that the accepted arm is silent.
+}
+
+/// The diagnostic names the operation and the refusal category.
+///
+/// The wording is the contract an operator alerts on, so it is pinned rather
+/// than left to drift with the surrounding prose. Both fields are asserted
+/// because a message carrying only one of them cannot be filtered.
+#[test]
+fn the_diagnostic_names_the_operation_and_the_category() {
+    assert!(
+        UNEXPECTED_JOB_DIAGNOSTIC.contains("operation=producer_queue_dispatch"),
+        "the diagnostic must name the operation: {UNEXPECTED_JOB_DIAGNOSTIC}",
+    );
+    assert!(
+        UNEXPECTED_JOB_DIAGNOSTIC.contains("refusal=unexpected_job"),
+        "the diagnostic must name the refusal category: {UNEXPECTED_JOB_DIAGNOSTIC}",
+    );
+    assert!(
+        !UNEXPECTED_JOB_DIAGNOSTIC.contains("capacity"),
+        "the diagnostic must not reuse the capacity wording: {UNEXPECTED_JOB_DIAGNOSTIC}",
+    );
+    assert!(
+        !UNEXPECTED_JOB_DIAGNOSTIC.contains('\n'),
+        "the diagnostic must be one line: {UNEXPECTED_JOB_DIAGNOSTIC}",
     );
 }

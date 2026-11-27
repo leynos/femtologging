@@ -18,15 +18,60 @@ use super::super::{FemtoLogger, QueuedRecord};
 /// records, and the variant exists to keep its match total. A test therefore
 /// passes it in directly, which is why this is `pub(super)` rather than private
 /// to the module — the arm is otherwise unreachable from any test at all.
+///
+/// That arm is not silent. If it ever does fire it is a logic error the record
+/// accounting cannot explain, so it reports on its own stable message and
+/// category rather than being counted with ordinary capacity refusals; see
+/// [`report_unexpected_job`].
 pub(super) fn is_admitted(admission: Result<(), AdmissionRefusal>) -> bool {
+    is_admitted_reporting(admission, report_unexpected_job)
+}
+
+/// Classify an admission, reporting an unexpected job through `report`.
+///
+/// Split from [`is_admitted`] so the report is observable without installing a
+/// global `log` backend: production passes [`report_unexpected_job`], while a
+/// test passes a closure that records the call. That is the only way to assert
+/// the arm actually reports, because the variant cannot be produced by a real
+/// send.
+pub(super) fn is_admitted_reporting(
+    admission: Result<(), AdmissionRefusal>,
+    report: impl FnOnce(),
+) -> bool {
     match admission {
         Ok(()) => true,
         Err(AdmissionRefusal::Record(refused)) => {
             drop(refused);
             false
         }
-        Err(AdmissionRefusal::UnexpectedJob) => false,
+        Err(AdmissionRefusal::UnexpectedJob) => {
+            report();
+            false
+        }
     }
+}
+
+/// The stable message an unexpected-job refusal logs.
+///
+/// A bare constant rather than an inline literal so a test can assert the
+/// wording without capturing the log stream. It names the operation and the
+/// refusal category, which is what an operator alerts on, and carries no job
+/// contents, so caller-controlled data never reaches the log through it.
+const UNEXPECTED_JOB_DIAGNOSTIC: &str = concat!(
+    "FemtoLogger: dispatch admission returned a job without a record; ",
+    "operation=producer_queue_dispatch refusal=unexpected_job",
+);
+
+/// Report a refusal that carried a job instead of a record.
+///
+/// Kept separate from the capacity warning on purpose. "Dispatch capacity
+/// exhausted" describes a busy shard and is expected under load; this
+/// describes the queue handing back something `admit` never sent, which is a
+/// defect rather than backpressure. Reusing the capacity wording would hide it
+/// among ordinary drops, and the log line is the only way it becomes visible:
+/// the API level reports a dropped record either way.
+fn report_unexpected_job() {
+    warn!("{UNEXPECTED_JOB_DIAGNOSTIC}");
 }
 
 impl FemtoLogger {

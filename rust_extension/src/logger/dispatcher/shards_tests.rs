@@ -16,7 +16,15 @@ use crate::logger::dispatcher::shard::Shard;
 // round-robin wraparound is arithmetic a caller can fold. A `const fn` that
 // quietly loses its qualifier still passes every behavioural test, so the
 // guarantee is pinned at compile time.
-const _: fn(&Shards) -> usize = Shards::len;
+//
+// `Shards` owns `Shard` values, which hold channels and worker handles, so no
+// `Shards` value can be built in a const item. The pin is therefore a `const
+// fn` that calls `len`: it compiles only while the call is const-evaluable,
+// which a function-pointer binding would not establish.
+const fn len_of(shards: &Shards) -> usize {
+    shards.len()
+}
+const _: fn(&Shards) -> usize = len_of;
 
 /// Build a pool of `count` shards, asserting each worker started.
 fn pool_of(count: usize) -> Shards {
