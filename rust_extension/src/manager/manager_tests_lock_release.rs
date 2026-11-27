@@ -274,10 +274,13 @@ fn a_refused_commit_drops_staged_handlers_after_unlocking() {
 #[test]
 #[serial]
 fn a_commit_that_fails_partway_drops_built_ancestors_after_unlocking() {
-    use super::registry::set_injected_construction_failure;
+    use super::registry::{reset_ancestor_probe, set_injected_construction_failure};
 
     Python::attach(|py| {
         reset_manager();
+        // The counters are process-wide, so an earlier test's drops must not be
+        // counted as this one's.
+        reset_ancestor_probe();
         // The staged name supplies the chain; `deep` then `deep.middle` are the
         // missing ancestors, and the second one is made to fail.
         let staged = stage_loggers(py, std::iter::once("deep.middle.leaf"))
