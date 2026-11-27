@@ -36,12 +36,9 @@ mod capacity;
 mod config;
 
 #[cfg(all(test, feature = "python"))]
-pub(crate) use config::build_batch;
+pub(crate) use config::{ANCESTOR_DROP_SAW_FREE_LOCK, set_injected_construction_failure};
 #[cfg(all(test, feature = "python"))]
-pub(crate) use config::{
-    ANCESTOR_DROP_SAW_FREE_LOCK, ANCESTOR_DROPS, reset_ancestor_probe,
-    set_injected_construction_failure,
-};
+pub(crate) use config::{ANCESTOR_DROPS, build_batch, reset_ancestor_probe};
 #[cfg(feature = "python")]
 pub(crate) use config::{AncestorRegistrationError, register_missing_ancestors, stage_loggers};
 
@@ -381,9 +378,8 @@ pub(crate) fn flush_all_handlers_with_metrics(
 /// across every bounded wait and serialize a full reset.
 #[pyfunction]
 pub fn reset_manager() {
-    // Take both registries under the lock but drop neither there: handler
-    // destruction may flush or join a worker, and a filter may own the last
-    // reference to a Python callable whose finalizer re-enters the manager.
+    // Take both registries under the lock; tearing either down may wait on a
+    // worker or re-enter the manager, so neither drops there.
     let (loggers, displaced_runtime) = {
         let mut mgr = MANAGER.write();
         let displaced_runtime = clear_runtime_state(&mut mgr);
