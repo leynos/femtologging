@@ -46,6 +46,7 @@ _PLACEHOLDER_CASES = [
     pytest.param("%%(a)s", {"a": "x"}, "%x", id="no-percent-escaping"),
     pytest.param("%(a", {}, "%(a", id="missing-closer"),
     pytest.param("%(a)", {}, "%(a)", id="missing-suffix"),
+    pytest.param("%(a)d", {}, "%(a)d", id="wrong-suffix"),
     pytest.param("%()s", {}, "%()s", id="empty-name"),
     pytest.param("%(x)%(a)s", {"a": "A"}, "%(x)A", id="failed-candidate-then-valid"),
     pytest.param(
@@ -186,6 +187,20 @@ def test_expand_placeholders_reports_the_first_unknown_name() -> None:
     )
 
 
+def test_expand_placeholders_reports_a_missing_name_after_a_percent_sign() -> None:
+    """A placeholder after a literal percent still resolves its own name."""
+    value = "%%(missing)s"
+
+    with pytest.raises(ValueError, match="unknown placeholder 'missing'") as raised:
+        _expand_placeholders(value, {})
+
+    expected = f"unknown placeholder 'missing' in {value!r}"
+    assert str(raised.value) == expected, (
+        "the second percent must open the placeholder, and the diagnostic "
+        "must quote the whole original value"
+    )
+
+
 def test_expand_placeholders_handles_many_unterminated_openers() -> None:
     """Input just below the limit with no closers passes through unchanged."""
     value = "%(" * (_MAX_HANDLER_PARAMETER_CHARS // 2 - 1)
@@ -241,7 +256,9 @@ def test_check_parameter_size_rejects_one_code_point_over_the_limit(
     field: str,
 ) -> None:
     """One code point over the limit raises without echoing the value."""
-    value = "MARKER" + "x" * _MAX_HANDLER_PARAMETER_CHARS
+    # The sentinel occupies part of the budget so the total is exactly one
+    # code point over the limit while remaining identifiable in the message.
+    value = "MARKER" + "x" * (_MAX_HANDLER_PARAMETER_CHARS - len("MARKER") + 1)
 
     with pytest.raises(ValueError, match="characters; the limit is") as raised:
         _check_parameter_size("h", field, value)

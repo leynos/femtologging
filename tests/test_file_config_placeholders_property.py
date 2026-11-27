@@ -42,7 +42,13 @@ _FRAGMENTS = st.one_of(
     st.just("%("),
     st.just(")"),
     st.just(")s"),
+    st.just("%()s"),  # empty name
+    st.just("%(a)d"),  # wrong suffix
+    st.just("%(a)"),  # no suffix at all
+    st.just("%(%(a)s"),  # nested opener resolved by one closer
     st.tuples(st.just("%("), _NAME, st.just(")s")).map("".join),
+    st.tuples(st.just("%("), _NAME, st.just(")d")).map("".join),
+    st.tuples(st.just("%("), st.just("%("), _NAME, st.just(")s")).map("".join),
 )
 
 _STRUCTURED_TEXT = st.lists(_FRAGMENTS, max_size=6).map("".join)
@@ -94,8 +100,11 @@ def test_expansion_agrees_with_the_regex_oracle(
             f"expanding {value!r} with {defaults!r} must yield the oracle's text"
         )
     else:
-        with pytest.raises(ValueError, match=re.escape(expected_error)):
+        with pytest.raises(ValueError, match=re.escape(expected_error)) as raised:
             _expand_placeholders(value, defaults)
+        assert str(raised.value) == expected_error, (
+            "the diagnostic must match the oracle exactly, with no extra text"
+        )
 
 
 @settings(max_examples=200, deadline=None)

@@ -90,7 +90,18 @@ def test_file_config_rejects_unresolved_placeholders_without_defaults(
 
 
 def test_file_config_rejects_oversized_handler_parameters(tmp_path: Path) -> None:
-    """A later handler's oversized kwargs fail before any configuration applies."""
+    """A later handler's oversized kwargs leave live configuration unchanged."""
+    good = tmp_path / "good.ini"
+    good.write_text(
+        "[loggers]\nkeys = root\n\n[handlers]\nkeys = first\n\n"
+        "[handler_first]\nclass = femtologging.StreamHandler\nargs = ()\n\n"
+        "[logger_root]\nlevel = INFO\nhandlers = first\n",
+        encoding="utf-8",
+    )
+    fileConfig(good)
+    root = get_logger("root")
+    before = (root.level, tuple(root.handler_identities_for_test()))
+
     ini = tmp_path / "oversized-parameter.ini"
     oversized = "x" * (_MAX_HANDLER_PARAMETER_CHARS + 1)
     ini.write_text(
@@ -106,6 +117,11 @@ def test_file_config_rejects_oversized_handler_parameters(tmp_path: Path) -> Non
         ValueError, match="handler 'second' kwargs has 65537 characters"
     ):
         fileConfig(ini)
+
+    after = (root.level, tuple(root.handler_identities_for_test()))
+    assert after == before, (
+        "a rejected fileConfig must leave the live logger configuration intact"
+    )
 
 
 def test_file_config_rejects_handler_level(tmp_path: Path) -> None:

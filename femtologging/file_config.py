@@ -21,9 +21,9 @@ if typ.TYPE_CHECKING:
 
 _DEFAULT_SECTION = "DEFAULT"
 # The limit counts Unicode code points, matching ``len(str)``. It bounds the
-# placeholder scan and the later literal parsing of caller-supplied INI text.
-# It applies to the raw handler ``args`` and ``kwargs`` values, not to expanded
-# output, whose cumulative size is tracked separately.
+# placeholder scan of the raw, caller-supplied INI text, not the expanded text
+# that is later parsed as a literal. It applies to the raw handler ``args`` and
+# ``kwargs`` values; cumulative expansion size is tracked separately.
 _MAX_HANDLER_PARAMETER_CHARS = 65_536
 # Note: Error messages are assigned to variables before raising to satisfy
 # TRY003/EM101 lint rules throughout this module.
