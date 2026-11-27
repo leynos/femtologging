@@ -42,19 +42,207 @@ pub(crate) fn stage_loggers<'a>(
     if !registry_has_room_for(named_logger_count(&mgr), additions.len()) {
         return Err(registry_full_error());
     }
-    requested_names
-        .into_iter()
-        .map(|name| {
-            let logger = match mgr.loggers.get(&name) {
-                Some(logger) => logger.clone_ref(py),
-                None => Py::new(
-                    py,
-                    FemtoLogger::with_parent(name.clone(), calculate_parent_name(&name))?,
-                )?,
-            };
-            Ok((name, logger))
-        })
-        .collect()
+    // Build the staged map by hand so a construction failure keeps the partial
+    // map alive past the read guard. Collecting here would drop the loggers
+    // built so far inside the guard, and a logger's teardown may wait for its
+    // shard or run a Python finalizer that needs the manager.
+    let mut staged = BTreeMap::new();
+    let mut construction_error = None;
+    for name in requested_names {
+        let logger = match mgr.loggers.get(&name) {
+            Some(logger) => logger.clone_ref(py),
+            // The same test-only wrapper the commit path uses, so one seam
+            // covers both fallible construction sites.
+            None => match construct_ancestor(py, &name) {
+                Ok(logger) => logger,
+                Err(error) => {
+                    construction_error = Some(error);
+                    break;
+                }
+            },
+        };
+        staged.insert(name, logger);
+    }
+    drop(mgr);
+    if let Some(error) = construction_error {
+        drop(staged);
+        return Err(error);
+    }
+    Ok(staged)
+}
+
+/// Values built before a fallible step failed, returned with the failure.
+///
+/// A caller that holds a guard must not let these values drop while it still
+/// holds it: tearing one down may wait for a worker or run a Python finalizer
+/// that needs the same lock. Returning them alongside the error is what lets
+/// the caller dispose of them on an unlocked path; a bare `Result<_, PyErr>`
+/// would have to drop them in place.
+pub(crate) struct PartialBatch<T> {
+    /// The failure that stopped the batch.
+    pub(crate) error: PyErr,
+    /// Values built before the failure, in request order.
+    pub(crate) built: Vec<(String, T)>,
+}
+
+impl<T> std::fmt::Debug for PartialBatch<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `PyErr`'s `Debug` attaches to the interpreter, and a caller can
+        // reach this `Debug` while holding the manager guard. Report only the
+        // Rust-owned count; the error travels to the caller intact.
+        formatter
+            .debug_struct("PartialBatch")
+            .field("built_len", &self.built.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The error [`register_missing_ancestors`] returns.
+pub(crate) type AncestorRegistrationError = PartialBatch<Py<FemtoLogger>>;
+
+/// Build *names* with *build*, returning what was built when it fails.
+///
+/// The partial batch leaves the loop with the error instead of being dropped
+/// by it, so a caller holding a guard can release the guard before the batch's
+/// values are destroyed.
+pub(crate) fn build_batch<T>(
+    names: impl IntoIterator<Item = String>,
+    mut build: impl FnMut(&str) -> PyResult<T>,
+) -> Result<Vec<(String, T)>, PartialBatch<T>> {
+    let mut built = Vec::new();
+    for name in names {
+        match build(&name) {
+            Ok(value) => built.push((name, value)),
+            Err(error) => return Err(PartialBatch { error, built }),
+        }
+    }
+    Ok(built)
+}
+
+/// Build one ancestor logger.
+///
+/// This is the production path: name validation, parent resolution and
+/// `Py::new` are the only ways construction can fail.
+#[cfg(not(test))]
+fn construct_ancestor(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+    let parent_name = calculate_parent_name(name);
+    FemtoLogger::with_parent(name.to_string(), parent_name)
+        .map_err(pyo3::PyErr::from)
+        .and_then(|logger| Py::new(py, logger))
+}
+
+/// Build one ancestor logger, honouring the test seam when it is set.
+///
+/// `register_missing_ancestors` is the only fallible step under the manager
+/// write guard, and no production input makes `FemtoLogger::with_parent` fail
+/// for one chosen name in a chain. Without this the non-empty partial batch
+/// could never leave the guarded scope in a test, so the rule that governs it
+/// would be unproven.
+#[cfg(test)]
+fn construct_ancestor(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+    if let Some(failing) = injected_construction_failure()
+        && failing == name
+    {
+        return Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "injected ancestor construction failure",
+        ));
+    }
+    construct_ancestor_without_seam(py, name)
+}
+
+/// The production construction path, with the test drop-probe attached.
+#[cfg(test)]
+fn construct_ancestor_without_seam(py: Python<'_>, name: &str) -> PyResult<Py<FemtoLogger>> {
+    let parent_name = calculate_parent_name(name);
+    let logger =
+        FemtoLogger::with_parent(name.to_string(), parent_name).map_err(pyo3::PyErr::from)?;
+    logger
+        .add_handler(std::sync::Arc::new(AncestorDropProbe))
+        .map_err(pyo3::PyErr::from)?;
+    Py::new(py, logger)
+}
+
+/// Whether the manager lock was free when the last ancestor probe dropped.
+#[cfg(test)]
+pub(crate) static ANCESTOR_DROP_SAW_FREE_LOCK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// How many ancestor probes have been destroyed.
+#[cfg(test)]
+pub(crate) static ANCESTOR_DROPS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Clear the probe counters before a test starts observing them.
+///
+/// The counters are process-wide, so a test resets them inside its serialised
+/// section; otherwise a logger destroyed by an earlier test would be counted.
+#[cfg(test)]
+pub(crate) fn reset_ancestor_probe() {
+    ANCESTOR_DROP_SAW_FREE_LOCK.store(true, std::sync::atomic::Ordering::SeqCst);
+    ANCESTOR_DROPS.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Handler attached to every test-built ancestor to observe its destruction.
+///
+/// A `Py<FemtoLogger>` drop is not itself observable, but dropping the logger
+/// drops its handlers, so a probe handler runs at the moment the partial batch
+/// is destroyed. Recording `try_write` there is what makes the ordering claim
+/// testable: if the batch were dropped under the manager guard, the probe would
+/// see the lock held.
+#[cfg(test)]
+struct AncestorDropProbe;
+
+#[cfg(test)]
+impl crate::handler::FemtoHandlerTrait for AncestorDropProbe {
+    fn handle(
+        &self,
+        _record: crate::log_record::FemtoLogRecord,
+    ) -> Result<(), crate::handler::HandlerError> {
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[cfg(test)]
+impl Drop for AncestorDropProbe {
+    fn drop(&mut self) {
+        ANCESTOR_DROP_SAW_FREE_LOCK.store(
+            super::MANAGER.try_write().is_some(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        ANCESTOR_DROPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Name whose construction the current test wants to fail, if any.
+#[cfg(test)]
+static INJECTED_CONSTRUCTION_FAILURE: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
+
+/// Return the name whose construction the current test wants to fail.
+#[cfg(test)]
+fn injected_construction_failure() -> Option<String> {
+    INJECTED_CONSTRUCTION_FAILURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Install or clear the test seam, returning the previous value.
+///
+/// The returned value lets a test restore whatever was there, so a panic
+/// mid-test cannot leave the seam armed for the next one.
+#[cfg(test)]
+pub(crate) fn set_injected_construction_failure(name: Option<String>) -> Option<String> {
+    std::mem::replace(
+        &mut *INJECTED_CONSTRUCTION_FAILURE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        name,
+    )
 }
 
 /// Register the missing ancestors of a configuration's loggers.
@@ -74,27 +262,35 @@ pub(crate) fn stage_loggers<'a>(
 ///
 /// `"root"` never appears here; the chain iterator stops before it, and the
 /// configured root logger arrives as one of the caller's staged plans.
+///
+/// # Errors
+///
+/// Returns [`AncestorRegistrationError`] when the registry has no room or a
+/// logger cannot be constructed. The error carries any ancestors built before
+/// the failure so the caller can drop them after releasing the manager guard.
 pub(crate) fn register_missing_ancestors<'a>(
     py: Python<'_>,
     mgr: &mut Manager,
     names: impl IntoIterator<Item = &'a str>,
     is_staged: impl Fn(&str) -> bool,
-) -> PyResult<()> {
+) -> Result<(), AncestorRegistrationError> {
     let novel = new_logger_names(mgr, names);
     if !registry_has_room_for(named_logger_count(mgr), novel.len()) {
-        return Err(registry_full_error());
+        return Err(PartialBatch {
+            error: registry_full_error(),
+            built: Vec::new(),
+        });
     }
     // Build every object before inserting any: construction is fallible, and a
-    // failure here must not leave a half-registered chain behind.
-    let ancestors = novel
-        .into_iter()
-        .filter(|name| !is_staged(name))
-        .map(|name| {
-            let parent_name = calculate_parent_name(&name);
-            Py::new(py, FemtoLogger::with_parent(name.clone(), parent_name)?)
-                .map(|logger| (name, logger))
-        })
-        .collect::<PyResult<Vec<_>>>()?;
+    // failure here must not leave a half-registered chain behind. `build_batch`
+    // carries a partial result out with the error rather than dropping it under
+    // the caller's write guard.
+    let building: Vec<String> = novel.into_iter().filter(|name| !is_staged(name)).collect();
+    let ancestors = build_batch(building, |name| {
+        // The seam is a test-only wrapper around the real build, so neither the
+        // hook nor the branch exists in a production build.
+        construct_ancestor(py, name)
+    })?;
     for (name, logger) in ancestors {
         // The `log` bridge resolves a target's threshold without attaching to
         // Python, so an ancestor created here must be indexed exactly as

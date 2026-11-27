@@ -22,7 +22,7 @@ use crate::{handler::FemtoHandlerTrait, level::FemtoLevel};
 use super::flush::FlushFailureStage;
 #[cfg(all(feature = "python", any(test, feature = "test-util")))]
 use super::test_identity::AttachmentIdentity;
-use super::{FemtoLogger, HandlerAttachment, PyHandler, validate_handler};
+use super::{FemtoLogger, PyHandler, validate_handler};
 
 #[pymethods]
 impl FemtoLogger {
@@ -112,23 +112,30 @@ impl FemtoLogger {
     }
 
     /// Remove a handler that was previously attached via `add_handler`.
+    ///
+    /// Returns `True` when one matching attachment was removed. Selection runs
+    /// outside every guard and the removal re-checks the selection under the
+    /// write guard, so a re-entrant caller can remove a selected attachment
+    /// first. One scan therefore yields every match, and every one of them is
+    /// tried; a re-entrant removal costs one target rather than the whole
+    /// call's remaining budget. A further scan is made only when a re-entrant
+    /// caller removed everything the previous scan found.
     #[pyo3(name = "remove_handler", text_signature = "(self, handler)")]
     pub fn py_remove_handler(&self, handler: Py<PyAny>) -> bool {
         Python::attach(|py| {
-            let mut handlers = self.handlers.write();
-            let matches_handler = |attachment: &HandlerAttachment| {
-                attachment
-                    .handler
-                    .as_any()
-                    .downcast_ref::<PyHandler>()
-                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
-            };
-            if let Some(pos) = handlers.iter().position(matches_handler) {
-                handlers.remove(pos);
-                true
-            } else {
-                false
+            for _ in 0..MAX_REMOVAL_SCANS {
+                let targets = self.select_py_handlers(py, &handler);
+                if targets.is_empty() {
+                    return false;
+                }
+                if targets
+                    .into_iter()
+                    .any(|target| self.remove_selected_handler(&target))
+                {
+                    return true;
+                }
             }
+            false
         })
     }
 
@@ -267,5 +274,62 @@ impl FemtoLogger {
             &self.flush_diagnostics,
             FlushFailureStage::CallerReturnDeadlineExceeded,
         )
+    }
+}
+
+/// How many times `remove_handler` scans before reporting no removable match.
+///
+/// A scan tries every match it found, so repeated re-entry cannot exhaust a
+/// budget measured in matching attachments. The bound only limits rescans
+/// after a re-entrant caller removed everything the previous scan found, and
+/// stops a handler whose `as_any` always does that from spinning forever.
+pub(crate) const MAX_REMOVAL_SCANS: usize = 4;
+
+impl FemtoLogger {
+    /// Select every attached handler wrapping *handler*, with no guard held.
+    ///
+    /// `as_any` is a trait method any handler may override, so calling it under
+    /// this logger's lock would deadlock a handler that re-enters the logger.
+    /// The clones keep the scan valid without the guard.
+    fn select_py_handlers(
+        &self,
+        py: Python<'_>,
+        handler: &Py<PyAny>,
+    ) -> Vec<Arc<dyn FemtoHandlerTrait>> {
+        let candidates: Vec<Arc<dyn FemtoHandlerTrait>> = {
+            let handlers = self.handlers.read();
+            handlers
+                .iter()
+                .map(|attachment| Arc::clone(&attachment.handler))
+                .collect()
+        };
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                candidate
+                    .as_any()
+                    .downcast_ref::<PyHandler>()
+                    .is_some_and(|py_h| py_h.obj.bind(py).is(handler.bind(py)))
+            })
+            .collect()
+    }
+
+    /// Remove the attachment holding *target*, reporting whether it was there.
+    ///
+    /// Take the removed attachment out of the guarded block: dropping it inside
+    /// would run a Python finalizer that may re-enter this logger and take the
+    /// same write lock. The drop happens after the guard is gone but still
+    /// inside `Python::attach`, so decref is immediate.
+    fn remove_selected_handler(&self, target: &Arc<dyn FemtoHandlerTrait>) -> bool {
+        let removed = {
+            let mut handlers = self.handlers.write();
+            handlers
+                .iter()
+                .position(|attachment| Arc::ptr_eq(&attachment.handler, target))
+                .map(|pos| handlers.remove(pos))
+        };
+        let is_removed = removed.is_some();
+        drop(removed);
+        is_removed
     }
 }

@@ -198,16 +198,19 @@ impl FemtoLogger {
 
     /// Detach a handler previously added to this logger.
     pub fn remove_handler(&self, handler: &Arc<dyn FemtoHandlerTrait>) -> bool {
-        let mut handlers = self.handlers.write();
-        if let Some(pos) = handlers
-            .iter()
-            .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
-        {
-            handlers.remove(pos);
-            true
-        } else {
-            false
-        }
+        // Destructors and finalizers must not run while a collection guard is
+        // held: dropping the last owner of a Python handler can re-enter this
+        // logger and try to acquire the same lock.
+        let removed = {
+            let mut handlers = self.handlers.write();
+            handlers
+                .iter()
+                .position(|attachment| Arc::ptr_eq(&attachment.handler, handler))
+                .map(|pos| handlers.remove(pos))
+        };
+        let is_removed = removed.is_some();
+        drop(removed);
+        is_removed
     }
 
     /// Remove all handlers from this logger.
@@ -216,25 +219,42 @@ impl FemtoLogger {
     /// already queued retain their captured handler set and will still be
     /// dispatched to those handlers.
     pub fn clear_handlers(&self) {
-        self.handlers.write().clear();
+        // Take the collection under the guard and release it before the
+        // attachments drop; a handler's finalizer may log back through this
+        // logger and would otherwise deadlock on the write lock.
+        let removed = {
+            let mut handlers = self.handlers.write();
+            std::mem::take(&mut *handlers)
+        };
+        drop(removed);
     }
 
     /// Detach a filter previously added to this logger, matching by identity.
     ///
     /// Removes the first matching attachment. Returns `true` if one was removed.
     pub fn remove_filter(&self, filter: &Arc<dyn FemtoFilter>) -> bool {
-        let mut filters = self.filters.write();
-        if let Some(pos) = filters.iter().position(|f| Arc::ptr_eq(f, filter)) {
-            filters.remove(pos);
-            true
-        } else {
-            false
-        }
+        // As with handlers, a filter may own the last reference to user code
+        // whose finalizer re-enters this logger.
+        let removed = {
+            let mut filters = self.filters.write();
+            filters
+                .iter()
+                .position(|candidate| Arc::ptr_eq(candidate, filter))
+                .map(|pos| filters.remove(pos))
+        };
+        let is_removed = removed.is_some();
+        drop(removed);
+        is_removed
     }
 
     /// Remove all filters from this logger, so later records are not filtered by them.
     pub fn clear_filters(&self) {
-        self.filters.write().clear();
+        // See `clear_handlers`: release the guard before dropping filters.
+        let removed = {
+            let mut filters = self.filters.write();
+            std::mem::take(&mut *filters)
+        };
+        drop(removed);
     }
 
     /// Return whether configuration has disabled this logger.

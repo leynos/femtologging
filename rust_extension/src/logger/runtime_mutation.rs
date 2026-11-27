@@ -41,7 +41,13 @@ impl FemtoLogger {
         &self,
         handlers: Vec<HandlerAttachment>,
     ) -> Vec<HandlerAttachment> {
-        std::mem::replace(&mut *self.handlers.write(), handlers)
+        // Destructors and finalizers must not run while a collection guard is
+        // held, so the displaced attachments leave the guarded block intact and
+        // the caller drops them once its own guard and the GIL are released.
+        let mut current = self.handlers.write();
+        let displaced = std::mem::replace(&mut *current, handlers);
+        drop(current);
+        displaced
     }
 
     /// Replace the complete filter collection while holding its write lock.
@@ -55,7 +61,12 @@ impl FemtoLogger {
         &self,
         filters: Vec<Arc<dyn FemtoFilter>>,
     ) -> Vec<Arc<dyn FemtoFilter>> {
-        std::mem::replace(&mut *self.filters.write(), filters)
+        // As with handlers: the old filters outlive the guard and are dropped
+        // by the caller.
+        let mut current = self.filters.write();
+        let displaced = std::mem::replace(&mut *current, filters);
+        drop(current);
+        displaced
     }
 }
 

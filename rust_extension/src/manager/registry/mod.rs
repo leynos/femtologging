@@ -35,8 +35,12 @@ mod capacity;
 #[cfg(feature = "python")]
 mod config;
 
+#[cfg(all(test, feature = "python"))]
+pub(crate) use config::{ANCESTOR_DROP_SAW_FREE_LOCK, set_injected_construction_failure};
+#[cfg(all(test, feature = "python"))]
+pub(crate) use config::{ANCESTOR_DROPS, build_batch, reset_ancestor_probe};
 #[cfg(feature = "python")]
-pub(crate) use config::{register_missing_ancestors, stage_loggers};
+pub(crate) use config::{AncestorRegistrationError, register_missing_ancestors, stage_loggers};
 
 #[cfg(any(feature = "test-util", doc, test))]
 pub use capacity::MAX_LOGGERS;
@@ -160,10 +164,14 @@ pub(crate) fn registered_logger_levels() -> Vec<FemtoLevel> {
         .collect()
 }
 
-/// Clear the Python-specific runtime configuration while preserving loggers.
+/// Take the Python-specific runtime configuration, preserving loggers.
+///
+/// The caller drops the returned snapshot only after the manager guard ends:
+/// a handler may flush or join its worker, and a filter may own the last
+/// reference to a Python callable whose finalizer re-enters the manager.
 #[cfg(feature = "python")]
-pub(super) fn clear_runtime_state(mgr: &mut Manager) {
-    mgr.runtime = RuntimeStateSnapshot::default();
+pub(super) fn clear_runtime_state(mgr: &mut Manager) -> RuntimeStateSnapshot {
+    std::mem::take(&mut mgr.runtime)
 }
 
 /// There is no Python runtime configuration to clear in this feature lane.
@@ -298,7 +306,7 @@ pub(crate) fn replace_runtime_state(
     logger_states: BTreeMap<String, LoggerAttachmentState>,
 ) -> RuntimeStateSnapshot {
     let mut mgr = MANAGER.write();
-    std::mem::replace(
+    let displaced = std::mem::replace(
         &mut mgr.runtime,
         RuntimeStateSnapshot {
             handler_registry,
@@ -306,7 +314,9 @@ pub(crate) fn replace_runtime_state(
             filter_registry,
             logger_states,
         },
-    )
+    );
+    drop(mgr);
+    displaced
 }
 
 /// Flush every registered logger for the Rust `log` bridge.
@@ -368,16 +378,23 @@ pub(crate) fn flush_all_handlers_with_metrics(
 /// across every bounded wait and serialize a full reset.
 #[pyfunction]
 pub fn reset_manager() {
-    let loggers = {
+    // Take both registries under the lock; tearing either down may wait on a
+    // worker or re-enter the manager, so neither drops there.
+    let (loggers, displaced_runtime) = {
         let mut mgr = MANAGER.write();
-        clear_runtime_state(&mut mgr);
+        let displaced_runtime = clear_runtime_state(&mut mgr);
         #[cfg(feature = "log-compat")]
         LOGGER_LEVEL_INDEX.write().clear();
-        std::mem::take(&mut mgr.loggers)
+        (std::mem::take(&mut mgr.loggers), displaced_runtime)
     };
-    // Dropping the loggers outside the registry lock may wait for queued
-    // records, so refresh the facade maximum only after that drain.
-    drop(loggers);
+    #[cfg(feature = "python")]
+    // Destroy both halves with the interpreter detached: a handler or logger
+    // destructor may wait for completion or queued records, and holding the
+    // GIL across that wait stalls unrelated Python threads.
+    Python::attach(|py| py.detach(move || drop((displaced_runtime, loggers))));
+    #[cfg(not(feature = "python"))]
+    // Dropping outside the guard may wait for queued records.
+    drop((displaced_runtime, loggers));
     #[cfg(feature = "log-compat")]
     crate::log_compat::refresh_global_max_level();
 }

@@ -369,6 +369,17 @@ mod logger_tests_drop;
 #[path = "logger_tests_drop_reporting.rs"]
 mod logger_tests_drop_reporting;
 
+// Guard-release-before-drop tests live in a separate module to respect
+// the 400-line limit.
+#[path = "logger_tests_lock_release.rs"]
+mod logger_tests_lock_release;
+
+// Python removal tests need Python objects, so they are separate from the
+// feature-independent lock-release module.
+#[cfg(feature = "python")]
+#[path = "logger_tests_python_removal.rs"]
+mod logger_tests_python_removal;
+
 // Drain-on-drop and pool-shape tests are in a separate module to respect
 // the 400-line limit.
 #[path = "logger_tests_shutdown.rs"]

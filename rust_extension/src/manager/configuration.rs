@@ -25,7 +25,7 @@ use crate::{
 #[cfg(feature = "log-compat")]
 use super::registry::index_logger_level;
 use super::{
-    registry::{MANAGER, register_missing_ancestors},
+    registry::{AncestorRegistrationError, MANAGER, register_missing_ancestors},
     runtime_state::{LoggerAttachmentState, RuntimeStateSnapshot, SharedFilters, SharedHandlers},
 };
 
@@ -178,14 +178,15 @@ pub(crate) fn commit_configuration(
     })
     .err();
     drop(planned);
-    if let Some(error) = refusal {
+    if let Some(refusal) = refusal {
         // The staged loggers and registries own handlers whose drop can flush
         // or join a worker. Release the manager lock, then the GIL, before
         // those resources are torn down; dropping them under either would
         // deadlock a worker that needs the lock or the interpreter.
+        let AncestorRegistrationError { error, built } = refusal;
         drop(manager);
         drop(transaction);
-        py.detach(move || drop((loggers, handler_registry, filter_registry)));
+        py.detach(move || drop((loggers, handler_registry, filter_registry, built)));
         return Err(error);
     }
 

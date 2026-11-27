@@ -70,6 +70,10 @@ libraries. Use the links below to explore each topic.
   - Records the builders' `const` and `#[must_use]` setter contract, its
     compile-time fixtures and the disclosed `missing_const_for_fn` deferral.
 
+- [adrs/adr-0011-release-collection-locks-before-dropping-user-resources.md](./adrs/adr-0011-release-collection-locks-before-dropping-user-resources.md)
+  - Records the rule that logger and manager locks cover collection mutation
+    only, so re-entrant destructors and finalizers run with no guard held.
+
 ## Logging Architecture
 
 - [logging-class-overview.md](./logging-class-overview.md)
