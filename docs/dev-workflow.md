@@ -26,7 +26,9 @@ across Python and Rust code.
   target rather than an independently installed `ty` version.
 
 - `make build` – install the locked development group and build the extension
-  with `maturin develop --features python,test-util`.
+  with `maturin develop --features python,test-util`. Property-test modules
+  import Hypothesis at collection time, so run this target before
+  `uv run --locked pytest`; `make test` already depends on it.
 
 - `make check-api-boundary` – build the extension, then build a release wheel
   from the production maturin configuration and compile three default-feature
