@@ -20,7 +20,10 @@ pub(crate) mod isolated_child;
 pub mod json_round_trip;
 #[cfg(feature = "python")]
 pub mod logging_test_helpers;
-#[cfg(feature = "python")]
+// Its only caller is the py-handler call suite, which is excluded under
+// `--cfg loom`; keeping the module out of that build avoids the dead-code
+// errors the Loom Clippy lane reports for it.
+#[cfg(all(feature = "python", not(loom)))]
 pub mod stderr_capture;
 #[cfg(feature = "python")]
 pub mod traceback_test_helpers;
