@@ -1,223 +1,1795 @@
-# Femtologging user guide
+# Femtologging users' guide
 
-Femtologging is an asynchronous logging runtime for Python applications that
-delegates IO and record fan-out to Rust worker threads. This guide covers the
-features that are currently implemented, how they differ from the CPython
-`logging` module, and the practical caveats you need to keep in mind when
-building production systems on top of femtologging.
+Femtologging is a logging library for Python whose loggers hand every record to
+Rust worker threads. Your code enqueues a record and carries on; formatting,
+file writes, and network calls happen elsewhere.
 
-## Quick start
+This guide describes femtologging 0.2.0-beta1, an early-adopter release whose
+interfaces may still change, so pin the version you depend on. It starts with a
+single log message and builds, one idea at a time, towards production
+configuration and Rust integration. Read it top to bottom the first time, or
+jump straight to the part you need:
 
-After the first release is published, install the package from PyPI:
+- **New to femtologging?** Start with [Get started](#get-started), then
+  [Log from your code](#log-from-your-code).
+- **Choosing where records go?** See
+  [Send records somewhere](#send-records-somewhere).
+- **Configuring an application?** See [Configure logging](#configure-logging).
+- **Running in production?** See [Run in production](#run-in-production).
+- **Coming from the standard library?** Keep
+  [Differences from the standard library](#differences-from-the-standard-library)
+  open beside you; femtologging looks familiar, but some behaviour differs on
+  purpose.
+- **Upgrading from 0.1?** Read the
+  [0.2.0 migration guide](v0-2-0-migration-guide.md) first.
 
+Every Python example in this guide is run by the test suite exactly as it
+appears here, and each one checks its own result with `assert`, so you can see
+what should happen as well as how to make it happen.
+
+______________________________________________________________________
+
+## Get started
+
+### Install femtologging
+
+Femtologging needs Python 3.12 or newer. Version 0.2.0-beta1 is a pre-release,
+and installers skip pre-releases unless asked, so request it explicitly:
+
+<!-- tested-example: guide-install-pip -->
 ```bash
-pip install femtologging
+python -m pip install "femtologging>=0.2.0b1"
 ```
 
-The first release has not yet been published. Until then, install from the
-repository with `pip install .`. Maturin is the PEP 517 backend that compiles
-the Rust extension, so `rustc` and `cargo` must be available on `PATH`. This
-source build uses the production feature set and excludes the test-only
-`test-util` feature.
+Or add it to a [uv](https://docs.astral.sh/uv/) project:
 
-Then emit a log record:
+<!-- tested-example: guide-install-uv -->
+```bash
+uv add "femtologging>=0.2.0b1"
+```
 
+The same requirement keeps working once 0.2.0 itself is released.
+
+If no pre-built wheel matches your platform, the installer compiles the Rust
+extension from source with [maturin](https://maturin.rs/), which needs `rustc`
+and `cargo` from the [Rust toolchain](https://www.rust-lang.org/tools/install)
+on your `PATH`. You can also build a checkout of the repository directly:
+
+<!-- tested-example: guide-install-source -->
+```bash
+git clone https://github.com/leynos/femtologging.git
+cd femtologging
+python -m pip install .
+```
+
+### Write your first log message
+
+<!-- tested-example: guide-first-message -->
 ```python
 from femtologging import FemtoStreamHandler, get_logger
 
 logger = get_logger("demo.app")
-logger.add_handler(FemtoStreamHandler.stderr())
+handler = FemtoStreamHandler.stderr()
+logger.add_handler(handler)
 
-logger.log("INFO", "hello from femtologging")
+message = logger.info("hello from femtologging")
+assert message == "demo.app [INFO] hello from femtologging"
+
+# Wait for the logger's worker to hand over its records, then stop the
+# handler's worker thread.
+assert logger.flush_handlers()
+handler.close()
 ```
 
-Handlers run in background threads, so remember to flush or close them before
-your process exits.
+Running it prints:
 
-## Architectural overview
+<!-- tested-example: guide-first-message-output -->
+```text
+demo.app [INFO] hello from femtologging
+```
 
-- Loggers share a small, fixed pool of dispatch shards, one worker thread
-  each, sized from the machine's available parallelism (one to four). A logger
-  is assigned a shard rather than owning a thread, so the threads a process
-  spends on logging follow the machine rather than the number of loggers it has
-  created. Calls to `logger.log()` enqueue a record on the logger's shard and
-  return immediately.
-- Each shard's queue holds 1,024 records multiplied by the number of shards in
-  the pool, so a four-shard pool gives each shard a depth of 4,096. Each logger
-  may hold at most half of its shard's depth, never more than 1,024, so the
-  pool grows with the machine while any one logger's share does not. The
-  per-logger limit stops one logger from consuming every permit, so an
-  over-active logger cannot crowd the loggers sharing its shard out of the
-  queue. It does not stop a handler that never returns from blocking the
-  shard's single worker while holding its permits: the other loggers on that
-  shard can then exhaust their own allowances and drop records even though the
-  shard has permits left. Separate shards, and the machine-derived shard count,
-  are what keep one stuck handler from stopping the whole process.
-- Handlers (`FemtoStreamHandler`, `FemtoFileHandler`,
-  `FemtoRotatingFileHandler`, and `FemtoSocketHandler`) also own dedicated
-  queues and worker threads so file IO, stdout/stderr writes, and socket
-  operations run on worker threads. A `handle()` call enqueues work when space
-  is available; behaviour on a full queue depends on the handler. For file
-  handlers, direct `handle()` calls using `"block"` or `"timeout:N"` wait in
-  the calling thread. `flush()` and `close()` may also wait for worker
-  completion. See
+Three things happened there:
+
+1. `get_logger("demo.app")` returned the logger registered under that name,
+   creating it the first time.
+2. `add_handler()` attached a handler that writes to standard error.
+3. `logger.info()` checked the level, queued the record, and returned the
+   formatted text straight away. A worker thread wrote it out a moment later.
+
+The last two lines matter more than they look. Records are written by
+background threads, so a process that exits immediately can leave records in a
+queue. `flush_handlers()` waits for the worker serving the logger, and
+`close()` waits for the handler's worker and shuts it down.
+[Shut down cleanly](#shut-down-cleanly) covers this in more depth.
+
+### How a record travels
+
+Loggers share a small, fixed pool of dispatch workers: one to four threads,
+depending on the machine, however many loggers you create. Each logger is
+assigned to one of these workers and its queue, called a shard. Each built-in
+handler has its own queue and worker thread as well. A log call does a little
+work on your thread, then hands the record over:
+
+<!-- tested-example: guide-record-flow-diagram -->
+```mermaid
+flowchart LR
+    caller["Your thread: logger.info()"] -->|"level and filter checks"| lq["Shard queue"]
+    lq --> lw["Shared dispatch worker"]
+    lw --> hq["Handler queue"]
+    hq --> hw["Handler worker thread"]
+    hw --> sink["Stream, file, socket, or HTTP endpoint"]
+```
+
+_Figure 1: A record crosses two queues before it reaches its destination._
+
+Level checks, filters, and context capture run on your thread, so their results
+are decided before the call returns. Propagation to parent loggers happens on
+your thread too. Formatting and I/O run on the handler's worker. When a logger
+or its shard is at capacity, femtologging drops the record and counts it rather
+than blocking your code;
+[Handle back-pressure and dropped records](#handle-back-pressure-and-dropped-records)
+explains how to tune that.
+
+______________________________________________________________________
+
+## Log from your code
+
+### Name your loggers
+
+`get_logger(name)` returns the same `FemtoLogger` every time it is called with
+the same name. `getLogger(name)` is an alias for code written against the
+standard library's `logging.getLogger`.
+
+Dotted names form a hierarchy. Each logger's parent is the name before its last
+dot, and the top of every chain is the logger named `root`:
+
+<!-- tested-example: guide-logger-names -->
+```python
+import femtologging
+from femtologging import get_logger
+
+api = get_logger("shop.api")
+assert get_logger("shop.api") is api
+assert femtologging.getLogger("shop.api") is api
+assert api.parent == "shop"
+assert get_logger("shop").parent == "root"
+assert get_logger("root").parent is None
+
+# Names must not be empty, start or end with a dot, or contain "..".
+try:
+    get_logger("shop..api")
+except ValueError as error:
+    assert "consecutive dots" in str(error)
+else:
+    raise AssertionError("an invalid name should be rejected")
+```
+
+Name loggers after stable components, such as a module, subsystem, or service,
+not after the data flowing through them. A logger is never evicted, so one
+logger per request, tenant, or user would grow for the life of the process. Put
+those identifiers in [structured fields](#add-context-to-records) instead:
+
+<!-- tested-example: guide-logger-name-limits -->
+```python
+from femtologging import get_logger
+
+# Not get_logger(f"requests.{request_id}"): that is one logger per request.
+logger = get_logger("requests")
+assert logger.info("handled", extra={"request_id": 42}) is not None
+
+try:
+    get_logger("x" * 256)
+except ValueError as error:
+    assert str(error) == "logger name cannot exceed 255 bytes; got 256 bytes"
+else:
+    raise AssertionError("an oversized name should be rejected")
+```
+
+Femtologging enforces this with two kinds of limit:
+
+- A name may be at most 255 UTF-8 bytes and 32 dot-separated segments, and may
+  not contain control characters or the Unicode line and paragraph separators.
+  Those characters could otherwise split one rendered record across two lines.
+  A name that breaks these rules raises `ValueError`.
+- The registry holds at most 10,000 named loggers. Once it is full, asking for
+  a new name raises `RuntimeError`. Names already registered keep working, and
+  `root` is always available and does not count towards the limit.
+
+### Emit records
+
+Each logger has a method per level, and `log()` takes the level as its first
+argument:
+
+<!-- tested-example: guide-emit-records -->
+```python
+from femtologging import get_logger
+
+logger = get_logger("billing")
+
+assert logger.info("invoice sent") == "billing [INFO] invoice sent"
+assert logger.warning("card expiring") == "billing [WARN] card expiring"
+assert logger.error("charge failed") == "billing [ERROR] charge failed"
+assert logger.critical("ledger offline") == "billing [CRITICAL] ledger offline"
+assert logger.log("warning", "level names are case-insensitive") is not None
+
+# Below the logger's level, nothing is queued and the call returns None.
+assert logger.debug("not shown") is None
+```
+
+A few details are worth knowing early:
+
+- Level names are `TRACE`, `DEBUG`, `INFO`, `WARN` (or `WARNING`), `ERROR`, and
+  `CRITICAL`, in any letter case. Warnings are rendered as `WARN`.
+- The methods return the record's default rendering
+  (`"{logger} [{level}] {message}"`) when the record is accepted, and `None`
+  when it is filtered out or the logger is
+  [disabled](#disable-loggers-a-configuration-omits). The standard library
+  always returns `None`.
+- Messages are final strings. There is no `%`-style lazy formatting, so build
+  the text first, for example with an f-string.
+- The default rendering keeps each message on one line. Line breaks in the
+  message are written as escapes such as `\n`, so a message cannot forge a line
+  that looks like another record. See [Multiline messages](#multiline-messages).
+- Module-level `femtologging.debug()`, `info()`, `warn()`, and `error()` log
+  through the root logger, or through the logger named by their `name` keyword
+  argument.
+
+### Control levels
+
+Every logger starts at `INFO`. Change it with `set_level()`, read it back from
+the `level` property, and ask `isEnabledFor()` before building an expensive
+message:
+
+<!-- tested-example: guide-levels -->
+```python
+from femtologging import get_logger
+
+logger = get_logger("reports")
+assert logger.level == "INFO"
+assert not logger.isEnabledFor("DEBUG")
+
+logger.set_level("DEBUG")
+assert logger.isEnabledFor("DEBUG")
+assert logger.debug("row count: 42") == "reports [DEBUG] row count: 42"
+
+# A logger's level is its own: raising the root level does not filter
+# records on loggers that have already set theirs.
+get_logger("root").set_level("ERROR")
+assert logger.debug("still shown") is not None
+```
+
+Each logger checks only its own level. Unlike the standard library, a child
+logger does not inherit its parent's level, so set levels on the loggers that
+emit records, or use [`ConfigBuilder`](#build-a-configuration-in-code) and
+`with_default_level()` to give unconfigured loggers a common level.
+
+### Understand propagation
+
+After a logger hands a record to its own handlers, it passes the record up to
+its parent, which hands it to _its_ handlers, and so on up to `root`. This is
+how a single handler on `root` can serve a whole application. Call
+`set_propagate(False)` to stop a logger passing records upwards:
+
+<!-- tested-example: guide-propagation -->
+```python
+from femtologging import FemtoFileHandler, get_logger
+
+root = get_logger("root")
+everything = FemtoFileHandler("everything.log")
+root.add_handler(everything)
+
+get_logger("shop.api").info("served by the root handler")
+
+quiet = get_logger("shop.audit")
+quiet.set_propagate(False)
+assert not quiet.propagate
+quiet.info("kept away from root")
+
+assert root.flush_handlers()
+everything.close()
+with open("everything.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "shop.api [INFO] served by the root handler\n"
+```
+
+### Record exceptions and call stacks
+
+Pass `exc_info=True` inside an `except` block to attach the active exception
+and its traceback, or call `exception()`, which does that for you at `ERROR`
+level. Pass `stack_info=True` to attach the current call stack:
+
+<!-- tested-example: guide-exceptions -->
+```python
+from femtologging import get_logger
+
+logger = get_logger("payments")
+
+try:
+    1 / 0
+except ZeroDivisionError:
+    rendered = logger.exception("refund calculation failed")
+
+assert rendered is not None
+assert rendered.startswith("payments [ERROR] refund calculation failed\n")
+assert "ZeroDivisionError: division by zero" in rendered
+
+trace = logger.info("checkpoint reached", stack_info=True)
+assert trace is not None
+assert "Stack (most recent call last):" in trace
+```
+
+`exc_info` also accepts an exception instance or a `(type, value, traceback)`
+tuple. `False` and `None` capture nothing.
+
+______________________________________________________________________
+
+## Add context to records
+
+Plain messages are fine for people. Machines prefer fields. Femtologging
+attaches structured key-value fields to records in two ways: per call, with
+`extra`, and for a whole block of code, with `log_context()`.
+
+### Attach fields to one record
+
+`log()` and the level methods accept a keyword-only `extra` mapping:
+
+<!-- tested-example: guide-extra -->
+```python
+from femtologging import get_logger
+
+logger = get_logger("checkout")
+logger.info("order placed", extra={"order_id": 1042, "express": True})
+
+try:
+    logger.info("rejected", extra={"items": ["not", "a", "scalar"]})
+except TypeError as error:
+    assert "context values must be" in str(error)
+else:
+    raise AssertionError("a list value should be rejected")
+```
+
+Keys must be strings and values must be `str`, `int`, `float`, `bool`, or
+`None`. An invalid mapping raises an exception on your thread instead of
+silently losing data. `exception()` does not accept `extra`; use
+`error(..., exc_info=True, extra=...)` when you need both.
+
+### Attach fields to a block of code
+
+`log_context()` is a context manager. Every record created inside the block
+carries its fields, and nested blocks override same-named fields from outer
+ones. When a field appears in both `log_context()` and `extra`, the `extra`
+value wins.
+
+It is built on `contextvars`, so it is safe to hold across `await`: each
+`asyncio` task sees only its own fields, even when tasks share a thread. A
+child task inherits the fields that were active when it was created.
+
+<!-- tested-example: guide-log-context -->
+```python
+import asyncio
+
+from femtologging import get_logger, log_context
+
+
+class FieldCollector:
+    """Keep the structured fields of every record the logger delivers."""
+
+    def __init__(self) -> None:
+        self.fields: list[dict[str, str]] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        """Accept plain records; unused because handle_record is defined."""
+
+    def handle_record(self, record: dict) -> None:
+        self.fields.append(record["metadata"]["key_values"])
+
+
+logger = get_logger("service")
+collector = FieldCollector()
+logger.add_handler(collector)
+
+
+async def handle_request(request_id: int) -> None:
+    with log_context(request_id=request_id, user="alice"):
+        await asyncio.sleep(0.01)
+        logger.info("request accepted", extra={"user": "bob"})
+
+
+async def main() -> None:
+    await asyncio.gather(handle_request(1), handle_request(2))
+
+
+asyncio.run(main())
+assert logger.flush_handlers()
+
+# Field values reach handlers as strings.
+assert sorted(fields["request_id"] for fields in collector.fields) == ["1", "2"]
+assert {fields["user"] for fields in collector.fields} == {"bob"}
+```
+
+Fields from both sources must follow the same rules:
+
+- Keys are non-empty strings that do not use a reserved name. A reserved name
+  raises `ValueError`, even when the record is below the logger's level.
+- Values are `str`, `int`, `float`, `bool`, or `None`.
+- A record carries at most 64 fields, each key at most 64 UTF-8 bytes, each
+  value at most 1,024 UTF-8 bytes, and 16 kibibytes (KiB) of fields in total.
+
+The reserved names are the record's own fields. Matching is exact and
+case-sensitive, so `Name`, `logger_name`, and `request_id` are fine:
+
+- The standard library's `LogRecord` attributes: `name`, `msg`, `args`,
+  `levelname`, `levelno`, `pathname`, `filename`, `module`, `exc_info`,
+  `exc_text`, `stack_info`, `lineno`, `funcName`, `created`, `msecs`,
+  `relativeCreated`, `thread`, `threadName`, `process`, `processName`,
+  `message`, `asctime`, and `taskName`.
+- Femtologging's own: `logger`, `level`, `metadata`, `module_path`,
+  `line_number`, `timestamp`, `thread_id`, `thread_name`, and `key_values`.
+
+<!-- tested-example: guide-reserved-field -->
+```python
+from femtologging import get_logger, log_context
+
+logger = get_logger("checkout")
+
+try:
+    logger.info("accepted", extra={"message": "ok"})
+except ValueError:
+    pass
+else:
+    raise AssertionError("a reserved name should be rejected")
+
+with log_context(message_id="ok"):
+    assert logger.info("accepted") is not None
+```
+
+From Rust, `push_log_context` returns `LogContextError::ReservedKey` for a
+reserved name, and `log_with_metadata` drops the record and counts it in
+`get_context_dropped()`.
+
+______________________________________________________________________
+
+## Send records somewhere
+
+Handlers decide where records go. Femtologging ships handlers for standard
+streams, files, rotating files, sockets, and HTTP endpoints. Each built-in
+handler owns a queue and a worker thread. Python objects can act as handlers
+too, and existing standard library handlers can be wrapped.
+
+Every built-in handler supports two calls you should know:
+
+- `flush()` waits (one second by default) for the handler's worker to write
+  out what it has queued. It returns `True` on success, and `False` when the
+  handler is closed or the worker does not answer in time.
+- `close()` stops the worker thread after it has written its queue. It is safe
+  to call more than once; only the first call does the shutdown work. Stream
+  and file handlers can also be closed from several threads at once, and every
+  caller waits until the worker has stopped.
+
+Both calls release Python's global interpreter lock (GIL) while they wait, so
+your other Python threads keep running.
+
+### Write to standard output or standard error
+
+`FemtoStreamHandler.stderr()` and `FemtoStreamHandler.stdout()` write to the
+matching stream. To change the queue capacity, the flush timeout, or the
+formatter, use `StreamHandlerBuilder`:
+
+<!-- tested-example: guide-stream-builder -->
+```python
+from femtologging import StreamHandlerBuilder, get_logger
+
+handler = (
+    StreamHandlerBuilder
+    .stdout()
+    .with_capacity(4096)
+    .with_flush_after_ms(250)
+    .with_formatter(lambda record: f"{record['level']}: {record['message']}")
+    .build()
+)
+logger = get_logger("cli")
+logger.add_handler(handler)
+logger.info("ready")
+
+assert logger.flush_handlers()
+assert handler.flush()
+handler.close()
+```
+
+`with_flush_after_ms()` sets the handler's flush timeout in milliseconds; the
+default is one second. It limits both calls that wait for the worker:
+
+- `flush()` returns `True` once the worker has flushed the stream. Handing over
+  the request and waiting for the answer share the one timeout, so a slow
+  worker makes `flush()` return `False`. So do a closed handler and a failed
+  write.
+- `close()` stops accepting records and waits, up to the same timeout, for the
+  worker to write what is already queued. If the time runs out, `close()`
+  returns anyway and the worker goes on writing to the stream in the background.
+  `close()` returns `None` in both cases, so it cannot tell you which happened.
+
+Both calls release the GIL while they wait, so a Python formatter can finish
+its work on the worker thread.
+
+Dropped records are reported as
+`FemtoStreamHandler: 12 log records dropped since the last report`. The count
+includes drops held back while warnings were rate-limited, and `flush()`,
+`close()`, and dropping the handler report any count still held back.
+
+### Write to a file
+
+<!-- tested-example: guide-file-handler -->
+```python
+from femtologging import FemtoFileHandler, get_logger
+
+handler = FemtoFileHandler("app.log", capacity=1024, flush_interval=1)
+logger = get_logger("app")
+logger.add_handler(handler)
+logger.info("saved to disk")
+
+assert logger.flush_handlers()
+handler.close()
+with open("app.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "app [INFO] saved to disk\n"
+```
+
+`FemtoFileHandler(path, capacity=1024, flush_interval=1, policy="drop")`
+appends to `path`, creating it if needed. `flush_interval` counts _records_,
+not seconds: the worker flushes the file after that many writes.
+
+`policy` decides what happens when the handler's queue is full:
+
+- `"drop"` (the default) discards the record.
+- `"block"` waits until there is room. The wait has no time limit: if the
+  worker stops draining, because of a stalled disk or a formatter that never
+  returns, the wait lasts as long as that does.
+- `"timeout:N"` waits up to `N` milliseconds, then discards the record.
+
+Who waits depends on how the record arrives. Through a logger, it is the shared
+dispatch worker that waits, which delays every logger on its shard. A direct
+`handler.handle()` call waits in your thread, and when it discards a record it
+raises `RuntimeError`.
+
+`FileHandlerBuilder` offers the same settings fluently, through
+`with_capacity()`, `with_flush_after_records()`, `with_filters()`,
+`with_overflow_policy(OverflowPolicy.drop() | OverflowPolicy.block() |
+OverflowPolicy.timeout(ms))`,
+and `with_formatter()`.
+
+#### Concurrency and the GIL for file handlers
+
+`flush()` returns `True` when the worker confirms the flush within one second,
+and `False` otherwise. Handing over the request and waiting for the answer
+share that second, so a busy worker makes `flush()` return `False` sooner.
+`True` means the flush itself succeeded. It does not prove that every record
+reached the disk, because a record whose write fails is reported and skipped.
+
+`close()` can be called more than once, and from several threads. The first
+call shuts the worker down, and every call waits for the same outcome, for at
+most one second. If the worker has not finished by then, `close()` logs a
+warning and returns while the worker may still be running.
+
+Explicit `handle()`, `flush()`, and `close()` calls release the GIL while they
+wait, so your other Python threads keep running during slow file I/O. This has
+three consequences:
+
+- Code that relied on one of these calls keeping other Python threads out must
+  now use its own lock.
+- Once a `close()` has started, other threads see a closed handler: `handle()`
+  raises `RuntimeError`, `flush()` returns `False`, and a second `close()`
+  waits for the first to finish.
+- `close()` does not cancel a `handle()` that is already waiting under
+  `"block"`. Let the worker catch up before closing.
+
+Call `close()` yourself rather than leaving it to garbage collection. The
+destructor does the same shutdown, but it holds the GIL while it waits.
+
+On CPython 3.12 and earlier, a worker that is still running a Python formatter
+when the interpreter shuts down can crash the process. If a `close()` timed
+out, get the worker moving again and confirm that it finished before the
+process exits.
+
+`handler.wait_diagnostics()` tells you how those waits went. It returns a
+dictionary with the same keys every time: a count for each outcome of
+`handle()`, `flush()`, and `close()` (such as `handle_queue_full` or
+`close_timed_out`), the total and longest wait in microseconds, and
+`waits_in_flight`, the number of calls waiting right now. Reading it is cheap
+and records nothing. The counts cover the handler's whole life, so to check one
+call, compare a reading taken before it with one taken after:
+
+<!-- tested-example: guide-file-wait-diagnostics -->
+```python
+from femtologging import FemtoFileHandler
+
+handler = FemtoFileHandler("diagnostics.log")
+handler.handle("app", "INFO", "hello")
+
+before = handler.wait_diagnostics()
+handler.close()
+after = handler.wait_diagnostics()
+
+assert after["close_completed"] == before["close_completed"] + 1
+assert after["waits_in_flight"] == 0
+```
+
+With the `tracing-compat` feature, each wait also emits a
+`femtologging::internal` trace event, described in the
+[developers' guide](developers-guide.md#handler-wait-diagnostics).
+
+### Rotate files by size
+
+`FemtoRotatingFileHandler` rolls the file over before a write would take it past
+`max_bytes`. The current file becomes `app.log.1`, older backups shift up to
+`backup_count`, and the oldest is removed:
+
+<!-- tested-example: guide-rotating-handler -->
+```python
+import os
+
+from femtologging import FemtoRotatingFileHandler, HandlerOptions
+
+handler = FemtoRotatingFileHandler(
+    "rotating.log",
+    options=HandlerOptions(rotation=(64, 2)),
+)
+assert (handler.max_bytes, handler.backup_count) == (64, 2)
+
+for number in range(10):
+    handler.handle("app", "INFO", f"message number {number}")
+handler.close()
+
+assert sorted(os.listdir(".")) == ["rotating.log", "rotating.log.1", "rotating.log.2"]
+```
+
+`HandlerOptions` also takes `capacity`, `flush_interval`, and `policy`, as
+`FemtoFileHandler` does. `rotation=(max_bytes, backup_count)` enables rotation
+only when _both_ values are greater than zero; `(0, 0)` disables it, and any
+other mix raises `ValueError`. If opening a fresh file after rollover fails,
+the handler keeps appending to the existing file instead of losing records.
+
+`RotatingFileHandlerBuilder` offers the same settings, plus `with_max_bytes()`
+and `with_backup_count()`.
+
+A full queue, `flush()`, `close()`, and `wait_diagnostics()` all behave as they
+do for `FemtoFileHandler`; see
+[Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
+
+### Rotate files on a schedule
+
+`FemtoTimedRotatingFileHandler` rotates on a timetable, like the standard
+library's `TimedRotatingFileHandler`:
+
+<!-- tested-example: guide-timed-rotating-handler -->
+```python
+import datetime as dt
+
+from femtologging import FemtoTimedRotatingFileHandler, TimedHandlerOptions
+
+handler = FemtoTimedRotatingFileHandler(
+    "nightly.log",
+    options=TimedHandlerOptions(
+        when="MIDNIGHT",
+        backup_count=7,
+        utc=True,
+        at_time=dt.time(2, 30),
+    ),
+)
+assert (handler.when, handler.interval, handler.backup_count) == ("MIDNIGHT", 1, 7)
+assert handler.at_time == "02:30:00"
+handler.close()
+
+try:
+    TimedHandlerOptions(when="H", at_time=dt.time(2, 30))
+except ValueError as error:
+    assert "at_time is only supported" in str(error)
+else:
+    raise AssertionError("at_time should need a daily or weekly schedule")
+```
+
+- `when` is one of `S`, `M`, `H`, `D`, `MIDNIGHT`, or `W0` to `W6` (Monday to
+  Sunday), and `interval` multiplies it.
+- `at_time` is allowed only for `D`, `MIDNIGHT`, and weekday schedules.
+- `backup_count=0` keeps every timestamped backup rather than disabling
+  rotation.
+- `TimedRotatingFileHandlerBuilder` offers the same settings through
+  `with_when()`, `with_interval()`, `with_backup_count()`, `with_utc()`, and
+  `with_at_time()`.
+- A full queue, `flush()`, `close()`, and `wait_diagnostics()` behave as they
+  do for `FemtoFileHandler`, except that `handle()` raises `ValueError` where
+  the other file handlers raise `RuntimeError`. See
   [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers).
-- When any queue is full under the default policy, the record is dropped. Each
-  component emits rate-limited warnings and maintains drop counters
-  (`FemtoLogger.get_dropped()` and handler-specific warnings) so you can
-  monitor pressure. A file handler whose policy is `"block"` waits for room
-  instead of dropping; with `"timeout:N"` it waits for room only until its
-  deadline, then drops the record.
-- Record metadata tracks the logger name, level, message text, timestamps,
-  thread identity, optional structured exception (`exc_info`) and call stack
-  (`stack_info`) payloads, and validated inline structured fields (`extra`).
-  The Python API does not expose other rich `LogRecord` attributes such as the
-  calling module.
 
-## Working with loggers
+### Send records over a socket
 
-### Creating and naming loggers
+`SocketHandlerBuilder` builds a `FemtoSocketHandler`, which streams records to
+a TCP or Unix-domain socket. Choose a transport with `with_tcp()` or
+`with_unix_path()`; building without one raises `HandlerConfigError`.
 
-- Use `get_logger(name)` to obtain a singleton `FemtoLogger`. Names must not be
-  empty, start or end with `.`, or contain consecutive dots.
-- Names are limited to 255 bytes and 32 dot-separated segments, and may not
-  contain control characters. That covers the ASCII controls (`0x00`–`0x1F` and
-  `0x7F`), the C1 controls (`U+0080`–`U+009F`), and `U+2028`/`U+2029`, the
-  Unicode line and paragraph separators. A name that breaks any of these is
-  rejected with `ValueError`. The rule matters even though a logger never
-  writes its own name: the name is rendered into every formatted record, and
-  Python's `str.splitlines()` splits on all of these characters, not only on
-  `\n`, so a name carrying any of them could split one record into two lines of
-  output. This validation applies to names passed through the logger API. A
-  direct `FemtoFileHandler.handle(logger, level, message)` call takes the
-  logger string as given and does not validate it, so pass a name that already
-  satisfies the rule when its framing matters.
-- Name loggers after stable components — a module, subsystem, or service — not
-  after the data flowing through them. A registry that maps one logger per
-  request, tenant, user, or plug-in identifier grows for the life of the
-  process, which is a memory leak a caller controls by accident:
+<!-- tested-example: guide-socket-handler -->
+```python
+from femtologging import BackoffConfig, FemtoSocketHandler, SocketHandlerBuilder
 
-  ```python
-  # Do not do this: one logger per request, retained forever.
-  logger = get_logger(f"requests.{request_id}")
-  logger.info("handled")
+handler = (
+    SocketHandlerBuilder()
+    .with_tcp("127.0.0.1", 9020)
+    .with_capacity(2048)
+    .with_connect_timeout_ms(5000)
+    .with_write_timeout_ms(1000)
+    .with_tls("logs.example.com", insecure=False)
+    .with_backoff(
+        BackoffConfig({
+            "base_ms": 100,
+            "cap_ms": 5000,
+            "reset_after_ms": 30000,
+            "deadline_ms": 120000,
+        })
+    )
+    .build()
+)
+assert isinstance(handler, FemtoSocketHandler)
+handler.close()
+```
 
-  # Do this instead: a fixed name, with the identifier as a field.
-  logger = get_logger("requests")
-  logger.info("handled", extra={"request_id": request_id})
-  ```
+- The handler connects in the background and reconnects with exponential
+  backoff, so building it never waits for the network.
+- Each record is a MessagePack map with the keys `logger`, `level`, `message`,
+  `timestamp_ns`, `filename`, `line_number`, `module_path`, `thread_id`,
+  `thread_name`, and `key_values`, framed by a 4-byte big-endian length.
+- Frames larger than `with_max_frame_size()` (1 MiB by default) are dropped.
+- TLS works only over TCP; combining `with_tls()` with `with_unix_path()`
+  raises `HandlerConfigError`.
+- `flush()` returns `True` once the worker confirms that the socket is flushed.
+  One write timeout covers the whole flush, waiting for queue space included,
+  so a stalled collector makes it return `False` after that one timeout.
+- `close()` returns within the write timeout. Until then, each queued record
+  gets one attempt, without retries. Records still queued at the deadline are
+  discarded, and a warning says how many, such as
+  `FemtoSocketHandler discarded 12 queued records at its shutdown deadline`. A
+  frame cut off by the deadline arrives truncated, and the connection is not
+  reused. Dropping the handler without calling `close()` behaves the same way.
+- A worker blocked where it cannot be interrupted, in a TCP hostname lookup or
+  a Unix-domain connect to a listener with a full backlog, is left to finish on
+  its own. `close()` still returns on time.
+- Dropped records are reported as
+  `FemtoSocketHandler dropped 12 records since the last report`, with the same
+  `; triggering cause: ...` suffix, held-back counts, and close-time report as
+  the [HTTP handler](#send-records-over-http).
+- Both `flush()` and `close()` release the GIL while they wait, so your other
+  Python threads keep running.
 
-- The registry holds at most 10,000 named loggers and never evicts one, so a
-  logger keeps its handlers, level, and drop counters for the life of the
-  process. Once the cap is reached, a request for a name that does not yet
-  exist is refused with `RuntimeError`. Names already registered keep working,
-  and the `"root"` logger is always available and does not count against the
-  cap.
-- Logger parents are derived from dotted names. `get_logger("api.v1")` creates
-  a parent `api` logger that ultimately propagates to `root`.
-- Call `logger.set_propagate(False)` to stop parent propagation. The default is
-  to bubble records to ancestors, just like the stdlib.
-- `reset_manager()` clears all registered loggers. It is intended for tests and
-  is not thread-safe.
+### Send records over HTTP
 
-Loggers share a small fixed pool of dispatch threads rather than each owning
-one, so the number of threads the logging system uses depends on the machine
-rather than on how many loggers exist. A record is dropped instead of blocking
-the caller when either bound is reached: when the logger has spent its own
-in-flight allowance, or when its shard has no free slot. Either condition is
-enough on its own, so a logger at its allowance drops records while its shard
-still has room, and a shard with every permit taken drops records from loggers
-that are below theirs. The drop is counted, and `logger.get_dropped()` reports
-it.
+`HTTPHandlerBuilder` builds a `FemtoHTTPHandler`, which sends one record per
+request from its worker thread:
 
-### Emitting records
+<!-- tested-example: guide-http-handler -->
+```python
+from femtologging import FemtoHTTPHandler, HTTPHandlerBuilder
 
-- `logger.log(level, message)` accepts the case-insensitive names `"TRACE"`,
-  `"DEBUG"`, `"INFO"`, `"WARN"`, `"WARNING"`, `"ERROR"`, and `"CRITICAL"`.
-- The method returns the formatted string when the record passes level checks
-  (default format is `"{logger} [LEVEL] message"`), or `None` when the logger
-  is disabled or the record is filtered out. This differs from
-  `logging.Logger.log()`, which always returns `None`.
-- Convenience methods `logger.debug(message)`, `logger.info(message)`,
-  `logger.warning(message)`, `logger.error(message)`,
-  `logger.critical(message)`, and `logger.exception(message)` are available.
-  Each accepts a pre-formatted `message` string plus optional `exc_info` and
-  `stack_info` keyword arguments, identical to `log()`. Unlike the stdlib,
-  `*args` / `**kwargs` lazy formatting is not supported — build the final
-  message string before calling these methods. `exception()` behaves like
-  `error()` but defaults `exc_info` to `True`.
-- `log()` and the `debug`, `info`, `warning`, `error`, and `critical`
-  convenience methods accept the keyword-only argument `extra` for validated
-  inline structured fields. `extra` must be a mapping with string keys and
-  `str`, `int`, `float`, `bool`, or `None` values. Reserved names that collide
-  with built-in record fields raise `ValueError`; see
-  [Scoped structured context](#scoped-structured-context) for the reserved sets.
-- `log()` accepts the keyword-only arguments `exc_info` and `stack_info` for
-  capturing exception tracebacks and call stacks alongside the log message.
-  `exc_info` accepts any of the following forms:
-  - `True` — capture the current exception via `sys.exc_info()`.
-  - An exception instance — capture that exception's traceback.
-  - A `(type, value, traceback)` 3-tuple — use directly.
-  - `False` or `None` (default) — no capture.
+handler = (
+    HTTPHandlerBuilder()
+    .with_endpoint("https://logs.example.com/ingest", method="POST")
+    .with_auth({"token": "s3cr3t"})
+    .with_headers({"X-Service": "checkout"})
+    .with_json_format()
+    .with_record_fields(["logger", "level", "message"])
+    .build()
+)
+assert isinstance(handler, FemtoHTTPHandler)
+handler.close()
+```
 
-  `stack_info` is a boolean (`False` by default). When `True`, the current call
-  stack is appended to the record. Both payloads are rendered by the default
-  formatter and are available as structured data to `handle_record` handlers.
+- `with_auth({"token": ...})` sends a bearer token, and
+  `with_auth({"username": ..., "password": ...})` uses basic authentication.
+  The older `with_url()`, `with_method()`, `with_basic_auth()`, and
+  `with_bearer_token()` setters still work but are deprecated.
+- `with_json_format()` sends JSON bodies, and `with_record_fields()` limits
+  which record fields are sent.
+- Building without an endpoint raises `HandlerConfigError`; malformed
+  arguments, such as a mixed `with_auth()` mapping, raise `ValueError`.
+- The endpoint must be an absolute `http` or `https` URL. Any other endpoint,
+  and a header name, header value, or token that cannot be sent as an HTTP
+  header, raises `HandlerConfigError` when you build the handler. The error
+  never repeats a header's value. A path that needs percent-encoding is
+  accepted and encoded, so `http://host/log ingest` is sent to `/log%20ingest`.
+- Certificates are checked against the WebPKI roots built into femtologging,
+  not your operating system's trust store. A private certificate authority is
+  not supported, and verification cannot be turned off.
+- `with_connect_timeout_ms()` limits making the connection, TLS handshake
+  included. `with_write_timeout_ms()` limits the whole attempt, so a connection
+  waits for at most the smaller of the two.
+- Up to four redirects are followed, all within one write timeout. A 301, 302,
+  or 303 is followed with a GET, and a 307 or 308 only when the request was
+  already a GET. `Authorization` and `Cookie` are never sent to the redirect
+  target. A 300, a 307 or 308 answering a POST, and a redirect without a usable
+  `Location` fail without a retry; a fifth redirect is retried like any other
+  transport failure.
+- A failed request is reported as a fixed category, such as
+  `transport error (DNS lookup failed)`, rather than the HTTP client's own
+  message, so the URL's credentials or query, a header value, or a redirect
+  target never reach the warning.
+- Each record is sent with its built-in fields (`name`, `levelname`, `msg`,
+  `created`, `filename`, `lineno`, `module`, `thread`, and, when present,
+  `threadName`, `exc_info`, and `stack_info`) and its structured fields side by
+  side at the top level, in both JSON and form-encoded bodies. A structured
+  field can never replace a built-in one: one with a
+  [reserved name](#attach-fields-to-a-block-of-code) is left out. In
+  `with_record_fields()`, a reserved name selects the built-in field, any other
+  name selects the structured field of that name, and an unknown name is
+  ignored.
+- `flush()` returns `True` once the worker confirms that everything queued has
+  been handled, and `False` if that takes longer than the write timeout.
+- `close()` returns within the write timeout. Until then, each queued record
+  gets one attempt, without retries. Records still queued at the deadline are
+  discarded, and a warning says how many, such as
+  `FemtoHTTPHandler discarded 12 queued records at its shutdown deadline`. A
+  request already in flight when the deadline passes may finish after `close()`
+  has returned. Dropping the handler without calling `close()` behaves the same
+  way.
+- Records dropped for any reason are reported as
+  `FemtoHTTPHandler dropped 12 records since the last report`, followed by
+  `; triggering cause: ...` when one drop prompted the report. The count
+  includes drops held back while warnings were rate-limited. `flush()`,
+  `close()`, and dropping the handler report any count still held back.
+  `close()` makes that report before its deadline starts, so a slow destination
+  for femtologging's own warnings can hold it up.
+- Both `flush()` and `close()` release the GIL while they wait, so your other
+  Python threads keep running.
+- The handler ignores the HTTP client's own diagnostics, so a delivery cannot
+  trigger the next one. While a worker sends, `ureq` logs its progress at
+  `DEBUG` under targets such as `ureq.run`, `ureq.pool`, and
+  `ureq.unversioned.resolver`. With a Rust bridge installed, those records
+  carry a transport-origin marker, and every `FemtoHTTPHandler` silently skips
+  a marked record without counting it as dropped. Other handlers still receive
+  it, and records logged by your own threads are never marked.
+- To see what the handler skips, attach a file or stream handler and raise the
+  `ureq` targets to `DEBUG`. A record that reaches that handler but not the
+  endpoint suggests a skip, though a filter or a failed delivery can also
+  explain an absence.
+- The marker is deliberately narrow. A record that Python code rebuilds from a
+  marked one, and a record passed straight to
+  `handler.handle(logger, level, message)`, carry no marker, and socket
+  handlers do not skip marked records. Guard those paths yourself if they could
+  loop back to the same endpoint.
 
-  ```python
-  try:
-      db.execute(query)
-  except DatabaseError:
-      logger.log("ERROR", "query failed", exc_info=True)
+### Write your own handler in Python
 
-  # Capture just the call stack (no exception needed):
-  logger.log("DEBUG", "checkpoint reached", stack_info=True)
-  ```
+Any object with a callable `handle(logger, level, message)` method can be a
+handler. Define `handle_record(record)` as well to receive the whole record as
+a dictionary, including its structured fields:
 
-- `logger.isEnabledFor(level)` returns `True` when the logger would process a
-  record at the given level. A disabled logger returns `False` for every level.
-  Use it for expensive message construction that should be skipped when the
-  level is filtered out.
-- `getLogger(name)` is an alias for `get_logger(name)`, provided for drop-in
-  compatibility with code written against `logging.getLogger`.
-- The default formatter keeps the message field on the record's first physical
-  line. It escapes the line separators that Python's `str.splitlines()`
-  recognizes in the message — LF, CR, VT, FF, U+001C, U+001D, U+001E, NEL,
-  U+2028, and U+2029 — using their `char::escape_debug` forms, such as `\n` and
-  `\u{2028}`. Every other character, including a backslash and a horizontal
-  tab, is unchanged. A literal `\n` in the message therefore looks the same as
-  an escaped LF, so the transformation cannot be reversed. Stack and exception
-  diagnostics are not escaped and keep their own multiline structure; that
-  includes the exception message, so a separator inside an exception message
-  can still add a forged line. Only the default formatter escapes:
-  percent-style and Python callable formatters, and structured `handle_record`
-  handlers, receive the raw message. Escaping can lengthen a record, so
-  size-based rotation counts the escaped bytes and may roll over sooner than
-  the unescaped message length suggests.
-- There is no lazy formatting. Build the final message string before calling
-  `log()`.
+<!-- tested-example: guide-python-handler -->
+```python
+import threading
 
-### Flushing records
+from femtologging import get_logger
 
-`logger.flush_handlers()` waits for records already queued by that logger to
-reach its handlers, then flushes each attached handler. The Python wrapper
-releases the GIL while it waits, so Python handlers can run. For a native
-handler such as `FemtoFileHandler`, the wrapper forwards the flush to the
-handler's own `flush()`, so buffered records reach disk even though the handler
-exposes no Python `flush` method. For any other handler object, the wrapper
-calls its `flush()` when it defines one and treats a missing or non-callable
-`flush` as success. A `flush()` that returns `None` — as
-`logging.Handler.flush()` does — counts as success, and any other falsy return
-value counts as failure. An exception, or an error other than a missing or
-non-callable `flush` attribute, also counts as failure. One two-second deadline
-covers the whole barrier — resolving dispatch state, enqueueing the marker,
-waiting for its acknowledgement, and flushing every attached handler. A
-synchronous handler callback can overrun its own wait, but the caller does not
-get a separate budget for handler flushing. The method returns `True` when the
-worker acknowledges the marker in time and every handler flush succeeds; it
-returns `False` if the marker cannot be enqueued or acknowledged in time, or
-any handler flush fails. A failing handler does not stop the remaining handlers
-from being flushed.
+
+class Collector:
+    """Keep every record in memory, for tests or diagnostics."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.records: list[dict] = []
+
+    def handle(self, logger: str, level: str, message: str) -> None:
+        """Fallback entry point; femtologging prefers handle_record."""
+
+    def handle_record(self, record: dict) -> None:
+        with self._lock:
+            self.records.append(record)
+
+
+logger = get_logger("inventory")
+collector = Collector()
+logger.add_handler(collector)
+logger.warning("stock low", extra={"sku": "A-113"})
+assert logger.flush_handlers()
+
+record = collector.records[0]
+assert (record["logger"], record["level"], record["message"]) == (
+    "inventory",
+    "WARN",
+    "stock low",
+)
+assert record["metadata"]["key_values"] == {"sku": "A-113"}
+assert logger.remove_handler(collector)
+```
+
+The record dictionary holds `logger`, `level`, `message`, and `levelno`, a
+`metadata` mapping (`timestamp`, `thread_id`, `thread_name`, `key_values`, and
+source-location fields that Python callers leave empty), and the structured
+`exc_info` and `stack_info` payloads when they were captured.
+
+Python handlers run on the shared dispatch worker assigned to the logger,
+inside a copy of the `contextvars` context that was active when the record was
+logged. Keep them fast and thread-safe: a slow handler delays every logger on
+the same shard, not only the one it is attached to. Records that arrive while
+the shard is at capacity are dropped and counted. An exception raised by a
+handler is printed to standard error and the next record is handled as normal.
+
+Give the handler a `flush()` method if it buffers anything. `flush_handlers()`
+calls it on the dispatch worker, after the records queued before the flush have
+been handled, so it cannot rely on state belonging to the thread that called
+`flush_handlers()`, such as a `threading.local` value. A failing handler does
+not stop the ones after it:
+
+- Returning `None` (as `logging.Handler.flush()` does) or any truthy value
+  counts as success.
+- Returning `False` or any other falsy value makes `flush_handlers()` return
+  `False`.
+- Raising makes `flush_handlers()` return `False` and logs a short warning
+  that leaves out the exception's text.
+- A handler without a callable `flush()` counts as flushed.
+
+All of this shares the two-second deadline described in
+[Shut down cleanly](#shut-down-cleanly). Handlers still waiting when it expires
+are not flushed, and `flush_handlers()` can return `False` while a slow
+`flush()` is still running on the worker, holding up every logger on its shard.
+Keep `flush()` short.
+
+`add_handler()` accepts built-in and Python handlers alike. `remove_handler()`
+returns whether it found the handler, and `clear_handlers()` removes them all.
+Records already queued keep the handler list they were queued with.
+
+#### Configure the handler before attaching it
+
+`add_handler()` checks once whether the object has a callable `handle_record`
+method and remembers the answer. Adding or removing `handle_record` afterwards
+has no effect, so finish configuring a handler before you attach it. Checking
+once keeps attribute lookups off the per-record path.
+
+<!-- tested-example: guide-handler-capability-diagram -->
+```mermaid
+sequenceDiagram
+    actor User
+    participant Logger
+    participant PyHandler
+    participant PythonHandlerObject
+
+    User->>Logger: add_handler(python_handler)
+    Logger->>PyHandler: new(py, python_handler)
+    PyHandler->>PythonHandlerObject: getattr(handle_record)
+    alt handle_record exists and is callable
+        PyHandler-->>PyHandler: has_handle_record = true
+    else handle_record missing or not callable
+        PyHandler-->>PyHandler: has_handle_record = false
+    end
+    PyHandler-->>Logger: PyHandler instance (with cached has_handle_record)
+    Logger-->>Logger: register handler with cached capability
+
+    User->>Logger: log(record)
+    Logger->>PyHandler: handle(record)
+    alt has_handle_record is true
+        PyHandler->>PythonHandlerObject: handle_record(record)
+    else has_handle_record is false
+        PyHandler->>PythonHandlerObject: handle(logger, level, message)
+    end
+```
+
+_Figure 2: `add_handler()` detects `handle_record` once, and every later record
+uses the cached answer._
+
+### Reuse standard library handlers
+
+The standard library ships handlers that femtologging does not, such as
+`SMTPHandler` and `SysLogHandler`. `StdlibHandlerAdapter` wraps any
+`logging.Handler` so femtologging can use it, complete with its formatter and
+filters:
+
+<!-- tested-example: guide-stdlib-adapter -->
+```python
+import io
+import logging
+
+from femtologging import StdlibHandlerAdapter, get_logger
+
+stream = io.StringIO()
+stdlib_handler = logging.StreamHandler(stream)
+stdlib_handler.setFormatter(
+    logging.Formatter("%(name)s %(levelname)s %(message)s request=%(request_id)s")
+)
+
+logger = get_logger("legacy")
+logger.add_handler(StdlibHandlerAdapter(stdlib_handler))
+logger.info("adapter ready", extra={"request_id": "r-7"})
+assert logger.flush_handlers()
+
+assert stream.getvalue() == "legacy INFO adapter ready request=r-7\n"
+```
+
+- Levels map to their standard equivalents (`TRACE` becomes level 5, which
+  the adapter registers under the name `TRACE`).
+- Structured fields become `LogRecord` attributes, so formatters can use
+  `%(request_id)s` and filters can read `record.request_id`.
+- The wrapped handler's `handle()` runs on the shared dispatch worker, inside
+  the logging caller's `contextvars` context, so filters and formatters that
+  read a `ContextVar` see the caller's value. A handler that hands its work to
+  another thread or process needs to pass that context on itself. Other
+  thread-local state, such as `threading.local`, belongs to the shared worker,
+  so handlers serving other loggers can see it too.
+- Exceptions arrive as pre-formatted text in `exc_text`; `record.exc_info` does
+  not hold a live traceback. `pathname` and `funcName` keep default values,
+  because femtologging does not capture them.
+
+Two thresholds decide whether a wrapped handler sees a record, just as in the
+standard library. The femtologging logger's level decides whether the record is
+dispatched at all, and the adapter then compares it with the wrapped handler's
+own `level`:
+
+<!-- tested-example: guide-stdlib-adapter-levels -->
+```python
+import io
+import logging
+
+from femtologging import StdlibHandlerAdapter, get_logger
+
+stream = io.StringIO()
+alerts = logging.StreamHandler(stream)
+alerts.setLevel(logging.ERROR)
+
+logger = get_logger("alerts")
+logger.add_handler(StdlibHandlerAdapter(alerts))
+
+logger.info("request completed")  # accepted by the logger, below the handler
+logger.error("payment failed")
+assert logger.flush_handlers()
+
+assert stream.getvalue() == "payment failed\n"
+```
+
+The adapter reads the handler's level as it processes each record, so
+`setLevel()` also affects records that are queued but not yet handled, and you
+never need to rebuild the adapter. `logging.NOTSET`, the default, accepts every
+level.
+
+______________________________________________________________________
+
+## Shape and filter records
+
+### Format output
+
+The default rendering is `"{logger} [{level}] {message}"`, followed by any
+stack trace and exception. To change it, give a stream or file handler builder
+a formatter. `with_formatter()` accepts a `FormatterBuilder`, the name of a
+formatter you registered, a callable that takes the record dictionary and
+returns a string, or an object with a `format(record)` method.
+
+`FormatterBuilder` takes a standard library-style `%` format string:
+
+<!-- tested-example: guide-percent-formatter -->
+```python
+from femtologging import FileHandlerBuilder, FormatterBuilder, get_logger
+
+formatter = FormatterBuilder().with_format(
+    "%(levelname)s %(name)s: %(message)s (request %(request_id)s)"
+)
+handler = FileHandlerBuilder("percent.log").with_formatter(formatter).build()
+logger = get_logger("api")
+logger.add_handler(handler)
+logger.info("served", extra={"request_id": "r-7"})
+
+assert logger.flush_handlers()
+handler.close()
+with open("percent.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "INFO api: served (request r-7)\n"
+```
+
+- Fields are written `%(name)s`, `%(name)d`, or `%(name)f`. The standard fields
+  are `name`, `levelname`, `levelno`, `message`, and `asctime`; any other name
+  is looked up in the record's structured fields, and a missing field renders
+  as an empty string.
+- `with_datefmt()` sets the format of `asctime`.
+- The format string is compiled once, when the formatter is built. `%%` writes
+  a literal percent sign. A directive femtologging does not support, such as
+  `%(name)q` or one missing its closing parenthesis, is not an error: its `%`
+  is written as text and the rest of the string is still processed.
+- `levelno` is femtologging's own number (`INFO` is 2), not the standard
+  library's (20). Only `StdlibHandlerAdapter` converts it.
+
+For anything a format string cannot express, pass a callable:
+
+<!-- tested-example: guide-formatter -->
+```python
+import json
+
+from femtologging import FileHandlerBuilder, get_logger
+
+
+def json_formatter(record: dict) -> str:
+    return json.dumps(
+        {
+            "logger": record["logger"],
+            "level": record["level"],
+            "message": record["message"],
+            **record["metadata"]["key_values"],
+        },
+        separators=(",", ":"),
+    )
+
+
+handler = FileHandlerBuilder("app.jsonl").with_formatter(json_formatter).build()
+logger = get_logger("api")
+logger.add_handler(handler)
+logger.info("request served", extra={"status": 200})
+
+assert logger.flush_handlers()
+handler.close()
+with open("app.jsonl", encoding="utf-8") as log_file:
+    line = json.loads(log_file.read())
+assert line == {
+    "logger": "api",
+    "level": "INFO",
+    "message": "request served",
+    "status": "200",
+}
+```
+
+Formatters run on the handler's worker thread. To share a formatter between
+handlers, register it by name with
+[`ConfigBuilder.with_formatter()`](#build-a-configuration-in-code) or in
+[`dictConfig`'s `formatters` section](#use-dictconfig), then pass that name to
+each handler.
+
+#### Multiline messages
+
+The default rendering puts each record's message on a single line, so text in a
+message cannot pass itself off as another record. Line breaks in the message
+are written as escapes: LF as `\n`, CR as `\r`, and the other separators that
+Python's `str.splitlines()` recognizes (VT, FF, U+001C to U+001E, NEL, U+2028,
+and U+2029) in forms such as `\x0b` and `\u{2028}`:
+
+<!-- tested-example: guide-multiline-message -->
+```python
+from femtologging import FemtoStreamHandler, get_logger
+
+logger = get_logger("core")
+handler = FemtoStreamHandler.stdout()
+logger.add_handler(handler)
+logger.info("first\ncore [CRITICAL] forged")
+
+assert logger.flush_handlers()
+handler.close()
+```
+
+It prints one line:
+
+<!-- tested-example: guide-multiline-message-output -->
+```text
+core [INFO] first\ncore [CRITICAL] forged
+```
+
+Some details to bear in mind:
+
+- Other characters, backslashes included, are written as they are, so a
+  message containing a literal `\n` looks the same as one containing a line
+  break. The escaping cannot be reversed.
+- Stack traces and exceptions still follow the message on lines of their own,
+  and are not escaped. That includes an exception's message, so a line break
+  there can still start a misleading line.
+- Only the default rendering escapes. `FormatterBuilder` formats, callable
+  formatters, and `handle_record` handlers all receive the message as it was
+  logged.
+- Escaping makes a record longer, and size-based rotation counts the escaped
+  length.
+- A direct `FemtoFileHandler.handle(logger, level, message)` call does not
+  check or escape the logger name it is given. Pass a valid name.
+
+### Filter and enrich records
+
+Filters decide, on your thread, whether a record goes any further. Three
+builders are available:
+
+- `LevelFilterBuilder().with_max_level(level)` accepts records at or below a
+  level, which is handy for sending warnings and errors elsewhere.
+- `NameFilterBuilder().with_prefix(prefix)` accepts records whose logger name
+  starts with a prefix.
+- `PythonCallbackFilterBuilder(callback)` runs your own code. The callback is
+  either a callable or an object with a standard-library-style `filter(record)`
+  method, such as a `logging.Filter` subclass.
+
+Filters are attached by name through
+[`ConfigBuilder`](#build-a-configuration-in-code),
+[`RuntimeConfigBuilder`](#change-configuration-at-runtime), or
+[`dictConfig`](#use-dictconfig), and run in the order you list them.
+
+A callback filter receives a temporary `logging.LogRecord`. Returning a truthy
+value accepts the record, and any new attributes it sets become structured
+fields, which makes filters a natural place to attach request metadata:
+
+<!-- tested-example: guide-callback-filter -->
+```python
+import contextvars
+import logging
+
+from femtologging import (
+    ConfigBuilder,
+    LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
+    StdlibHandlerAdapter,
+    get_logger,
+)
+
+request_id = contextvars.ContextVar("request_id", default="-")
+
+
+def add_request_id(record: logging.LogRecord) -> bool:
+    record.request_id = request_id.get()
+    return True
+
+
+class SkipHealthChecks(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/healthz" not in record.getMessage()
+
+
+(
+    ConfigBuilder()
+    .with_filter("request_id", PythonCallbackFilterBuilder(add_request_id))
+    .with_filter("no_health", PythonCallbackFilterBuilder(SkipHealthChecks()))
+    .with_logger(
+        "web",
+        LoggerConfigBuilder().with_filters(["no_health", "request_id"]),
+    )
+    .with_root_logger(LoggerConfigBuilder())
+    .build_and_init()
+)
+
+logger = get_logger("web")
+request_id.set("req-123")
+assert logger.info("GET /healthz") is None
+assert logger.info("GET /orders") == "web [INFO] GET /orders"
+```
+
+Enrichment follows the same rules as
+[structured fields](#attach-fields-to-a-block-of-code). An added attribute that
+breaks them, such as a dictionary value, is left off the record with a warning
+(see [See femtologging's own warnings](#see-femtologgings-own-warnings)), and
+changes to standard attributes such as `record.name` are ignored. The record
+itself is still delivered.
+
+#### Filter every record a handler receives
+
+A filter attached to a logger runs only for records logged through that logger.
+As in the standard library, it does not run for records propagated up from its
+children. For application-wide enrichment, attach the filter to the shared
+handler with `with_filters()` instead. It then runs, still on your thread, for
+every record routed to that handler, including propagated ones:
+
+<!-- tested-example: guide-handler-filter -->
+```python
+import contextvars
+import logging
+
+from femtologging import (
+    ConfigBuilder,
+    FileHandlerBuilder,
+    FormatterBuilder,
+    LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
+    get_logger,
+)
+
+request_id = contextvars.ContextVar("request_id", default="-")
+
+
+def add_request_id(record: logging.LogRecord) -> bool:
+    record.request_id = request_id.get()
+    return True
+
+
+(
+    ConfigBuilder()
+    .with_filter("request_id", PythonCallbackFilterBuilder(add_request_id))
+    .with_handler(
+        "file",
+        FileHandlerBuilder("requests.log")
+        .with_filters(["request_id"])
+        .with_formatter(
+            FormatterBuilder().with_format("%(name)s %(message)s %(request_id)s")
+        ),
+    )
+    .with_root_logger(LoggerConfigBuilder().with_handlers(["file"]))
+    .build_and_init()
+)
+
+request_id.set("req-1")
+get_logger("shop.api").info("accepted")
+get_logger("shop.worker").info("processed")
+
+assert get_logger("root").flush_handlers()
+with open("requests.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "shop.api accepted req-1\nshop.worker processed req-1\n"
+```
+
+All the handler builders accept `with_filters()`, and every handler gets its
+own snapshot of the record, so what a filter adds for one handler does not
+reach another.
+
+### Trim frames from exception and stack payloads
+
+`filter_frames()` returns a filtered copy of a structured `exc_info` or
+`stack_info` payload, which is useful in a custom handler that forwards them.
+Your original payload is left unchanged:
+
+<!-- tested-example: guide-filter-frames -->
+```python
+from femtologging import filter_frames
+
+payload = {
+    "type_name": "OSError",
+    "message": "file could not be read",
+    "frames": [
+        {"filename": "/srv/app/reader.py", "lineno": 42, "function": "read"},
+        {
+            "filename": "/usr/lib/python3.12/logging/__init__.py",
+            "lineno": 7,
+            "function": "handle",
+        },
+    ],
+}
+
+filtered = filter_frames(payload, exclude_logging=True, max_depth=10)
+assert [frame["function"] for frame in filtered["frames"]] == ["read"]
+assert len(payload["frames"]) == 2
+
+# A payload that refers back to itself is rejected, not followed for ever.
+cyclic = {"type_name": "ValueError", "message": "bad"}
+cyclic["cause"] = cyclic
+try:
+    filter_frames(cyclic)
+except ValueError as error:
+    assert str(error) == "exception payload graph contains a cycle at $.cause"
+else:
+    raise AssertionError("a cyclic payload should be rejected")
+```
+
+- `exclude_filenames` and `exclude_functions` remove frames by substring, and
+  `exclude_logging=True` removes femtologging, standard library logging, and
+  import-system frames.
+- `max_depth` limits the frames kept in each payload, not how far exception
+  chains are followed.
+- `max_exception_depth` (default 1,000) limits how far `cause`, `context`, and
+  `exceptions` links are followed. `max_exception_nodes` (default 10,000)
+  limits how many payloads are visited in total, counting the root and each
+  repeat of a shared payload. Raise them if a legitimate payload exceeds them.
+- Cycles and exceeded limits raise `ValueError`, malformed frames or links raise
+  `TypeError`, and negative or oversized limits raise `OverflowError`.
+
+______________________________________________________________________
+
+## Configure logging
+
+Femtologging offers four ways to configure loggers, from the quickest to the
+most familiar:
+
+- `basicConfig()` attaches one handler to the root logger.
+- `ConfigBuilder` describes a whole configuration in Python and applies it in
+  one step.
+- `RuntimeConfigBuilder` changes a running configuration.
+- `dictConfig()` and `fileConfig()` read the standard library's dictionary and
+  INI formats, within limits.
+
+The first two are the most capable; the compatibility layers translate into
+`ConfigBuilder` and support a subset of their standard library namesakes.
+
+### Start with basicConfig
+
+<!-- tested-example: guide-basic-config -->
+```python
+from femtologging import BasicConfig, basicConfig, get_logger
+
+basicConfig(level="INFO", filename="basic.log")
+get_logger("root").info("configured")
+
+# Replace the handler: force=True clears the root logger's handlers first.
+basicConfig(BasicConfig(level="WARNING", filename="basic.log", force=True))
+root = get_logger("root")
+assert root.level == "WARN"
+assert root.flush_handlers()
+```
+
+- `basicConfig()` takes `level`, `filename`, `stream` (`sys.stdout` or
+  `sys.stderr` only), `force`, and `handlers` (an iterable of handler objects),
+  either as keyword arguments or as a `BasicConfig` instance.
+- `filename` and `stream` are mutually exclusive, and neither can be combined
+  with `handlers`.
+- Formatting arguments such as `format` and `datefmt` raise `TypeError`. To
+  control output, build a handler with a [formatter](#format-output) and pass
+  it through `handlers`.
+- `BasicConfig` is a slotted dataclass, so a mistyped field name fails at once
+  with `AttributeError` instead of being silently ignored.
+
+### Build a configuration in code
+
+`ConfigBuilder` names handlers and filters once, then refers to them by name
+from each logger:
+
+<!-- tested-example: guide-config-builder -->
+```python
+from femtologging import (
+    ConfigBuilder,
+    FileHandlerBuilder,
+    LevelFilterBuilder,
+    LoggerConfigBuilder,
+    OverflowPolicy,
+    StreamHandlerBuilder,
+    get_logger,
+)
+
+(
+    ConfigBuilder()
+    .with_default_level("INFO")
+    .with_handler("console", StreamHandlerBuilder.stderr())
+    .with_handler(
+        "audit",
+        FileHandlerBuilder("audit.log").with_overflow_policy(OverflowPolicy.block()),
+    )
+    .with_filter("info_and_below", LevelFilterBuilder().with_max_level("INFO"))
+    .with_logger(
+        "app.audit",
+        LoggerConfigBuilder()
+        .with_level("INFO")
+        .with_handlers(["audit"])
+        .with_filters(["info_and_below"])
+        .with_propagate(False),
+    )
+    .with_root_logger(
+        LoggerConfigBuilder().with_level("WARNING").with_handlers(["console"])
+    )
+    .build_and_init()
+)
+
+audit = get_logger("app.audit")
+assert audit.info("user signed in") is not None
+assert audit.error("too severe for this logger") is None
+assert audit.flush_handlers()
+```
+
+- `build_and_init()` validates every logger name, handler and filter reference,
+  and setting, and builds the whole configuration before touching live loggers.
+  If anything fails, every existing logger keeps its state. Two things sit
+  outside that guarantee: records already queued are not retracted, and
+  building a handler can open its file or socket before a later error is found.
+- `with_default_level()` sets the level for loggers that do not set their own.
+- `with_formatter(id, FormatterBuilder)` registers a formatter that handlers can
+  use by name.
+- Builders can be inspected before use: each has an `as_dict()` method.
+
+### Disable loggers a configuration omits
+
+`with_disable_existing_loggers(True)`, and the matching
+`disable_existing_loggers` setting in `dictConfig()` and `fileConfig()`,
+disables every logger created earlier that the new configuration does not name:
+
+<!-- tested-example: guide-disable-existing-loggers -->
+```python
+from femtologging import ConfigBuilder, LoggerConfigBuilder, get_logger
+
+noisy = get_logger("noisy")
+
+(
+    ConfigBuilder()
+    .with_disable_existing_loggers(True)
+    .with_root_logger(LoggerConfigBuilder())
+    .build_and_init()
+)
+
+assert noisy.disabled
+assert noisy.error("rejected") is None
+assert not noisy.isEnabledFor("CRITICAL")
+assert noisy.get_disabled_drops() == 1
+
+# Naming the logger in a later configuration enables it again.
+(
+    ConfigBuilder()
+    .with_logger("noisy", LoggerConfigBuilder())
+    .with_root_logger(LoggerConfigBuilder())
+    .build_and_init()
+)
+assert not noisy.disabled
+assert noisy.error("accepted") is not None
+```
+
+A disabled logger rejects its own records before the level check, filters,
+formatter, or dispatch, so nothing reaches ancestor handlers through
+propagation. It also loses its handlers and filters. `get_disabled_drops()`
+counts each refused call, separately from `get_dropped()`. Ancestors of
+configured loggers stay available for propagation, but an ancestor that was
+already disabled stays disabled until a configuration names it.
+
+The default differs by entry point: `ConfigBuilder` and `dictConfig()` leave
+existing loggers alone unless asked, while `fileConfig()` disables them unless
+you pass `disable_existing_loggers=False`.
+
+### Change configuration at runtime
+
+`set_level()` and `set_propagate()` change one logger at any time. For larger
+changes, such as swapping handlers on a running service, `RuntimeConfigBuilder`
+applies a batch of mutations in one step:
+
+<!-- tested-example: guide-runtime-config -->
+```python
+from femtologging import (
+    LoggerMutationBuilder,
+    NameFilterBuilder,
+    RuntimeConfigBuilder,
+    StreamHandlerBuilder,
+    get_logger,
+)
+
+worker = get_logger("jobs.worker")
+assert worker.level == "INFO"
+
+(
+    RuntimeConfigBuilder()
+    .with_handler("console", StreamHandlerBuilder.stderr())
+    .with_filter("jobs_only", NameFilterBuilder().with_prefix("jobs"))
+    .with_logger(
+        "jobs.worker",
+        LoggerMutationBuilder()
+        .with_level("DEBUG")
+        .replace_handlers(["console"])
+        .replace_filters(["jobs_only"]),
+    )
+    .apply()
+)
+
+assert worker.level == "DEBUG"
+assert worker.debug("now visible") is not None
+assert worker.flush_handlers()
+```
+
+`LoggerMutationBuilder` can `replace_*`, `append_*`, `remove_*`, or `clear_*` a
+logger's handlers and filters, and set its level and propagation. Replacing and
+clearing work on any logger. Appending and removing edit the handler and filter
+IDs recorded by an earlier `ConfigBuilder.build_and_init()`, so a logger that
+was never configured that way raises `ValueError` for them. Records already
+queued keep the handlers they were queued with.
+
+Every handler and filter you declare must end up attached to a logger, or to a
+handler in the case of a filter. Otherwise `apply()` raises `ValueError`
+(`unreferenced definitions: …`) before building anything, so no file is opened
+and no worker is started. Definitions that a change leaves unreferenced are
+released, which closes their handlers once in-flight records have drained.
+
+### Use dictConfig
+
+`dictConfig()` accepts the standard library's dictionary schema, restricted to
+what femtologging supports, and applies it through `ConfigBuilder`, so a failed
+call leaves your loggers as they were:
+
+<!-- tested-example: guide-dict-config -->
+```python
+from femtologging import dictConfig, get_logger
+
+dictConfig({
+    "version": 1,
+    "filters": {"payments_only": {"name": "payments"}},
+    "handlers": {
+        "file": {"class": "logging.FileHandler", "args": "('payments.log',)"},
+    },
+    "loggers": {
+        "payments": {
+            "level": "INFO",
+            "handlers": ["file"],
+            "filters": ["payments_only"],
+            "propagate": False,
+        },
+    },
+    "root": {"level": "WARNING", "handlers": []},
+})
+
+payments = get_logger("payments")
+assert payments.info("payment captured") is not None
+assert payments.flush_handlers()
+
+try:
+    dictConfig({"version": 1, "incremental": True, "root": {}})
+except ValueError as error:
+    assert "incremental configuration is not supported" in str(error)
+else:
+    raise AssertionError("incremental configuration should be rejected")
+```
+
+- **Handlers**: `logging.StreamHandler`, `logging.FileHandler`,
+  `logging.handlers.RotatingFileHandler`,
+  `logging.handlers.TimedRotatingFileHandler`, and
+  `logging.handlers.SocketHandler`, plus their `femtologging.*` equivalents
+  (`femtologging.StreamHandler`, `femtologging.FileHandler`, and so on). Stream
+  handlers always write to standard error.
+- **Arguments**: `args` strings are parsed with `ast.literal_eval`, so they
+  must be literals; `"(sys.stdout,)"` is rejected. Socket handlers accept
+  `(host, port)` or a single Unix socket path, and keyword arguments mirror the
+  builder (`host`, `port`, `unix_path`, `capacity`, `connect_timeout_ms`,
+  `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`, and
+  `backoff_*`).
+- **Filters**: each entry has exactly one of `level` or `name`, or uses the
+  standard `"()"` factory syntax, for example
+  `{"()": "myapp.filters.make_filter", "prefix": "svc"}`. The factory may be a
+  dotted path or a callable, and receives the other keys as keyword arguments.
+  Mixing `"()"` with `level` or `name` is rejected. A factory runs code, so read
+  [Filter factories run code](#filter-factories-run-code) before accepting
+  configuration you do not fully trust.
+- **Loggers**: a `root` section is required. Loggers accept `level`,
+  `handlers`, `filters`, and `propagate`.
+- **Handler `filters` and `formatter`**: handlers accept a `filters` list of
+  filter IDs, and a `formatter` ID from the top-level `formatters` section,
+  whose entries take `%`-style `format` and `datefmt` values:
+
+<!-- tested-example: guide-dict-config-formatter -->
+```python
+from femtologging import dictConfig, get_logger
+
+dictConfig({
+    "version": 1,
+    "formatters": {"plain": {"format": "%(levelname)s %(message)s"}},
+    "filters": {"payments_only": {"name": "payments"}},
+    "handlers": {
+        "file": {
+            "class": "logging.FileHandler",
+            "args": "('formatted.log',)",
+            "formatter": "plain",
+            "filters": ["payments_only"],
+        },
+    },
+    "root": {"level": "INFO", "handlers": ["file"]},
+})
+
+get_logger("payments").info("captured")
+get_logger("shipping").info("filtered out")
+
+assert get_logger("root").flush_handlers()
+with open("formatted.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "INFO captured\n"
+```
+
+Not supported, and raising `ValueError`: incremental configuration and handler
+`level`.
+
+#### Filter factories run code
+
+A `"()"` filter entry is as powerful as code you wrote yourself. A dotted path
+is imported and called, and a callable is called, so whoever writes the
+configuration chooses what runs inside your process. Importing a module can
+have side effects of its own, so checking the resolved object or its result
+afterwards is too late.
+
+When configuration comes from anywhere less trusted than your own code, such as
+tenants, an HTTP API, a remote configuration service, or a writable file, pass
+`allow_factories=False`. Every top-level filter entry with a `"()"` key is then
+rejected before anything is imported or called, while `level` and `name`
+filters keep working:
+
+<!-- tested-example: guide-dict-config-no-factories -->
+```python
+from femtologging import dictConfig
+
+untrusted = {
+    "version": 1,
+    "filters": {"svc": {"()": "tenant_plugins.make_filter", "prefix": "svc"}},
+    "root": {"level": "INFO", "handlers": [], "filters": ["svc"]},
+}
+
+try:
+    dictConfig(untrusted, allow_factories=False)
+except ValueError as error:
+    assert "rejected by allow_factories=False" in str(error)
+else:
+    raise AssertionError("a factory entry should be rejected")
+```
+
+`allow_factories=False` is not a sandbox:
+
+- It checks the top-level filter entries only, not values nested inside them.
+- Handlers still open the files and connections the configuration names, so
+  validate those destinations separately.
+- A failed call applies none of its logger changes, but it cannot undo what
+  already happened while preparing them, such as files a handler opened.
+- Filters installed earlier keep running. A logger that a reload leaves out
+  keeps its filters when `disable_existing_loggers` is `False`, so a Python
+  callback filter can still run after a declarative-only reload. To retire one,
+  remove every logger and handler attachment that uses it.
+
+With factories allowed, every `dictConfig()` call runs them again, reloads
+included. `fileConfig()` never produces `"()"` entries, and
+`RuntimeConfigBuilder` selects registered filters by name without running
+factories.
+
+### Use fileConfig
+
+`fileConfig()` reads standard library INI files and applies them through
+`dictConfig()`. Default substitutions such as `%(logdir)s` work, using values
+from the file's `[DEFAULT]` section and the `defaults` mapping:
+
+<!-- tested-example: guide-file-config -->
+```python
+from pathlib import Path
+
+from femtologging import fileConfig, get_logger
+
+Path("logging.ini").write_text(
+    """\
+[loggers]
+keys=root
+
+[handlers]
+keys=file
+
+[logger_root]
+level=INFO
+handlers=file
+
+[handler_file]
+class=logging.FileHandler
+args=('%(logdir)s/ini.log',)
+""",
+    encoding="utf-8",
+)
+
+fileConfig("logging.ini", defaults={"logdir": "."})
+root = get_logger("root")
+assert root.info("configured from INI") is not None
+assert root.flush_handlers()
+```
+
+- The signature is
+  `fileConfig(fname, defaults=None, *, disable_existing_loggers=True, encoding=None)`.
+- Handler classes need their full name, such as `logging.FileHandler`; the
+  standard library's short `FileHandler` form is not resolved.
+- `[formatters]` sections, filters, and handler `level` or `formatter` keys
+  are not supported and raise `ValueError`.
+
+______________________________________________________________________
+
+## Run in production
+
+### Shut down cleanly
+
+Records are written by background threads, and nothing flushes them for you
+when the interpreter exits. Before your process ends:
+
+1. Stop the threads that log, and wait for them to finish. A flush covers the
+   records queued when it starts, so a record logged afterwards can still be
+   queued when the handler closes.
+2. Call `flush_handlers()` on each logger that owns handlers, and check that it
+   returns `True`. Records propagate, so include the ancestors that receive
+   them, such as `root`.
+3. Call `close()` on each handler you created.
+
+<!-- tested-example: guide-shutdown -->
+```python
+import atexit
+
+from femtologging import FemtoFileHandler, get_logger
+
+root = get_logger("root")
+handler = FemtoFileHandler("service.log")
+root.add_handler(handler)
+
+
+def shut_down_logging() -> None:
+    root.flush_handlers()
+    handler.close()
+
+
+atexit.register(shut_down_logging)
+get_logger("service").info("started")
+
+# atexit runs this at exit; calling it early shows that it is safe to repeat.
+shut_down_logging()
+with open("service.log", encoding="utf-8") as log_file:
+    assert log_file.read() == "service [INFO] started\n"
+```
+
+`flush_handlers()` puts a marker behind the records the logger has already
+queued, then waits for the dispatch worker to reach it and flush each handler
+in turn, so one failure does not stop the others being flushed. One two-second
+deadline covers the whole call, and it returns `True` only when every step
+finished in time. A logger with no handlers of its own waits instead for its
+whole shard to drain, so other loggers' queued records can delay it. The GIL is
+released while it waits, so Python handlers and formatters can run. A built-in
+handler flushes its own output within its own, shorter limit, so records reach
+the file even though the handler is still open:
 
 <!-- tested-example: flush-handlers-usage -->
 ```python
@@ -230,63 +1802,264 @@ logger.add_handler(handler)
 
 try:
     logger.info("shutting down")
-    if not logger.flush_handlers():
-        raise RuntimeError("logger handlers did not flush")
+    assert logger.flush_handlers(), "logger handlers did not flush"
 
-    # The record reached disk while the handler was still open, so this
-    # proves logger.flush_handlers() flushed it rather than handler.close().
+    # The handler is still open, so the record on disk proves that
+    # flush_handlers() wrote it, not close().
     with open("service.log", encoding="utf-8") as log_file:
-        if "shutting down" not in log_file.read():
-            raise RuntimeError("flush did not write the buffered record")
+        assert "shutting down" in log_file.read()
 finally:
     logger.remove_handler(handler)
     handler.close()
 ```
 
-### Exception schema versioning
+Socket and HTTP handlers put a deadline on shutdown: `close()` returns within
+the handler's write timeout and discards, with a warning, whatever it could not
+send by then. See [Send records over a socket](#send-records-over-a-socket) and
+[Send records over HTTP](#send-records-over-http).
 
-Structured `exc_info` and `stack_info` payloads carry a `schema_version` field.
-This allows the payload schema to evolve without silent breakage.
+### Handle back-pressure and dropped records
 
-- `EXCEPTION_SCHEMA_VERSION` is the current version exposed by the Python API.
-- Rust consumers accept versions in the inclusive range
-  `MIN_EXCEPTION_SCHEMA_VERSION..=EXCEPTION_SCHEMA_VERSION`.
-- Backward compatibility is guaranteed within that range. Missing optional
-  fields default safely during deserialization.
-- Forward compatibility is not guaranteed. A payload from a newer producer may
-  deserialize, but explicit validation is required before processing.
+Queues are bounded so that a slow destination cannot exhaust your memory. Three
+limits apply:
 
-Validation is recursive. Each `cause`, `context`, and exception-group member is
-an independently versioned payload, so `validate_version()` checks the root
-payload and every payload nested beneath it. The walk is depth-first in
-pre-order: the payload itself, then its `cause`, its `context`, and its
-exception-group members in index order. The first unsupported version reached
-is the one reported.
+- Each shard's queue holds 1,024 records multiplied by the number of shards, so
+  a four-shard pool gives each shard a depth of 4,096.
+- Each logger may have at most half of its shard's depth in flight, and never
+  more than 1,024 records. This stops one busy logger crowding out the others
+  on its shard.
+- Each handler's capacity defaults to 1,024 and can be changed with `capacity`
+  or `with_capacity()`.
 
-A mismatch below the root is reported as `SchemaVersionError::Nested`, which
-carries a dot-separated path to the failing payload, such as
-`cause.exceptions[3].context`. The root payload is at depth 0, and each child
-edge adds one. The walk stops at `MAX_EXCEPTION_PAYLOAD_DEPTH` (1,000, matching
-the frame filter's default `max_exception_depth`) and at
-`MAX_EXCEPTION_PAYLOAD_NODES` (10,000, matching its default
-`max_exception_nodes`). Exceeding either bound reports `TreeTooDeep` or
-`TreeTooLarge`. These limits bound validation work; they are not parsing
-limits, so a payload tree that deserializes can still be rejected by either
-bound.
+A record is dropped rather than blocking your thread when its logger has spent
+its allowance, even if the shard has room, or when its shard is full. Either
+way, it is counted in `logger.get_dropped()`. When a handler's own queue is
+full, a file handler applies its overflow policy: `"drop"`, `"block"`, or
+`"timeout:N"`.
 
-Rust-side validation returns these variants from `SchemaVersionError`:
+Three more counters report records lost for other reasons:
 
-- `VersionTooNew { found, max_supported }`
-- `VersionTooOld { found, min_supported }`
-- `Nested { path, source }`
-- `TreeTooDeep { path, max_depth }`
-- `TreeTooLarge { max_nodes }`
+- `logger.get_context_dropped()` counts records discarded because Rust scoped
+  context or Rust key-values failed validation.
+- `logger.get_context_capture_failures()` counts records whose `contextvars`
+  snapshot could not be taken.
+- `logger.get_disabled_drops()` counts records refused because a configuration
+  [disabled the logger](#disable-loggers-a-configuration-omits).
 
-`SchemaVersionError` is `#[non_exhaustive]`, so matching it requires a wildcard
-arm. This breaks downstream code that matched the original two variants
-exhaustively; the [v0.2.0 migration guide](v0-2-0-migration-guide.md) records
-the migration. Use these variants to choose explicit behaviour when versions
-mismatch:
+`logger.get_flush_diagnostics()` explains `flush_handlers()` failures. It
+returns a dictionary of counters with a fixed set of keys, such as
+`flush_handlers_attempts`, `flush_handlers_confirmed`, a
+`flush_handlers_failure_<stage>` key for each way a flush can fail, and
+elapsed-time buckets such as `flush_handlers_elapsed_gt_10_le_100_ms`. The keys
+never include logger names or record content, so they are safe to export as
+metrics. Each value is read on its own, so a snapshot taken during a flush can
+be briefly inconsistent:
+
+<!-- tested-example: guide-flush-diagnostics -->
+```python
+from femtologging import get_logger
+
+logger = get_logger("billing")
+assert logger.flush_handlers()
+
+counters = logger.get_flush_diagnostics()
+assert counters["flush_handlers_attempts"] == 1
+assert counters["flush_handlers_confirmed"] == 1
+assert all(name.startswith("flush_handlers_") for name in counters)
+```
+
+Socket and HTTP handlers also discard records still queued when `close()`
+reaches its deadline. No counter records these; a warning reports the count
+instead.
+
+If drops are unacceptable, raise handler capacities or give file handlers the
+`"block"` policy. `"timeout:N"` still discards a record when its time runs out,
+and neither policy changes what happens at the logger's own queue. Bear in mind
+where the waiting happens: a handler attached to a logger is fed by the shared
+dispatch worker, so a blocking policy makes that worker wait, which delays
+every logger on the shard. Your thread keeps going until the logger's allowance
+or the shard is used up, and from then on records are dropped and counted in
+`get_dropped()`. A handler that never returns holds its shard's worker, so the
+other loggers on that shard can start dropping too.
+
+If the operating system cannot start the dispatch pool because the process has
+reached its thread limit, creating a logger raises `RuntimeError`, and the next
+logger creation tries again.
+
+### See femtologging's own warnings
+
+Femtologging reports its internal problems, such as dropped records, handler
+errors, and rejected enrichment, through the Rust `log` crate. Those warnings
+are discarded unless you ask for them. Call `setup_rust_logging()` once at
+start-up, and warnings from femtologging itself are printed to standard error:
+
+<!-- tested-example: guide-internal-warnings -->
+```python
+import logging
+
+import femtologging
+from femtologging import (
+    ConfigBuilder,
+    LoggerConfigBuilder,
+    PythonCallbackFilterBuilder,
+    get_logger,
+)
+
+femtologging.setup_rust_logging()
+
+
+def attach_unsupported_field(record: logging.LogRecord) -> bool:
+    record.payload = {"nested": "values are not allowed"}
+    return True
+
+
+(
+    ConfigBuilder()
+    .with_filter("enrich", PythonCallbackFilterBuilder(attach_unsupported_field))
+    .with_logger("api", LoggerConfigBuilder().with_filters(["enrich"]))
+    .with_root_logger(LoggerConfigBuilder())
+    .build_and_init()
+)
+
+# The record is still delivered, without the field the filter tried to add.
+assert get_logger("api").info("request served") == "api [INFO] request served"
+```
+
+It prints:
+
+<!-- tested-example: guide-internal-warnings-output -->
+```text
+Python filter callback 'function' ignored enrichment: enrichment key 'payload' has unsupported Python type dict
+```
+
+Warnings are rate-limited, and each drop warning counts every drop since the
+previous report. When a logger is destroyed, it reports any count still held
+back: `FemtoLogger: dropped 12 records; reported by flush` for records counted
+by `get_dropped()`, and
+`FemtoLogger: dropped 12 records after context capture failed` for those
+counted by `get_context_capture_failures()`. `flush_handlers()` does not report
+these counts itself, so that a slow destination for warnings cannot push it
+past its deadline.
+
+These warnings deliberately bypass your loggers and handlers: a warning that
+the queues are full must not need room in those same queues. Monitor standard
+error as well as your log files, and use the counters above to watch for lost
+records.
+
+### Operational caveats
+
+- `flush_interval` on file handlers counts records. For time-based flushing,
+  call `handler.flush()` periodically.
+- Socket frames over the size limit are dropped. Truncate or split very large
+  messages before logging them.
+- Socket and HTTP handlers keep only what they can send within the write
+  timeout at shutdown. If every record matters, call `flush()` and check that
+  it returns `True` before calling `close()`.
+- Known issue in 0.2.0-beta1: while one thread is inside a socket or HTTP
+  handler's `close()`, calling `flush()` or `close()` on the same handler from
+  another thread raises `RuntimeError: Already mutably borrowed` (or
+  `Already borrowed`). A record that reaches the handler during that window is
+  dropped, as it would be once the handler is closed, but the same error is
+  also printed to standard error. Stop logging, then close each network handler
+  from one thread.
+- `reset_manager()` removes every registered logger. It exists for tests, is
+  not thread-safe, and must not run while other threads hold loggers.
+- Femtologging's loggers are separate from the standard library's
+  `logging` module. Mixing both systems in one process is unsupported; use
+  `StdlibHandlerAdapter` to reuse standard handlers instead.
+
+______________________________________________________________________
+
+## Integrate with Rust
+
+This part is for Rust code that runs alongside femtologging, such as the
+extension itself or a crate embedded in it. Python-only applications can skip
+it.
+
+### Rust and Python context
+
+Rust has its own scoped context, `push_log_context`, which is OS-thread-local.
+Its `LogContextGuard` is neither `Send` nor `Sync`, and it removes only its own
+frame when dropped. Do not hold a Rust guard across an `.await` in a future
+that may move between executor threads.
+
+Python and Rust context fields do not flow into each other. Python logging
+calls see only Python `log_context()` fields; Rust macros and records received
+through the `log` and `tracing` bridges see only Rust scoped fields active on
+their thread, with explicit event fields taking precedence. Pass metadata
+explicitly when a request crosses the boundary.
+
+### Bridge the log and tracing crates
+
+`setup_rust_logging()` installs a `log::Log` implementation that routes Rust
+`log` records into femtologging loggers named after each record's target.
+`setup_rust_tracing()` does the same for `tracing` events and spans. Both are
+covered in [the Rust extension notes](rust-extension.md#rust-log-crate-bridge).
+It raises `RuntimeError` if another global logger is already installed.
+
+`log::log_enabled!` follows femtologging's thresholds for each target:
+
+- A target such as `service::worker` is matched as the logger `service.worker`.
+- A registered target uses its own current level. Levels are not inherited, and
+  changes apply to later checks without reinstalling the bridge.
+- A valid but unregistered target uses `INFO`. Once the registry is full, such a
+  target is routed to `root`, so it uses the level of `root` instead.
+- An invalid target uses the `root` logger's level, or `INFO` if there is no
+  `root` logger.
+
+The `log` crate compares a macro call with its process-wide maximum before it
+evaluates the arguments, and asks about the target only afterwards. Arguments
+for a target held below that maximum are therefore still evaluated, so guard
+expensive ones with `log::log_enabled!`. The check does not look at filters or
+handlers, so an enabled record can still be rejected or dropped later.
+
+While an HTTP handler's worker is delivering a record, the bridge marks the
+records that delivery produces, such as `ureq`'s `DEBUG` diagnostics, and HTTP
+handlers skip them so the transport cannot feed itself. The bridge lifts the
+mark before running filters, formatters, and handlers, so a callback that logs
+during dispatch produces an ordinary record. See
+[Send records over HTTP](#send-records-over-http).
+
+A name the logger registry refuses falls back to the `root` logger. The `log`
+bridge reports this with a rate-limited warning, while the `tracing` layer
+currently falls back silently.
+
+`log::logger().flush()` flushes every registered femtologging logger. The `log`
+crate gives that call no way to report failure, so a logger that fails to flush
+is reported with a rate-limited warning instead.
+
+### Validate exception schema versions
+
+Structured `exc_info` and `stack_info` payloads carry a `schema_version` field
+so their shape can evolve without silent breakage.
+`femtologging.EXCEPTION_SCHEMA_VERSION` is the version this release produces.
+
+- Rust consumers accept versions from `MIN_EXCEPTION_SCHEMA_VERSION` to
+  `EXCEPTION_SCHEMA_VERSION` inclusive. Within that range, missing optional
+  fields take safe defaults.
+- A payload from a newer producer may deserialize, but must be validated
+  before use.
+- The version increases only for breaking changes: new required fields,
+  removed or renamed fields, or changed meanings or types. New optional fields
+  with safe defaults do not change it.
+
+`validate_version()` checks the whole payload tree, not only the top. Each
+`cause`, `context`, and exception-group member carries its own version, and the
+first unsupported one found is reported. Payloads are visited in order: the
+payload itself, then its `cause`, its `context`, and its group members.
+
+In Rust, `validate_version()` returns a `SchemaVersionError`:
+
+- `VersionTooNew { found, max_supported }` and
+  `VersionTooOld { found, min_supported }` for the top-level payload.
+- `Nested { path, source }` for a payload further down, with a path such as
+  `cause.exceptions[3].context`.
+- `TreeTooDeep { path, max_depth }` and `TreeTooLarge { max_nodes }` when the
+  tree is more than `MAX_EXCEPTION_PAYLOAD_DEPTH` (1,000) levels deep or holds
+  more than `MAX_EXCEPTION_PAYLOAD_NODES` (10,000) payloads. These limits bound
+  the checking; a tree that parsed can still exceed them.
+
+`SchemaVersionError` is `#[non_exhaustive]`, so a `match` needs a wildcard arm:
 
 <!-- tested-example: process-payload-schema-versioning -->
 ```rust
@@ -360,8 +2133,8 @@ fn process_payload(json: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Malformed JSON propagates as `serde_json::Error` inside the boxed error, and
-version validation runs only after a successful parse.
+Malformed JSON comes back as a `serde_json::Error` inside the boxed error, and
+the version is checked only after the payload has parsed.
 
 `process_payload` borrows `json`: it neither stores nor returns the raw
 payload, and `SchemaVersionError` reports a mismatch through versions, paths,
@@ -369,1453 +2142,60 @@ and bounds rather than through the payload itself. A caller that needs the raw
 JSON after `VersionTooNew` (for example, to quarantine or forward the payload)
 must retain its own copy.
 
-When consuming payloads in Python from external sources, each nested `cause`,
-`context`, and exception-group member carries its own `schema_version`. Compare
-every one of them with `femtologging.EXCEPTION_SCHEMA_VERSION`, not only the
-root, and apply the same policy: reject too-old payloads, and explicitly
-degrade or reject too-new payloads.
-
-Increment the schema version only for breaking changes (required field
-additions, removals, renamed fields, or semantic/type changes). Adding optional
-fields with safe defaults does not require a version bump.
-
-### Managing handlers and custom sinks
-
-- The built-in handlers implement the Rust-side `FemtoHandlerTrait`. Python
-  handlers can be attached by supplying any object that exposes a callable
-  `handle(logger_name: str, level: str, message: str)` method.
-- Python handlers run inside a shared dispatch worker, not the calling thread.
-  Ensure they are thread-safe and fast: a slow handler delays every logger
-  assigned to the same shard, not only the logger it is attached to. (Loggers
-  are spread across the shards, so the blast radius is the shard rather than
-  the process.) Records that arrive while a shard is at its bound are dropped
-  and counted.
-- `logger.add_handler(handler)` accepts either a Rust-backed handler or a Python
-  handler as described above. Use `logger.remove_handler(handler)` or
-  `logger.clear_handlers()` to detach them. Removals only affect records that
-  are enqueued after the call because previously queued items already captured
-  their handler list.
-- Use `logger.get_dropped()` to inspect records refused at dispatch admission:
-  the logger's allowance or shard permits were exhausted, the shard queue was
-  full or gone, or an inherited logger could not start the process-local pool
-  after `fork`.
-- Use `logger.get_context_capture_failures()` to inspect failed producer-context
-  snapshots. This counter is separate from `get_dropped()` and does not include
-  dispatch-admission refusals.
-- Use `logger.get_flush_diagnostics()` to poll fixed-cardinality flush-barrier
-  counters for attempts, confirmations, failure stages and elapsed-time
-  buckets. The keys remain stable and include no logger names, paths, messages
-  or payloads. Values are a best-effort snapshot read from relaxed atomics, so
-  concurrent updates may appear at different instants. Exporting these values
-  through a shared metrics adapter remains the application's responsibility.
-- Use `logger.get_context_dropped()` to inspect records discarded when Rust
-  scoped context or explicit Rust key-values fail validation. This counter is
-  separate from queue-capacity drops.
-- `logger.disabled` is a read-only property reporting whether a configuration
-  with `disable_existing_loggers=True` disabled the logger. A disabled logger
-  rejects its own records before the level check, filters, formatter, dispatch,
-  or propagation, so `log()` returns `None` and `isEnabledFor()` returns
-  `False` for every level. A later configuration that names the logger
-  re-enables it.
-- Use `logger.get_disabled_drops()` to inspect records refused because a
-  configuration with `disable_existing_loggers=True` disabled the logger. The
-  record never reaches the level check, filters, formatter, or dispatch, so
-  this counter is separate from `get_dropped()`. A later configuration that
-  names the logger re-enables it and stops the counter rising.
-
-Logger destruction reports a pending count that the warning interval is still
-holding back. At that point, the dispatch-admission drops counted by
-`get_dropped()` use `FemtoLogger: dropped {count} records; reported by flush`,
-and the context-capture failures counted by `get_context_capture_failures()` use
-`FemtoLogger: dropped {count} records after context capture failed`. Both
-figures are cumulative since the last report, so a suppressed interval's drops
-are carried into the next one. Destruction reports whatever is still pending at
-that point; a count whose interval elapsed first may already have been reported
-by a due warning, so the message does not mean every drop since the last report
-is still outstanding. A logger flush adds no report of its own: the barrier is
-deadline-bound, so a blocking sink must not be able to push `flush_handlers()`
-past its timeout, and these counts wait for destruction. (An open handler's own
-pending count still travels on the barrier's marker to that handler's worker.)
-
-### Flushing logger handlers
-
-`logger.flush_handlers()` queues a marker behind records the logger has already
-accepted when handlers are attached, then snapshots the handlers before
-allowing the worker to run their flush callbacks. With no handlers but records
-in flight, it queues a shard-wide drain marker instead; that marker sits behind
-work other loggers have already queued on the same shard, so that work can
-delay the flush. Handler additions and removals completed before that snapshot
-are reflected in this barrier; a handler removed afterwards remains alive in
-the snapshot until the worker releases it, and later additions participate in
-the next barrier. One two-second deadline covers dispatch resolution, marker
-insertion, handler-list locking, worker acknowledgement and every handler
-flush. Built-in handlers keep their own shorter flush limits, whether fixed or
-configurable: the file handlers stop waiting after a fixed second, while the
-stream handler has a configurable `flush_timeout`. The Python method releases
-the GIL while waiting so Python handlers can run.
-
-The method returns `False` when a stage is not confirmed by the deadline, the
-worker has exited, or a handler reports failure or lacks deadline support. A
-user-defined Python handler is asked to flush itself: the barrier calls its
-callable `flush` method. A handler with no callable `flush` has nothing to
-drain, so it is confirmed once the record reaches it; one whose `flush` raises
-or returns a falsy value other than `None` reports failure, and its exception
-text is never printed. `None` counts as success, as Python's flush protocol
-reports success that way. The timeout bounds the caller's Rust barrier wait; it
-cannot stop a synchronous handler callback that is still running. In normal
-builds, logger drop waits for its own in-flight records only, up to the bounded
-drain timeout, and does not join the shared process-wide worker. A callback
-that violates its deadline may keep that worker occupied after the flush returns
-`False`. PyO3 must reacquire the interpreter before returning to Python, so
-interpreter contention can delay the Python return beyond the barrier deadline.
-
-Custom Rust handlers that should participate must implement the deadline-aware
-`FemtoHandlerTrait::flush_until(context)` contract. Its default fails closed
-without invoking legacy synchronous `flush()` code. See the
-[Rust handler port guide](formatters-and-handlers-rust-port.md#femtohandler-trait-and-implementations)
-for the compatibility rules.
-
-## Built-in handlers
-
-### FemtoStreamHandler
-
-- `FemtoStreamHandler.stderr()` (default) and `.stdout()` log to the respective
-  standard streams. Calls return immediately; the handler thread flushes the
-  underlying `io::Write`.
-- `handler.flush()` waits (up to one second by default) for the worker to flush
-  buffered writes and returns `True` only when the worker acknowledges
-  `Ok(())`. One deadline, set by the flush timeout, bounds the whole call:
-  queueing the flush command and waiting for the acknowledgement share it. It
-  returns `False` if the underlying I/O flush fails, the handler has already
-  been closed, the worker channel has been dropped, or the deadline expires.
-- `handler.close()` stops accepting records and waits, up to the handler's
-  flush timeout, for the worker to process the records already queued; call it
-  before process exit. Both `flush()` and `close()` release the GIL while they
-  wait so a Python callable formatter can run to completion on the worker
-  thread during either call. `close()` returns no status, so a caller cannot
-  tell from the return value whether the worker finished.
-
-  The wait is bounded by the handler's flush timeout, which
-  `StreamHandlerBuilder.with_flush_after_ms()` sets. If the timeout expires,
-  `close()` returns without the worker having finished; the worker keeps
-  processing its queue and can still write to the stream after `close()`
-  returns. A successful `close()` returns once the worker raises its completion
-  signal, without joining the worker thread: joining would also wait for
-  thread-local destructors, which user code can make block, so the worker is
-  detached and reclaimed by the operating system when it exits. Completion does
-  not guarantee delivery, because a worker panic still signals completion with
-  records queued, and write errors are logged rather than reported to the
-  caller.
-- A dropped record is reported as
-  `FemtoStreamHandler: {count} log records dropped since the last report`. The
-  count is cumulative, so a suppressed warning interval carries its drops into
-  the next report. An open handler's `flush()` carries a pending count on its
-  flush marker, which the worker reports before acknowledging; if the marker
-  never enters the queue the count stays pending. `close()` and destruction
-  report a pending count directly because no later warning will come: the
-  former before it waits for the worker, the latter before it closes. That
-  report runs before the close wait starts, so a blocking `log` sink can delay
-  `close()` past the flush timeout, and the Python `close()` makes it while
-  still holding the GIL. A flush on an already closed handler reports nothing
-  and returns `False`.
-- To tune capacity, flush timeout, or formatters use `StreamHandlerBuilder`. It
-  provides `.with_capacity(n)`, `.with_flush_after_ms(ms)`, and
-  `.with_formatter(callable_or_id_or_builder)` fluent methods before calling
-  `.build()`.
-
-A direct `flush()` shares one configured `flush_timeout` between queue
-admission and the acknowledgement, so admission that spends part of that budget
-leaves less of it for the worker's answer. Under load, `flush()` can therefore
-return `False` even though the handler is healthy: admission may spend the
-budget while the queue is full, or the worker may not acknowledge what is left.
-The logger's `flush_handlers()` does not change this: it gives the handler the
-barrier's deadline, and the handler still caps its own wait at its configured
-`flush_timeout`.
-
-### FemtoFileHandler
-
-- Constructor signature:
-  `FemtoFileHandler(path, capacity=1024, flush_interval=1, policy="drop")`. The
-  flush interval counts *records*, not seconds.
-- `policy` controls queue overflow handling:
-  - `"drop"` (default) discards records and raises `RuntimeError`.
-  - `"block"` blocks the caller until the worker makes room.
-  - `"timeout:N"` blocks for `N` milliseconds before giving up.
-- Use `handler.flush()` and `handler.close()` to move queued records to disk,
-  and check what `flush()` reports. `flush()` returns `True` only when the
-  worker acknowledged the flush within its one-second timeout; a `False` result
-  means the records were not confirmed written. `True` confirms the flush
-  operation itself, not that every queued record was written or durably stored:
-  an individual record whose write failed is logged and skipped, and the worker
-  can still acknowledge a later flush. Always close the handler when the
-  application shuts down. `close()` is idempotent and safe to call multiple
-  times; only the first call performs shutdown work, and every call waits on
-  the same completion signal. That wait is bounded to one second: if the worker
-  does not signal completion within that second, `close()` logs a warning and
-  returns while the worker may still be running, so a timed-out close is not
-  confirmation that queued records have been written, and a second `close()`
-  that also times out does not confirm completion either. Prefer calling
-  `close()` explicitly: the destructor performs the same shutdown, but it runs
-  with the interpreter lock held, so it cannot offer the GIL release described
-  below.
-
-  On CPython 3.12 and earlier, a worker that is still running when the
-  interpreter starts finalizing can abort the whole process instead of failing
-  quietly. A worker that runs a Python-callable formatter attaches to the
-  interpreter to call it, and PyO3 only guards that attach during finalization
-  on CPython 3.13 and later. A timed-out `close()`, including a repeated one,
-  therefore leaves that window open. Restore worker progress first — do not
-  park the worker and exit — then confirm completion before the process ends by
-  reading `wait_diagnostics()`. Those counters are cumulative for the handler's
-  lifetime: `close_completed`, `close_panicked` and `close_unknown` each count
-  a closer that reached a verdict on the worker's exit, and `close_timed_out`
-  counts the closers that returned without one. An earlier timeout therefore
-  stays counted after a later close succeeds, so confirm a retry by snapshotting
-  `wait_diagnostics()` immediately before it and again after it returns, and
-  check that one of the verdict counters increased. A non-zero
-  `close_timed_out` only records the earlier attempt; it does not mean the
-  retry also failed.
-- In Rust, `close()` takes `&self` and may be called concurrently on a shared
-  handler, including while another thread flushes it. Every closer observes the
-  same completion signal, and a closer that arrives after the worker has
-  stopped returns immediately. Each wait is bounded to one second: a worker
-  that does not signal completion in that window is reported, and the call
-  returns without joining it.
-- `handler.wait_diagnostics()` returns counters for the Python-facing waits: one
-  entry per outcome across `handle()`, `flush()`, and `close()`, plus
-  `total_wait_micros`, `max_wait_micros`, and `waits_in_flight`. The last of
-  these is a gauge rather than a counter: it is non-zero while any thread is
-  still inside a wait, so a reader can tell an idle handler from one whose
-  caller is parked, and can see a `close()` that has not yet settled the
-  worker. The key set is fixed and never includes logger names, paths,
-  messages, or raw timeout values. Reading the diagnostics is itself cheap and
-  records nothing, so a monitoring loop cannot inflate the numbers it reports.
-  With the `tracing-compat` feature the same outcomes are emitted as
-  `femtologging::internal` trace events; see
-  [Handler wait diagnostics](developers-guide.md#handler-wait-diagnostics).
-- `FileHandlerBuilder` mirrors these options and also exposes
-  `.with_overflow_policy(OverflowPolicy.drop()/block()/timeout(ms))` and
-  `.with_formatter(…)`. Pass a callable, a `FormatterBuilder`, or a named
-  formatter registered on `ConfigBuilder` to customize output.
-
-#### Concurrency and the GIL for file handlers
-
-Explicit Python calls to `handle()`, `flush()`, and `close()` release the
-interpreter lock (`GIL`) for the whole of any wait on the channel, on the
-worker's flush acknowledgement, or on the worker's shutdown. Another Python
-thread therefore keeps running while one thread is parked on back pressure, and
-slow file IO can no longer stall every thread in the interpreter. The rotating
-and timed-rotating handlers are built on the same worker and inherit this
-contract; see [FemtoRotatingFileHandler](#femtorotatingfilehandler) and
-[FemtoTimedRotatingFileHandler](#femtotimedrotatingfilehandler).
-
-Two consequences follow from that release, and both concern `"block"`:
-
-- A `"block"` wait is **unbounded**. It ends when the worker makes room or when
-  the channel closes, and nothing else ends it. If the worker has stopped
-  draining — a stalled filesystem, a full disk, a formatting callable that
-  never returns — the calling thread waits for as long as that lasts.
-- `close()` does **not** cancel a `handle()` call that is already blocked.
-  `close()` takes the shutdown state and waits on the shared completion signal,
-  but the blocked `handle()` holds its own clone of the sender and stays
-  blocked until the worker makes room. Restore worker progress and let the
-  blocked call finish before calling `close()`.
-
-Two states follow, and they describe different points in the shutdown:
-
-- While a `handle()` or `flush()` call is waiting — blocked on queue capacity
-  or waiting for a flush acknowledgement — it holds a shared borrow of the
-  handler and, for `handle()`, its own clone of the sender. Another `handle()`
-  or `flush()` call may take its own shared borrow and start, although it may
-  then wait on the same queue. A `close()` takes the shutdown state and waits
-  on the shared completion signal, so it does not raise; it returns once the
-  blocked call is accepted and the worker stops, or after its own one-second
-  bound.
-- Once a `close()` has taken the shutdown state, concurrent `handle()` calls
-  raise `RuntimeError`, `flush()` returns `False`, and a second `close()`
-  shares the first one's completion wait rather than starting new shutdown work.
-  `FemtoTimedRotatingFileHandler` reports the closed handler from `handle()` as
-  `ValueError`, like its other handler errors. This keeps a worker formatter
-  that re-enters the handler safe while shutdown is in progress.
-
-Callers who need a wait that ends on its own must use `"timeout:N"`. They must
-also handle the exception raised when the deadline expires and the record is
-dropped. `FemtoFileHandler` and `FemtoRotatingFileHandler` raise `RuntimeError`;
-`FemtoTimedRotatingFileHandler` currently maps the same enqueue failure to
-`ValueError`.
-
-Under the logger path there is no such choice to make: dispatch through
-`logger.log()` waits in the logger's worker thread, not in the thread that
-called `logger.log()`. The producer returns as soon as the logger's own queue
-accepts the record.
-
-### FemtoRotatingFileHandler
-
-- Wraps `FemtoFileHandler` with size-based rotation. Instantiate via
-  `FemtoRotatingFileHandler(path, options=HandlerOptions(…))`.
-- `HandlerOptions` fields:
-  - `capacity`, `flush_interval`, and `policy` mirror `FemtoFileHandler`.
-  - `rotation=(max_bytes, backup_count)` enables rollover when *both* values
-    are greater than zero. Set `(0, 0)` to disable rotation entirely.
-- Rotation renames the active log file to `.1`, shifts older backups up to
-  `backup_count`, and truncates the live file. If opening a fresh file fails
-  the implementation falls back to appending to the existing file and logs the
-  reason.
-- `handler.close()` follows the same contract as `FemtoFileHandler`: it is
-  idempotent, only the first call performs shutdown work, and concurrent close
-  calls share one worker-completion wait rather than needing caller-side
-  synchronization.
-- `handle()`, `flush()`, and `close()` inherit the interpreter-lock contract
-  described in
-  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers),
-  including the unbounded `"block"` wait and its shutdown semantics.
-- `wait_diagnostics()` reports the same bounded counters as
-  `FemtoFileHandler`; trace events carry `handler_kind="rotating"` so the two
-  handlers stay distinguishable.
-- `RotatingFileHandlerBuilder` provides the same fluent API as the file builder
-  plus `.with_max_bytes()` and `.with_backup_count()`.
-
-### FemtoTimedRotatingFileHandler
-
-- Wraps `FemtoFileHandler` with time-based rotation. Instantiate via
-  `FemtoTimedRotatingFileHandler(path, options=TimedHandlerOptions(…))`.
-- `TimedHandlerOptions` keeps the queue fields (`capacity`, `flush_interval`,
-  `policy`) and adds `when`, `interval`, `backup_count`, `utc`, and optional
-  `at_time`.
-- Supported `when` values are `S`, `M`, `H`, `D`, `MIDNIGHT`, and `W0`-`W6`.
-  `at_time` is only valid for daily, midnight, and weekday schedules.
-- Rotation runs on the worker thread. `backup_count == 0` keeps all timestamped
-  backups instead of disabling rotation.
-- `handle()`, `flush()`, and `close()` inherit the interpreter-lock contract
-  described in
-  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers),
-  including the unbounded `"block"` wait and its shutdown semantics.
-- `wait_diagnostics()` reports the same bounded counters as
-  `FemtoFileHandler`; trace events carry `handler_kind="timed_rotating"` so the
-  three worker-backed handlers stay distinguishable.
-- `TimedRotatingFileHandlerBuilder` mirrors the direct handler surface with
-  `.with_when()`, `.with_interval()`, `.with_backup_count()`, `.with_utc()`, and
-  `.with_at_time()`.
-
-### FemtoSocketHandler
-
-- Socket handlers must be built via `SocketHandlerBuilder`. Typical usage:
-
-```python
-from femtologging import BackoffConfig, SocketHandlerBuilder
-
-socket_handler = (
-    SocketHandlerBuilder()
-    .with_tcp("127.0.0.1", 9020)
-    .with_capacity(2048)
-    .with_connect_timeout_ms(5000)
-    .with_write_timeout_ms(1000)
-    .with_tls("logs.example.com", insecure=False)
-    .with_backoff(
-        BackoffConfig({
-            "base_ms": 100,
-            "cap_ms": 5000,
-            "reset_after_ms": 30000,
-            "deadline_ms": 120000,
-        })
-    )
-    .build()
-)
-```
-
-- Default transport is TCP to `localhost:9020`. Call `.with_unix_path()` to use
-  Unix sockets on POSIX systems. TLS only works with TCP transports; attempting
-  to combine TLS and Unix sockets raises `HandlerConfigError`.
-- Records are serialized to MessagePack maps:
-  `{logger, level, message, timestamp_ns, filename, line_number, module_path,
-    thread_id, thread_name, key_values}` and framed with a 4-byte big-endian
-  length prefix.
-- The worker reconnects automatically using exponential backoff. Payloads that
-  exceed the configured `max_frame_size` are dropped.
-- `handler.flush()` forces the worker to flush the active socket, and returns
-  `True` only when the worker acknowledges. One deadline of the handler's flush
-  timeout covers both the wait for queue space and the acknowledgement, so a
-  flush returns `False` once that single budget is spent rather than waiting a
-  second full timeout for the worker to answer. It returns `False` when the
-  handler is closed, the worker channel is gone, the connection fails to flush
-  with an I/O error, the marker is discarded during shutdown, or the budget
-  expires. An acknowledgement therefore has to report a successful flush to
-  count, not merely arrive. Python `flush()` releases the GIL while it waits,
-  so other Python threads keep running during a flush that blocks on a full
-  queue or a slow collector.
-- `handler.close()` waits for the worker for at most the handler's write
-  timeout. During that window, each pending record gets at most one best-effort
-  attempt, without retries. A worker that acknowledges the shutdown in time is
-  joined. One that does not, typically because it is blocked writing to a
-  collector that has stopped reading, is detached with a warning rather than
-  joined past the deadline. Records still queued when the deadline passes are
-  discarded, and the count is warned about. The same bound applies when the
-  handler is dropped without an explicit `close()`, and the wait runs with the
-  GIL released.
-- One record is written in steps, and the remaining budget is recomputed
-  between them. A frame larger than the socket send buffer therefore stops at
-  the deadline with a warning that reports how many bytes were written, instead
-  of spending one socket timeout per buffer-sized chunk. A partial frame leaves
-  the collector with a truncated record, which is the same outcome as a record
-  that arrived after the deadline: the connection is not reused afterwards.
-- Two operations are outside the cooperative cancellation above, and a `close`
-  against either one is answered by detaching the worker rather than joining
-  it. A Unix domain socket connect that finds a full listener backlog blocks
-  until a slot frees or the listener closes, and the standard library offers no
-  timed or non-blocking constructor for it; the deadline is checked before the
-  attempt, so no connect begins once it has passed, but an attempt already
-  blocked is not interrupted. Hostname resolution for a TCP transport has the
-  same limitation for the same reason. In both cases `close()` still returns
-  inside its budget, and the detached worker leaves as soon as its blocking
-  call returns or fails.
-- Dropped records are reported as
-  `FemtoSocketHandler dropped {count} records since the last report`, with
-  `; triggering cause: {cause}` appended when a specific drop triggered the
-  warning. The count is cumulative, so it can cover several suppressed
-  intervals and earlier drops from other causes; only the cause that triggered
-  this report is named. An open handler's `flush()` carries a pending count on
-  its flush marker, which the worker reports before acknowledging alongside its
-  own suppressed count; if the marker never enters the queue the count stays
-  pending. `close()` and destruction report a pending count directly, because
-  no later warning will come, and a flush on an already closed handler reports
-  nothing and returns `False`. The close-time report runs before the bounded
-  shutdown wait and is outside `flush_timeout` (the handler's write timeout),
-  so a blocking log sink can delay `close()` past its budget.
-
-### FemtoHTTPHandler
-
-- HTTP handlers are built via `HTTPHandlerBuilder` and send one serialized
-  record per request from a dedicated worker thread.
-- Use `.with_endpoint(url, method="POST")` to configure the destination in a
-  single call. Legacy `.with_url()` and `.with_method()` setters remain
-  available for compatibility.
-- Use `.with_auth({"token": "..."})` for bearer tokens or
-  `.with_auth({"username": "...", "password": "..."})` for basic auth. Legacy
-  `.with_basic_auth()` and `.with_bearer_token()` setters remain available for
-  compatibility.
-- `with_headers(...)`, `with_capacity(...)`, timeout setters, and
-  `.with_json_format()` mirror the socket/file builder style.
-  `HTTPHandlerBuilder` rejects an invalid header name, header value, or bearer
-  token at build time with `HandlerConfigError`. The message never echoes a
-  header value.
-- The endpoint must be an absolute `http` or `https` URL. A malformed endpoint,
-  another scheme, or an endpoint the transport cannot send is rejected with
-  `HandlerConfigError` when the handler is built, instead of failing on every
-  record. A path that needs percent-encoding is accepted and encoded on the
-  wire, so `http://host/log ingest` reaches the collector as `/log%20ingest`.
-- Certificates are validated against the WebPKI roots bundled with the
-  extension, not the platform trust store. A private certificate authority is
-  not supported, and there is no setting that weakens verification.
-- `connect_timeout_ms` bounds connection establishment, including the TLS
-  handshake. `write_timeout_ms` bounds the whole attempt, so it also caps the
-  connect phase: a connection may wait for at most the smaller of the two.
-- A redirect chain is followed for at most four redirects. A 301, 302 or 303 is
-  re-requested as a GET, and a 307 or 308 only for a GET. `Authorization` and
-  `Cookie` are never replayed at the redirect target. These redirects fail
-  permanently: a 300 or any other status with no replay rule, a 307 or 308
-  answering a POST, and a redirect whose `Location` is missing or not valid
-  UTF-8. A fifth redirect is a transport failure, so the record follows the
-  normal retry policy.
-- A transport failure logs a fixed classification instead of the HTTP client's
-  own error text, for example `transport error (invalid URL)`,
-  `transport error (DNS lookup failed)`, or `transport error (invalid header)`.
-  The classification never repeats the configured URL's userinfo or query
-  values, a rejected header's value, or a redirect target, so credentials
-  cannot reach the diagnostic output. The endpoint itself is omitted because
-  each handler has exactly one configured URL.
-- Authoritative fields (`name`, `levelname`, `msg`, `created`, `filename`,
-  `lineno`, `module`, `thread`, and the optional `threadName`, `exc_info`, and
-  `stack_info`) stay at the top level in both JSON and URL-encoded payloads.
-  Legitimate custom structured fields are flat, string-valued top-level members
-  alongside them.
-- Reserved structured names are omitted from custom metadata in every HTTP
-  format, so lower-trust metadata cannot replace an authoritative value even
-  when a record is constructed without admission validation.
-  `.with_record_fields([...])` selects built-in fields by name and projects
-  permitted custom fields by their top-level name. A reserved name in that list
-  selects only the built-in field, and unknown names are omitted.
-- These builder and transport rules are new in v0.2.0. See
-  [the migration guide](v0-2-0-migration-guide.md#http-handler-endpoint-validation-and-redirects)
-  before upgrading an HTTP handler.
-- `handler.close()` waits for the worker for at most the handler's write
-  timeout. During that window, each pending record gets at most one best-effort
-  attempt, without retries. A worker that acknowledges the shutdown in time is
-  joined. One that does not, typically because a request already in flight is
-  waiting on an endpoint that has stopped answering, is detached with a warning
-  rather than joined past the deadline. Records still queued when the deadline
-  passes are discarded, and the count is warned about, so a queue that cannot
-  be delivered inside the timeout costs those records rather than extending the
-  close. The bound is on `close()` itself, not on the detached worker's exit: a
-  request already in flight when the deadline falls may outlive it, and TCP
-  hostname resolution has no interruptible timeout. The same bound applies when
-  the handler is dropped without an explicit `close()`, and the wait runs with
-  the GIL released.
-- Dropped records are reported as
-  `FemtoHTTPHandler dropped {count} records since the last report`, with
-  `; triggering cause: {cause}` appended when a specific drop triggered the
-  warning. The count is cumulative, so it can cover several suppressed
-  intervals and earlier drops from other causes; only the cause that triggered
-  this report is named. An open handler's `flush()` carries a pending count on
-  its flush marker, which the worker reports before acknowledging alongside its
-  own suppressed count; if the marker never enters the queue the count stays
-  pending. `close()` and destruction report a pending count directly, because
-  no later warning will come, and a flush on an already closed handler reports
-  nothing and returns `False`. The close-time report runs before the bounded
-  shutdown wait and is outside `flush_timeout` (the handler's write timeout),
-  so a blocking log sink can delay `close()` past its budget.
-- `handler.flush()` forces the worker to flush what it has queued, and returns
-  `True` only when the worker acknowledges within the handler's flush timeout.
-  Python `flush()` releases the GIL while it waits, so other Python threads
-  keep running during a flush that blocks on a full queue or a slow endpoint.
-- A handler's worker marks its thread as HTTP transport while it delivers.
-  `ureq` reports its progress at `DEBUG` through the Rust `log` and `tracing`
-  facades, using targets such as `ureq.run`, `ureq.pool`, and
-  `ureq.unversioned.resolver`. When a Rust bridge is installed, those records
-  carry a transport-origin marker. Every `FemtoHTTPHandler` silently ignores a
-  marked record after its closed-handler check, so a delivery cannot
-  manufacture the next request. The ignored record is not counted as a drop.
-  Non-HTTP handlers still receive it, and records emitted by application code
-  on other threads are unaffected even while a worker is sending. To see what
-  an endpoint suppresses, put a non-HTTP sink in place and raise the worker's
-  targets (`ureq.run`, `ureq.pool`, `ureq.unversioned.resolver`) to `DEBUG`. A
-  record that reaches that sink and never reaches the endpoint is evidence of
-  suppression, not an exact count: a filter or a failed delivery can also
-  account for an absence.
-- The marker is narrow on purpose. A record that Python code rebuilds from a
-  marked record is a new application record, records passed directly to the
-  three-argument `handler.handle(logger, level, message)` Python method carry
-  no marker, and socket handlers do not suppress marked records. Those paths
-  remain the caller's responsibility when they could loop back into the same
-  HTTP endpoint.
-
-### Custom Python handlers
-
-```python
-class Collector:
-    def __init__(self) -> None:
-        self.records: list[tuple[str, str, str]] = []
-
-    def handle(self, logger: str, level: str, message: str) -> None:
-        # Runs on the worker for this logger's shared dispatch shard.
-        self.records.append((logger, level, message))
-
-
-collector = Collector()
-logger.add_handler(collector)
-```
-
-The handler's `handle` method must be callable and thread-safe. Exceptions are
-printed to stderr and counted as handler errors, so prefer defensive code and
-avoid raising from `handle`.
-
-`FemtoLogger.flush_handlers()` also calls the handler's `flush` method when it
-has one, so a custom handler that buffers records can persist them. The call
-queues a barrier behind any records already queued for the logger's shard, and
-blocks the invoking thread while the dispatch worker handles those records and
-then runs `flush` on the registered handlers, up to the flush deadline. The
-handler callbacks themselves run on the dispatch worker, not on the invoking
-thread, so a custom `flush` must not rely on caller-thread state such as a
-thread-local or an enclosing interpreter frame. Handlers are attempted while
-budget remains: a handler that fails does not stop the ones after it, but
-handlers left when the deadline expires are not flushed, and the caller can
-return `False` while a callback is still running. A missing or non-callable
-`flush` counts as success, so handlers without one need no change. A `flush`
-that returns `None`, as `logging.Handler.flush` does, has flushed without
-complaint; every other result succeeds only when it is truthy, so `False` or
-`0` reports failure. An exception raised by `flush` logs a bounded warning that
-omits the exception text and makes `flush_handlers()` return `False`. The
-calling thread releases the GIL while it waits for queued records and native
-handlers. A custom `flush` runs with the interpreter attached. Whether other
-Python threads can run while it blocks depends on the blocking operation.
-
-#### Handler stability contract
-
-Handler capabilities are inspected **once** when `add_handler()` is called:
-
-- The presence of a callable `handle_record` method is cached at registration
-  time and determines which dispatch path is used for all subsequent records.
-- **Do not mutate the handler after calling `add_handler()`.** Adding or
-  removing `handle_record` after registration has no effect and results in
-  undefined behaviour.
-- Ensure the handler is fully configured before passing it to `add_handler()`.
-
-This design keeps per-record overhead low by avoiding repeated attribute
-lookups on the hot path and aligns with the standard library expectation that
-handlers are configured before use.
-
-The following diagram shows how capability detection works at registration time
-and how the cached result determines dispatch for all subsequent records:
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Logger
-    participant PyHandler
-    participant PythonHandlerObject
-
-    User->>Logger: add_handler(python_handler)
-    Logger->>PyHandler: new(py, python_handler)
-    PyHandler->>PythonHandlerObject: getattr(handle_record)
-    alt handle_record exists and is callable
-        PyHandler-->>PyHandler: has_handle_record = true
-    else handle_record missing or not callable
-        PyHandler-->>PyHandler: has_handle_record = false
-    end
-    PyHandler-->>Logger: PyHandler instance (with cached has_handle_record)
-    Logger-->>Logger: register handler with cached capability
-
-    User->>Logger: log(record)
-    Logger->>PyHandler: handle(record)
-    alt has_handle_record is true
-        PyHandler->>PythonHandlerObject: handle_record(record)
-    else has_handle_record is false
-        PyHandler->>PythonHandlerObject: handle(logger, level, message)
-    end
-```
-
-*Figure 1: Capability detection at registration and dispatch based on cached
-result.*
-
-This next diagram illustrates why mutating the handler after registration has
-no effect—the capability was already cached:
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Logger
-    participant PyHandler
-    participant PythonHandlerObject
-
-    User->>Logger: add_handler(python_handler)
-    Logger->>PyHandler: new(py, python_handler)
-    PyHandler->>PythonHandlerObject: getattr(handle_record)
-    PyHandler-->>PyHandler: has_handle_record = false
-    PyHandler-->>Logger: PyHandler instance (has_handle_record = false)
-
-    User->>PythonHandlerObject: add method handle_record
-    PythonHandlerObject-->>PythonHandlerObject: mutate object
-
-    User->>Logger: log(record)
-    Logger->>PyHandler: handle(record)
-    PyHandler-->>PyHandler: uses cached has_handle_record = false
-    PyHandler->>PythonHandlerObject: handle(logger, level, message)
-
-    Note over PyHandler,PythonHandlerObject: New handle_record is not used because capability was cached at registration
-```
-
-*Figure 2: Mutating the handler after registration does not change dispatch
-behaviour.*
-
-### Using standard library (stdlib) `logging.Handler` subclasses
-
-Python's standard library ships with a rich set of handler classes
-(`FileHandler`, `RotatingFileHandler`, `SMTPHandler`, `SysLogHandler`, etc.).
-These handlers implement the stdlib `emit(LogRecord)` interface, which is
-incompatible with femtologging's `handle_record(dict)` protocol.
-
-`StdlibHandlerAdapter` bridges the gap.  It wraps any `logging.Handler`
-subclass, translates femtologging record dicts into `logging.LogRecord`
-instances, and delegates to the wrapped handler's `handle()` method, preserving
-that handler's own dispatch path. For handlers retaining the base
-`logging.Handler.handle()` behaviour, normal execution evaluates the filter
-chain once, then acquires the I/O lock and invokes `emit()` if the chain
-accepts the record. A subclass overriding `handle()` controls its own internal
-filtering, locking and emission behaviour.
-
-```python
-import logging
-from femtologging import FemtoLogger, StdlibHandlerAdapter
-
-# Wrap a stdlib FileHandler for use with femtologging
-file_handler = logging.FileHandler("app.log")
-file_handler.setFormatter(
-    logging.Formatter("%(asctime)s %(name)s [%(levelname)s] %(message)s")
-)
-
-adapter = StdlibHandlerAdapter(file_handler)
-
-logger = FemtoLogger("myapp")
-logger.add_handler(adapter)
-logger.log("INFO", "Application started")
-```
-
-Two independent thresholds govern whether a record is written, and the adapter
-honours both.  The femtologging logger's own level decides whether the record
-is dispatched at all.  The adapter then compares the record's mapped stdlib
-level with the wrapped handler's `level`, exactly as the standard library's
-`Logger.callHandlers()` does, and discards the record when it falls below that
-threshold.  The adapter reads the wrapped handler's current level when it
-processes each record.  A `logging.Handler.setLevel()` call therefore affects
-records processed after the call, including records already queued but not yet
-handled; records already handled are unaffected.  There is no need to rebuild
-the adapter.
-
-```python
-import logging
-import logging.handlers
-from femtologging import FemtoLogger, StdlibHandlerAdapter
-
-# Email is expensive and sensitive; only send it the serious records.
-email_handler = logging.handlers.SMTPHandler(
-    mailhost="mail.example.com",
-    fromaddr="logging@example.com",
-    toaddrs=["oncall@example.com"],
-    subject="Application alert",
-)
-email_handler.setLevel(logging.ERROR)
-
-logger = FemtoLogger("myapp")
-logger.set_level("TRACE")
-logger.add_handler(StdlibHandlerAdapter(email_handler))
-
-logger.log("INFO", "Request completed")  # discarded: below handler level
-logger.log("ERROR", "Payment failed")  # reaches the email handler
-```
-
-In this example the `"TRACE"` femtologging logger accepts every record, but only
-`ERROR` and `CRITICAL` reach the handler.  `logging.NOTSET` is the default and
-accepts every level.
-
-The adapter maps femtologging levels to their stdlib equivalents (TRACE maps to
-level 5, DEBUG to 10, INFO to 20, WARN to 30, ERROR to 40, CRITICAL to 50). A
-custom `TRACE` level name is registered with stdlib's `logging` module so that
-formatters render it as `TRACE` rather than `Level 5`.
-
-A record that passes the level comparison is passed through the wrapped
-handler's `handle()` once. For a handler retaining the base
-`logging.Handler.handle()` behaviour, normal execution evaluates its filter
-chain once. If the chain accepts the record, the handler acquires its I/O lock
-and invokes `emit()`. A filter can reject a level-accepted record before lock
-acquisition or the `emit()` invocation. Subclasses overriding `handle()` define
-their own internal path. Records discarded by the level comparison never enter
-`handle()`, so the handler's filter path is not entered.
-
-The restrictions on setting a handler's `level` in the
-[dictConfig](#dictconfig-restricted-compatibility-layer) and
-[fileConfig](#fileconfig-ini-compatibility) schemas apply only to those
-configuration formats. They do not limit a standard-library handler wrapped in
-`StdlibHandlerAdapter`; the adapter honours that handler's own `level` as
-described above.
-
-Metadata fields such as `filename`, `line_number`, `thread_name`, `thread_id`,
-and `timestamp` are forwarded to the `LogRecord` where matching attributes
-exist.  Custom key-value pairs from `metadata.key_values` are propagated into
-the `LogRecord.__dict__`, making them available to stdlib formatters (e.g.
-`%(request_id)s`) and filters.
-
-The adapter runs on the worker for the logger's dispatch shard, which may also
-serve other loggers. Before a record is queued, femtologging captures the
-producer's `contextvars` context and invokes the wrapped handler's `handle()`
-call inside it. For handlers retaining the base `logging.Handler.handle()`
-behaviour, this includes the filter chain and, when the chain accepts, the I/O
-lock and `emit()` invocation. Formatting performed synchronously within that
-call also uses the captured context. Work deferred to another thread or process
-needs separate context propagation. A `contextvars.ContextVar` read by an
-inline handler callback therefore observes the value set by the log caller,
-even though the initial handler dispatch is asynchronous on a shared worker.
-
-**Limitations:**
-
-- `exc_info` is provided as pre-formatted text (`exc_text`), not as
-  the original `(type, value, traceback)` tuple.  Stdlib formatters that inspect
-  `record.exc_info` directly will not find a live traceback object.
-- `pathname` and `funcName` are set to defaults because femtologging does not
-  capture these values.  `relativeCreated` is recomputed from
-  `metadata.timestamp` when present, so elapsed-time values can be accurate.
-- Only `contextvars` are propagated. Other thread-local state, including
-  `threading.local`, belongs to the shared shard worker and may be observed by
-  handlers serving different loggers on that shard.
-
-## Configuration options
-
-### basicConfig
-
-- Accepts `level`, `filename`, `stream` (`sys.stdout` or `sys.stderr`), `force`,
-  and `handlers` (an iterable of handler objects) either via keyword arguments
-  or the `BasicConfig` dataclass.
-- `BasicConfig` is a slotted dataclass: `level`, `filename`, `stream`, `force`,
-  and `handlers` are its complete supported surface, and instances cannot
-  accept arbitrary extra attributes. Assigning a mistyped field name raises
-  `AttributeError` immediately rather than silently creating a new attribute
-  that `basicConfig` never reads:
-
-  ```python
-  cfg = BasicConfig(level="INFO")
-  cfg.filenam = "/var/log/app.log"  # AttributeError: no such field
-  ```
-
-- `filename` and `stream` are mutually exclusive and cannot be combined with
-  the `handlers` argument.
-- Passing `force=True` clears existing handlers on the root logger before
-  installing the new one.
-- `basicConfig` does not accept formatting parameters such as `format` or
-  `datefmt`. To customize output, configure a handler with a callable or
-  `FormatterBuilder` as described below.
-
-### ConfigBuilder (imperative API)
-
-```python
-from femtologging import (
-    ConfigBuilder,
-    LoggerConfigBuilder,
-    StreamHandlerBuilder,
-    FileHandlerBuilder,
-    OverflowPolicy,
-    LevelFilterBuilder,
-    PythonCallbackFilterBuilder,
-)
-
-
-def add_request_id(record):
-    record.request_id = "req-123"
-    return True
-
-
-builder = (
-    ConfigBuilder()
-    .with_handler("console", StreamHandlerBuilder.stderr())
-    .with_handler(
-        "audit",
-        FileHandlerBuilder("/var/log/app.log").with_overflow_policy(
-            OverflowPolicy.block()
-        ),
-    )
-    .with_filter(
-        "request_context",
-        PythonCallbackFilterBuilder(add_request_id),
-    )
-    .with_filter("info_only", LevelFilterBuilder().with_max_level("INFO"))
-    .with_logger(
-        "app.audit",
-        LoggerConfigBuilder()
-        .with_level("INFO")
-        .with_handlers(["audit"])
-        .with_filters(["request_context", "info_only"])
-        .with_propagate(False),
-    )
-    .with_root_logger(
-        LoggerConfigBuilder().with_level("WARNING").with_handlers(["console"])
-    )
-)
-
-builder.build_and_init()
-```
-
-- `build_and_init()` validates every logger name, handler and filter reference,
-  and scalar setting, and prepares the complete configuration before changing
-  live logger state. The resulting transition is atomic from the caller's
-  perspective: if configuration fails, every pre-existing logger keeps its
-  handlers, filters, level, propagation flag, disabled flag, and runtime
-  attachment metadata exactly as they were.
-- `with_default_level(level)` sets a fallback for loggers that omit explicit
-  levels. `with_disable_existing_loggers(True)` disables previously created
-  loggers that are not part of the new configuration: they reject records
-  outright, so nothing reaches ancestor or root handlers through propagation,
-  and they lose their handlers and filters. Ancestors of configured loggers are
-  preserved automatically. Naming a logger in a later configuration enables it
-  again; loggers that were never disabled keep their state through a
-  configuration that leaves `disable_existing_loggers` off.
-- Available filter builders are `LevelFilterBuilder`,
-  `NameFilterBuilder`, and `PythonCallbackFilterBuilder`. Callback filters run
-  on the producer thread and may either return a truthy/falsy value directly or
-  expose a stdlib-style `filter(record)` method. Filters are applied in the
-  order they are declared in each `LoggerConfigBuilder`.
-- Logger filters apply only to the logger receiving the logging call. They do
-  not run for descendants or records propagated from descendants, matching
-  CPython. For application-wide enrichment, attach a filter to the shared
-  handler with `.with_filters(["request_context"])`; handler filters run on the
-  producer thread for every record routed to that handler, including propagated
-  records.
-- Formatter registration (`with_formatter(id, FormatterBuilder)`) resolves the
-  named formatter when `build_and_init()` builds each configured handler.
-
-### dictConfig (restricted compatibility layer)
-
-- Supported handler classes: `logging.StreamHandler`,
-  `femtologging.StreamHandler`, `logging.FileHandler`,
-  `femtologging.FileHandler`, `logging.handlers.RotatingFileHandler`,
-  `logging.handlers.TimedRotatingFileHandler`, and
-  `logging.handlers.SocketHandler` (plus their femtologging equivalents).
-- Handler `args` are evaluated with `ast.literal_eval`, matching the stdlib
-  behaviour for simple tuples. For socket handlers you can pass either
-  `(host, port)` or a single Unix socket path; keyword arguments mirror the
-  builder API (`host`, `port`, `unix_path`, `capacity`, `connect_timeout_ms`,
-  `write_timeout_ms`, `max_frame_size`, `tls`, `tls_domain`, `tls_insecure`,
-  `backoff_*` aliases).
-- Top-level `filters` sections are supported. Declarative mappings still use
-  exactly one of `level` or `name`, while factory mappings use stdlib-style
-  `"()"` syntax such as `{"()": "pkg.module.FilterFactory", "prefix": "svc"}`.
-  The factory target may be a dotted path or a direct callable, and is
-  instantiated with the remaining keys as keyword arguments. Mixing `"()"` with
-  `level` or `name` is rejected. Loggers, handlers, and the root logger accept a
-  `filters` list of filter IDs. Factory entries are trusted-code-equivalent
-  input; read [Filter factory trust boundary](#filter-factory-trust-boundary)
-  before accepting configuration from any source that is not fully trusted.
-- Unsupported stdlib features raise `ValueError`: incremental updates and
-  handler `level`. The `formatters` section accepts percent-style `format` and
-  `datefmt` values, and a handler can reference its registered formatter ID.
-- A `root` section is mandatory. Named loggers support `level`,
-  `handlers`, `filters`, and `propagate` (bool).
-- The parsed configuration is passed to `ConfigBuilder.build_and_init()`, so
-  handler and filter validation completes before the builder applies its staged
-  changes to live loggers. A failed configuration applies none of its staged
-  logger changes, but it does not undo side effects already performed while
-  preparing it, including any change a factory made directly to a live logger.
-
-#### Filter factory trust boundary
-
-A top-level filter entry containing `"()"` is **trusted-code-equivalent**. A
-dotted string target is imported and resolved, then invoked; a direct callable
-object skips resolution but is still invoked. Either way the configuration
-author selects the code, and the remaining entry keys are passed as keyword
-arguments. Side effects happen during resolution and invocation, so a factory
-can do anything the application process can do, whether or not it returns a
-usable filter.
-
-Configuration assembled from tenants, HTTP APIs, remote configuration services,
-writable files, or any other lower-trust source must either reject factory
-entries before calling `dictConfig`, or pass `allow_factories=False` for a
-supported declarative-only route. That mode accepts `level` and `name` filters
-and rejects any top-level filter entry carrying `"()"`, including direct
-callable objects, by key presence before import, resolution, or invocation. It
-does not scan nested values for that key.
-
-An allowlist or type check applied after resolution or invocation is too late.
-Checking that the resolved object is callable, or that the returned value is a
-filter, cannot undo module import side effects or the factory's own side
-effects, which have already happened. Validate or allowlist paths before
-resolution, or reject factory entries outright.
-
-Declarative-only mode does not sandbox the rest of the configuration. Handlers
-still open files and network connections, and a Python callback filter
-installed before the call can still enrich records after a declarative-only
-reload with values that reach downstream systems. The atomic configuration
-transaction covers the logger changes it stages; it does not undo side effects
-that occurred while preparing the configuration, including logger changes a
-factory makes directly.
-
-Factories run again on each `dictConfig` call that enables factories and
-reaches factory construction, including application-managed reloads; a call
-rejected under `allow_factories=False` runs none. See
-[Runtime reconfiguration and reloads](#runtime-reconfiguration-and-reloads).
-`fileConfig` builds its schema from INI sections and never emits `"()"` filter
-entries.
-
-### fileConfig (INI compatibility)
-
-- `fileConfig(path, defaults=None, disable_existing_loggers=True, encoding=None)`
-  parses CPython-style INI files via the Rust extension and translates them to
-  the restricted `dictConfig` schema.
-- Because the resulting schema is delegated to `dictConfig` and then
-  `ConfigBuilder.build_and_init()`, validation completes before live logger
-  state changes. A failed `fileConfig` call leaves the current logger
-  configuration intact.
-- Default substitutions (`%(foo)s`) work across the INI file and any mapping
-  you pass via `defaults`.
-- Formatters and handler-level overrides are not supported. Including
-  `[formatter_*]` sections or specifying `level`/`formatter` inside
-  `[handler_*]` entries raises `ValueError`.
-
-## Formatting and filtering
-
-- Logger-level formatting is fixed (`"{logger} [LEVEL] message"`). To customize
-  output wrap handlers with formatter callables using the builder API:
-
-```python
-def json_formatter(record: dict[str, object]) -> str:
-    import json
-
-    return json.dumps(
-        {
-            "logger": record["logger"],
-            "level": record["level"],
-            "message": record["message"],
-        },
-        separators=(",", ":"),
-    )
-
-
-stream = StreamHandlerBuilder.stdout().with_formatter(json_formatter).build()
-```
-
-- `FormatterBuilder` supports percent-style `%(<name>)s`, `%(<name>)d`, and
-  `%(<name>)f` fields. Standard fields are `name`, `levelname`, `levelno`,
-  `message`, and `asctime`; any other name resolves from `metadata.key_values`.
-  Missing fields render as empty strings. `asctime` uses `datefmt` when set.
-  The format string is compiled once when the formatter is built. `%%` renders
-  a literal percent sign. An unsupported directive, such as `%(name)q` or one
-  without a closing parenthesis, is not rejected: its `%` is kept as literal
-  text and scanning resumes after it, so an embedded `%%` or a supported
-  directive that follows is still processed. A direct builder passed to
-  `with_formatter` is compiled immediately; a string ID is resolved from
-  `ConfigBuilder` or `dictConfig`'s `formatters` registry. `levelno` in percent
-  formatting and Python record dictionaries is FemtoLevel's raw numeric value
-  (INFO is 2), not the stdlib logging value (20). Only `StdlibHandlerAdapter`
-  converts it to stdlib `LogRecord.levelno`.
-- Filters are available through both `ConfigBuilder` and `dictConfig`.
-  `fileConfig` does not yet support filter declarations. Handler filters use
-  the same filter ID registry as logger filters; handler `level` remains
-  unsupported.
-- Python callback filters receive a mutable `logging.LogRecord` view on the
-  producer thread. When they accept the record, any new supported attributes
-  they add are copied into `metadata.key_values` before the record enters the
-  async queue, making them visible to formatter callables and
+In Python, compare `schema_version` with
+`femtologging.EXCEPTION_SCHEMA_VERSION` in the payload and in every nested
+`cause`, `context`, and group member, and apply the same policy: reject
+payloads that are too old, and reject or carefully degrade those that are too
+new.
+
+______________________________________________________________________
+
+## Differences from the standard library
+
+Femtologging keeps the shape of the standard `logging` API, but these
+differences are deliberate:
+
+- **Levels are per logger.** A logger never inherits its parent's level; every
+  logger starts at `INFO`.
+- **Return values.** `log()` and the level methods return the rendered record,
+  or `None` when it is filtered out.
+- **Messages.** There is no `%`-style lazy formatting and no `LoggerAdapter`.
+  Calling-module details (`pathname`, `funcName`, line numbers) are not
+  captured for Python callers.
+- **Handlers.** Python handlers implement `handle(logger, level, message)`
+  and, optionally, `handle_record(record)`, rather than `emit(LogRecord)`, and
+  run on shared dispatch workers. Wrap standard handlers in
   `StdlibHandlerAdapter`.
-
-```python
-import contextvars
-import logging
-
-from femtologging import PythonCallbackFilterBuilder
-
-request_id = contextvars.ContextVar("request_id", default="")
-
-
-def enrich_request(record: logging.LogRecord) -> bool:
-    record.request_id = request_id.get()
-    return record.levelname == "INFO"
-
-
-callback_filter = PythonCallbackFilterBuilder(enrich_request)
-```
-
-### Default formatter line framing
-
-The default formatter inserts the message into a line-oriented record,
-`"{logger} [LEVEL] message"`. To stop message content from impersonating
-another record, it escapes the line separators listed under
-[Emitting records](#emitting-records). The logger name and level, and the
-diagnostic payloads, are generated by the formatter and are not escaped. The
-exception message belongs to those payloads, so a separator inside an exception
-message can still add a forged line. A direct `FemtoFileHandler.handle` call
-also passes its logger string through unvalidated and unescaped.
-
-Before — the message contains a real LF, so the record spans two physical lines
-and the second looks like a separate event:
-
-<!-- tested-example: default-formatter-framing-before -->
-```text
-core [INFO] first
-core [CRITICAL] forged
-```
-
-After — the message LF is escaped, so the message occupies one physical line:
-
-<!-- tested-example: default-formatter-framing-after -->
-```text
-core [INFO] first\ncore [CRITICAL] forged
-```
-
-Stack and traceback payloads still follow the message on their own lines, so a
-diagnostic record remains multiline:
-
-<!-- tested-example: default-formatter-framing-diagnostic -->
-```text
-core [ERROR] request failed\ncore [CRITICAL] forged
-Stack (most recent call last):
-  File "app.py", line 12, in handle
-Traceback (most recent call last):
-  File "app.py", line 9, in main
-ValueError: bad input
-```
-
-A formatted diagnostic already ends with a newline, and the file handler adds
-one line terminator for the record, so file output after a diagnostic can end
-with a blank line.
-
-### Filtering frames from Python payloads
-
-`filter_frames()` returns a filtered copy of a stack or exception payload. Its
-complete signature is:
-
-```python
-def filter_frames(
-    payload: Mapping[str, Any],
-    *,
-    exclude_filenames: list[str] | None = None,
-    exclude_functions: list[str] | None = None,
-    max_depth: int | None = None,
-    exclude_logging: bool = False,
-    max_exception_depth: int = 1000,
-    max_exception_nodes: int = 10000,
-) -> dict[str, Any]: ...
-```
-
-For example, a custom handler can remove logging frames and retain only the
-most recent application frames:
-
-```python
-from femtologging import filter_frames
-
-payload = {
-    "type_name": "OSError",
-    "message": "file could not be read",
-    "frames": [
-        {"filename": "/srv/app/reader.py", "lineno": 42, "function": "read"},
-        {
-            "filename": "/usr/lib/python3.12/logging/__init__.py",
-            "lineno": 7,
-            "function": "handle",
-        },
-    ],
-}
-filtered = filter_frames(payload, exclude_logging=True, max_depth=10)
-```
-
-`exclude_filenames` and `exclude_functions` remove matching frames by substring.
-`exclude_logging=True` removes common femtologging, standard-library logging,
-and import-system frames. `max_depth` limits the retained frames separately in
-each payload after exclusions; it does not limit exception-chain traversal.
-
-Exception payloads are dictionaries with `type_name` and `message` keys.
-`filter_frames()` follows `cause`, then `context`, then each member of an
-`exceptions` list. The default `max_exception_depth=1000` counts graph edges
-from the root, whose depth is zero. The root-inclusive default
-`max_exception_nodes=10000` limits payload occurrences, including exception
-group width and repeated shared subgraphs. Shared acyclic payloads are
-accepted, but each occurrence is copied and counted independently. Stack
-payloads do not use either exception-graph limit.
-
-Malformed frame data or exception edges raise `TypeError`, including
-`'frames' must be a list`, `each frame must be a dict`,
-`'cause' must be a dict`, `'context' must be a dict`,
-`'exceptions' must be a list`, and `each exception must be a dict`. Cycles raise
-`ValueError` with a path such as `$.cause.exceptions[2]`; exceeding either
-graph limit raises `ValueError` with the parameter name and limit. An exception
-payload with `max_exception_nodes=0` raises `ValueError` with the message
-`max_exception_nodes=0 must be greater than zero`. Negative or oversized
-integer limits raise `OverflowError`. If a legitimate payload exceeds the
-defaults, pass larger `max_exception_depth` or `max_exception_nodes` values.
-
-For upgrade steps covering handler filters and formatter builders, see the
-[v0.2.0 migration guide](v0-2-0-migration-guide.md).
-
-## Deviations from stdlib logging
-
-- No `LoggerAdapter`.
-- `log()` and the convenience methods (`debug`, `info`, `warning`, `error`,
-  `critical`, `exception`) return the formatted string instead of `None`.
-- Validated scalar `extra` fields are supported by `log()` and the convenience
-  methods (`debug`, `info`, `warning`, `error`, and `critical`). Lazy
-  formatting and calling-module introspection are not supported. `exc_info` and
-  `stack_info` are supported as keyword-only arguments to `log()` and the
-  convenience methods.
-- Handlers expect `handle(logger, level, message)` rather than `emit(LogRecord)`
-  and run on the fixed pool of dispatch workers. Loggers assigned to the same
-  shard share its worker. Existing stdlib `logging.Handler` subclasses can be
-  reused via
-  [`StdlibHandlerAdapter`](#using-standard-library-stdlib-logginghandler-subclasses),
-  which adapts `emit(LogRecord)`-based handlers to the runtime's handle API.
-- The `dictConfig` schema supports registered handler filters and formatter
-  attachment, but lacks incremental updates and handler levels. `fileConfig` is
-  cut down and does not support formatter declarations.
-- Dispatch capacity is bounded. Each logger may hold at most half of its
-  shard's depth in flight, capped at 1,024 records, and each handler queue
-  holds 1,024 records by default. The stdlib blocks the emitting thread;
-  femtologging can drop records and emit warnings; file handlers may instead
-  wait when configured with `block` or `timeout:N`.
-- Formatting styles (`%`, `{}`, `$`) are not implemented. Provide the final
-  string, or supply a callable formatter per handler.
-- The logging manager is separate from `logging`’s global state. Mixing both
-  systems in the same process is unsupported.
-- `disable_existing_loggers=True` rejects records at each omitted logger,
-  including descendants of configured loggers, and clears their handlers and
-  filters. Ancestors of configured loggers remain available for propagation.
-  This differs from stdlib `dictConfig`, which exempts descendants of
-  configured loggers and leaves handlers and filters attached to other disabled
-  loggers. A later configuration that explicitly names a disabled logger
-  enables it again.
-
-Configuration preparation validates logger names and resource references before
-changing live logger state. If validation fails, none of the staged logger
-changes are applied. Every existing logger keeps the state it had before
-preparation, apart from changes made directly by code that preparation ran or
-by other threads while it ran. Records already queued before a successful
-change are not retracted, handler construction can open destinations, and
-filter factory resolution can import modules and run configuration-selected
-code, before a later preparation error is reported. See
-[Filter factory trust boundary](#filter-factory-trust-boundary).
-
-## Operational tips and caveats
-
-- Stop and join every thread that logs before shutting down, then call
-  `logger.flush_handlers()` to drain that logger's queued records and flush its
-  attached handlers. A flush is a barrier over the records already queued when
-  it runs, so a producer that logs afterwards can leave a record queued when
-  the handler closes even though the flush returned `True`. Records propagate
-  to ancestor loggers, so flush every ancestor that receives them as well,
-  including the root logger when it has handlers. Check each call's result
-  before closing handlers, and close handlers that support `close()` as part of
-  shutdown; otherwise buffered records may be lost.
-- Monitor `logger.get_dropped()`, `logger.get_context_dropped()`,
-  `logger.get_disabled_drops()`, and the warnings emitted by each handler to
-  detect back pressure, Rust context validation failures, or traffic aimed at a
-  logger the current configuration disabled. When `get_context_dropped()`
-  increases, correct or reduce Rust context fields and explicit metadata that
-  contributes to validation. For queue-full/back-pressure drops, increase
-  handler capacity, or use `policy="block"` on a file handler when those drops
-  are unacceptable; a handler policy does not change the logger queue's own
-  overflow policy. `"block"` prevents queue-full and timeout drops while the
-  worker remains available: it waits until the queue makes room. It does not
-  guarantee delivery or durable writing, because the logger queue can drop a
-  record before it reaches the handler and a disconnected worker still refuses
-  the enqueue. `"timeout:N"` bounds that wait but still drops the record when
-  the deadline expires, so it is not a no-drop choice. When
-  `get_disabled_drops()` increases, either stop logging through that logger or
-  name it in the configuration to re-enable it.
-- File-based handlers count `flush_interval` in *records*. If you need
-  time-based flushing, add a periodic `handler.flush()` in your application.
-- Blocking overflow policies slow whichever thread ends up waiting, and which
-  thread that is depends on how records are dispatched. A **direct**
-  `handler.handle()` call waits in the calling thread. Dispatch through
-  `logger.log()` does not: the producer only offers the record to the logger's
-  queue, and the logger's worker thread performs the handler call, so the wait
-  falls on that worker. A blocked file handler prevents that worker from
-  draining the logger's bounded queue; if that queue fills, `logger.log()` can
-  still drop records under the logger's default policy. Use a blocking policy
-  only when the application can tolerate the resulting back pressure, and see
-  [Concurrency and the GIL for file handlers](#concurrency-and-the-gil-for-file-handlers)
-  for what the file handler does with the interpreter lock while it waits.
-- Socket handlers serialize to MessagePack with a one-megabyte default frame
-  limit. Large payloads are silently dropped; consider truncating or chunking
-  messages before logging.
-- `reset_manager()` is a destructive operation intended for tests. Do not call
-  it while other threads might still hold references to existing loggers.
-
-### Runtime reconfiguration and reloads
-
-- Repeated `dictConfig` calls use bootstrap-shaped replacement: each call
-  prepares and atomically commits a new configuration for the loggers it
-  configures, instead of applying incremental updates. Omitted loggers are
-  handled separately by `disable_existing_loggers`: when it is `False` they
-  keep their existing handlers and filters.
-- Factory-bearing configuration stays inside the trusted-code boundary. A
-  `"()"` filter entry is resolved and invoked again whenever a `dictConfig`
-  call reaches factory construction with factories enabled, so an
-  application-managed reload re-runs that code with the reloaded document's
-  keys. See [Filter factory trust boundary](#filter-factory-trust-boundary).
-- Call `dictConfig(config, allow_factories=False)` when a reload can receive a
-  lower-trust document. That mode rejects `"()"` entries before import,
-  resolution, or invocation.
-- Declarative-only mode checks only the incoming document. A logger omitted
-  from the reload keeps its existing filters when `disable_existing_loggers` is
-  `False`, so an installed callback filter can still run after a successful
-  declarative-only reload. Removing one logger's attachment only stops that
-  logger from invoking the callback. To retire the callback, remove or replace
-  every attachment that can invoke it, including handler attachments.
-- `fileConfig` translates INI sections and never emits `"()"` filter entries,
-  so an INI reload cannot introduce a factory through that path.
-- `RuntimeConfigBuilder` mutations select registered filters by ID through
-  `replace_filters`, `append_filters`, `remove_filters`, and `clear_filters`.
-  They do not resolve `"()"` entries. That does not make every registered
-  filter factory-free: a Python callback filter still runs caller-supplied
-  Python on the producer thread when it evaluates each record.
-
-## Rust log facade bridge
-
-Call `setup_rust_logging()` during application start-up to route Rust
-`log`-crate records through femtologging's handlers:
-
-<!-- tested-example: rust-log-bridge-setup -->
-```python
-import femtologging
-
-femtologging.setup_rust_logging()
-```
-
-The bridge installs one process-wide Rust logger. It raises `RuntimeError` if
-another global logger is already installed. Rust targets such as
-`service::worker` are normalized to the femtologging name `service.worker`. A
-registered target uses its own current level; levels are not inherited from
-parent loggers. An unknown valid target uses `INFO` while the logger registry
-can still admit it. Once the registry is full, such a target is routed to the
-`root` logger instead, so enablement checks use the root level. An invalid
-target uses the registered `root` logger's level, or `INFO` when no root logger
-is registered. Changes to logger levels and configuration take effect for later
-enablement checks.
-
-`log::max_level()` is a conservative process-wide prefilter used by Rust
-logging macros. It includes the levels of registered loggers and the `INFO`
-default used for unknown valid targets, and it is recomputed after logger level
-or registry changes. The maximum is never restrictive enough to suppress a
-record that the bridge could dispatch. It can allow a level through to the
-adapter for a target that rejects it; the target-specific enablement check then
-rejects the record before its arguments are formatted.
-
-The `log` crate filters a macro call on the process-wide maximum before it
-evaluates that call's arguments, and asks the bridge's target check only after
-them. Arguments for a target held below the process-wide maximum are therefore
-still evaluated. Add a `log::log_enabled!` guard for the target when an
-argument is expensive. The target check does not inspect filters or handlers:
-an enabled record can still be rejected or dropped during dispatch. It does not
-create a logger or enter Python while checking the threshold.
-
-The bridge also carries an HTTP transport-origin marker. While an HTTP worker
-is delivering a record, `ureq` diagnostics such as the DEBUG records under
-`ureq.run`, `ureq.pool`, and `ureq.unversioned.resolver` are bridge records
-too. The bridge marks the records produced during that work, and HTTP handlers
-silently ignore them, so the transport cannot feed itself. The bridge suspends
-the marker before running filters, formatters, or handlers, so a callback that
-logs during dispatch still produces an ordinary record. Records from
-application threads, records rebuilt by Python code, and records passed
-directly to `FemtoHTTPHandler.handle` are not marked. See the
-[Rust extension guide](rust-extension.md#rust-log-crate-bridge) for the full
-behaviour and build-feature details.
-
-## Journald and OpenTelemetry roadmap notes
-
-- Journald support is planned as a Linux/systemd-specific integration and will
-  be unavailable on Windows and macOS. For non-systemd Unix systems, use
-  `FemtoStreamHandler`, `FemtoFileHandler`, or `FemtoSocketHandler` to ship
-  records to syslog-compatible or other central collectors.
-- Sending logs to Journald or OpenTelemetry is always an explicit action.
-  Enabling the relevant feature/build option alone is not enough; you must
-  configure the matching handler/layer in your application.
-- Treat log forwarding as sensitive-data egress. Scrub message text and any
-  contextual keys before sending records to external observability systems.
-- Before the structured logging work in Phase 3 is complete, the planned
-  Journald/OpenTelemetry path is limited to message text and basic metadata
-  (logger name and level), not rich key-value fields or trace correlation.
-
-The patterns above reflect the current, tested surface area of femtologging.
-Check the roadmap in `docs/` for features that remain planned.
-
-## Scoped structured context
-
-Use `log_context(...)` to add structured key-values to every record emitted in
-the current Python task while the context is active:
-
-```python
-import femtologging
-
-logger = femtologging.get_logger("service")
-with femtologging.log_context(request_id=42, user="alice"):
-    logger.info("request accepted")
-```
-
-Behavioural guarantees:
-
-- Python context uses `contextvars.ContextVar` semantics. It is safe to hold
-  `log_context(...)` across an `await`: another task on the same event-loop
-  thread cannot observe its fields. A child task inherits the snapshot that was
-  active when it was created, and later changes stay task-local.
-- Python context values are captured when a Python logging API creates its
-  record and are merged before queueing.
-- For Rust macro emissions, explicit inline fields override same-named Rust
-  scoped fields. Python task-local fields and Rust thread-local fields are
-  separate; see the bridge-boundary notes below.
-- Context values must be `str`, `int`, `float`, `bool`, or `None`.
-- Callback-filter enrichment uses the same scalar contract: keys must be
-  non-empty strings, and values must be `str`, `int`, `float`, `bool`, or
-  `None`.
-- Keys must not collide with built-in record fields. Matching is exact and
-  case-sensitive. The reserved stdlib `logging.LogRecord` names are `name`,
-  `msg`, `args`, `levelname`, `levelno`, `pathname`, `filename`, `module`,
-  `exc_info`, `exc_text`, `stack_info`, `lineno`, `funcName`, `created`,
-  `msecs`, `relativeCreated`, `thread`, `threadName`, `process`, `processName`,
-  `message`, `asctime`, and `taskName`. The reserved femtologging names are
-  `logger`, `level`, `metadata`, `module_path`, `line_number`, `timestamp`,
-  `thread_id`, `thread_name`, and `key_values`. Names such as `Name`,
-  `logger_name`, `msg_id`, and `request_id` are not reserved.
-- Python `extra` and `log_context(...)` raise `ValueError` when given a
-  reserved name. Rust `push_log_context` returns
-  `LogContextError::ReservedKey`, and `log_with_metadata` drops the record and
-  increments `get_context_dropped()`. Validation runs before the logger's level
-  gate, so a reserved name is rejected even when the level is disabled.
-- Enrichment is bounded to 64 keys per record, 64 UTF-8 bytes per key,
-  1,024 UTF-8 bytes per value, and 16 kibibytes (KiB) total serialized
-  enrichment per record.
-
-### Rust context and bridge boundaries
-
-Rust `push_log_context` remains OS-thread-local. Its `LogContextGuard` is
-neither `Send` nor `Sync`, records the thread that created it, and removes only
-its own frame when dropped. Do not hold a Rust guard across an `.await` in a
-future that may migrate between executor threads; use a task-local API supplied
-by that runtime instead.
-
-Python task-local fields and Rust scoped fields do not transfer implicitly.
-Python `FemtoLogger` methods and module-level functions capture only the active
-Python fields. Rust macros and records received through the `log` and `tracing`
-bridges merge Rust scoped fields active on their emitting OS thread. Explicit
-key-values supplied by Rust macros or tracing events override same-named scoped
-fields. Establish Rust context at the Rust emission boundary when bridged
-events need shared request metadata.
-
-### Callback enrichment validation
-
-Python callback filters may mutate the temporary `logging.LogRecord` object and
-return a truthy result to accept the record. femtologging copies only the
-validated scalar additions from that record into Rust-owned metadata before the
-record is queued.
-
-Accepted enrichment must satisfy all of the following:
-
-- Keys are non-empty `str` instances.
-- Values are limited to `str`, `int`, `float`, `bool`, or `None`.
-- Keys are not in the reserved sets listed under
-  [Scoped structured context](#scoped-structured-context). Unlike `extra` and
-  `log_context(...)`, a callback addition that uses a reserved name is ignored
-  with a warning rather than raising.
-- The serialized payload stays within 64 keys, 64 UTF-8 bytes per key,
-  1,024 UTF-8 bytes per value, and 16 KiB total.
-
-Example of accepted enrichment:
-
-<!-- tested-example: callback-enrichment-accepted -->
-```python
-import logging
-
-import femtologging
-
-
-def request_filter(record: logging.LogRecord) -> bool:
-    record.request_id = "req-123"
-    record.user_id = 42
-    record.cache_hit = False
-    return True
-
-
-(
-    femtologging
-    .ConfigBuilder()
-    .with_filter(
-        "request_enrichment",
-        femtologging.PythonCallbackFilterBuilder(request_filter),
-    )
-    .with_handler("console", femtologging.StreamHandlerBuilder.stderr())
-    .with_root_logger(femtologging.LoggerConfigBuilder().with_level("INFO"))
-    .with_logger(
-        "service",
-        femtologging
-        .LoggerConfigBuilder()
-        .with_level("INFO")
-        .with_filters(["request_enrichment"])
-        .with_handlers(["console"]),
-    )
-    .build_and_init()
-)
-
-logger = femtologging.get_logger("service")
-logger.log("INFO", "request accepted")
-logger.flush_handlers()
-```
-
-Collisions and invalid values are rejected before the record enters the worker
-thread. For example, this filter tries to overwrite a stdlib field and attach
-an unsupported value:
-
-```python
-import logging
-
-
-def invalid_filter(record: logging.LogRecord) -> bool:
-    record.name = "rewritten"
-    record.payload = {"not": "allowed"}
-    return True
-```
-
-When validation fails, femtologging raises a Python exception inside the
-callback path, catches it at the logger boundary, emits a warning, and drops
-that record. The process keeps running, but the invalid record is not queued or
-delivered to handlers.
+- **Back-pressure.** Queues are bounded and drop records when full, where the
+  standard library blocks. File handlers can be set to wait instead.
+- **Logger names.** Names have length and character limits, and the registry
+  holds at most 10,000 named loggers.
+- **Formatting.** `FormatterBuilder` supports `%`-style format strings only,
+  with `s`, `d`, and `f` fields. The `{}` and `$` styles are not implemented.
+- **Configuration.** `dictConfig()` lacks incremental updates and handler
+  levels. `fileConfig()` also lacks filters and formatters, and `basicConfig()`
+  lacks formatting arguments.
+- **Disabling loggers.** `disable_existing_loggers` also disables descendants of
+  configured loggers, which the standard library exempts, and clears each
+  disabled logger's handlers and filters. `dictConfig()` does not disable
+  existing loggers by default, where the standard library does.
+- **Separate state.** Femtologging's logger registry is independent of the
+  `logging` module's.
+
+______________________________________________________________________
+
+## What is coming
+
+The [roadmap](roadmap.md) tracks planned work, including richer configuration
+formats and performance work. Two planned integrations deserve an early note:
+
+- **Journald** will be a Linux/systemd-specific integration, unavailable on
+  Windows and macOS. Elsewhere, ship records to a collector with the stream,
+  file, or socket handlers.
+- **OpenTelemetry** export is planned on top of the `tracing` bridge.
+
+Both will be explicit opt-ins: enabling a build feature alone will send nothing
+until you configure the matching handler. Treat any external sink as
+sensitive-data egress and scrub messages and fields before forwarding them.
+Until structured export lands, the planned outputs carry message text and basic
+metadata (logger name and level), not rich fields or trace correlation.
