@@ -20,6 +20,9 @@ mod deferred_capture_py_tests;
 #[path = "deferred_capture_tests.rs"]
 mod deferred_capture_tests;
 #[cfg(not(loom))]
+#[path = "logger_filter_removal_tests.rs"]
+mod logger_filter_removal_tests;
+#[cfg(not(loom))]
 #[path = "logger_tests.rs"]
 mod logger_tests;
 #[cfg(not(loom))]

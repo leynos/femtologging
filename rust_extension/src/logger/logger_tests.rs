@@ -49,44 +49,6 @@ fn multiple_filters_must_all_pass() {
 }
 
 #[test]
-fn removing_and_clearing_filters() {
-    let logger = FemtoLogger::new("remove".into()).expect("test logger should be constructible");
-    let filt = LevelFilterBuilder::new()
-        .with_max_level(FemtoLevel::Info)
-        .build()
-        .expect("build should succeed");
-    logger.add_filter(filt.clone());
-    assert!(logger.log(FemtoLevel::Error, "msg").is_none());
-    assert!(logger.remove_filter(&filt));
-    assert!(logger.log(FemtoLevel::Error, "msg").is_some());
-
-    let f1 = LevelFilterBuilder::new()
-        .with_max_level(FemtoLevel::Error)
-        .build()
-        .expect("build should succeed");
-    let f2 = NameFilterBuilder::new()
-        .with_prefix("other")
-        .build()
-        .expect("build should succeed");
-    logger.add_filter(f1);
-    logger.add_filter(f2);
-    assert!(logger.log(FemtoLevel::Error, "msg").is_none());
-    logger.clear_filters();
-    assert!(logger.log(FemtoLevel::Error, "msg").is_some());
-}
-
-#[test]
-fn removing_unknown_filter_returns_false() {
-    let logger = FemtoLogger::new("unknown".into()).expect("test logger should be constructible");
-    let filt = LevelFilterBuilder::new()
-        .with_max_level(FemtoLevel::Info)
-        .build()
-        .expect("build should succeed");
-    assert!(!logger.remove_filter(&filt));
-    assert!(logger.log(FemtoLevel::Error, "err").is_some());
-}
-
-#[test]
 fn logger_dispatches_through_its_shard() {
     let handler = Arc::new(CollectingHandler::new());
     let logger = FemtoLogger::new("sharded".into()).expect("test logger should be constructible");
