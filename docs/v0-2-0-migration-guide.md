@@ -706,8 +706,9 @@ search and on to `dictConfig`.
 
 ```ini
 [handler_h]
-class = femtologging.StreamHandler
-args = (<65,537-character string>,)
+class = femtologging.FileHandler
+# A 65,532-character path makes the raw args text 65,537 characters.
+args = (<65,532-character string>,)
 ```
 
 This now raises
@@ -718,7 +719,7 @@ any logger configuration changes.
 
 ```ini
 [handler_h]
-class = femtologging.StreamHandler
+class = femtologging.FileHandler
 args = ('/var/log/app.log',)
 ```
 
