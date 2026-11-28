@@ -42,11 +42,9 @@ if typ.TYPE_CHECKING:
 type FilteredLoggerFactory = cabc.Callable[[object], RecordCollector]
 
 #: Appended to the published example by `run_example`. The example configures
-#: and flushes its own logger, so the probe attaches a collector to that same
-#: `logger`, emits one more record, and prints the delivered key-values as
-#: JSON. Nothing here changes how the shipped text runs. The probe's message
-#: differs from the example's, so an assertion on the example's own delivery
-#: cannot be satisfied by the probe's record.
+#: its own `logger`, so the probe attaches a collector to that same logger,
+#: emits one more record, and prints the delivered key-values as JSON. Nothing
+#: here changes how the shipped text runs.
 PROBE_MESSAGE = "probe after the published example"
 RECORD_PROBE = f"""
 import json
@@ -313,25 +311,19 @@ def test_documented_callback_enrichment_example_enriches_records(
 
     The example runs exactly as published in a fresh interpreter, so a guide
     that drifts back to an API the library does not support fails here instead
-    of misleading a reader. The appended probe only reports what the example
-    itself cannot: the key-values its filter put on a delivered record.
+    of misleading a reader. The example asserts what its logger returns; the
+    appended probe reports what it cannot, the key-values its filter put on a
+    delivered record.
     """
-    example = documented_example("callback-enrichment-accepted")
+    example = documented_example("guide-callback-filter")
     result = run_example(example, tmp_path, probe=RECORD_PROBE)
 
     assert result.returncode == 0, f"the published example failed:\n{result.stderr}"
-    # The probe emits a different message, so finding this text proves the
-    # example's own `logger.log(...)` reached a handler and was delivered.
-    assert "request accepted" in result.stderr, (
-        f"the published example must deliver its own record, got {result.stderr!r}"
-    )
     assert result.stdout.strip(), "the probe must report the delivered record"
     key_values = json.loads(result.stdout.strip().splitlines()[-1])
-    assert key_values == {
-        "request_id": "req-123",
-        "user_id": "42",
-        "cache_hit": "False",
-    }, f"the documented filter must enrich the record, got {key_values!r}"
+    assert key_values == {"request_id": "req-123"}, (
+        f"the documented filter must enrich the record, got {key_values!r}"
+    )
 
 
 @pytest.mark.timeout(20)

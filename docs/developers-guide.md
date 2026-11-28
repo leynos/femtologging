@@ -261,6 +261,41 @@ rather than only at the cases written down. `tests/test_documented_examples.py`
 runs the users' guide's `flush-handlers-usage` example and checks that the
 record it logs reached the file it flushes.
 
+#### Published example checks
+
+`tests/test_documentation_examples.py` checks every fence in the three
+documents the loader reads. Follow these rules when adding or changing an
+example:
+
+- Mark every fence. `test_every_fence_is_marked` fails on any fence without a
+  `tested-example` marker.
+- Give every Python example an `assert` that checks its outcome. The suite runs
+  each one, exactly as published, in a fresh interpreter whose working
+  directory is an empty temporary directory, and fails if it exits non-zero or
+  contains no `assert`.
+- To show what an example prints, add a `text` fence marked `<id>-output`. Its
+  body must equal the standard output followed by the standard error of example
+  `<id>`.
+- Put Rust examples in `docs/users-guide.md` only, because
+  `rust_extension/build.rs` reads only that file. Each one also needs an
+  integration test under `rust_extension/tests/` that `include!`s
+  `generated/<id>.rs`, with hyphens in the identifier replaced by underscores.
+- Keep the install commands in step with the release. The
+  `readme-install-pip` and `guide-install-pip` fences must be identical, as
+  must the `readme-install-uv` and `guide-install-uv` fences, and each must
+  request `femtologging>=<version>`, where `<version>` is the version `uv.lock`
+  records. `migration-install` must pin `femtologging==<version>`, and
+  `guide-install-source` must build the checkout with `pip install .`.
+- Any other non-Python fence needs a check. `_verified_ids()` lists the
+  identifiers that have one: the install fences, `-output` fences, Rust
+  examples, and Mermaid diagrams, which `make nixie` validates. A new kind of
+  fence fails `test_every_published_example_has_a_check` until a check covers
+  it and its identifier is added there.
+
+`tests/features/documentation_examples.feature` states the newcomer's path as a
+behavioural scenario: `readme-quick-start` and `guide-first-message` run and
+print exactly what their `-output` fences show.
+
 ## Typos spelling checker
 
 Markdown spelling is enforced with [`typos`](https://github.com/crate-ci/typos)
