@@ -23,27 +23,60 @@ pytestmark = pytest.mark.timeout(120)
 _TARGET = "lint-rust-doc"
 
 
-def _recipe_text() -> str:
-    """Return the target's recipes joined into one searchable string."""
-    return "\n".join(" ".join(tokens) for tokens in recipe_tokens(_TARGET))
+# `\n` is a line continuation inside one command, not a separator.
+_SEPARATORS = {";", "then", "elif", "else", "do", "fi;", "done"}
 
 
-def test_rustdoc_denies_warnings() -> None:
+def _doc_invocations() -> list[list[str]]:
+    """Return one token list per `cargo doc` command in the target.
+
+    The recipe is a single shell script, so it is split into commands at shell
+    separators. Each command that runs `cargo doc` is returned with its own
+    environment prefix, because `RUSTDOCFLAGS` is set on the command rather than
+    for the whole script — an assertion that looked anywhere in the recipe would
+    pass even if one invocation lost the flag.
+
+    Returns
+    -------
+        One token list per command that runs `cargo doc`.
+    """
+    commands: list[list[str]] = []
+    current: list[str] = []
+    for tokens in recipe_tokens(_TARGET):
+        for token in tokens:
+            if token in _SEPARATORS:
+                commands.append(current)
+                current = []
+            else:
+                current.append(token)
+    commands.append(current)
+    return [
+        command for command in commands if "$(CARGO)" in command and "doc" in command
+    ]
+
+
+def test_every_invocation_denies_warnings() -> None:
     """A rustdoc run that tolerates warnings is not a gate."""
-    recipe = _recipe_text()
-    sets_flags = "RUSTDOCFLAGS" in recipe
-    denies_warnings = "-D warnings" in recipe
-    assert sets_flags, f"the rustdoc target must set RUSTDOCFLAGS, got {recipe}"
-    assert denies_warnings, f"the rustdoc target must deny warnings, got {recipe}"
+    invocations = _doc_invocations()
+    assert invocations, "the target must invoke cargo doc at least once"
+    for invocation in invocations:
+        assert "doc" in invocation, f"expected a cargo doc call, got {invocation}"
+        assert "RUSTDOCFLAGS=-D warnings" in invocation, (
+            f"every cargo doc invocation must deny warnings, got {invocation}"
+        )
 
 
-def test_rustdoc_stays_within_this_crate() -> None:
+def test_every_invocation_stays_within_this_crate() -> None:
     """`--no-deps` keeps the gate to this crate's own documentation."""
     args = variable_tokens("RUST_DOC_ARGS")
     assert "--no-deps" in args, (
         "RUST_DOC_ARGS must carry --no-deps so dependency documentation is not "
         f"built or gated, got {args}"
     )
+    for invocation in _doc_invocations():
+        assert "$(RUST_DOC_ARGS)" in invocation, (
+            f"every cargo doc invocation must expand RUST_DOC_ARGS, got {invocation}"
+        )
 
 
 def test_lint_rust_depends_on_the_rustdoc_gate() -> None:
@@ -54,6 +87,16 @@ def test_lint_rust_depends_on_the_rustdoc_gate() -> None:
         "lint-rust must depend on lint-rust-doc, because `make lint` is the only "
         f"aggregate CI invokes, got {prerequisites}"
     )
+
+
+def test_the_recipe_iterates_the_declared_lanes() -> None:
+    """A declared lane list that the recipe ignores gates nothing."""
+    script = " ".join(token for tokens in recipe_tokens(_TARGET) for token in tokens)
+    assert "for features in $(RUST_DOC_FEATURE_LANES)" in script.replace("\n", " "), (
+        "the recipe must loop over RUST_DOC_FEATURE_LANES"
+    )
+    assert "--no-default-features" in script, "the none lane must disable defaults"
+    assert "--all-features" in script, "the all lane must enable every feature"
 
 
 def test_the_lane_list_covers_the_documentation_surface() -> None:

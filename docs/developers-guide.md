@@ -399,6 +399,27 @@ parses test-support source and requires Rustdoc on helper types and their named
 fields. It is part of `lint-rust`; compiler UI fixtures remain intentionally
 minimal and are excluded from that source-level scan.
 
+### Rust documentation gate
+
+`make lint-rust-doc` builds this crate's documentation with warnings denied. It
+is a prerequisite of `lint-rust`, so `make lint` — the single aggregate CI
+invokes — cannot skip it. Each lane runs `cargo doc --no-deps` with
+`RUSTDOCFLAGS="-D warnings"`, which turns a broken intra-doc link, a link from
+public documentation to a private item, a bare URL or an unescaped backtick
+into a build failure rather than a silent blemish in the rendered docs.
+
+The documented lanes are `none`, `python`, `log-compat`, `tracing-compat` and
+`all`, declared once in `RUST_DOC_FEATURE_LANES`. `extension-module` is
+deliberately absent: it is a linking mode rather than a documentation surface,
+and selecting it changes the pyo3 crate's own compilation without adding any
+documented item to this crate.
+
+Run the gate locally with `make lint-rust-doc`, or a single lane with
+`cargo doc --no-deps --no-default-features --features log-compat` after setting
+`RUSTDOCFLAGS="-D warnings"`. `tests/test_rustdoc_gate_contract.py` pins the
+flag, the `--no-deps` argument, the lane list and the `lint-rust` dependency,
+so none of them can be dropped without a failing test.
+
 When updating either dependency, change the pin in the source manifest,
 regenerate `uv.lock` as described in
 [Python lockfile policy](#python-lockfile-policy), and run the maturin/PyO3
