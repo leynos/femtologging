@@ -1370,8 +1370,17 @@ entries.
   `ConfigBuilder.build_and_init()`, validation completes before live logger
   state changes. A failed `fileConfig` call leaves the current logger
   configuration intact.
-- Default substitutions (`%(foo)s`) work across the INI file and any mapping
-  you pass via `defaults`.
+- Default substitutions (`%(foo)s`) are applied to handler `args` and `kwargs`
+  values only. They resolve against the INI `[DEFAULT]` section and any mapping
+  you pass via `defaults`; other handler options and logger values are not
+  expanded. Substitution runs in a single left-to-right pass and never rescans
+  replacement text, so a default value that itself contains a placeholder is
+  inserted verbatim. There is no `%%` escape sequence; a literal percent sign
+  is written as-is.
+- Handler `args` and `kwargs` values are limited to 65,536 characters each as
+  written in the INI file. A longer value raises `ValueError` before any
+  configuration is applied. The limit applies to the raw option text, not to
+  the expanded result.
 - Formatters and handler-level overrides are not supported. Including
   `[formatter_*]` sections or specifying `level`/`formatter` inside
   `[handler_*]` entries raises `ValueError`.

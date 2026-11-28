@@ -35,6 +35,7 @@
     "femtologging/_filter_factory.py",
     "femtologging/_log_context.py",
     "femtologging/_payload_formatting.py",
+    "femtologging/_placeholders.py",
     "femtologging/_rust_compat.py",
     "femtologging/_timed_handler_config.py",
     "femtologging/adapter.py",

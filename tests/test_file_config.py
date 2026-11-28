@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from femtologging import fileConfig, get_logger, reset_manager
+from femtologging.file_config import _MAX_HANDLER_PARAMETER_CHARS
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -86,6 +87,41 @@ def test_file_config_rejects_unresolved_placeholders_without_defaults(
 
     with pytest.raises(ValueError, match="unknown placeholder 'missing'"):
         fileConfig(ini)
+
+
+def test_file_config_rejects_oversized_handler_parameters(tmp_path: Path) -> None:
+    """A later handler's oversized kwargs leave live configuration unchanged."""
+    good = tmp_path / "good.ini"
+    good.write_text(
+        "[loggers]\nkeys = root\n\n[handlers]\nkeys = first\n\n"
+        "[handler_first]\nclass = femtologging.StreamHandler\nargs = ()\n\n"
+        "[logger_root]\nlevel = INFO\nhandlers = first\n",
+        encoding="utf-8",
+    )
+    fileConfig(good)
+    root = get_logger("root")
+    before = (root.level, tuple(root.handler_identities_for_test()))
+
+    ini = tmp_path / "oversized-parameter.ini"
+    oversized = "x" * (_MAX_HANDLER_PARAMETER_CHARS + 1)
+    ini.write_text(
+        "[loggers]\nkeys = root\n\n[handlers]\nkeys = first, second\n\n"
+        "[handler_first]\nclass = femtologging.StreamHandler\nargs = ()\n\n"
+        "[handler_second]\nclass = femtologging.StreamHandler\n"
+        f"kwargs = {oversized}\n\n"
+        "[logger_root]\nhandlers = first\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError, match="handler 'second' kwargs has 65537 characters"
+    ):
+        fileConfig(ini)
+
+    after = (root.level, tuple(root.handler_identities_for_test()))
+    assert after == before, (
+        "a rejected fileConfig must leave the live logger configuration intact"
+    )
 
 
 def test_file_config_rejects_handler_level(tmp_path: Path) -> None:

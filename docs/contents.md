@@ -32,8 +32,9 @@ libraries. Use the links below to explore each topic.
 - [v0-2-0-migration-guide.md](./v0-2-0-migration-guide.md)
   - Describes the `BasicConfig` slots, bounded logger names and registry,
     shared dispatch, bounded handler `close()`, recursive schema version
-    validation, and the move to production wheels that omit the timed-rotation
-    test hooks, with migration guidance for v0.2.0.
+    validation, the 65,536-character raw handler parameter limit, and the
+    move to production wheels that omit the timed-rotation test hooks, with
+    migration guidance for v0.2.0.
 
 ## Architecture decision records
 

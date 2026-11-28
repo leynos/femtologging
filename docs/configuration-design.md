@@ -943,15 +943,32 @@ configuration files, as per `logging.config.fileConfig`.
       configuration from sections like `[logger_<name>]`, `[handler_<name>]`,
       `[formatter_<name>]`.
 
-    - **Parameter Evaluation:** String values from INI (especially for `args`
-      and `kwargs` entries in handler sections) are left as strings but pass
-      through placeholder substitution using values from the `[DEFAULT]`
-      section and the `defaults` argument. They are later safely evaluated by
-      `dictConfig` using `ast.literal_eval`, keeping evaluation consistent
-      across both configuration flows.
+    - **Parameter Evaluation:** Handler `args` and `kwargs` values are left as
+      strings but pass through placeholder substitution using values from the
+      `[DEFAULT]` section and the `defaults` argument. The expanded values are
+      later safely evaluated by `dictConfig` using `ast.literal_eval`, keeping
+      evaluation consistent across both configuration flows. Other handler
+      options and logger values are not expanded.
 
     - The `defaults` dictionary passed to `fileConfig()` will be used to
-      substitute `%(key)s` placeholders in the INI file.
+      substitute `%(key)s` placeholders in handler `args` and `kwargs`
+      values. Other handler options and logger values are not expanded.
+
+    - **Linear Placeholder Scanning:** Placeholder matching is a forward-only
+      scan rather than a backtracking regular expression. For each position,
+      the scanner finds the earliest `%(` opener and the first `)` after it; a
+      candidate is a placeholder only when its name is non-empty and the
+      closer is followed by `s`. A failed candidate is abandoned at its own
+      closer, so malformed input is scanned once. This avoids the quadratic
+      suffix rescanning that an unanchored `%\(([^)]+)\)s` search performed on
+      text containing many unterminated openers.
+
+    - **Raw Parameter Size Limit:** A handler's raw `args` or `kwargs` value
+      is rejected with `ValueError` when it exceeds 65,536 Unicode code
+      points. The check runs before expansion, so the placeholder scan is
+      bounded by the raw option text. It does not bound the expanded result,
+      which a short placeholder can grow through a large default; a separate
+      issue tracks cumulative expansion size.
 
   - **Delegation to** `dictConfig`**:** Finally, the fully formed
     `dictConfig`-compatible dictionary is passed to

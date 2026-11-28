@@ -9,18 +9,22 @@ builder API remains the canonical configuration mechanism.
 
 from __future__ import annotations
 
-import re
 import typing as typ
 from os import PathLike, fsdecode, fspath
 from pathlib import Path
 
 from . import _femtologging_rs as rust
+from ._placeholders import _expand_placeholders
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _DEFAULT_SECTION = "DEFAULT"
-_PERCENT_PLACEHOLDER = re.compile(r"%\(([^)]+)\)s")
+# The limit counts Unicode code points, matching ``len(str)``. It bounds the
+# placeholder scan of the raw, caller-supplied INI text, not the expanded text
+# that is later parsed as a literal. It applies to the raw handler ``args`` and
+# ``kwargs`` values; cumulative expansion size is tracked separately.
+_MAX_HANDLER_PARAMETER_CHARS = 65_536
 # Note: Error messages are assigned to variables before raising to satisfy
 # TRY003/EM101 lint rules throughout this module.
 
@@ -159,16 +163,44 @@ def _validate_handler_options(hid: str, section: dict[str, str]) -> None:
     _check_unsupported_handler_options(section)
 
 
+def _check_parameter_size(handler_id: str, field: str, value: str) -> None:
+    """Reject a raw handler parameter longer than the configured limit.
+
+    The check runs before expansion, so an oversized value never reaches the
+    scanner or ``dictConfig``. The value is omitted from the error because it
+    may be arbitrarily large.
+
+    Raises
+    ------
+    ValueError
+        If *value* holds more than ``_MAX_HANDLER_PARAMETER_CHARS`` code
+        points.
+
+    """
+    length = len(value)
+    if length <= _MAX_HANDLER_PARAMETER_CHARS:
+        return
+    msg = (
+        f"handler {handler_id!r} {field} has {length} characters; "
+        f"the limit is {_MAX_HANDLER_PARAMETER_CHARS}"
+    )
+    raise ValueError(msg)
+
+
 def _build_handler_config(
+    handler_id: str,
     section: dict[str, str],
     defaults: cabc.Mapping[str, str],
 ) -> dict[str, typ.Any]:
     """Build a handler config, expanding ``%(name)s`` placeholders in args/kwargs."""
+    args = section.get("args") or "()"
+    _check_parameter_size(handler_id, "args", args)
     cfg: dict[str, typ.Any] = {
         "class": section["class"],
-        "args": _expand_placeholders(section.get("args") or "()", defaults),
+        "args": _expand_placeholders(args, defaults),
     }
     if (kwargs_raw := section.get("kwargs")) is not None:
+        _check_parameter_size(handler_id, "kwargs", kwargs_raw)
         cfg["kwargs"] = _expand_placeholders(kwargs_raw, defaults)
     if formatter := section.get("formatter"):
         cfg["formatter"] = formatter
@@ -186,7 +218,7 @@ def _parse_handlers(
     for hid in handler_ids:
         section = _require_section(sections, f"handler_{hid}")
         _validate_handler_options(hid, section)
-        handlers[hid] = _build_handler_config(section, defaults)
+        handlers[hid] = _build_handler_config(hid, section, defaults)
     return handlers
 
 
@@ -269,22 +301,6 @@ def _require_section(
         msg = f"section [{name}] is missing"
         raise ValueError(msg)
     return sections[name]
-
-
-def _expand_placeholders(value: str, defaults: cabc.Mapping[str, str]) -> str:
-    """Expand ``%(name)s`` placeholders, rejecting names absent from *defaults*."""
-    if "%(" not in value:
-        return value
-
-    def replacer(match: re.Match[str]) -> str:
-        """Resolve one ``%(name)s`` regex match against *defaults*."""
-        key = match.group(1)
-        if key not in defaults:
-            msg = f"unknown placeholder {key!r} in {value!r}"
-            raise ValueError(msg)
-        return defaults[key]
-
-    return _PERCENT_PLACEHOLDER.sub(replacer, value)
 
 
 def _parse_bool(raw: str | None) -> bool:

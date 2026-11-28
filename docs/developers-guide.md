@@ -2679,6 +2679,24 @@ linear-parsing guarantees, which rendered output cannot show. The counters are
 absent from production builds, so compilation there carries no instrumentation
 and no synchronization.
 
+### INI placeholder expansion
+
+`femtologging/_placeholders.py` owns `%(name)s` scanning and expansion for
+`file_config.py`. `_iter_placeholders` is a forward-only scanner: it pairs the
+earliest `%(` with the first `)` after it and resumes after a rejected
+candidate's closer, so malformed input costs one pass. It accepts an optional
+`find` seam with the same `(substring, start)` contract as `str.find`.
+Production callers leave it unset; the tests inject a recorder that sums the
+spans searched, which checks the bounded-work claim without a timing assertion.
+`_expand_placeholders` resolves names in a single pass and never rescans
+replacement text.
+
+`file_config._check_parameter_size` runs before each expansion and rejects a raw
+`args` or `kwargs` value over 65,536 Unicode code points. The limit bounds the
+raw input, not the expanded result. See
+[the configuration design](configuration-design.md#23-fileconfig) and
+[tests/test_file_config_placeholders.py](../tests/test_file_config_placeholders.py).
+
 ## Shared Rust test helpers and fixtures
 
 Crate unit-test support is owned by `rust_extension/src/test_utils/` and is
