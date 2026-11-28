@@ -28,7 +28,7 @@ const _: fn(&Shards) -> usize = len_of;
 
 /// Build a pool of `count` shards, asserting each worker started.
 fn pool_of(count: usize) -> Shards {
-    let started = (0..count)
+    let started: Vec<Shard> = (0..count)
         .map(|index| {
             Shard::start(index, 8)
                 .map_err(|error| format!("shard {index} of {count} did not start: {error}"))
@@ -89,6 +89,12 @@ fn slot_zero_and_slots_past_the_end_answer_with_the_first_shard() {
 fn every_slot_inside_the_pool_answers_with_its_own_shard() {
     let shards = pool_of(4);
 
+    // A `Shard` has no cheap public identity, so start order is not asserted
+    // here directly. What is asserted is that the lookup is a bijection onto
+    // the pool's shards: every slot inside the pool names a distinct shard, and
+    // slot zero agrees with the past-the-end fallback. Start order is pinned by
+    // `assignment_visits_every_shard_before_repeating`, which observes the
+    // round-robin sequence that `get` produces.
     let slots: Vec<&Shard> = (0..shards.len()).map(|slot| shards.get(slot)).collect();
     for (index, shard) in slots.iter().enumerate() {
         for (other_index, other) in slots.iter().enumerate() {
@@ -98,6 +104,10 @@ fn every_slot_inside_the_pool_answers_with_its_own_shard() {
             );
         }
     }
+    assert!(
+        ptr::eq(shards.get(0), shards.get(shards.len())),
+        "slot zero and the first slot past the end must name one shard",
+    );
 }
 
 /// A pool built from no shard is refused as an invalid request.
