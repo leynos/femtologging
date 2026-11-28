@@ -54,8 +54,15 @@ impl FemtoLogger {
     /// # Errors
     ///
     /// Returns `ValueError` when the task context or the `extra` mapping holds
-    /// a key or value the shared context limits reject. Returns the
-    /// interpreter's own error when exception or stack capture fails.
+    /// a key or value the shared context limits reject, and `TypeError` when
+    /// `exc_info` or `stack_info` has an unsupported shape.
+    ///
+    /// A capture that fails after that point is reported in the payload rather
+    /// than raised: a failed stack capture records an empty payload carrying a
+    /// truncation marker, and a failed exception capture leaves `exc_info`
+    /// absent. The logging call therefore still succeeds, which matters because
+    /// capture runs on a path whose whole purpose is to record a record that is
+    /// already being emitted.
     #[pyo3(
         name = "log",
         signature = (level, message, /, *, exc_info=None, stack_info=false, extra=None),
