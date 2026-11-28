@@ -1776,7 +1776,7 @@ root.add_handler(handler)
 
 def shut_down_logging() -> None:
     if not root.flush_handlers():
-        print("logging flush timed out; some records may be lost", file=sys.stderr)
+        print("logging flush did not finish; records may be lost", file=sys.stderr)
     handler.close()
 
 
