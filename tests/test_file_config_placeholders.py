@@ -21,6 +21,7 @@ from femtologging.file_config import (
     _check_parameter_size,
     _ini_to_dict_config,
 )
+from tests.file_config_placeholder_shapes import SCAN_BUILDERS
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -72,52 +73,29 @@ _PLACEHOLDER_CASES = [
 ]
 
 
-def _unterminated_openers(size: int) -> str:
-    """Return *size* ``%(`` openers with no closer at all."""
-    return "%(" * size
+# Subclassing str is the only way to observe that the production default
+# delegates to str.find; collections.UserString defines its own find and would
+# not exercise the same dispatch.
+class _CountingStr(str):  # ruff: ignore[subclass-builtin] observe str.find
+    """A string that counts ``find`` calls, proving the default search path."""
 
+    find_calls: int
 
-def _failed_closers(size: int) -> str:
-    """Return *size* ``%(a)`` candidates whose closer is not followed by ``s``."""
-    return "%(a)" * size
+    def __init__(self, value: str) -> None:
+        """Initialise the counter for *value*."""
+        super().__init__()
+        self.find_calls = 0
 
-
-def _nested_openers(size: int) -> str:
-    """Return *size* nested openers resolved by one trailing ``)s``."""
-    return "%(x" * size + ")s"
-
-
-def _adjacent_valid(size: int) -> str:
-    """Return *size* adjacent well-formed placeholders named ``a``."""
-    return "%(a)s" * size
-
-
-def _no_matches(_size: int) -> list[tuple[int, int, str]]:
-    """Return the matches a shape holding no valid placeholder yields."""
-    return []
-
-
-def _one_spanning_match(size: int) -> list[tuple[int, int, str]]:
-    """Return the single match consuming the whole nested-opener input."""
-    name = "x" + "%(x" * (size - 1)
-    return [(0, len(_nested_openers(size)), name)]
-
-
-def _adjacent_matches(size: int) -> list[tuple[int, int, str]]:
-    """Return one five-character ``a`` match per adjacent placeholder."""
-    stride = len("%(a)s")
-    return [(stride * index, stride * index + stride, "a") for index in range(size)]
-
-
-# Each shape's expected matches are declared here rather than derived from the
-# regex oracle. The oracle is itself quadratic on the malformed shapes, so
-# calling it at these sizes would reintroduce the very cost under test.
-_SCAN_BUILDERS = [
-    pytest.param(_unterminated_openers, _no_matches, id="unterminated-openers"),
-    pytest.param(_failed_closers, _no_matches, id="failed-closers"),
-    pytest.param(_nested_openers, _one_spanning_match, id="nested-openers"),
-    pytest.param(_adjacent_valid, _adjacent_matches, id="adjacent-valid"),
-]
+    def find(
+        self,
+        sub: str,
+        start: typ.SupportsIndex | None = None,
+        end: typ.SupportsIndex | None = None,
+        /,
+    ) -> int:
+        """Delegate to ``str.find`` while counting the call."""
+        self.find_calls += 1
+        return super().find(sub, start, end)
 
 
 class _RecordingFind:
@@ -221,7 +199,7 @@ def test_expand_placeholders_handles_many_unterminated_openers() -> None:
     )
 
 
-@pytest.mark.parametrize(("build_value", "expected_matches"), _SCAN_BUILDERS)
+@pytest.mark.parametrize(("build_value", "expected_matches"), SCAN_BUILDERS)
 @pytest.mark.parametrize("size", [1_000, 10_000, 30_000])
 def test_placeholder_search_work_is_bounded(
     build_value: cabc.Callable[[int], str],
@@ -235,6 +213,11 @@ def test_placeholder_search_work_is_bounded(
     suffixes. Summing searched spans proves the bounded work without a timing
     assertion; expected matches are declared per shape rather than derived
     from the regex oracle, which is itself quadratic here.
+
+    The ``distant-closer`` shape is what makes the resume point observable. A
+    scanner that resumed at the opener instead of past the closer produces the
+    same matches on every other shape yet searches that whole span again for
+    each opener, which this bound rejects.
     """
     value = build_value(size)
     recorder = _RecordingFind(value)
@@ -251,6 +234,32 @@ def test_placeholder_search_work_is_bounded(
     assert matches == expected_matches(size), (
         "the bounded scan must still report the shape's placeholders"
     )
+
+
+def test_production_path_searches_through_str_find() -> None:
+    """Omitting the seam still routes every search through ``str.find``."""
+    value = _CountingStr("a=%(x)s %(bad)q")
+
+    matches = list(_iter_placeholders(value))
+
+    assert value.find_calls > 0, "the default path must search through str.find"
+    assert matches == [(2, 7, "x")], (
+        "the default path must still report the valid placeholder"
+    )
+
+
+def test_check_parameter_size_counts_code_points_not_bytes() -> None:
+    """A non-ASCII value is measured in code points, not encoded bytes."""
+    accepted = "é" * _MAX_HANDLER_PARAMETER_CHARS
+    _check_parameter_size("h", "args", accepted)
+
+    rejected = "é" * (_MAX_HANDLER_PARAMETER_CHARS + 1)
+    with pytest.raises(ValueError, match="characters; the limit is") as raised:
+        _check_parameter_size("h", "args", rejected)
+
+    message = str(raised.value)
+    assert str(len(rejected)) in message, "the diagnostic must report code points"
+    assert rejected not in message, "the value must not be echoed"
 
 
 @pytest.mark.parametrize("field", ["args", "kwargs"])
