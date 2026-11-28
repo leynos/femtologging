@@ -2,7 +2,7 @@
 
 Issue: <https://github.com/leynos/femtologging/issues/442> Branch:
 `issue-442-bound-exception-payload-capture-and-contain-user-defined-stringification`
-Status: **in progress**
+Status: **complete**
 
 ## Big picture
 
@@ -532,3 +532,21 @@ before moving on.
   assertions, a MessagePack marker round trip, an `rstest` fixture for the
   deferred-capture observations, byte-length assertions at the callback
   boundary, a positive filter control, and multiline group-member rendering.
+
+- 2026-11-28 — Final reconciliation with `main` and the last review passes. The
+  branch now keeps `main`'s `exception_schema/versioning.rs` and inline version
+  constants, adds the truncation module alongside them, and removes the
+  branch's duplicate version module. The remaining review fixes bound native
+  representations for container, byte-like and exception subclasses, read
+  `OSError` from its writable fields, validate `exc_info` tuple members before
+  filters run, classify lost frames and note tails without inventing counts,
+  reserve marker space at recorded container boundaries, and record a failed
+  stack capture as a marked empty payload. Property tests cover
+  `truncate_to_limit`, `CaptureBudget` and `PayloadTruncation::merge`, and
+  Hypothesis covers end-to-end message/note bounds. The v0.2.0 migration guide
+  and developer guide describe the ceilings, marker, payload fields and filter
+  ordering. Final gates: check-fmt, build, lint, lint-rust-clippy,
+  lint-env-policy, markdownlint, nixie and typecheck passed; the four cargo
+  test lanes passed (`test-default`, `test-python`, `test-log-compat`,
+  `test-tracing-compat`), and `pytest --doctest-modules` passed on rerun after
+  a file-handler GIL-release timing flake.

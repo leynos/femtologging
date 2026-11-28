@@ -267,19 +267,22 @@ but one user conversion can take arbitrary time or allocate internally before
 returning.
 
 When capture omits or shortens data, the structured payload includes an
-optional fixed-size `truncation` mapping. It reports shortened messages,
-arguments, or notes; omitted arguments, notes, frames, causes, contexts, and
-exception-group members; failed elements; and aggregate-budget exhaustion. For
-example, text formatters can show `... 2 earlier frames omitted ...` before
-retained frames. When a walk stopped before the end of its chain — a live stack
-at its frame ceiling, or a traceback whose visit allowance expired before the
-throw site — the count is only a minimum, `frames_omitted_is_lower_bound` is
-set, and formatters say `... at least 2 frames omitted ...` instead. The
-mapping is absent only when every marker field is at its default. A message
-that was shortened without dropping any component still carries
-`message_truncated`; a capture that exhausted the aggregate budget carries
-`budget_exhausted`, even when no omission count is positive. Existing formatted
-output is unchanged.
+optional fixed-size `truncation` mapping. It reports the kinds of loss capture
+tracks: shortened messages, arguments, or notes; omitted arguments, notes,
+frames, causes, contexts, and exception-group members; failed elements; and
+aggregate-budget exhaustion. A field the marker does not name, such as a
+retained frame's shortened filename, can still be clamped without setting a
+marker. For example, text formatters can show
+`... 2 earlier frames omitted ...` before retained frames. When a walk stopped
+before the end of its chain — a live stack at its frame ceiling, or a traceback
+whose visit allowance expired before the throw site — the count is only a
+minimum, `frames_omitted_is_lower_bound` is set, and formatters say
+`... at least 2 frames omitted ...` instead. The mapping is absent only when
+every marker field is at its default. A message that was shortened without
+dropping any component still carries `message_truncated`; a capture that
+exhausted the aggregate budget carries `budget_exhausted`, even when no
+omission count is positive. Output is unchanged when no truncation annotation
+is present; a frame-omission marker adds the line shown above.
 
 The logger threshold is checked before record construction or exception/stack
 capture. Native level and name filters can also reject without capture when

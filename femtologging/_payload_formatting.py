@@ -272,4 +272,10 @@ def _format_stack_text(stack_info: cabc.Mapping[str, object]) -> str:
                 frame for frame in frames if isinstance(frame, cabc.Mapping)
             ])
         )
+    # Frames have their own marker; this covers the remaining reasons a stack
+    # payload was cut, such as aggregate-budget exhaustion with no frame
+    # dropped.
+    summary = _format_exception_summary(marker)
+    if summary is not None:
+        lines.append(summary)
     return "\n".join(lines)

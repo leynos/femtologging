@@ -10,9 +10,10 @@
 //! Capture is a robustness boundary: the values being captured come from
 //! application code, and rendering them runs that code's `__str__`, `__repr__`
 //! and attribute lookups. Every traversal is therefore bounded by
-//! [`CaptureLimits`], and every conversion is contained, so a hostile or merely
-//! pathological exception costs a predictable amount of work instead of
-//! whatever its object graph happens to demand.
+//! [`CaptureLimits`], and every conversion is contained. The limits bound
+//! traversal and retained data; they cannot pre-empt a single Python conversion
+//! that blocks or allocates before returning, so such a call may still take
+//! arbitrary time.
 //!
 //! Two failure families are deliberately kept apart:
 //!
@@ -57,6 +58,8 @@ mod values;
 mod walker;
 
 pub(crate) use self::limits::{CaptureBudget, CaptureLimits};
+#[cfg(test)]
+pub(crate) use self::limits::{TRUNCATION_SUFFIX, TRUNCATION_SUFFIX_LEN, truncate_to_limit};
 
 #[cfg(test)]
 pub(crate) use self::counter::{capture_count, reset_capture_count};
@@ -154,7 +157,9 @@ pub fn validate_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResul
 /// Capture exception information under explicit `limits`.
 ///
 /// The entry point tests use to force truncation with small ceilings; the public
-/// [`capture_exception`] applies [`CaptureLimits::default`].
+/// [`capture_exception`] applies [`CaptureLimits::default`]. Capture refreshes
+/// the process-wide `linecache` and may read a regular source file up to 1 MiB
+/// for a retained frame's source line.
 ///
 /// # Errors
 ///
@@ -332,6 +337,7 @@ fn classify_exc_info(py: Python<'_>, exc_info: &Bound<'_, PyAny>) -> PyResult<Ex
     if let Ok(tuple) = exc_info.cast::<PyTuple>()
         && tuple.len() == 3
     {
+        types::validate_tuple_members(py, tuple)?;
         return Ok(ExcInfoKind::Tuple(tuple.clone().unbind()));
     }
     if is_exception_instance(py, exc_info)? {

@@ -62,8 +62,16 @@ pub(super) struct RenderedArgs {
     shortened: Vec<bool>,
     /// How many arguments the exception actually carries.
     total: usize,
-    /// How many argument representations raised and were skipped.
+    /// How many argument conversions raised and were skipped, including
+    /// failures of nested group members.
     failed: u32,
+    /// How many *top-level* argument positions failed.
+    ///
+    /// Omission accounting subtracts these from the dropped count, because a
+    /// failed position is reported through `failed_elements` instead. A nested
+    /// member failure does not remove its top-level argument, so it must not
+    /// hide a different argument the ceiling dropped.
+    top_failed: u32,
     /// Position of the first argument whose representation failed.
     ///
     /// A failure in the middle of the tuple is a gap, not a suffix: rendering
@@ -84,6 +92,7 @@ impl RenderedArgs {
             shortened: Vec::new(),
             total: 0,
             failed: 0,
+            top_failed: 0,
             first_failed: None,
             truncated: false,
             first_arg: None,
@@ -94,6 +103,7 @@ impl RenderedArgs {
     fn failed() -> Self {
         Self {
             failed: 1,
+            top_failed: 1,
             ..Self::none()
         }
     }
@@ -114,6 +124,7 @@ impl RenderedArgs {
     /// Record that the argument at `index` produced no representation.
     fn record_failure(&mut self, index: usize) {
         self.failed += 1;
+        self.top_failed += 1;
         self.first_failed.get_or_insert(index);
     }
 
@@ -150,9 +161,14 @@ pub(super) fn render_args(
         return RenderedArgs::none();
     };
     let total = args.len();
+    // The sole argument is needed for the message even when the argument
+    // representations themselves are not kept, so it is read independently of
+    // `max_args` and `should_render`.
+    let first_arg = args.get_item(0).ok().map(Bound::unbind);
     if !should_render {
         return RenderedArgs {
             total,
+            first_arg,
             ..RenderedArgs::none()
         };
     }
@@ -161,14 +177,12 @@ pub(super) fn render_args(
         shortened: Vec::with_capacity(total.min(limits.max_args)),
         total,
         failed: 0,
+        top_failed: 0,
         first_failed: None,
         truncated: false,
-        first_arg: None,
+        first_arg,
     };
     for (index, arg) in args.iter().take(limits.max_args).enumerate() {
-        if index == 0 {
-            rendered.first_arg = Some(arg.clone().unbind());
-        }
         if index == 1 && types::is_exception_group(exception.py(), exception) {
             let members = group_members_text(&arg, limits);
             rendered.truncated |= members.text.truncated;
@@ -213,7 +227,9 @@ fn group_members_text(value: &Bound<'_, PyAny>, limits: &CaptureLimits) -> Group
     let Ok(iterator) = PyIterator::from_object(value) else {
         return GroupMembers {
             text: BoundedText::failure(placeholder, limits.max_arg_bytes),
-            failed: 0,
+            // Starting the iteration failed, so report the conversion failure
+            // rather than presenting the placeholder as successful capture.
+            failed: 1,
         };
     };
     let probe = limits.max_group_width.saturating_add(1);
@@ -299,7 +315,7 @@ pub(super) fn retain_args(
         retained.push(text);
     }
     let unavailable = as_u32(rendered.total.saturating_sub(retained.len()));
-    let omitted = unavailable.saturating_sub(rendered.failed);
+    let omitted = unavailable.saturating_sub(rendered.top_failed);
     marker.args_omitted = marker.args_omitted.saturating_add(omitted);
     retained
 }

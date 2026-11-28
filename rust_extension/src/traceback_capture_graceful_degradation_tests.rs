@@ -4,7 +4,7 @@
 //! such as missing attributes, empty args, chained exceptions, and malformed notes.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::PyDict;
 use rstest::rstest;
 
 use crate::exception_schema::ExceptionPayload;
@@ -320,10 +320,10 @@ fn a_lookalike_traceback_yields_no_frames() {
             "the control exception must contribute real frames"
         );
 
-        let exc_type = exc_value.get_type();
-        // The lookalike's `tb_frame` is a property that counts reads, so a walker
-        // that duck-typed the object would be caught even if it ignored the
-        // missing `tb_lineno` and `tb_lasti` attributes.
+        // A lookalike returned by the exception's own `__traceback__` property
+        // reaches the walker without passing the tuple-type validation. Its
+        // `tb_frame` counts reads, so a walker that duck-typed the object would
+        // be caught even if it ignored the missing `tb_lineno` and `tb_lasti`.
         let globals = PyDict::new(py);
         py.run(
             c"
@@ -337,27 +337,29 @@ class Fake:
         return None
 
     tb_next = None
+
+class Bad(Exception):
+    @property
+    def __traceback__(self):
+        return Fake()
+
+result = Bad('fake traceback')
 ",
             Some(&globals),
             None,
         )
         .expect("fake traceback class should build");
-        let fake = globals
-            .get_item("Fake")
-            .expect("class lookup should succeed")
-            .expect("class should be defined")
-            .call0()
-            .expect("fake traceback should build");
-        let tuple = PyTuple::new(py, [exc_type.as_any(), exc_value, &fake])
-            .expect("tuple creation should succeed");
+        let value = globals
+            .get_item("result")
+            .expect("binding lookup should succeed")
+            .expect("binding should be defined");
 
-        let payload = capture_exception(py, tuple.as_any())
+        let payload = capture_exception(py, &value)
             .expect("capture should not fail")
             .expect("payload should be present");
 
-        // An `exc_info` tuple is caller-supplied, so its traceback may be any
-        // object. One that is neither a real traceback nor a frame ends the
-        // walk: it contributes no frames, and because nothing was dropped it is
+        // The lookalike is neither a real traceback nor a frame, so the walk
+        // ends: it contributes no frames and, because nothing was dropped, is
         // not reported as an omission either.
         assert!(
             payload.frames.is_empty(),

@@ -96,6 +96,8 @@ mod traceback_capture_group_tests;
 mod traceback_capture_limits_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_note_tests;
+#[cfg(test)]
+mod traceback_capture_property_tests;
 #[cfg(all(test, feature = "python"))]
 mod traceback_capture_stack_limits_tests;
 #[cfg(all(test, feature = "python"))]

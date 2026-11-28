@@ -206,7 +206,9 @@ def test_many_notes_are_capped_and_counted() -> None:
     output = _log_once(logger, exc)
 
     assert output is not None, "an accepted record must produce formatted output"
-    assert "968 notes omitted" in output, "the note ceiling must be reported"
+    assert "1 notes omitted" in output, (
+        "the note ceiling must be reported as at least one confirmed omission"
+    )
     assert len(output) < 40_000, "the formatted output must stay bounded"
 
 

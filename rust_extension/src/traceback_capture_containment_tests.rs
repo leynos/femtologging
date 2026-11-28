@@ -169,8 +169,11 @@ fn a_short_literal_that_expands_past_the_ceiling_keeps_its_quotes() {
             argument.ends_with('\''),
             "the clipped literal must keep its closing quote: {argument:?}"
         );
+        // Strip the closing quote and wrapper before checking the body, so a
+        // trailing partial escape cannot hide behind them.
+        let body = argument.strip_suffix("'").unwrap_or(argument);
         assert!(
-            !argument.ends_with('x') && !argument.ends_with('\\'),
+            !body.ends_with('x') && !body.ends_with('\\'),
             "the clipped literal must not end inside an escape: {argument:?}"
         );
     });

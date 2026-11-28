@@ -139,3 +139,31 @@ def test_displayed_cause_is_not_reported_as_omitted() -> None:
     assert "... exception cause omitted ..." not in exc_text, (
         f"a displayed cause must not also be reported as omitted: {exc_text!r}"
     )
+
+
+def _stack_lines(record: FemtoRecord) -> list[str]:
+    """Return the stack text the adapter stores for *record*."""
+    capturing = CapturingHandler()
+    StdlibHandlerAdapter(capturing).handle_record(record)
+    assert len(capturing.records) == 1, (
+        f"expected 1 emitted record, got {len(capturing.records)}"
+    )
+    stack_info = capturing.records[0].stack_info
+    assert isinstance(stack_info, str), (
+        f"stack_info should be rendered, got {stack_info!r}"
+    )
+    return stack_info.splitlines()
+
+
+def test_a_stack_budget_exhaustion_is_rendered() -> None:
+    """A stack cut without dropping a frame should still explain the loss."""
+    lines = _stack_lines({
+        "stack_info": {
+            "frames": [{"filename": "app.py", "lineno": 8, "function": "run"}],
+            "truncation": {"budget_exhausted": True},
+        }
+    })
+
+    assert "... exception payload truncated (capture budget exhausted) ..." in lines, (
+        "a stack summary must report aggregate-budget exhaustion"
+    )

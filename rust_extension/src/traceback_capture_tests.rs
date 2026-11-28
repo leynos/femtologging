@@ -170,6 +170,22 @@ fn capture_exception_invalid_type_raises_error() {
 }
 
 #[rstest]
+#[case(c"(ValueError, object(), None)")]
+#[case(c"(ValueError, ValueError('x'), object())")]
+fn exc_info_tuple_member_types_are_validated(#[case] source: &std::ffi::CStr) {
+    Python::attach(|py| {
+        let tuple = py
+            .eval(source, None, None)
+            .expect("tuple literal should build");
+        assert!(capture_exception(py, &tuple).is_err(), "invalid member");
+        assert!(
+            crate::traceback_capture::validate_exc_info(py, &tuple).is_err(),
+            "validation must reject the same input before filters run"
+        );
+    });
+}
+
+#[rstest]
 fn capture_exception_with_chained_cause() {
     Python::attach(|py| {
         let code =

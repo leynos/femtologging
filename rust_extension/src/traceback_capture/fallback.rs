@@ -12,6 +12,7 @@ use crate::exception_schema::{EXCEPTION_SCHEMA_VERSION, ExceptionPayload, Payloa
 
 use super::attrs::type_identity;
 use super::limits::{CaptureBudget, CaptureLimits};
+use super::values;
 
 /// Type name used when even the type lookup cannot be completed.
 const TYPE_PLACEHOLDER: &str = "<exception type unavailable>";
@@ -38,7 +39,7 @@ pub(super) fn minimal_payload(
     // attributes. An empty identity says nothing, so substitute the placeholder
     // before the byte budget is charged and let a zero-byte limit still empty it.
     let type_name = if type_name.is_empty() {
-        TYPE_PLACEHOLDER.to_string()
+        values::clamp(TYPE_PLACEHOLDER.to_string(), limits.max_function_bytes).text
     } else {
         type_name
     };

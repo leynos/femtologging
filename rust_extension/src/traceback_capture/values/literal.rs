@@ -30,13 +30,14 @@ const MAX_INLINE_BLOB: usize = 512;
 /// exact `bytearray` is summarised from its length alone, so its buffer is
 /// copied only when it is small enough to render inline and no borrowed slice
 /// outlives the check.
-pub(super) fn render_byte_like(value: &Bound<'_, PyAny>) -> Option<(String, bool)> {
-    if value.is_exact_instance_of::<PyBytes>()
+pub(super) fn render_byte_like(value: &Bound<'_, PyAny>, method: &str) -> Option<(String, bool)> {
+    let py = value.py();
+    if byte_like_matches(value, py.get_type::<PyBytes>().as_any(), method)
         && let Ok(bytes) = value.cast::<PyBytes>()
     {
         return Some(render_blob(bytes.as_bytes()));
     }
-    if !value.is_exact_instance_of::<PyByteArray>() {
+    if !byte_like_matches(value, py.get_type::<PyByteArray>().as_any(), method) {
         return None;
     }
     // The buffer may be resized by another thread between a length check and a
@@ -58,7 +59,14 @@ pub(super) fn render_byte_like(value: &Bound<'_, PyAny>) -> Option<(String, bool
     Some((rendered, false))
 }
 
-/// Copy at most `MAX_INLINE_BLOB + 1` bytes of a bytearray.
+/// Return `true` when `value` renders through the native byte-like method.
+///
+/// An exact built-in always matches. A subclass matches only when the requested
+/// conversion (`__repr__` or `__str__`) still resolves to the native one, so a
+/// custom method keeps its own representation.
+fn byte_like_matches(value: &Bound<'_, PyAny>, native: &Bound<'_, PyAny>, method: &str) -> bool {
+    crate::traceback_capture::types::inherits_native_method(value, native, method)
+}
 ///
 /// Slicing through the unbound `bytearray.__getitem__` performs one bounded
 /// copy inside the interpreter, so a concurrently resizing buffer cannot make

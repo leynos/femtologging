@@ -257,25 +257,26 @@ impl FemtoLogger {
     {
         let filters = self.filters.read().clone();
         let mut context = FilterContext::default();
-        let mut capture = Some(capture);
-        for filter in &filters {
-            if filter.inspects_traceback()
-                && let Some(run_capture) = capture.take()
-            {
-                run_capture(record);
-            }
-            let decision = filter.decision(record, &mut context);
-            if decision.callback_failed || !decision.accepted {
-                return false;
-            }
-            record.metadata_mut().key_values.extend(decision.enrichment);
+        // Capture belongs immediately before the first filter that can read
+        // traceback data. Splitting there lets both halves use the one segment
+        // evaluator, so the decision, rejection, failure and enrichment rules
+        // have a single implementation.
+        let split = filters
+            .iter()
+            .position(|filter| filter.inspects_traceback())
+            .unwrap_or(filters.len());
+        let (before, after) = filters.split_at(split);
+        if !matches!(
+            handler_filters::apply_filter_segment(record, before, &mut context),
+            handler_filters::FilterChainOutcome::Accepted
+        ) {
+            return false;
         }
-        // No filter inspects traceback data, so capture runs only once every
-        // filter has accepted; a rejected record never pays for it.
-        if let Some(run_capture) = capture.take() {
-            run_capture(record);
-        }
-        true
+        capture(record);
+        matches!(
+            handler_filters::apply_filter_segment(record, after, &mut context),
+            handler_filters::FilterChainOutcome::Accepted
+        )
     }
 
     /// Return whether this logger forwards records to its configured parent.

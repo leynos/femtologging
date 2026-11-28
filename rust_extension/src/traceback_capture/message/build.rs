@@ -112,35 +112,74 @@ fn os_error_container_message(exception: &Bound<'_, PyAny>, limit: usize) -> Opt
     if strerror.is_none() {
         return None;
     }
-    let bounded = values::bounded_container(&strerror, limit.saturating_sub(16).max(1))?;
-    let mut text = format!("[Errno {errno}] {}", bounded.text);
-    let mut shortened = bounded.truncated;
-    // `OSError.__str__` appends the filename(s) after the message; keep that
-    // information without reaching the container's unbounded `repr`.
-    for attribute in ["filename", "filename2"] {
+    // `str` semantics, not `repr`: a container subclass with its own `__str__`
+    // must keep it, while native containers stay on the bounded path.
+    let strerror = values::stringify_argument(&strerror, limit.saturating_sub(16).max(1));
+    // Native formatting prefers a Windows error code over the POSIX one.
+    let winerror = exception
+        .getattr("winerror")
+        .ok()
+        .filter(|value| !value.is_none())
+        .and_then(|value| value.extract::<i64>().ok());
+    let prefix = match winerror {
+        Some(0) | None => format!("[Errno {errno}]"),
+        Some(code) => format!("[WinError {code}]"),
+    };
+    let mut text = format!("{prefix} {}", strerror.text);
+    let mut flags = PartFlags {
+        shortened: strerror.truncated,
+        failed: strerror.failed,
+        clipped: strerror.clipped,
+    };
+    append_filenames(exception, &mut text, limit, &mut flags);
+    let bounded = values::clamp(text, limit);
+    Some(BoundedText {
+        truncated: bounded.truncated || flags.shortened,
+        clipped: bounded.clipped || flags.clipped,
+        failed: flags.failed,
+        text: bounded.text,
+    })
+}
+
+/// Accumulated flags while an `OSError` message is assembled.
+struct PartFlags {
+    /// Any retained part was shortened.
+    shortened: bool,
+    /// A conversion failed.
+    failed: bool,
+    /// The byte ceiling cut a part.
+    clipped: bool,
+}
+
+/// Append the filename and second filename in CPython's `: repr` form.
+fn append_filenames(
+    exception: &Bound<'_, PyAny>,
+    text: &mut String,
+    limit: usize,
+    flags: &mut PartFlags,
+) {
+    for (attribute, separator) in [("filename", ": "), ("filename2", " -> ")] {
         let Ok(value) = exception.getattr(attribute) else {
             continue;
         };
         if value.is_none() {
             continue;
         }
-        let remaining = limit.saturating_sub(text.len() + 4).max(1);
-        let Some(rendered) = values::repr_bounded(&value, remaining) else {
-            continue;
-        };
-        text.push_str(if attribute == "filename" {
-            ": "
-        } else {
-            " -> "
-        });
-        text.push_str(&rendered.text);
-        shortened |= rendered.truncated;
+        text.push_str(separator);
+        let remaining = limit.saturating_sub(text.len()).max(1);
+        match values::repr_bounded(&value, remaining) {
+            Some(rendered) => {
+                text.push_str(&rendered.text);
+                flags.shortened |= rendered.truncated;
+                flags.failed |= rendered.failed;
+                flags.clipped |= rendered.clipped;
+            }
+            None => {
+                flags.failed = true;
+                text.push_str("<filename unavailable>");
+            }
+        }
     }
-    let bounded = values::clamp(text, limit);
-    Some(BoundedText {
-        truncated: bounded.truncated || shortened,
-        ..bounded
-    })
 }
 
 /// Report whether `exception` inherits `BaseException.__str__` unchanged.

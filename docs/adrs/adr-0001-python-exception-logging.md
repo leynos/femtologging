@@ -240,10 +240,12 @@ time or allocate internally before it returns.
 
 Capture spends the aggregate budget in this order: type, message, frames,
 arguments, notes, cause, context, and group children. It keeps the innermost
-frames in a fixed-capacity ring, limits chain and group depth, caps group width
-and total nodes, and detects identity cycles. These limits bound retained data
-and the number of user conversions; they cannot pre-empt a conversion already
-running in Python.
+frames *visited* in a fixed-capacity ring; when the visit allowance expires
+before the throw site, the retained window is a tail of the visited prefix, not
+of the full traceback, and `frames_omitted_is_lower_bound` reports that case.
+It limits chain and group depth, caps group width and total nodes, and detects
+identity cycles. These limits bound retained data and the number of user
+conversions; they cannot pre-empt a conversion already running in Python.
 
 ## Known risks and limitations
 

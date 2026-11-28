@@ -152,16 +152,12 @@ pub(super) fn retain_notes(
         iterator_ended,
     };
     let probed_note = probe_tail(completed, &mut iterator, marker);
-    // A note is only counted as omitted when a probed position proves one was
-    // dropped, or when the budget refused a note it had already rendered.
-    // With an exact length and a proven string tail, every remaining position
-    // is a note, so the count is exact. Otherwise unclassified positions stay
-    // unknown instead of being guessed at from the raw length.
-    let omitted = match known_len {
-        Some(length) if tail_after_retention => length.saturating_sub(retained.len()),
-        Some(_) => usize::from(exhausted),
-        None => usize::from(tail_after_retention || probed_note || exhausted),
-    };
+    // A note is only counted as omitted when a probe proves one was dropped,
+    // or when the budget refused a note it had already rendered. Entries past
+    // the probe stay unclassified: their raw positions are not evidence that
+    // they are notes, so the count is a confirmed minimum rather than an
+    // inferred total.
+    let omitted = usize::from(tail_after_retention || probed_note || exhausted);
     marker.notes_omitted = marker.notes_omitted.saturating_add(as_u32(omitted));
     (retained, exhausted)
 }

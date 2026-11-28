@@ -112,7 +112,9 @@ raise error
         );
 
         assert_eq!(payload.notes.len(), 2);
-        assert_eq!(marker(&payload).notes_omitted, 998);
+        // Only the probe position is confirmed to be a note; positions beyond
+        // it are unclassified, so the count is a minimum, not a total.
+        assert_eq!(marker(&payload).notes_omitted, 1);
     });
 }
 

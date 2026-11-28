@@ -153,15 +153,6 @@ pub(super) fn exception_summary(value: &Bound<'_, PyAny>, limit: usize) -> Bound
     }
 }
 
-/// Render an exact built-in container through the bounded container renderer.
-///
-/// Used where a caller needs the container text without going through the
-/// general `repr` path, such as the `OSError` message assembled from a
-/// non-string `strerror`.
-pub(super) fn bounded_container(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
-    container::render(value, limit, 0)
-}
-
 /// Convert a built-in string to bounded UTF-8 without copying its full value.
 ///
 /// Python strings can contain lone surrogates, which `to_str()` cannot borrow
@@ -227,7 +218,7 @@ pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> Boun
     {
         return rendered;
     }
-    if let Some((rendered, truncated)) = render_byte_like(value) {
+    if let Some((rendered, truncated)) = render_byte_like(value, "__str__") {
         return bounded_rendered(rendered, truncated, limit);
     }
     stringify(value, limit, "<exception str() failed>")
@@ -238,7 +229,7 @@ pub(super) fn stringify_argument(value: &Bound<'_, PyAny>, limit: usize) -> Boun
 /// Returns `None` for any other type, leaving the caller to take the general
 /// `repr` path.
 fn render_builtin(value: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
-    if let Some((rendered, truncated)) = render_byte_like(value) {
+    if let Some((rendered, truncated)) = render_byte_like(value, "__repr__") {
         return Some(bounded_rendered(rendered, truncated, limit));
     }
     render_long_string(value, limit)

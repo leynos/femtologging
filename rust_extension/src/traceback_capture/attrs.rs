@@ -89,7 +89,14 @@ pub(super) fn type_identity(
 /// defeat the elision.
 fn module_name(obj: &Bound<'_, PyAny>, limit: usize) -> Option<String> {
     let value = string_attr(obj, "__module__")?;
-    if value.eq("builtins") {
+    // The equality check needs a UTF-8 view of the whole string, so a huge
+    // module name would be converted in full before the ceiling applies. Only
+    // a name of exactly the elided length can match.
+    let is_builtin = value
+        .code_point_len()
+        .is_ok_and(|length| length == "builtins".len())
+        && value.eq("builtins");
+    if is_builtin {
         return None;
     }
     Some(values::bounded_string(&value, limit).text)
@@ -210,9 +217,12 @@ pub(super) fn bounded_sequence<'py>(
     let mut iterator = match PyIterator::from_object(sequence) {
         Ok(iterator) => iterator,
         Err(_) => {
+            // Starting the iterator proved nothing about what it would have
+            // yielded, so the count stays unknown rather than claiming one
+            // omitted child; the failure is reported separately.
             return BoundedSequence {
                 items,
-                omitted: known_len.unwrap_or(1),
+                omitted: 0,
                 failed: true,
             };
         }
@@ -233,7 +243,7 @@ pub(super) fn bounded_sequence<'py>(
         }
     }
     let omitted = known_len.map_or_else(
-        || if failed || extra_found { 1 } else { 0 },
+        || usize::from(extra_found),
         |length| length.saturating_sub(items.len()),
     );
     BoundedSequence {

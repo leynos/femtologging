@@ -1358,6 +1358,43 @@ boundaries.
 [python-graph-tests]: ../tests/frame_filter/test_exception_graph_limits.py
 [python-graph-property-tests]: ../tests/frame_filter/test_exception_graph_properties.py
 
+## Bounded exception and stack capture
+
+`rust_extension/src/traceback_capture/` performs exception and stack capture.
+The entry points are `capture_exception_with_limits` and
+`capture_stack_with_limits`; the public `capture_exception` and `capture_stack`
+apply `CaptureLimits::default`. Both refresh the process-wide `linecache` and
+may read a regular source file up to 1 MiB to supply a frame's source line; a
+larger file, or one that is not a regular file, keeps its filename, function
+and line number without source text.
+
+`limits.rs` defines `CaptureLimits`, the per-field ceilings, and
+`CaptureBudget`, the running allowance charged for retained nodes and UTF-8
+bytes. Only retained data is charged, so payloads of the same shape cost the
+same however much was offered. ADR-0001 records the defaults and the spend
+order.
+
+The walker visits exception nodes, following `cause`, `context` and group
+members with identity-cycle detection on the active path. Two containment
+boundaries protect the logging call: an `exc_info` that is not a bool, an
+exception instance or a well-typed 3-tuple raises `TypeError` before filters
+run, and any traversal failure or panic degrades to a type-only payload that
+carries `budget_exhausted`. `CaptureBudget` charges exception nodes and
+traceback visits separately, so a very long traceback cannot consume the
+payload's node allowance.
+
+### Capture and filter order
+
+`FemtoFilter::inspects_traceback()` states whether a filter reads exception or
+stack payloads. `LevelFilter` and `NameFilter` return `false`; callback and
+unknown filters default to `true`. `FemtoLogger`'s producer checks the level
+threshold first, then evaluates the leading run of non-inspecting filters
+through `apply_filter_segment`. If that run rejects the record, no capture
+runs. Otherwise the producer runs the one-shot capture hook and evaluates the
+remaining filters in their configured order, sharing one `FilterContext`. No
+filter is reordered. `log_record_with_capture` and `validate_exc_info` are the
+producer-side helpers that drive this flow.
+
 ## Exception schema version validation
 
 `ExceptionPayload::validate_version()` validates the root payload and every
@@ -2652,12 +2689,11 @@ assertions reusable without expanding the runtime API:
   whose collected records can be inspected by unit tests.
 - `frame_test_helpers.rs` provides `StackFrame` factories and assertions for
   frame and payload slices.
-- `frame_assertion_helpers.rs` provides pure assertions for required and
-  optional frame fields and extracted locals maps. It is available to the
-  Python-enabled unit tests.
-- `traceback_test_helpers.rs` builds Python-like frame and exception objects,
-  arranges extraction cases, and re-exports the frame assertion helpers. It is
-  also limited to Python-enabled unit tests.
+- `capture_limit_helpers.rs` provides `tiny_limits`, `capture_raised`,
+  `capture_raised_in` and `marker`, the arrangements the bounded-capture tests
+  use to drive real Python exceptions through injected ceilings.
+- `traceback_test_helpers.rs` builds real Python exception objects and arranges
+  traceback extraction cases. It is limited to Python-enabled unit tests.
 - `flush_budget.rs` provides the scripted clocks for handler flush-deadline
   tests: `ScriptedClock` and the lock-backed `SharedScriptedClock` return a
   fixed sequence of samples, and `WarningClock` is advanced by hand so a

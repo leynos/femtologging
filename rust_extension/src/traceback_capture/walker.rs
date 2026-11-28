@@ -132,6 +132,8 @@ impl Walker<'_> {
             // none. Record the loss on this node and keep its other fields.
             marker.failed_elements = marker.failed_elements.saturating_add(1);
         }
+        // Read before descendants: a descendant's `__str__` could clear this.
+        let suppress_context = bool_attr(exception, "__suppress_context__").unwrap_or(false);
         let (type_name, module) = type_identity(exception, self.limits);
         let (type_name, type_was_shortened) = self.budget.retain_text(type_name);
         self.exhausted |= type_was_shortened;
@@ -185,7 +187,7 @@ impl Walker<'_> {
             frames,
             cause,
             context,
-            suppress_context: bool_attr(exception, "__suppress_context__").unwrap_or(false),
+            suppress_context,
             exceptions,
             truncation: marker.into_option(),
         }
@@ -310,10 +312,9 @@ impl Walker<'_> {
         if link.is_duplicate_context(retained_cause, &linked) {
             return (None, None);
         }
-        // A chain back to an exception on the active path is a cycle in the
-        // object graph, not a spent allowance, so the edge is dropped without
-        // charging the budget. Checking first means a self-referential edge is
-        // never misreported as depth exhaustion, whatever the depth ceiling.
+        // A chain back to an active exception is a cycle, not a spent
+        // allowance, so it is dropped without charging the budget. Checking
+        // first keeps a self-referential edge from reading as depth exhaustion.
         if self.active.contains(&identity(&linked)) {
             link.mark_omitted(marker);
             return (None, None);

@@ -11,7 +11,7 @@
 
 use pyo3::exceptions::{PyBaseException, PyBaseExceptionGroup};
 use pyo3::prelude::*;
-use pyo3::types::PyType;
+use pyo3::types::{PyTraceback, PyTuple, PyType};
 
 /// Return `true` when `value` is a real Python exception instance.
 pub(super) fn is_exception(py: Python<'_>, value: &Bound<'_, PyAny>) -> bool {
@@ -41,14 +41,7 @@ pub(super) fn inherits_exception_repr(value: &Bound<'_, PyAny>) -> bool {
     if !is_exception(py, value) {
         return false;
     }
-    let base = py.get_type::<PyBaseException>();
-    let Some(inherited) = class_attribute(base.as_any(), "__repr__") else {
-        return false;
-    };
-    let Some(actual) = class_attribute(value.get_type().as_any(), "__repr__") else {
-        return false;
-    };
-    actual.is(&inherited)
+    inherits_native_method(value, py.get_type::<PyBaseException>().as_any(), "__repr__")
 }
 
 /// Return `true` when `value` uses the built-in `BaseException.__str__`.
@@ -61,14 +54,7 @@ pub(super) fn inherits_exception_str(value: &Bound<'_, PyAny>) -> bool {
     if !is_exception(py, value) {
         return false;
     }
-    let base = py.get_type::<PyBaseException>();
-    let Some(inherited) = class_attribute(base.as_any(), "__str__") else {
-        return false;
-    };
-    let Some(actual) = class_attribute(value.get_type().as_any(), "__str__") else {
-        return false;
-    };
-    actual.is(&inherited)
+    inherits_native_method(value, py.get_type::<PyBaseException>().as_any(), "__str__")
 }
 
 /// Return `true` when `value` inherits `object.__str__`.
@@ -78,14 +64,7 @@ pub(super) fn inherits_exception_str(value: &Bound<'_, PyAny>) -> bool {
 /// representation instead.
 pub(super) fn inherits_object_str(value: &Bound<'_, PyAny>) -> bool {
     let py = value.py();
-    let object = py.get_type::<PyAny>();
-    let Some(inherited) = class_attribute(object.as_any(), "__str__") else {
-        return false;
-    };
-    let Some(actual) = class_attribute(value.get_type().as_any(), "__str__") else {
-        return false;
-    };
-    actual.is(&inherited)
+    inherits_native_method(value, py.get_type::<PyAny>().as_any(), "__str__")
 }
 
 /// Return `true` when `value` inherits `method` unchanged from `native`.
@@ -98,19 +77,58 @@ pub(super) fn inherits_native_method(
     native: &Bound<'_, PyAny>,
     method: &str,
 ) -> bool {
-    let Some(inherited) = class_attribute(native, method) else {
+    let Some(inherited) = method_definition(native, method) else {
         return false;
     };
-    let Some(actual) = class_attribute(value.get_type().as_any(), method) else {
+    let Some(actual) = method_definition(value.get_type().as_any(), method) else {
         return false;
     };
     actual.is(&inherited)
 }
 
-/// Read a class attribute through `type.__getattribute__`.
-fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
+/// Return the first definition of `name` along a type's MRO.
+///
+/// Reading `cls.__str__` through `type.__getattribute__` still honours a
+/// metaclass data descriptor, which can answer for the class instead of the
+/// class's own MRO. Walking the MRO's raw dictionaries is how CPython's special
+/// method lookup resolves `__str__` and `__repr__`, so a metaclass property
+/// cannot fake an inherited definition.
+fn method_definition<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
     let py = class.py();
     let type_type = py.get_type::<PyType>();
     let getattribute = type_type.getattr("__getattribute__").ok()?;
-    getattribute.call1((class, name)).ok()
+    let mro = getattribute.call1((class, "__mro__")).ok()?;
+    let mro = mro.cast::<PyTuple>().ok()?;
+    for base in mro.iter() {
+        let dictionary = getattribute.call1((&base, "__dict__")).ok()?;
+        // A type's `__dict__` is a mapping proxy, not a dict, so it is queried
+        // through its own `get`.
+        let value = dictionary.call_method1("get", (name,)).ok()?;
+        if !value.is_none() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Check the value and traceback positions of an `exc_info` triple.
+///
+/// The checks happen on every path, including `validate_exc_info`, so an
+/// invalid tuple is rejected before logger filters can drop the record and hide
+/// the programming error. Only types are inspected; capture itself stays
+/// deferred.
+pub(super) fn validate_tuple_members(py: Python<'_>, tuple: &Bound<'_, PyTuple>) -> PyResult<()> {
+    let value = tuple.get_item(1)?;
+    if !value.is_none() && !is_exception(py, &value) {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "exc_info tuple value must be an exception instance or None",
+        ));
+    }
+    let traceback = tuple.get_item(2)?;
+    if !traceback.is_none() && traceback.cast::<PyTraceback>().is_err() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "exc_info tuple traceback must be a traceback or None",
+        ));
+    }
+    Ok(())
 }

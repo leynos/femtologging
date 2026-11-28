@@ -34,8 +34,9 @@ pub(super) fn validated_exc_info<'py, 'a>(
 /// This is the deferred-capture hook used by the producer's two-phase filter
 /// path. `exc_info` has already been filtered and validated by
 /// [`validated_exc_info`], so the only failures left here are interpreter-level
-/// ones; those are dropped rather than propagated, because logging must not
-/// fail on the way out of a failure.
+/// ones. Those are not propagated, because logging must not fail on the way out
+/// of a failure: a failed stack capture is recorded as an empty payload with a
+/// truncation marker, and a failed exception capture leaves `exc_info` absent.
 #[cfg(feature = "python")]
 pub(super) fn attach_captured_payloads(
     py: Python<'_>,
@@ -44,15 +45,27 @@ pub(super) fn attach_captured_payloads(
     record: &mut crate::log_record::FemtoLogRecord,
 ) {
     if let Some(exc) = exc_info
+        // The input was validated, so a remaining failure is an
+        // interpreter-level one. Logging must not fail on the way out of a
+        // failure, so the loss is reported through the payload contract instead
+        // of being raised.
         && let Ok(Some(payload)) = crate::traceback_capture::capture_exception(py, exc)
     {
         record.set_exception_payload(payload);
     }
 
-    if stack_info.unwrap_or(false)
-        && let Ok(payload) = crate::traceback_capture::capture_stack(py)
-    {
-        record.set_stack_payload(payload);
+    if stack_info.unwrap_or(false) {
+        match crate::traceback_capture::capture_stack(py) {
+            Ok(payload) => record.set_stack_payload(payload),
+            Err(_) => record.set_stack_payload(crate::exception_schema::StackTracePayload {
+                truncation: crate::exception_schema::PayloadTruncation {
+                    failed_elements: 1,
+                    ..Default::default()
+                }
+                .into_option(),
+                ..crate::exception_schema::StackTracePayload::new(Vec::new())
+            }),
+        }
     }
 }
 

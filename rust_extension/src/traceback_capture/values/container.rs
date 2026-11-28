@@ -22,6 +22,10 @@ use pyo3::types::{PyDict, PyFrozenSet, PyIterator, PyList, PySet, PyTuple, PyTyp
 use crate::traceback_capture::limits::TRUNCATION_SUFFIX;
 use crate::traceback_capture::values::{BoundedText, clamp, repr_bounded_at};
 
+mod display;
+use display::ContainerKind;
+use display::{display_delimiters, summary};
+
 /// Largest number of container entries rendered before summarising.
 const MAX_CONTAINER_ITEMS: usize = 16;
 
@@ -38,28 +42,28 @@ const MAX_CONTAINER_DEPTH: usize = 4;
 /// `None`, so the caller never restarts the conversion through native `repr`.
 pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Option<BoundedText> {
     let kind = container_kind(value)?;
+    let (open, close, empty) = display_delimiters(value, kind, limit);
     if exact_len(value, kind) == Some(0) {
-        return Some(clamp(empty_form(kind).to_string(), limit));
+        return Some(clamp(empty, limit));
     }
-    let (open, close) = delimiters(kind);
     if depth >= MAX_CONTAINER_DEPTH {
         // A depth stop is not a byte cut: the summary itself may fit.
-        return Some(summary(open, close, limit, false));
+        return Some(summary(&open, &close, limit, false));
     }
     let fixed = open.len() + close.len();
     if limit <= fixed {
-        return Some(summary(open, close, limit, true));
+        return Some(summary(&open, &close, limit, true));
     }
     if let Some(length) = exact_len(value, kind)
         && length > MAX_CONTAINER_ITEMS.saturating_add(1)
     {
         // The item ceiling, not the byte ceiling, stops this container.
-        return Some(summary(open, close, limit, false));
+        return Some(summary(&open, &close, limit, false));
     }
     let Some(entries) = snapshot(value, kind) else {
         return Some(BoundedText::failure("<container unavailable>", limit));
     };
-    Some(render_entries(&entries, kind, open, close, limit, depth))
+    Some(render_entries(&entries, kind, &open, &close, limit, depth))
 }
 
 /// Copy at most one entry past the rendering ceiling out of a container.
@@ -147,12 +151,26 @@ fn render_entries(
     let mut byte_cut = false;
     let mut failed = false;
     let mut kept = 0usize;
+    let mut boundaries = Vec::with_capacity(entries.len());
+    // A complete singleton tuple needs its trailing comma inside the body.
+    let reserve_comma = usize::from(is_single_tuple(kind, 0, entries.len()));
     for (index, piece) in entries.iter().enumerate() {
         if index == MAX_CONTAINER_ITEMS {
             shortened = true;
             break;
         }
-        let piece_limit = body_budget.saturating_sub(body.len()).max(1);
+        let separator = usize::from(kept > 0) * 2;
+        if body.len() + separator >= body_budget.saturating_sub(reserve_comma) {
+            // No room even for a separator and one byte of entry, so rendering
+            // the next value could only run user code whose text is discarded.
+            shortened = true;
+            byte_cut = true;
+            break;
+        }
+        let piece_limit = body_budget
+            .saturating_sub(body.len())
+            .saturating_sub(separator)
+            .max(1);
         let piece = match render_piece(piece, piece_limit, depth + 1) {
             Some(piece) => piece,
             None => {
@@ -162,14 +180,27 @@ fn render_entries(
         };
         shortened |= piece.truncated;
         failed |= piece.failed;
-        if !fits(&mut body, &piece.text, body_budget) {
+        if !fits(
+            &mut body,
+            &piece.text,
+            body_budget.saturating_sub(reserve_comma),
+        ) {
             shortened = true;
             byte_cut = true;
             break;
         }
+        boundaries.push(body.len());
         kept += 1;
     }
-    let (body, reclaimed) = finish_body(body, kind, kept, entries.len(), shortened, body_budget);
+    let (body, reclaimed) = finish_body(
+        body,
+        kind,
+        kept,
+        entries.len(),
+        shortened,
+        body_budget,
+        &boundaries,
+    );
     byte_cut |= reclaimed;
     let mut text = String::with_capacity(body.len() + open.len() + close.len());
     text.push_str(open);
@@ -198,6 +229,7 @@ fn finish_body(
     offered: usize,
     shortened: bool,
     budget: usize,
+    boundaries: &[usize],
 ) -> (String, bool) {
     if !shortened {
         if is_single_tuple(kind, kept, offered) {
@@ -222,8 +254,10 @@ fn finish_body(
         }
         reclaimed = true;
         kept -= 1;
-        match body.rfind(", ") {
-            Some(index) => body.truncate(index),
+        // Truncate at the recorded end of the previous entry. Searching for
+        // the separator text would find a comma inside an entry's own string.
+        match kept.checked_sub(1).and_then(|index| boundaries.get(index)) {
+            Some(end) => body.truncate(*end),
             None => body.clear(),
         }
     }
@@ -285,21 +319,6 @@ enum Piece<'py> {
     Entry(Bound<'py, PyAny>, Bound<'py, PyAny>),
 }
 
-/// The exact container type of `value`, if it is one of the recognised kinds.
-#[derive(Clone, Copy)]
-enum ContainerKind {
-    /// `list`
-    List,
-    /// `tuple`
-    Tuple,
-    /// `dict`
-    Dict,
-    /// `set`
-    Set,
-    /// `frozenset`
-    FrozenSet,
-}
-
 /// Classify `value` by its built-in container type.
 ///
 /// An exact instance always qualifies. A subclass qualifies only when it
@@ -358,24 +377,6 @@ fn empty_form(kind: ContainerKind) -> &'static str {
     }
 }
 
-/// The opening and closing text of each container kind.
-fn delimiters(kind: ContainerKind) -> (&'static str, &'static str) {
-    match kind {
-        ContainerKind::List => ("[", "]"),
-        ContainerKind::Tuple => ("(", ")"),
-        ContainerKind::Dict => ("{", "}"),
-        ContainerKind::Set => ("{", "}"),
-        ContainerKind::FrozenSet => ("frozenset({", "})"),
-    }
-}
-
-/// A fixed summary used when a container is too deep or its ceiling too small.
-fn summary(open: &str, close: &str, limit: usize, byte_cut: bool) -> BoundedText {
-    let bounded = clamp(format!("{open}{TRUNCATION_SUFFIX}{close}"), limit);
-    BoundedText {
-        text: bounded.text,
-        truncated: true,
-        failed: false,
-        clipped: byte_cut || bounded.clipped,
-    }
-}
+#[cfg(test)]
+#[path = "container_tests.rs"]
+mod tests;

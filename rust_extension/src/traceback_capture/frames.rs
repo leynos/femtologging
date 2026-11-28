@@ -64,29 +64,47 @@ struct FrameDescriptor<'py> {
     lasti: isize,
 }
 
+/// The outcome of resolving one chain entry.
+enum Resolved<'py> {
+    /// A traceback node or live frame.
+    Entry(ChainEntry<'py>),
+    /// The object is neither, so the walk has reached its end.
+    End,
+    /// The object is a traceback, but a required attribute read raised, so a
+    /// frame was lost rather than absent.
+    Lost,
+}
+
 /// Resolve one chain entry, whether it is a traceback node or a live frame.
 ///
-/// Returns `None` for an object that is neither, which ends the walk rather than
-/// inventing an entry for it. The type is checked before any attribute is read:
-/// an `exc_info` tuple is caller-supplied, so a lookalike object that reports a
-/// `tb_next` back to itself would otherwise keep the walk spinning while the
-/// GIL is held. A real traceback cannot form such a loop, because CPython
-/// rejects a cyclic `tb_next` assignment, and a real frame chain is finite.
-fn resolve<'py>(entry: &Bound<'py, PyAny>) -> Option<ChainEntry<'py>> {
+/// [`Resolved::End`] is returned for an object that is neither, which ends the
+/// walk rather than inventing an entry for it. The type is checked before any
+/// attribute is read: an `exc_info` tuple is caller-supplied, so a lookalike
+/// object that reports a `tb_next` back to itself would otherwise keep the walk
+/// spinning while the GIL is held. A real traceback cannot form such a loop,
+/// because CPython rejects a cyclic `tb_next` assignment, and a real frame chain
+/// is finite.
+fn resolve<'py>(entry: &Bound<'py, PyAny>) -> Resolved<'py> {
     if let Ok(traceback) = entry.cast::<PyTraceback>() {
         // A traceback node describes the frame it was raised in. `tb_next`
         // links inwards, towards the frame where the exception was raised.
-        return Some(ChainEntry {
-            frame: traceback.getattr("tb_frame").ok()?,
+        let Ok(frame) = traceback.getattr("tb_frame") else {
+            // An audit hook can reject the read even for a real traceback.
+            return Resolved::Lost;
+        };
+        return Resolved::Entry(ChainEntry {
+            frame,
             lineno: extract_u32(entry, "tb_lineno").unwrap_or(0),
             lasti: extract_isize(entry, "tb_lasti").unwrap_or(-1),
             following: optional_attr(entry, "tb_next"),
         });
     }
-    entry.cast::<PyFrame>().ok()?;
+    if entry.cast::<PyFrame>().is_err() {
+        return Resolved::End;
+    }
     // A live frame describes itself. `f_back` links outwards, towards the
     // frame's caller.
-    Some(ChainEntry {
+    Resolved::Entry(ChainEntry {
         frame: entry.clone(),
         lineno: extract_u32(entry, "f_lineno").unwrap_or(0),
         lasti: extract_isize(entry, "f_lasti").unwrap_or(-1),
@@ -143,10 +161,17 @@ pub(super) fn collect_traceback_frames(
             marker.frames_omitted_is_lower_bound = true;
             break;
         }
-        let Some(resolved) = resolve(&entry) else {
+        let resolved = match resolve(&entry) {
+            Resolved::Entry(resolved) => resolved,
             // A link that is neither a traceback nor a frame ends the walk.
             // There is no frame to count as omitted: the object was never one.
-            break;
+            Resolved::End => break,
+            Resolved::Lost => {
+                // The node was a traceback but its frame could not be read.
+                omitted = omitted.saturating_add(1);
+                marker.frames_omitted_is_lower_bound = true;
+                break;
+            }
         };
         current = resolved.following;
         if retained.len() == limits.max_frames {
@@ -213,8 +238,14 @@ pub(super) fn collect_stack_frames(
     let mut frames = Vec::with_capacity(limits.max_frames.min(8));
     let mut current = Some(head);
     while let Some(entry) = current {
-        let Some(resolved) = resolve(&entry) else {
-            break;
+        let resolved = match resolve(&entry) {
+            Resolved::Entry(resolved) => resolved,
+            Resolved::End => break,
+            Resolved::Lost => {
+                omitted += 1;
+                marker.frames_omitted_is_lower_bound = true;
+                break;
+            }
         };
         current = resolved.following;
         // The walk starts at the innermost frame, so once the window or the
@@ -265,18 +296,11 @@ fn caller_frame(py: Python<'_>) -> PyResult<Option<Bound<'_, PyAny>>> {
     let sys = py.import("sys")?;
     match sys.call_method1("_getframe", (0,)) {
         Ok(frame) => Ok((!frame.is_none()).then_some(frame)),
-        // `ValueError` is how "no Python frame" reports itself, but an audit
-        // hook can raise the same type. Only the interpreter's own message
-        // means the stack is shallow; anything else is a lost stack.
-        Err(error)
-            if error.is_instance_of::<PyValueError>(py)
-                && error.value(py).str().is_ok_and(|text| {
-                    text.to_string_lossy()
-                        .contains("call stack is not deep enough")
-                }) =>
-        {
-            Ok(None)
-        }
+        // The interpreter reports a shallow stack with an exact `ValueError`
+        // whose sole argument is a fixed string. Reading the argument does not
+        // run user code; comparing the type and text this way avoids calling a
+        // subclass's `__str__` just to classify the failure.
+        Err(error) if is_shallow_stack_error(&error, py) => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -289,4 +313,33 @@ fn extract_u32(obj: &Bound<'_, PyAny>, attr: &str) -> Option<u32> {
 /// Read an `isize` attribute, treating a missing value as absent.
 fn extract_isize(obj: &Bound<'_, PyAny>, attr: &str) -> Option<isize> {
     obj.getattr(attr).ok()?.extract::<isize>().ok()
+}
+
+/// Return `true` when `error` is the interpreter's shallow-stack `ValueError`.
+fn is_shallow_stack_error(error: &PyErr, py: Python<'_>) -> bool {
+    if !error.get_type(py).is(py.get_type::<PyValueError>()) {
+        return false;
+    }
+    let value = error.value(py);
+    let Ok(base) = py
+        .import("builtins")
+        .and_then(|builtins| builtins.getattr("BaseException"))
+    else {
+        return false;
+    };
+    let Ok(descriptor) = base.getattr("args") else {
+        return false;
+    };
+    let Ok(args) = descriptor.call_method1("__get__", (value, value.get_type())) else {
+        return false;
+    };
+    let Ok(args) = args.cast::<pyo3::types::PyTuple>() else {
+        return false;
+    };
+    args.len() == 1
+        && args
+            .get_item(0)
+            .ok()
+            .and_then(|arg| arg.extract::<String>().ok())
+            .is_some_and(|text| text == "call stack is not deep enough")
 }

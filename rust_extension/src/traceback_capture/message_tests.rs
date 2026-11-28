@@ -35,6 +35,7 @@ fn a_failed_representation_in_the_middle_leaves_a_gap() {
         shortened: vec![false, false],
         total: 3,
         failed: 1,
+        top_failed: 1,
         first_failed: Some(1),
         truncated: false,
         first_arg: None,
@@ -52,6 +53,7 @@ fn failed_renders_do_not_mark_unretained_args_as_truncated() {
         shortened: Vec::new(),
         total: 0,
         failed: 3,
+        top_failed: 3,
         truncated: true,
         ..RenderedArgs::none()
     };
