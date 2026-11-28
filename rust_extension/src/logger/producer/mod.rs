@@ -11,7 +11,7 @@ use crate::filters::FilterContext;
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
-use crate::log_record::{FemtoLogRecord, RecordMetadata};
+use crate::log_record::FemtoLogRecord;
 use crate::manager;
 
 mod admission;
@@ -19,7 +19,16 @@ mod admission;
 #[cfg(feature = "python")]
 mod context_capture;
 
+mod drop_diagnostic;
+mod entry;
 mod handler_filters;
+
+// The convenience-function test is the only caller of the diagnostic wording;
+// without the gate, `-D unused-imports` fails a build with tests compiled out.
+#[cfg(test)]
+pub(crate) use self::drop_diagnostic::context_drop_diagnostic;
+// Named by the prebuilt-record path in this module and by its unit test.
+pub(crate) use self::drop_diagnostic::report_context_drop;
 
 #[cfg(all(test, not(loom)))]
 use super::HandlerAttachment;
@@ -90,50 +99,6 @@ impl FemtoLogger {
         Some(msg)
     }
 
-    /// Log a message at the given level (Rust-only API).
-    ///
-    /// This method is a simplified version of the PyO3-exposed `log` method
-    /// for pure Rust callers. It does not support `exc_info` or `stack_info`.
-    pub fn log(&self, level: FemtoLevel, message: &str) -> Option<String> {
-        if self.refuse_if_disabled() {
-            return None;
-        }
-        let record = FemtoLogRecord::new(&self.name, level, message);
-        self.log_record(record)
-    }
-
-    /// Log a message with explicit source location metadata.
-    ///
-    /// Used by the `femtolog_info!` family of macros and the Python
-    /// convenience functions to attach caller-captured source information
-    /// (filename, line number, module path) to the record before filtering
-    /// and dispatch.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use femtologging_rs::{FemtoLevel, FemtoLogger, RecordMetadata};
-    ///
-    /// let logger = FemtoLogger::new("example".into());
-    /// let metadata = RecordMetadata {
-    ///     filename: "main.rs".into(),
-    ///     line_number: 42,
-    ///     module_path: "example".into(),
-    ///     ..Default::default()
-    /// };
-    /// logger.log_with_metadata(FemtoLevel::Info, "hello", metadata);
-    /// ```
-    pub fn log_with_metadata(
-        &self,
-        level: FemtoLevel,
-        message: &str,
-        metadata: RecordMetadata,
-    ) -> Option<String> {
-        self.log_prebuilt(FemtoLogRecord::with_metadata(
-            &self.name, level, message, metadata,
-        ))
-    }
-
     /// Log a record the caller has already assembled.
     ///
     /// The bridge adapters build their records themselves, which keeps any
@@ -181,24 +146,6 @@ impl FemtoLogger {
             return None;
         }
         record.metadata_mut().key_values = merged_key_values;
-        self.log_record(record)
-    }
-
-    /// Log a record whose context was captured by the Python caller.
-    ///
-    /// Python task-local context is already present in `metadata`; Rust
-    /// thread-local context is deliberately not merged a second time.
-    #[cfg(feature = "python")]
-    pub(crate) fn log_with_explicit_metadata(
-        &self,
-        level: FemtoLevel,
-        message: &str,
-        metadata: RecordMetadata,
-    ) -> Option<String> {
-        if self.refuse_if_disabled() || !self.is_enabled_for(level) {
-            return None;
-        }
-        let record = FemtoLogRecord::with_metadata(&self.name, level, message, metadata);
         self.log_record(record)
     }
 
@@ -398,46 +345,6 @@ impl FemtoLogger {
             self.handle_parent_propagation(pr);
         }
     }
-}
-
-/// The diagnostic a record dropped for an invalid context writes to stderr.
-///
-/// The write itself targets the process's stderr descriptor, which a test
-/// cannot observe without permanently redirecting it for every thread in the
-/// binary. Splitting the wording out lets a test pin the exact text the drop
-/// path emits, as the refused-target diagnostics do, while the counter
-/// assertion proves the drop path ran.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let err = log_context::merge_context_values(&oversize_map)
-///     .expect_err("an oversize value is refused");
-/// assert!(context_drop_diagnostic(&err).contains("invalid context payload"));
-/// ```
-pub(crate) fn context_drop_diagnostic(error: &log_context::LogContextError) -> String {
-    format!("FemtoLogger: dropping record due to invalid context payload: {error}")
-}
-
-/// Write the drop diagnostic for `error` to `writer`.
-///
-/// Split from the logging path so a test can hand it a writer and read back
-/// exactly what a caller sees. The production call site passes
-/// [`std::io::stderr`] and discards the result: a full or closed diagnostic
-/// stream must not fail the logging call that triggered it.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let mut written = Vec::new();
-/// report_context_drop(&mut written, &err).expect("a Vec accepts the write");
-/// assert_eq!(String::from_utf8(written).unwrap().lines().count(), 1);
-/// ```
-pub(crate) fn report_context_drop(
-    mut writer: impl std::io::Write,
-    error: &log_context::LogContextError,
-) -> std::io::Result<()> {
-    writeln!(writer, "{}", context_drop_diagnostic(error))
 }
 
 #[cfg(test)]
