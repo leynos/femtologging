@@ -702,6 +702,29 @@ error names the handler, the field, the actual length and the limit, and does
 not echo the value. Previously such a value passed through the placeholder
 search and on to `dictConfig`.
 
+### Before: oversized raw handler parameter
+
+```ini
+[handler_h]
+class = femtologging.StreamHandler
+args = (<65,537-character string>,)
+```
+
+This now raises
+`ValueError: handler 'h' args has 65537 characters; the limit is 65536` before
+any logger configuration changes.
+
+### After: shortened raw handler parameter
+
+```ini
+[handler_h]
+class = femtologging.StreamHandler
+args = ('/var/log/app.log',)
+```
+
+The shortened raw text loads normally. If the value is still large after
+substitution, the limit does not apply to the expanded result.
+
 ### How to migrate handler parameters
 
 Shorten the raw `args` or `kwargs` text so it fits within 65,536 characters.
