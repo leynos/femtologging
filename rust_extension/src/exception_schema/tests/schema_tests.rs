@@ -113,6 +113,11 @@ fn exception_payload_json_round_trip() {
         context: None,
         suppress_context: true,
         exceptions: vec![],
+        truncation: Some(PayloadTruncation {
+            frames_omitted: 2,
+            args_omitted: 1,
+            ..Default::default()
+        }),
     };
 
     assert_json_round_trip(&payload);
@@ -127,6 +132,7 @@ fn exception_payload_skips_default_fields() {
     assert!(!json.contains("frames"));
     assert!(!json.contains("exceptions"));
     assert!(!json.contains("suppress_context"));
+    assert!(!json.contains("truncation"));
 }
 
 #[rstest]

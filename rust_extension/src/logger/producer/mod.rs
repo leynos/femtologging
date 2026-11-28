@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use crate::filters::FilterContext;
 use crate::handler::FemtoHandlerTrait;
 use crate::level::FemtoLevel;
 use crate::log_context;
@@ -44,7 +45,34 @@ impl FemtoLogger {
     ///
     /// The disabled check lives here as well as in the public entry points
     /// because this is the funnel every producer path reaches.
-    pub(super) fn log_record(&self, mut record: FemtoLogRecord) -> Option<String> {
+    pub(super) fn log_record(&self, record: FemtoLogRecord) -> Option<String> {
+        self.log_record_with_capture(record, |_| {})
+    }
+
+    /// Log `record`, running `capture` once the deferred-capture prefix accepts.
+    ///
+    /// Filters are evaluated in their original order. The leading run of
+    /// filters that cannot inspect traceback data runs first; if every one of
+    /// them accepts, `capture` attaches the payloads and the remaining filters
+    /// run. Capture is therefore skipped for any record rejected by that
+    /// prefix, while a callback filter still sees the payload it may inspect.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let record = FemtoLogRecord::new("app", FemtoLevel::Info, "hello");
+    /// let logged = logger.log_record_with_capture(record, |record| {
+    ///     record.set_exception_payload(captured);
+    /// });
+    /// ```
+    pub(super) fn log_record_with_capture<F>(
+        &self,
+        mut record: FemtoLogRecord,
+        capture: F,
+    ) -> Option<String>
+    where
+        F: FnOnce(&mut FemtoLogRecord),
+    {
         if self.refuse_if_disabled() {
             return None;
         }
@@ -53,9 +81,10 @@ impl FemtoLogger {
             return None;
         }
 
-        if !self.apply_filters(&mut record) {
+        if !self.apply_filters_with_capture(&mut record, capture) {
             return None;
         }
+
         let msg = self.formatter.format(&record);
         self.dispatch_to_handlers(record);
         Some(msg)
@@ -213,14 +242,41 @@ impl FemtoLogger {
         }
     }
 
-    /// Return `true` if every configured filter approves the record.
+    /// Apply the configured filter chain, running `capture` at the split point.
     ///
-    /// Iterates over each filter and returns `false` on the first rejection.
-    /// If no filters are configured, the record passes.
-    fn apply_filters(&self, record: &mut FemtoLogRecord) -> bool {
+    /// Filters keep their configured order and are evaluated one at a time.
+    /// Capture runs immediately before the first filter that can inspect
+    /// traceback data, or after the last filter when none can. A record rejected
+    /// earlier therefore pays neither for capture nor for the checks that would
+    /// have found the split. One [`FilterContext`] is shared by the whole chain,
+    /// so a Python record view built by one filter is reused by the next. A
+    /// callback failure counts as rejection.
+    fn apply_filters_with_capture<F>(&self, record: &mut FemtoLogRecord, capture: F) -> bool
+    where
+        F: FnOnce(&mut FemtoLogRecord),
+    {
         let filters = self.filters.read().clone();
-        handler_filters::apply_filter_chain(record, &filters)
-            == handler_filters::FilterChainOutcome::Accepted
+        let mut context = FilterContext::default();
+        // Capture belongs immediately before the first filter that can read
+        // traceback data. Splitting there lets both halves use the one segment
+        // evaluator, so the decision, rejection, failure and enrichment rules
+        // have a single implementation.
+        let split = filters
+            .iter()
+            .position(|filter| filter.inspects_traceback())
+            .unwrap_or(filters.len());
+        let (before, after) = filters.split_at(split);
+        if !matches!(
+            handler_filters::apply_filter_segment(record, before, &mut context),
+            handler_filters::FilterChainOutcome::Accepted
+        ) {
+            return false;
+        }
+        capture(record);
+        matches!(
+            handler_filters::apply_filter_segment(record, after, &mut context),
+            handler_filters::FilterChainOutcome::Accepted
+        )
     }
 
     /// Return whether this logger forwards records to its configured parent.

@@ -252,3 +252,27 @@ step. Callers that accept lower-trust configuration must reject `"()"` entries
 or use `dictConfig(config, allow_factories=False)`. An allowlist applied after
 resolution or invocation is too late. See the
 [filter factory trust boundary](../users-guide.md#filter-factory-trust-boundary).
+
+## Addendum: bounded exception capture and filter order (2026-10-24)
+
+Records that pass the logger threshold can request exception or stack data,
+which callback filters may inspect. Capture therefore remains before any
+traceback-inspecting filter, but native level and name filters can reject a
+record first when they form the leading filter prefix.
+
+Each filter declares whether it inspects traceback data. Native level and name
+filters do not; callback and unknown filters default to inspecting it. The
+producer snapshots the filter list and evaluates only the leading
+non-inspecting prefix. If that prefix rejects the record, exception and stack
+capture are skipped. If it accepts, a one-shot bounded capture runs, followed
+by the remaining filters in their configured order. No filter is moved ahead of
+an earlier filter. A callback that comes first therefore receives the bounded
+eager payload before any later native filter runs.
+
+Callback filters continue to receive structured exception data with the same
+field contract, now subject to the documented capture limits and optional
+`truncation` marker in ADR 001. Capture failures are contained after input
+validation; for a record that passes the logger threshold, an invalid
+`exc_info` value still raises `TypeError` before filters can hide it. The
+existing early logger-threshold check remains ahead of record construction and
+capture.

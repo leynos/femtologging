@@ -20,12 +20,10 @@ use crate::log_context;
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 #[cfg(feature = "python")]
 use crate::python_context::extract_python_context_map;
-#[cfg(feature = "python")]
-use crate::traceback_capture;
 
 use super::FemtoLogger;
 #[cfg(feature = "python")]
-use super::python_helpers::capture_exception_payload;
+use super::python_helpers;
 
 #[pymethods]
 impl FemtoLogger {
@@ -93,7 +91,14 @@ impl FemtoLogger {
         if self.refuse_if_disabled() || !self.is_enabled_for(level) {
             return Ok(None);
         }
-        let mut record = FemtoLogRecord::with_metadata(
+
+        // Validate before filtering so a filter cannot swallow the caller's
+        // programming error; capture itself is deferred until the leading
+        // non-inspecting filters have accepted the record.
+        #[cfg(feature = "python")]
+        let capture_exc = python_helpers::validated_exc_info(py, exc_info)?;
+
+        let record = FemtoLogRecord::with_metadata(
             &self.name,
             level,
             message,
@@ -104,16 +109,13 @@ impl FemtoLogger {
         );
 
         #[cfg(feature = "python")]
-        if let Some(payload) = capture_exception_payload(py, exc_info)? {
-            record.set_exception_payload(payload);
-        }
+        let capture = move |record: &mut FemtoLogRecord| {
+            python_helpers::attach_captured_payloads(py, capture_exc, stack_info, record);
+        };
+        #[cfg(not(feature = "python"))]
+        let capture = |_: &mut FemtoLogRecord| {};
 
-        #[cfg(feature = "python")]
-        if stack_info.unwrap_or(false) {
-            record.set_stack_payload(traceback_capture::capture_stack(py)?);
-        }
-
-        Ok(self.log_record(record))
+        Ok(self.log_record_with_capture(record, capture))
     }
 }
 

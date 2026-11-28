@@ -280,6 +280,103 @@ class TestLevelFallback:
         )
 
 
+class TestTruncationMarkers:
+    """Verify bounded capture markers reach stdlib formatter text."""
+
+    @staticmethod
+    def test_exception_markers_describe_omitted_components() -> None:
+        """Exception text should explain omitted payload components."""
+        record = _emit_femto_record({
+            "exc_info": {
+                "schema_version": 1,
+                "type_name": "ValueError",
+                "message": "bad",
+                "frames": [{"filename": "app.py", "lineno": 8, "function": "run"}],
+                "truncation": {
+                    "frames_omitted": 2,
+                    "cause_omitted": True,
+                    "exceptions_omitted": 3,
+                    "args_omitted": 4,
+                    "notes_omitted": 5,
+                    "budget_exhausted": True,
+                },
+            }
+        })
+
+        assert record.exc_text is not None, "truncated exception payload should render"
+        lines = record.exc_text.splitlines()
+        assert lines.index("... 2 earlier frames omitted ...") < lines.index(
+            '  File "app.py", line 8, in run'
+        ), "frame omission marker should precede retained frames"
+        assert "... exception cause omitted ..." in lines, (
+            "cause omission should be marked"
+        )
+        assert "  ... and 3 more exceptions ..." in lines, (
+            "omitted group members should be counted"
+        )
+        assert any("4 arguments omitted" in line for line in lines), (
+            "omitted arguments should be counted"
+        )
+        assert any("5 notes omitted" in line for line in lines), (
+            "omitted notes should be counted"
+        )
+        assert any("capture budget exhausted" in line for line in lines), (
+            "budget exhaustion should be visible"
+        )
+
+    @staticmethod
+    def test_a_lower_bound_frame_count_is_rendered_as_at_least() -> None:
+        """A stack cut short should not present its count as exact."""
+        record = _emit_femto_record({
+            "stack_info": {
+                "frames": [{"filename": "app.py", "lineno": 8, "function": "run"}],
+                "truncation": {
+                    "frames_omitted": 2,
+                    "frames_omitted_is_lower_bound": True,
+                },
+            }
+        })
+
+        assert record.stack_info is not None, "truncated stack payload should render"
+        assert "... at least 2 frames omitted ..." in record.stack_info.splitlines(), (
+            "an incomplete walk must report a minimum, not an exact count"
+        )
+
+    @staticmethod
+    def test_stack_marker_precedes_retained_frames() -> None:
+        """Stack text should place omitted-frame markers before frames."""
+        record = _emit_femto_record({
+            "stack_info": {
+                "frames": [{"filename": "app.py", "lineno": 8, "function": "run"}],
+                "truncation": {"frames_omitted": 2},
+            }
+        })
+
+        assert record.stack_info is not None, "truncated stack payload should render"
+        lines = record.stack_info.splitlines()
+        assert lines == [
+            "Stack (most recent call last):",
+            "... 2 earlier frames omitted ...",
+            '  File "app.py", line 8, in run',
+        ], "frame omission marker should precede retained stack frames"
+
+    @staticmethod
+    def test_exception_text_is_unchanged_without_marker() -> None:
+        """An absent marker should preserve existing exception text."""
+        record = _emit_femto_record({
+            "exc_info": {
+                "schema_version": 1,
+                "type_name": "ValueError",
+                "message": "bad",
+                "frames": [],
+            }
+        })
+
+        assert (
+            record.exc_text == "Traceback (most recent call last):\nValueError: bad"
+        ), "exception formatting should stay unchanged without truncation"
+
+
 class TestPublicExport:
     """Verify the adapter is accessible from the top-level package."""
 

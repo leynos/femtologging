@@ -15,14 +15,16 @@ use std::time::UNIX_EPOCH;
 use pyo3::{
     exceptions::PyTypeError,
     prelude::*,
-    types::{PyDict, PyList, PyString},
+    types::{PyDict, PyString},
 };
 
-use crate::exception_schema::{ExceptionPayload, StackFrame, StackTracePayload};
 use crate::log_record::{FemtoLogRecord, RecordMetadata};
 use crate::python::fq_py_type;
 
+use self::payload::{exception_payload_to_py, stack_payload_to_py};
 use super::{FemtoFormatter, SharedFormatter};
+
+mod payload;
 
 /// Lets Rust invoke a Python callable as a [`FemtoFormatter`] implementation.
 #[derive(Clone)]
@@ -152,172 +154,6 @@ fn attach_payloads(
         dict.set_item("stack_info", stack_payload_to_py(py, stack)?)?;
     }
     Ok(())
-}
-
-/// Convert a `StackFrame` to a Python dict.
-fn stack_frame_to_py(py: Python<'_>, frame: &StackFrame) -> PyResult<Py<PyAny>> {
-    let dict = PyDict::new(py);
-    dict.set_item("filename", &frame.filename)?;
-    dict.set_item("lineno", frame.lineno)?;
-    dict.set_item("function", &frame.function)?;
-
-    if let Some(end_lineno) = frame.end_lineno {
-        dict.set_item("end_lineno", end_lineno)?;
-    }
-    if let Some(colno) = frame.colno {
-        dict.set_item("colno", colno)?;
-    }
-    if let Some(end_colno) = frame.end_colno {
-        dict.set_item("end_colno", end_colno)?;
-    }
-    if let Some(ref source_line) = frame.source_line {
-        dict.set_item("source_line", source_line)?;
-    }
-    if let Some(ref locals) = frame.locals {
-        let locals_dict = PyDict::new(py);
-        for (k, v) in locals {
-            locals_dict.set_item(k, v)?;
-        }
-        dict.set_item("locals", locals_dict)?;
-    }
-
-    Ok(dict.into())
-}
-
-/// Convert a `StackTracePayload` to a Python dict.
-fn stack_payload_to_py(py: Python<'_>, payload: &StackTracePayload) -> PyResult<Py<PyAny>> {
-    let dict = PyDict::new(py);
-    dict.set_item("schema_version", payload.schema_version)?;
-
-    let frames_list = PyList::empty(py);
-    for frame in &payload.frames {
-        frames_list.append(stack_frame_to_py(py, frame)?)?;
-    }
-    dict.set_item("frames", frames_list)?;
-
-    Ok(dict.into())
-}
-
-/// Convert a `&[String]` to a Python list.
-fn string_vec_to_pylist(py: Python<'_>, strings: &[String]) -> PyResult<Py<PyAny>> {
-    let list = PyList::empty(py);
-    for s in strings {
-        list.append(s)?;
-    }
-    Ok(list.into())
-}
-
-/// Convert a `&[StackFrame]` to a Python list of dicts.
-fn frames_to_pylist(py: Python<'_>, frames: &[StackFrame]) -> PyResult<Py<PyAny>> {
-    let list = PyList::empty(py);
-    for frame in frames {
-        list.append(stack_frame_to_py(py, frame)?)?;
-    }
-    Ok(list.into())
-}
-
-/// Convert a `&[ExceptionPayload]` to a Python list of dicts.
-fn exceptions_to_pylist(py: Python<'_>, exceptions: &[ExceptionPayload]) -> PyResult<Py<PyAny>> {
-    let list = PyList::empty(py);
-    for exc in exceptions {
-        list.append(exception_payload_to_py(py, exc)?)?;
-    }
-    Ok(list.into())
-}
-
-/// Set optional fields on the exception payload dict.
-///
-/// The insertion order is observable: a Python caller may iterate the dict, so
-/// the fields are written in the order the payload has always carried them.
-/// Splitting the writes into helpers must not reorder them.
-fn set_optional_exception_items(
-    py: Python<'_>,
-    dict: &Bound<'_, PyDict>,
-    payload: &ExceptionPayload,
-) -> PyResult<()> {
-    set_exception_module_item(dict, payload)?;
-    set_exception_sequence_items(py, dict, payload)?;
-    set_exception_link_items(py, dict, payload)?;
-    set_exception_suppression_item(dict, payload)?;
-    // Written last so the payload dict keeps the key order it has always had;
-    // callers would otherwise observe `exceptions` before the chained fields.
-    set_exception_member_items(py, dict, payload)
-}
-
-/// Set the module name, when the exception class carries one.
-fn set_exception_module_item(dict: &Bound<'_, PyDict>, payload: &ExceptionPayload) -> PyResult<()> {
-    if let Some(ref module) = payload.module {
-        dict.set_item("module", module)?;
-    }
-    Ok(())
-}
-
-/// Set the argument renderings, notes and stack frames, when present.
-fn set_exception_sequence_items(
-    py: Python<'_>,
-    dict: &Bound<'_, PyDict>,
-    payload: &ExceptionPayload,
-) -> PyResult<()> {
-    if !payload.args_repr.is_empty() {
-        dict.set_item("args_repr", string_vec_to_pylist(py, &payload.args_repr)?)?;
-    }
-    if !payload.notes.is_empty() {
-        dict.set_item("notes", string_vec_to_pylist(py, &payload.notes)?)?;
-    }
-    if !payload.frames.is_empty() {
-        dict.set_item("frames", frames_to_pylist(py, &payload.frames)?)?;
-    }
-    Ok(())
-}
-
-/// Set the `__cause__` and `__context__` links to other payloads.
-fn set_exception_link_items(
-    py: Python<'_>,
-    dict: &Bound<'_, PyDict>,
-    payload: &ExceptionPayload,
-) -> PyResult<()> {
-    if let Some(ref cause) = payload.cause {
-        dict.set_item("cause", exception_payload_to_py(py, cause)?)?;
-    }
-    if let Some(ref context) = payload.context {
-        dict.set_item("context", exception_payload_to_py(py, context)?)?;
-    }
-    Ok(())
-}
-
-/// Record that the exception suppresses implicit context.
-fn set_exception_suppression_item(
-    dict: &Bound<'_, PyDict>,
-    payload: &ExceptionPayload,
-) -> PyResult<()> {
-    if payload.suppress_context {
-        dict.set_item("suppress_context", true)?;
-    }
-    Ok(())
-}
-
-/// Set the exception-group members, when the exception group has any.
-fn set_exception_member_items(
-    py: Python<'_>,
-    dict: &Bound<'_, PyDict>,
-    payload: &ExceptionPayload,
-) -> PyResult<()> {
-    if !payload.exceptions.is_empty() {
-        dict.set_item("exceptions", exceptions_to_pylist(py, &payload.exceptions)?)?;
-    }
-    Ok(())
-}
-
-/// Convert an `ExceptionPayload` to a Python dict.
-fn exception_payload_to_py(py: Python<'_>, payload: &ExceptionPayload) -> PyResult<Py<PyAny>> {
-    let dict = PyDict::new(py);
-    dict.set_item("schema_version", payload.schema_version)?;
-    dict.set_item("type_name", &payload.type_name)?;
-    dict.set_item("message", &payload.message)?;
-
-    set_optional_exception_items(py, &dict, payload)?;
-
-    Ok(dict.into())
 }
 
 impl FemtoFormatter for PythonFormatter {

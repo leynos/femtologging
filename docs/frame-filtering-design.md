@@ -79,11 +79,27 @@ while stack payloads are rebuilt with the filtered frames directly.*
 The filtering operates on payload dictionaries rather than modifying records
 in-place. This approach:
 
-- Aligns with the current design where `capture_*` functions return full frames
+- Lets each formatter or handler choose how to filter the frames retained by
+  bounded capture
 - Allows different formatters and handlers to filter differently
 - Maintains testability and composability
 - Keeps worker threads Global Interpreter Lock (GIL)-free (filtering operates
   on Rust-owned data)
+
+### Capture limits and `max_depth`
+
+Capture and frame filtering impose separate limits at different stages. The
+capture limit bounds how many frames are copied from the original traceback or
+stack and reports any discarded frames in the optional `truncation` marker.
+`max_depth` is applied later to the retained frames, after filename, function,
+and logging-infrastructure exclusions. It can shorten the captured window
+further, but does not rewrite the capture marker: that marker reports omissions
+during capture, while `max_depth` is a consumer's presentation choice.
+
+If capture omitted earlier traceback frames, the `… N earlier frames omitted …`
+line remains available to formatters even after frame filtering. This
+distinction lets a consumer tell the difference between a bounded capture and a
+deliberately shorter view.
 
 ### Filter order
 

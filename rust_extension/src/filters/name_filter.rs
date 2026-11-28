@@ -31,6 +31,11 @@ impl FemtoFilter for NameFilter {
             record.logger() == self.prefix || record.logger().starts_with(&self.prefix_dot),
         )
     }
+
+    /// A name filter reads only the logger name, so capture can wait.
+    fn inspects_traceback(&self) -> bool {
+        false
+    }
 }
 
 /// Builder for [`NameFilter`].

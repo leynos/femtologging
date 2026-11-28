@@ -8,8 +8,9 @@ use pyo3::types::PyDict;
 use rstest::rstest;
 
 use crate::exception_schema::ExceptionPayload;
+use crate::test_utils::capture_limit_helpers::capture_raised;
 use crate::test_utils::traceback_test_helpers::{create_base_exception, create_value_error};
-use crate::traceback_capture::capture_exception;
+use crate::traceback_capture::{CaptureLimits, capture_exception};
 
 // --------------------------------
 // Helper functions for common setup
@@ -46,10 +47,10 @@ fn assert_outer_exception(payload: &ExceptionPayload, outer_type: &str) {
     );
 }
 
-/// Assert that a chained cause has the expected type and no instance-derived data.
+/// Assert that a chained cause has the expected type and no descendant-only data.
 ///
-/// Notes and `args_repr` require the original exception instance, which is
-/// unavailable for chained exceptions reached through `TracebackException`.
+/// The payload contract leaves notes and `args_repr` empty on descendants, even
+/// though the walker has access to their original exception instances.
 #[track_caller]
 fn assert_chained_cause(cause: &ExceptionPayload, cause_type: &str) {
     assert_eq!(
@@ -58,11 +59,11 @@ fn assert_chained_cause(cause: &ExceptionPayload, cause_type: &str) {
     );
     assert!(
         cause.notes.is_empty(),
-        "chained exception notes should be empty (no instance access)"
+        "chained exception notes should be empty on descendants"
     );
     assert!(
         cause.args_repr.is_empty(),
-        "chained exception args_repr should be empty (no instance access)"
+        "chained exception args_repr should be empty on descendants"
     );
 }
 
@@ -83,27 +84,6 @@ macro_rules! assert_chained_exception_structure {
         let cause = chained_cause(payload).expect("cause should be present");
         assert_chained_cause(cause, $cause_type);
     }};
-}
-
-#[rstest]
-fn capture_exception_without_notes_returns_empty_notes() {
-    // Standard exceptions without __notes__ should return empty notes vector.
-    // This tests the get_optional_attr degradation path for missing attributes.
-    Python::attach(|py| {
-        let exc = create_value_error(py, "test error").expect("exception should build");
-
-        // Do not assert CPython internals/version-specific defaults for __notes__.
-        // Only assert the capture output degrades to an empty notes vector.
-        let payload = capture_exception(py, &exc)
-            .expect("capture_exception should succeed")
-            .expect("payload should be Some");
-
-        assert!(
-            payload.notes.is_empty(),
-            "notes should be empty when __notes__ is missing/None/empty"
-        );
-        assert_eq!(payload.type_name, "ValueError");
-    });
 }
 
 #[rstest]
@@ -128,8 +108,8 @@ fn capture_exception_with_empty_args_tuple() {
 
 #[rstest]
 fn capture_exception_chained_cause_has_empty_notes_and_args() {
-    // Chained exceptions (where we only have TracebackException, not the instance)
-    // should have empty notes and args_repr because those require the original instance.
+    // Descendant payloads omit notes and args_repr by contract, despite access
+    // to the original exception instances.
     Python::attach(|py| {
         // Skip test if Python version doesn't support add_note()
         if !supports_add_note(py).expect("capability check should succeed") {
@@ -178,71 +158,6 @@ except ValueError as e:
             .expect("payload should be Some");
 
         assert_chained_exception_structure!(&payload, "RuntimeError", "ValueError");
-    });
-}
-
-#[rstest]
-fn capture_exception_with_non_iterable_notes_degrades_gracefully() {
-    // Exceptions with a non-iterable __notes__ attribute should degrade gracefully.
-    // This tests the type-mismatch degradation path for __notes__.
-    Python::attach(|py| {
-        let exc = create_value_error(py, "test error").expect("exception should build");
-
-        // Set a malformed, non-iterable __notes__ value (integer instead of list)
-        exc.setattr("__notes__", 123_i32)
-            .expect("setting non-iterable __notes__ should succeed at Python level");
-
-        let payload = capture_exception(py, &exc)
-            .expect("capture_exception should succeed even with malformed __notes__")
-            .expect("payload should be Some");
-
-        // For non-iterable __notes__, we expect graceful degradation to empty notes
-        assert!(
-            payload.notes.is_empty(),
-            "expected empty notes for non-iterable __notes__, got: {:?}",
-            payload.notes
-        );
-        assert_eq!(payload.type_name, "ValueError");
-    });
-}
-
-#[rstest]
-fn capture_exception_with_non_string_note_elements_degrades_gracefully() {
-    // Exceptions with __notes__ containing non-string elements should still
-    // be captured without failing, degrading notes content as needed.
-    // Per ADR "partial extraction of collections" rule: non-string entries are
-    // dropped/ignored but valid strings are preserved.
-    Python::attach(|py| {
-        let exc = create_value_error(py, "test error").expect("exception should build");
-
-        // Create a list with mixed types: valid string, integer, bytes, None
-        let code = c"
-notes_list = ['valid note', 42, b'bytes note', None]
-";
-        let globals = PyDict::new(py);
-        py.run(code, Some(&globals), None)
-            .expect("code to create notes list should succeed");
-        let notes_list = globals
-            .get_item("notes_list")
-            .expect("get_item should not fail")
-            .expect("notes_list should exist");
-
-        exc.setattr("__notes__", notes_list)
-            .expect("setting list-valued __notes__ should succeed");
-
-        let payload = capture_exception(py, &exc)
-            .expect("capture_exception should succeed even with malformed note entries")
-            .expect("payload should be Some");
-
-        assert_eq!(payload.type_name, "ValueError");
-
-        // Per ADR "partial extraction of collections" rule: only valid string
-        // entries are preserved; non-strings are skipped.
-        assert_eq!(
-            payload.notes,
-            vec!["valid note"],
-            "only valid string notes should survive; non-strings should be skipped"
-        );
     });
 }
 
@@ -298,6 +213,172 @@ class BadRepr:
             payload.args_repr,
             vec!["'valid arg'", "42"],
             "only valid repr strings should survive; failing repr elements should be skipped"
+        );
+        let marker = payload
+            .truncation
+            .as_ref()
+            .expect("a failed conversion should be recorded");
+        assert_eq!(marker.failed_elements, 1);
+        assert_eq!(
+            marker.args_omitted, 0,
+            "a failed conversion is not also an argument dropped by the ceiling"
+        );
+    });
+}
+
+#[rstest]
+fn a_failing_descendant_traceback_read_is_recorded() {
+    Python::attach(|py| {
+        let payload = capture_raised(
+            py,
+            c"
+class BadCause(Exception):
+    @property
+    def __traceback__(self):
+        raise RuntimeError('no traceback')
+
+error = ValueError('outer')
+error.__cause__ = BadCause('inner')
+raise error
+",
+            &CaptureLimits::default(),
+        );
+
+        let cause = payload
+            .cause
+            .as_ref()
+            .expect("the assigned cause should be retained");
+        assert_eq!(cause.type_name, "BadCause");
+        assert_eq!(
+            cause
+                .truncation
+                .as_ref()
+                .map_or(0, |marker| marker.failed_elements),
+            1,
+            "a descendant whose traceback read failed must report the loss"
+        );
+    });
+}
+
+#[rstest]
+fn a_failing_root_traceback_read_is_recorded() {
+    Python::attach(|py| {
+        let globals = PyDict::new(py);
+        py.run(
+            c"
+class Bad(Exception):
+    @property
+    def __traceback__(self):
+        raise RuntimeError('no traceback')
+
+result = Bad('x')
+",
+            Some(&globals),
+            None,
+        )
+        .expect("source should run");
+        let value = globals
+            .get_item("result")
+            .expect("binding lookup should succeed")
+            .expect("binding should be defined");
+        let payload = capture_exception(py, &value)
+            .expect("capture should not fail")
+            .expect("payload should be present");
+
+        assert!(payload.frames.is_empty());
+        assert_eq!(
+            payload
+                .truncation
+                .as_ref()
+                .map_or(0, |marker| marker.failed_elements),
+            1,
+            "a raising root traceback getter must be reported"
+        );
+    });
+}
+
+#[rstest]
+fn a_lookalike_traceback_yields_no_frames() {
+    Python::attach(|py| {
+        let error = py
+            .run(
+                c"def fail():\n    raise ValueError('fake traceback')\nfail()\n",
+                None,
+                None,
+            )
+            .expect_err("source should raise");
+        let exc_value = error.value(py);
+
+        // Control: the exception has a real traceback, and direct capture keeps
+        // its frames. Without this step the test would pass if capture simply
+        // ignored tracebacks altogether.
+        let direct = capture_exception(py, exc_value)
+            .expect("direct capture should succeed")
+            .expect("payload should be present");
+        assert!(
+            !direct.frames.is_empty(),
+            "the control exception must contribute real frames"
+        );
+
+        // A lookalike returned by the exception's own `__traceback__` property
+        // reaches the walker without passing the tuple-type validation. Its
+        // `tb_frame` counts reads, so a walker that duck-typed the object would
+        // be caught even if it ignored the missing `tb_lineno` and `tb_lasti`.
+        let globals = PyDict::new(py);
+        py.run(
+            c"
+reads = 0
+
+class Fake:
+    @property
+    def tb_frame(self):
+        global reads
+        reads += 1
+        return None
+
+    tb_next = None
+
+class Bad(Exception):
+    @property
+    def __traceback__(self):
+        return Fake()
+
+result = Bad('fake traceback')
+",
+            Some(&globals),
+            None,
+        )
+        .expect("fake traceback class should build");
+        let value = globals
+            .get_item("result")
+            .expect("binding lookup should succeed")
+            .expect("binding should be defined");
+
+        let payload = capture_exception(py, &value)
+            .expect("capture should not fail")
+            .expect("payload should be present");
+
+        // The lookalike is neither a real traceback nor a frame, so the walk
+        // ends: it contributes no frames and, because nothing was dropped, is
+        // not reported as an omission either.
+        assert!(
+            payload.frames.is_empty(),
+            "an explicit override that is not a traceback must not be followed"
+        );
+        assert!(
+            payload.truncation.is_none(),
+            "a lookalike traceback should not be reported as omitted: {:?}",
+            payload.truncation
+        );
+        let reads: usize = globals
+            .get_item("reads")
+            .expect("counter lookup should succeed")
+            .expect("counter should be defined")
+            .extract()
+            .expect("counter should be an integer");
+        assert_eq!(
+            reads, 0,
+            "type rejection must happen before any traceback attribute is read"
         );
     });
 }

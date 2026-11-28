@@ -7,6 +7,7 @@
 //! - `nested_version_property_tests`: Property tests against a reference model
 //! - `nested_version_tests`: Recursive schema version validation tests
 //! - `schema_tests`: Type definitions and serialization tests
+//! - `truncation_tests`: Bounded truncation marker serialization tests
 
 mod deep_chain_tests;
 mod filtering_tests;
@@ -14,3 +15,4 @@ mod nested_version_limit_tests;
 mod nested_version_property_tests;
 mod nested_version_tests;
 mod schema_tests;
+mod truncation_tests;

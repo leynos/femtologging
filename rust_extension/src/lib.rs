@@ -68,8 +68,6 @@ mod python_context;
 mod python_module;
 #[cfg(feature = "python")]
 pub(crate) mod traceback_capture;
-#[cfg(feature = "python")]
-pub(crate) mod traceback_frames;
 
 // Feature-gated log-compat module
 #[cfg(all(feature = "python", feature = "log-compat"))]
@@ -81,13 +79,29 @@ pub mod tracing_compat;
 #[cfg(test)]
 mod test_utils;
 #[cfg(all(test, feature = "python"))]
+mod traceback_capture_argument_repr_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_budget_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_container_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_containment_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_frame_tests;
+#[cfg(all(test, feature = "python"))]
 mod traceback_capture_graceful_degradation_tests;
 #[cfg(all(test, feature = "python"))]
+mod traceback_capture_group_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_limits_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_note_tests;
+#[cfg(test)]
+mod traceback_capture_property_tests;
+#[cfg(all(test, feature = "python"))]
+mod traceback_capture_stack_limits_tests;
+#[cfg(all(test, feature = "python"))]
 mod traceback_capture_tests;
-#[cfg(all(test, feature = "python"))]
-mod traceback_frames_graceful_degradation_tests;
-#[cfg(all(test, feature = "python"))]
-mod traceback_frames_tests;
 
 // Re-exports: configuration builders
 pub use config::{ConfigBuilder, FormatterBuilder, HandlerBuilder, LoggerConfigBuilder};
@@ -106,8 +120,8 @@ pub use filters::{
 /// Re-export exception schema types.
 pub use exception_schema::{
     EXCEPTION_SCHEMA_VERSION, ExceptionPayload, MAX_EXCEPTION_PAYLOAD_DEPTH,
-    MAX_EXCEPTION_PAYLOAD_NODES, MIN_EXCEPTION_SCHEMA_VERSION, SchemaVersionError, SchemaVersioned,
-    StackFrame, StackTracePayload, validate_schema_version,
+    MAX_EXCEPTION_PAYLOAD_NODES, MIN_EXCEPTION_SCHEMA_VERSION, PayloadTruncation,
+    SchemaVersionError, SchemaVersioned, StackFrame, StackTracePayload, validate_schema_version,
 };
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};

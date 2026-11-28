@@ -8,6 +8,67 @@ use pyo3::prelude::*;
 #[cfg(feature = "python")]
 use pyo3::types::PyBool;
 
+/// Return `exc_info` when it requests capture, after validating its shape.
+///
+/// Returning the reference rather than a boolean keeps the decision and the
+/// validated value together, so the deferred capture hook cannot mistake an
+/// unvalidated argument for a validated one. Invalid `exc_info` values raise
+/// `TypeError` here, before any filter sees the record.
+#[cfg(feature = "python")]
+pub(super) fn validated_exc_info<'py, 'a>(
+    py: Python<'py>,
+    exc_info: Option<&'a Bound<'py, PyAny>>,
+) -> PyResult<Option<&'a Bound<'py, PyAny>>> {
+    let Some(exc) = exc_info else {
+        return Ok(None);
+    };
+    if !should_capture_exc_info(exc)? {
+        return Ok(None);
+    }
+    crate::traceback_capture::validate_exc_info(py, exc)?;
+    Ok(Some(exc))
+}
+
+/// Attach bounded exception and stack payloads to `record`.
+///
+/// This is the deferred-capture hook used by the producer's two-phase filter
+/// path. `exc_info` has already been filtered and validated by
+/// [`validated_exc_info`], so the only failures left here are interpreter-level
+/// ones. Those are not propagated, because logging must not fail on the way out
+/// of a failure: a failed stack capture is recorded as an empty payload with a
+/// truncation marker, and a failed exception capture leaves `exc_info` absent.
+#[cfg(feature = "python")]
+pub(super) fn attach_captured_payloads(
+    py: Python<'_>,
+    exc_info: Option<&Bound<'_, PyAny>>,
+    stack_info: Option<bool>,
+    record: &mut crate::log_record::FemtoLogRecord,
+) {
+    if let Some(exc) = exc_info
+        // The input was validated, so a remaining failure is an
+        // interpreter-level one. Logging must not fail on the way out of a
+        // failure, so the loss is reported through the payload contract instead
+        // of being raised.
+        && let Ok(Some(payload)) = crate::traceback_capture::capture_exception(py, exc)
+    {
+        record.set_exception_payload(payload);
+    }
+
+    if stack_info.unwrap_or(false) {
+        match crate::traceback_capture::capture_stack(py) {
+            Ok(payload) => record.set_stack_payload(payload),
+            Err(_) => record.set_stack_payload(crate::exception_schema::StackTracePayload {
+                truncation: crate::exception_schema::PayloadTruncation {
+                    failed_elements: 1,
+                    ..Default::default()
+                }
+                .into_option(),
+                ..crate::exception_schema::StackTracePayload::new(Vec::new())
+            }),
+        }
+    }
+}
+
 /// Determine whether exc_info should trigger exception capture.
 ///
 /// Returns `true` for any non-False, non-None value (including exception
@@ -29,22 +90,4 @@ pub fn should_capture_exc_info(exc_info: &Bound<'_, PyAny>) -> PyResult<bool> {
     // Any other value (exception instance, tuple, or invalid type) triggers
     // capture attempt. Invalid types will fail in capture_exception.
     Ok(true)
-}
-
-/// Capture an exception payload when `exc_info` is provided and truthy.
-///
-/// Returns `Ok(None)` when `exc_info` is absent, falsy, or yields no
-/// captured exception.
-#[cfg(feature = "python")]
-pub(super) fn capture_exception_payload(
-    py: Python<'_>,
-    exc_info: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Option<crate::ExceptionPayload>> {
-    let Some(exc) = exc_info else {
-        return Ok(None);
-    };
-    if !should_capture_exc_info(exc)? {
-        return Ok(None);
-    }
-    crate::traceback_capture::capture_exception(py, exc)
 }

@@ -1,0 +1,303 @@
+//! Assembly of an exception's message from bounded argument representations.
+//!
+//! `super` reads and retains the arguments; this module turns them into the
+//! text `BaseException.__str__` would have produced, without calling user code
+//! again. Keeping the message shapes separate leaves both files under the
+//! repository's module-size ceiling and keeps the argument-reading rules in one
+//! place.
+
+use pyo3::exceptions::{PyOSError, PySyntaxError};
+use pyo3::prelude::*;
+use pyo3::types::{PyString, PyType};
+
+use crate::traceback_capture::limits::{STR_FAILURE_SENTINEL, TRUNCATION_SUFFIX};
+use crate::traceback_capture::types;
+use crate::traceback_capture::values::{self, BoundedText};
+
+use super::RenderedArgs;
+
+/// Build the exception's message, clamped to `limit` bytes.
+///
+/// `str(exception)` is called only where it is cheap or cannot be replaced. An
+/// exception with one argument has nothing to re-render beyond the
+/// representation already taken, and one whose type overrides `__str__` has a
+/// message the argument tuple cannot reproduce. Only the default multi-argument
+/// case — where `str` would mean one `__repr__` per argument — is assembled
+/// from the representations instead.
+pub(in crate::traceback_capture) fn build_message(
+    exception: &Bound<'_, PyAny>,
+    args: &RenderedArgs,
+    limit: usize,
+) -> BoundedText {
+    if let Some(message) = syntax_error_message(exception, limit) {
+        return message;
+    }
+    if let Some(message) = key_error_message(exception, args, limit) {
+        return message;
+    }
+    if let Some(message) = os_error_container_message(exception, limit) {
+        return message;
+    }
+    if uses_default_str(exception).unwrap_or(false) {
+        if args.total > 1 {
+            return multi_argument_message(args, limit);
+        }
+        if let Some(argument) = args.first_arg.as_ref() {
+            let argument = argument.bind(exception.py());
+            if types::inherits_exception_str(argument) {
+                // A nested exception's inherited `str` renders its own
+                // arguments, so a bounded summary replaces that recursion.
+                return values::exception_summary(argument, limit);
+            }
+            return values::stringify_argument(argument, limit);
+        }
+    }
+    values::stringify(exception, limit, STR_FAILURE_SENTINEL)
+}
+
+/// Assemble the multi-argument message and mark it when arguments are missing.
+///
+/// `joined_args` renders a `...` marker for arguments the count ceiling dropped
+/// or a failed representation left as a gap. That marker is part of the message
+/// even when the assembled text fits its byte ceiling, so the message is
+/// reported as shortened rather than complete.
+fn multi_argument_message(args: &RenderedArgs, limit: usize) -> BoundedText {
+    let mut message = values::clamp(joined_args(args), limit);
+    if args.has_omissions() {
+        message.truncated = true;
+    }
+    message
+}
+
+/// Preserve the message field exposed by `TracebackException` for syntax errors.
+fn syntax_error_message(exception: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    let py = exception.py();
+    // The real type decides, not `__class__`: a subclass may expose a property
+    // claiming to be a `SyntaxError` while its own `__str__` says otherwise.
+    let syntax_error = py.get_type::<PySyntaxError>();
+    if !exception
+        .get_type()
+        .is_subclass(&syntax_error)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let message = exception.getattr("msg").ok()?;
+    let message = message.cast::<PyString>().ok()?;
+    Some(values::bounded_string(message, limit))
+}
+
+/// Reproduce an `OSError` message when its `strerror` is a container.
+///
+/// `OSError.__str__` formats the second argument with `str`, which for a
+/// container is its `repr` and enumerates every element before any ceiling can
+/// apply. Only that shape is handled here: the ordinary `[Errno 2] text` form
+/// has no container to bound and keeps the normal path.
+fn os_error_container_message(exception: &Bound<'_, PyAny>, limit: usize) -> Option<BoundedText> {
+    let py = exception.py();
+    let os_error = py.get_type::<PyOSError>();
+    if !exception.get_type().is_subclass(&os_error).unwrap_or(false) {
+        return None;
+    }
+    let inherited = class_attribute(os_error.as_any(), "__str__")?;
+    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
+    if !actual.is(&inherited) {
+        return None;
+    }
+    // The writable `errno` and `strerror` attributes are what `__str__`
+    // formats, and they can differ from the constructor arguments.
+    let errno = exception.getattr("errno").ok()?;
+    let errno: i64 = errno.extract().ok()?;
+    let strerror = exception.getattr("strerror").ok()?;
+    if strerror.is_none() {
+        return None;
+    }
+    // `str` semantics, not `repr`: a container subclass with its own `__str__`
+    // must keep it, while native containers stay on the bounded path.
+    let strerror = values::stringify_argument(&strerror, limit.saturating_sub(16).max(1));
+    // Native formatting prefers a Windows error code over the POSIX one.
+    let winerror = exception
+        .getattr("winerror")
+        .ok()
+        .filter(|value| !value.is_none())
+        .and_then(|value| value.extract::<i64>().ok());
+    let prefix = match winerror {
+        Some(0) | None => format!("[Errno {errno}]"),
+        Some(code) => format!("[WinError {code}]"),
+    };
+    let mut text = format!("{prefix} {}", strerror.text);
+    let mut flags = PartFlags {
+        shortened: strerror.truncated,
+        failed: strerror.failed,
+        clipped: strerror.clipped,
+    };
+    append_filenames(exception, &mut text, limit, &mut flags);
+    let bounded = values::clamp(text, limit);
+    Some(BoundedText {
+        truncated: bounded.truncated || flags.shortened,
+        clipped: bounded.clipped || flags.clipped,
+        failed: flags.failed,
+        text: bounded.text,
+    })
+}
+
+/// Accumulated flags while an `OSError` message is assembled.
+struct PartFlags {
+    /// Any retained part was shortened.
+    shortened: bool,
+    /// A conversion failed.
+    failed: bool,
+    /// The byte ceiling cut a part.
+    clipped: bool,
+}
+
+/// Append the filename and second filename in CPython's `: repr` form.
+fn append_filenames(
+    exception: &Bound<'_, PyAny>,
+    text: &mut String,
+    limit: usize,
+    flags: &mut PartFlags,
+) {
+    for (attribute, separator) in [("filename", ": "), ("filename2", " -> ")] {
+        let Ok(value) = exception.getattr(attribute) else {
+            continue;
+        };
+        if value.is_none() {
+            continue;
+        }
+        text.push_str(separator);
+        let remaining = limit.saturating_sub(text.len()).max(1);
+        match values::repr_bounded(&value, remaining) {
+            Some(rendered) => {
+                text.push_str(&rendered.text);
+                flags.shortened |= rendered.truncated;
+                flags.failed |= rendered.failed;
+                flags.clipped |= rendered.clipped;
+            }
+            None => {
+                flags.failed = true;
+                text.push_str("<filename unavailable>");
+            }
+        }
+    }
+}
+
+/// Report whether `exception` inherits `BaseException.__str__` unchanged.
+///
+/// Returns `None` when the comparison cannot be made, which leaves the caller
+/// on the `str` path — the safe direction, because the joined form is only
+/// correct for types whose `__str__` really is the default.
+fn uses_default_str(exception: &Bound<'_, PyAny>) -> Option<bool> {
+    let py = exception.py();
+    let base = py
+        .import("builtins")
+        .and_then(|builtins| builtins.getattr("BaseException"))
+        .ok()?;
+    let inherited = class_attribute(&base, "__str__")?;
+    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
+    // Identity, not equality: a subclass that copied the body but redefined the
+    // slot still counts as overriding, which is the conservative reading.
+    Some(actual.is(&inherited))
+}
+
+/// Read a class attribute through the ordinary type lookup.
+///
+/// `cls.__str__` goes through the metaclass's `__getattribute__`, which
+/// application code can override, so the value compared here could be produced
+/// by user code rather than read from the class's method-resolution order.
+/// Calling `type.__getattribute__` directly performs the MRO lookup the
+/// comparison needs.
+fn class_attribute<'py>(class: &Bound<'py, PyAny>, name: &str) -> Option<Bound<'py, PyAny>> {
+    let py = class.py();
+    let type_type = py.get_type::<PyType>();
+    let getattribute = type_type.getattr("__getattribute__").ok()?;
+    getattribute.call1((class, name)).ok()
+}
+
+/// Reproduce `KeyError.__str__` from the argument representations already taken.
+///
+/// CPython renders a single-argument `KeyError` as `repr(args[0])` and the
+/// multi-argument form as the default `repr(args)`. Both are exactly what
+/// [`render_args`] and [`joined_args`] already produce, so using them avoids a
+/// second trip through user code — and avoids the unbounded intermediate string
+/// that `str(a_large_key)` would build before the ceiling could apply.
+///
+/// A subclass that overrides `__str__` is left alone: its own rendering is the
+/// correct message, so the identity check fails and the caller falls back to
+/// `str`.
+fn key_error_message(
+    exception: &Bound<'_, PyAny>,
+    args: &RenderedArgs,
+    limit: usize,
+) -> Option<BoundedText> {
+    let py = exception.py();
+    let key_error = py.import("builtins").ok()?.getattr("KeyError").ok()?;
+    if !exception
+        .get_type()
+        .is_subclass(&key_error)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let inherited = class_attribute(&key_error, "__str__")?;
+    let actual = class_attribute(exception.get_type().as_any(), "__str__")?;
+    if !actual.is(&inherited) {
+        return None;
+    }
+    if args.total > 1 {
+        return Some(multi_argument_message(args, limit));
+    }
+    match args.texts.first() {
+        Some(text) => {
+            // The key's representation was already bounded by `max_arg_bytes`.
+            // A cut there is a cut in the message too, so carry the flag rather
+            // than reporting an untruncated message built from shortened text.
+            let mut bounded = values::clamp(text.clone(), limit);
+            bounded.truncated |= args.truncated;
+            Some(bounded)
+        }
+        // The only key could not be represented. Returning `None` would send
+        // the caller to `str(exception)`, which calls the same failing
+        // `__repr__` a second time, so report the contained failure instead.
+        None if args.failed > 0 => {
+            // The failed key conversion was already counted by
+            // `report_failures`; this placeholder explains the text without
+            // counting the same failure a second time.
+            let mut failure = BoundedText::failure("<repr conversion failed>", limit);
+            failure.failed = false;
+            Some(failure)
+        }
+        None => None,
+    }
+}
+
+/// Assemble CPython's multi-argument message from bounded representations.
+///
+/// The result mirrors the shape `BaseException.__str__` produces — the `args`
+/// tuple's `repr` — so a message stays recognisable, but it is built from the
+/// representations already retained rather than by re-running user code. An
+/// argument the count or size ceiling dropped appears as `...`, which keeps the
+/// message honest about being a prefix.
+pub(super) fn joined_args(args: &RenderedArgs) -> String {
+    // A failed representation in the middle is a gap. Later texts are retained
+    // for `args_repr`, but displaying them here would move them into the gap's
+    // position, so the message stops where the gap starts.
+    let keep = args
+        .first_failed
+        .map_or(args.texts.len(), |gap| gap.min(args.texts.len()));
+    let mut rendered = String::from("(");
+    for (index, text) in args.texts.iter().take(keep).enumerate() {
+        if index > 0 {
+            rendered.push_str(", ");
+        }
+        rendered.push_str(text);
+    }
+    if args.first_failed.is_some() || args.is_incomplete() {
+        if keep > 0 {
+            rendered.push_str(", ");
+        }
+        rendered.push_str(TRUNCATION_SUFFIX);
+    }
+    rendered.push(')');
+    rendered
+}

@@ -65,6 +65,20 @@ pub trait FemtoFilter: Send + Sync {
         self.decision(record, &mut FilterContext::default())
             .accepted
     }
+
+    /// Return whether this filter may inspect exception or stack payloads.
+    ///
+    /// Producers defer capture until every leading filter that answers `false`
+    /// has accepted the record. A filter that can read `exc_info` or
+    /// `stack_info` must answer `true`, because its decision would otherwise
+    /// change once capture ran. The default is deliberately conservative:
+    /// only filters that provably ignore traceback data should opt out.
+    /// [`LevelFilter`](crate::filters::level_filter::LevelFilter) and
+    /// [`NameFilter`](crate::filters::name_filter::NameFilter) opt out because
+    /// they read only the level and logger name.
+    fn inspects_traceback(&self) -> bool {
+        true
+    }
 }
 
 pub mod level_filter;

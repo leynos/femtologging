@@ -35,6 +35,7 @@ ______________________________________________________________________
 | Review if enabled  | HTTP handlers                   | Expect `HandlerConfigError` for an invalid endpoint or header, and check the four-redirect limit and credential stripping.                                                                       |
 | Optional           | Inline structured fields        | Adopt `extra=` for per-call structured fields.                                                                                                                                                   |
 | Optional           | Exception-payload limits        | Set `max_exception_depth` and `max_exception_nodes` for unbounded payloads.                                                                                                                      |
+| Review if enabled  | Capture ceilings                | Review Rust struct-literal payload construction and callback filters that inspect exception or stack data for the new bounds.                                                                    |
 | Required for Rust  | `SchemaVersionError` matches    | Add a wildcard arm; the enum is now `#[non_exhaustive]` and gains nested and limit variants.                                                                                                     |
 | Optional           | Handler wait diagnostics        | Read `wait_diagnostics()` to tell a dropped record from a slow worker; enable `tracing-compat` for internal wait events.                                                                         |
 
@@ -528,6 +529,29 @@ For the complete parameter and error contract, see
 
 [user-filtering]: users-guide.md#filtering-frames-from-python-payloads
 [user-flushing]: users-guide.md#managing-handlers-and-custom-sinks
+[user-capture]: users-guide.md#bounded-exception-and-stack-capture
+
+______________________________________________________________________
+
+## 10. Bounded exception and stack capture
+
+Exception and stack capture now runs under fixed ceilings. The defaults are a
+4,096-byte message, 32 arguments and notes (512 bytes each), 64 frames,
+512-byte filenames and source lines, 256-byte function names, 32 cause or
+context links, 10 exception-group levels and 15 members, 256 exception nodes,
+and 256 KiB of retained text. See
+[bounded exception and stack capture][user-capture] for the full contract and
+the optional `truncation` mapping.
+
+`ExceptionPayload` and `StackTracePayload` gained an optional `truncation`
+field, and `PayloadTruncation` is exported from the crate root. Rust code that
+builds either payload with a struct literal must set `truncation` or use
+`..Default::default()`.
+
+Callback filters now see the bounded payload after the leading native filter
+prefix accepts. Only filters that read exception or stack data need to report
+that through `FemtoFilter::inspects_traceback`; level and name filters do not.
+Filter order is unchanged.
 
 ______________________________________________________________________
 
@@ -963,6 +987,8 @@ Each item carries the same obligation label as the matching row in
 - [ ] **Review if enabled:** Update HTTP handlers for build-time endpoint and
       header validation, the four-redirect limit, and credential stripping on
       redirects.
+- [ ] **Review if enabled:** Review Rust struct-literal payload construction
+      and callback filters for the new bounded-capture ceilings.
 - [ ] **Optional:** Adopt `extra=` and the exception-payload limits.
 - [ ] **Optional:** Watch `wait_diagnostics()` and, where the crate is built
       with `tracing-compat`, the `femtologging::internal` wait events to
