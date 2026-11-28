@@ -73,9 +73,10 @@ pub trait FemtoFilter: Send + Sync {
     /// `stack_info` must answer `true`, because its decision would otherwise
     /// change once capture ran. The default is deliberately conservative:
     /// only filters that provably ignore traceback data should opt out.
-    /// [`LevelFilter`](crate::filters::level_filter::LevelFilter) and
-    /// [`NameFilter`](crate::filters::name_filter::NameFilter) opt out because
-    /// they read only the level and logger name.
+    /// The level and name filters opt out because they read only the level and
+    /// the logger name, neither of which capture can change. Both types are
+    /// private, so they are named rather than linked: a public doc cannot link
+    /// to a private item.
     fn inspects_traceback(&self) -> bool {
         true
     }
