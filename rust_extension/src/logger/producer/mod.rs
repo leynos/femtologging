@@ -141,7 +141,22 @@ impl FemtoLogger {
     /// attached before it arrives, and every stage from here on carries it
     /// unchanged through filtering, the handler-filter snapshot and parent
     /// propagation.
-    pub(crate) fn log_prebuilt(&self, mut record: FemtoLogRecord) -> Option<String> {
+    pub(crate) fn log_prebuilt(&self, record: FemtoLogRecord) -> Option<String> {
+        self.log_prebuilt_to(std::io::stderr(), record)
+    }
+
+    /// Log a record the caller has already assembled, reporting to `writer`.
+    ///
+    /// The writer is the seam that makes the invalid-context diagnostic
+    /// observable: [`Self::log_prebuilt`] supplies the process's stderr, which
+    /// a test cannot read without redirecting a file descriptor, while a test
+    /// supplies a `Vec` and asserts the exact bytes. Everything else is shared,
+    /// so a test cannot pass by exercising a path production does not take.
+    pub(crate) fn log_prebuilt_to(
+        &self,
+        mut writer: impl std::io::Write,
+        mut record: FemtoLogRecord,
+    ) -> Option<String> {
         if self.refuse_if_disabled() {
             return None;
         }
@@ -153,7 +168,12 @@ impl FemtoLogger {
                 Err(err) => {
                     self.context_dropped_records
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    eprintln!("FemtoLogger: dropping record due to invalid context payload: {err}");
+                    // No `log` backend is installed by default, so a warning sent
+                    // through the facade would be dropped and a caller that never
+                    // installed the bridge would lose the only diagnostic for a
+                    // record this path discards. A failed write must not take
+                    // down the logging path, so its result is discarded.
+                    drop(report_context_drop(&mut writer, &err));
                     return None;
                 }
             };
@@ -231,7 +251,7 @@ impl FemtoLogger {
     }
 
     /// Decode the logger's validated atomic representation.
-    pub(crate) fn level_from_raw(level: u8) -> FemtoLevel {
+    pub(crate) const fn level_from_raw(level: u8) -> FemtoLevel {
         match level {
             0 => FemtoLevel::Trace,
             1 => FemtoLevel::Debug,
@@ -298,7 +318,7 @@ impl FemtoLogger {
 
     /// Queue a record for this logger's local handlers on its dispatch shard.
     fn send_to_local_handlers(&self, record: FemtoLogRecord) {
-        let Some((record, handlers)) = self.select_local_handlers(record) else {
+        let Some((filtered_record, handlers)) = self.select_local_handlers(record) else {
             return;
         };
         #[cfg(feature = "tracing-compat")]
@@ -311,12 +331,12 @@ impl FemtoLogger {
         ) {
             Ok(context) => context,
             Err(error) => {
-                self.record_context_capture_failure(error);
+                self.record_context_capture_failure(&error);
                 return;
             }
         };
         let queued = Box::new(QueuedRecord {
-            record,
+            record: filtered_record,
             handlers,
             #[cfg(feature = "python")]
             context,
@@ -379,3 +399,55 @@ impl FemtoLogger {
         }
     }
 }
+
+/// The diagnostic a record dropped for an invalid context writes to stderr.
+///
+/// The write itself targets the process's stderr descriptor, which a test
+/// cannot observe without permanently redirecting it for every thread in the
+/// binary. Splitting the wording out lets a test pin the exact text the drop
+/// path emits, as the refused-target diagnostics do, while the counter
+/// assertion proves the drop path ran.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let err = log_context::merge_context_values(&oversize_map)
+///     .expect_err("an oversize value is refused");
+/// assert!(context_drop_diagnostic(&err).contains("invalid context payload"));
+/// ```
+pub(crate) fn context_drop_diagnostic(error: &log_context::LogContextError) -> String {
+    format!("FemtoLogger: dropping record due to invalid context payload: {error}")
+}
+
+/// Write the drop diagnostic for `error` to `writer`.
+///
+/// Split from the logging path so a test can hand it a writer and read back
+/// exactly what a caller sees. The production call site passes
+/// [`std::io::stderr`] and discards the result: a full or closed diagnostic
+/// stream must not fail the logging call that triggered it.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut written = Vec::new();
+/// report_context_drop(&mut written, &err).expect("a Vec accepts the write");
+/// assert_eq!(String::from_utf8(written).unwrap().lines().count(), 1);
+/// ```
+pub(crate) fn report_context_drop(
+    mut writer: impl std::io::Write,
+    error: &log_context::LogContextError,
+) -> std::io::Result<()> {
+    writeln!(writer, "{}", context_drop_diagnostic(error))
+}
+
+#[cfg(test)]
+#[path = "report_context_drop_tests.rs"]
+mod report_context_drop_tests;
+
+#[cfg(all(test, feature = "python"))]
+#[path = "log_prebuilt_drop_tests.rs"]
+mod log_prebuilt_drop_tests;
+
+#[cfg(test)]
+#[path = "producer_const_eval_tests.rs"]
+mod producer_const_eval_tests;

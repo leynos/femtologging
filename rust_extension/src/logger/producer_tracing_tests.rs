@@ -91,14 +91,14 @@ impl InternalEventCollector {
     }
 
     fn wait_for_event_count(&self, expected_count: usize) -> Result<(), String> {
-        let events = self
+        let buffered = self
             .events
             .lock()
             .map_err(|error| format!("tracing event collector was poisoned: {error}"))?;
         let (events, _) = self
             .events_changed
-            .wait_timeout_while(events, Duration::from_secs(2), |events| {
-                events.len() < expected_count
+            .wait_timeout_while(buffered, Duration::from_secs(2), |pending| {
+                pending.len() < expected_count
             })
             .map_err(|error| format!("tracing event collector was poisoned: {error}"))?;
         if events.len() >= expected_count {

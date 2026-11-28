@@ -41,6 +41,8 @@
 #[cfg(not(loom))]
 mod pool_start;
 mod shard;
+#[cfg(not(loom))]
+mod shards;
 
 use pyo3::{PyErr, exceptions::PyRuntimeError};
 
@@ -48,9 +50,17 @@ use pyo3::{PyErr, exceptions::PyRuntimeError};
 #[path = "../dispatcher_tests.rs"]
 mod dispatcher_tests;
 
+#[cfg(all(test, not(loom)))]
+mod shards_property_tests;
+
 #[cfg(not(loom))]
 use super::flush_clock::FlushDeadline;
-pub(crate) use shard::{LoggerBudget, Shard};
+pub(crate) use shard::{AdmissionRefusal, LoggerBudget, Shard};
+// Gated with the module it draws from: `mod shards` is `not(loom)`, so an
+// ungated import is an unresolved path in the Loom build, which CI lints with
+// `-D warnings`.
+#[cfg(not(loom))]
+use shards::Shards;
 #[cfg(not(loom))]
 use std::ptr::NonNull;
 #[cfg(not(loom))]
@@ -105,7 +115,10 @@ pub(crate) struct Dispatcher {
     /// Process whose workers consume this dispatcher's queues.
     process_id: u32,
     /// Shards that share the process-wide dispatch workload.
-    shards: Vec<Shard>,
+    ///
+    /// Held as [`Shards`] rather than a plain vector so the "at least one
+    /// shard" invariant is part of the type and assignment cannot fail.
+    shards: Shards,
     /// Index used to assign new loggers to shards in round-robin order.
     next_shard: AtomicUsize,
 }
@@ -163,10 +176,24 @@ impl DispatcherError {
     /// refusal this way, so the two paths present one error type to callers.
     /// `started` counts the shards already running: zero for the Loom arm,
     /// which has no pool to have started any.
-    pub(super) fn new(started: usize, total: usize, source: std::io::Error) -> Self {
+    pub(super) const fn new(started: usize, total: usize, source: std::io::Error) -> Self {
         Self {
             started,
             total,
+            source,
+        }
+    }
+
+    /// Build an error for a pool size the dispatcher cannot honour.
+    ///
+    /// A pool needs at least one shard, so a zero-shard request is refused
+    /// before any worker is started. It is reported through this type so every
+    /// way a pool can fail to exist has one error for callers to handle.
+    #[cfg(not(loom))]
+    const fn invalid_pool(source: std::io::Error) -> Self {
+        Self {
+            started: 0,
+            total: 0,
             source,
         }
     }
@@ -174,6 +201,11 @@ impl DispatcherError {
 
 impl std::fmt::Display for DispatcherError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.total == 0 {
+            // A refused pool size, not a partial start: no worker was ever
+            // attempted, so the "started before" wording would misdescribe it.
+            return write!(f, "could not start the log dispatch pool: {}", self.source);
+        }
         write!(
             f,
             "could not start the log dispatch pool: {} of {} shards started before the system \
@@ -253,10 +285,13 @@ impl Dispatcher {
     /// Assign a shard to a newly created logger.
     ///
     /// Round robin over a fixed pool spreads loggers evenly without a lock and
-    /// without consulting the machine again.
+    /// without consulting the machine again. The access is total: [`Shards`]
+    /// always holds at least one shard, and its slot lookup falls back to the
+    /// first one if the counter ever names an empty slot, so assignment has no
+    /// failure or panic path even after the counter wraps.
     pub(crate) fn assign_shard(&self) -> &Shard {
         let index = self.next_shard.fetch_add(1, Ordering::Relaxed);
-        &self.shards[index % self.shards.len()]
+        self.shards.get(index % self.shards.len())
     }
 
     /// Start one shard per thread the machine can usefully run.
@@ -268,20 +303,27 @@ impl Dispatcher {
     ///
     /// Production supplies [`Shard::start`]. Tests can refuse a chosen start
     /// deterministically without exhausting the process's thread resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatcherError`] when a worker cannot be started, and when
+    /// `count` asks for no shards at all: a pool without a shard could not
+    /// assign one, so the request is refused here rather than left to fail at
+    /// the first logger.
     fn start_with(
         process_id: u32,
         count: usize,
         mut start_shard: impl FnMut(usize, usize) -> Result<Shard, std::io::Error>,
     ) -> Result<Self, DispatcherError> {
-        let mut shards = Vec::with_capacity(count);
+        let mut started = Vec::with_capacity(count);
         for index in 0..count {
             let shard = start_shard(index, RECORDS_PER_LOGGER * count)
                 .map_err(|source| DispatcherError::new(index, count, source))?;
-            shards.push(shard);
+            started.push(shard);
         }
         Ok(Self {
             process_id,
-            shards,
+            shards: Shards::from_started(started)?,
             next_shard: AtomicUsize::new(0),
         })
     }
@@ -302,7 +344,11 @@ pub(crate) fn shards_for(available_parallelism: Option<usize>) -> usize {
 /// Number of shards this process should run.
 #[cfg(not(loom))]
 pub(crate) fn shard_count() -> usize {
-    shards_for(std::thread::available_parallelism().ok().map(|n| n.get()))
+    shards_for(
+        std::thread::available_parallelism()
+            .ok()
+            .map(std::num::NonZeroUsize::get),
+    )
 }
 
 /// Return the number of workers actually started by the process-wide pool.
@@ -326,21 +372,28 @@ mod test_support {
     //! Built only outside Loom: the whole point is to construct a [`Dispatcher`]
     //! at a chosen shard count, and a Loom model has no pool to construct.
 
-    use super::{Dispatcher, Shard};
+    use super::{Dispatcher, DispatcherError, Shard, Shards};
 
     /// A pool a test has started itself, with a shard count it chose.
     ///
     /// Returned rather than installed as the process-wide pool: the tests that
     /// want a specific shard count are asserting the pool's own behaviour, and
     /// installing it would make every other test in the binary share it.
-    pub(crate) fn shared_with_shards_for_test(count: usize) -> Result<Dispatcher, std::io::Error> {
-        let mut shards = Vec::with_capacity(count);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DispatcherError`] when a worker cannot be started, and when
+    /// `count` asks for no shards: a pool must own at least one.
+    pub(crate) fn shared_with_shards_for_test(count: usize) -> Result<Dispatcher, DispatcherError> {
+        let mut started = Vec::with_capacity(count);
         for index in 0..count {
-            shards.push(Shard::start(index, super::RECORDS_PER_LOGGER * count)?);
+            let shard = Shard::start(index, super::RECORDS_PER_LOGGER * count)
+                .map_err(|source| DispatcherError::new(index, count, source))?;
+            started.push(shard);
         }
         Ok(Dispatcher {
             process_id: std::process::id(),
-            shards,
+            shards: Shards::from_started(started)?,
             next_shard: std::sync::atomic::AtomicUsize::new(0),
         })
     }

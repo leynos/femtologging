@@ -78,7 +78,7 @@ impl DispatchState {
         Self {
             process_id: std::sync::atomic::AtomicU32::new(std::process::id()),
             starting_process: std::sync::atomic::AtomicU32::new(0),
-            shard: std::sync::atomic::AtomicPtr::new(shard as *const Shard as *mut Shard),
+            shard: std::sync::atomic::AtomicPtr::new(std::ptr::from_ref(shard).cast_mut()),
             budget: shard.budget(),
         }
     }
@@ -245,7 +245,7 @@ impl FemtoLogger {
         let shard = dispatcher.assign_shard();
         self.dispatch.budget.reset_after_fork();
         self.dispatch.shard.store(
-            shard as *const Shard as *mut Shard,
+            std::ptr::from_ref(shard).cast_mut(),
             std::sync::atomic::Ordering::Release,
         );
         self.dispatch

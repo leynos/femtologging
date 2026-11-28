@@ -9,7 +9,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyAnyMethods;
-use pyo3::{Py, PyAny};
+use pyo3::{Bound, Py, PyAny};
 
 use crate::formatter::python::record_to_dict;
 use crate::handler::HandlerError;
@@ -56,6 +56,78 @@ impl FlushFailure {
     }
 }
 
+/// One of the two record interfaces a wrapped Python handler can offer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecordInterface {
+    /// Structured `handle_record`, which takes the record as a dictionary.
+    Structured,
+    /// Legacy `handle`, which takes logger, level and message separately.
+    Legacy,
+}
+
+impl RecordInterface {
+    /// Python attribute name of this interface's method.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Structured => "handle_record",
+            Self::Legacy => "handle",
+        }
+    }
+
+    /// Names and diagnostic labels for calling this interface directly.
+    const fn direct_spec(self) -> DirectMethodSpec {
+        match self {
+            Self::Structured => DirectMethodSpec {
+                name: "handle_record",
+                lookup_operation: "get handle_record",
+                call_operation: "handle_record",
+            },
+            Self::Legacy => DirectMethodSpec {
+                name: "handle",
+                lookup_operation: "get handle",
+                call_operation: "handle",
+            },
+        }
+    }
+
+    /// Operation label reported when the context-bound caller cannot be built.
+    const fn caller_operation(self) -> &'static str {
+        match self {
+            Self::Structured => "create handle_record caller",
+            Self::Legacy => "create handle caller",
+        }
+    }
+}
+
+/// One record delivery: the interface to call, the record, and its context.
+///
+/// The context is optional because a producer only captures one when the
+/// handler asks for context dispatch. Bundling the three keeps every helper
+/// below inside the argument budget.
+struct RecordDelivery<'a> {
+    /// Interface the wrapped handler exposes.
+    interface: RecordInterface,
+    /// Record being delivered.
+    record: &'a FemtoLogRecord,
+    /// Context the producer captured, when there is one.
+    context: Option<&'a Py<PyAny>>,
+}
+
+impl<'a> RecordDelivery<'a> {
+    /// Bundle the arguments of one delivery.
+    const fn new(
+        interface: RecordInterface,
+        record: &'a FemtoLogRecord,
+        context: Option<&'a Py<PyAny>>,
+    ) -> Self {
+        Self {
+            interface,
+            record,
+            context,
+        }
+    }
+}
+
 impl PyHandler {
     /// Call the structured `handle_record` method with the full record dict.
     pub(super) fn call_handle_record(
@@ -64,39 +136,8 @@ impl PyHandler {
         record: &FemtoLogRecord,
         context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
-        let record_dict =
-            record_to_dict(py, record).map_err(|err| map_py_err(py, err, "record_to_dict"))?;
-        match context {
-            Some(context) => self.call_handle_record_in_context(py, context, record_dict),
-            None => self.call_direct_method(
-                py,
-                DirectMethodSpec {
-                    name: "handle_record",
-                    lookup_operation: "get handle_record",
-                    call_operation: "handle_record",
-                },
-                (record_dict,),
-            ),
-        }
-    }
-
-    /// Runs `handle_record` inside a copied Python context and maps Python failures.
-    fn call_handle_record_in_context(
-        &self,
-        py: Python<'_>,
-        context: &Py<PyAny>,
-        record_dict: Py<PyAny>,
-    ) -> Result<(), HandlerError> {
-        let method_caller = py
-            .import("operator")
-            .and_then(|operator| operator.getattr("methodcaller"))
-            .and_then(|factory| factory.call1(("handle_record", record_dict)))
-            .map_err(|err| map_py_err(py, err, "create handle_record caller"))?;
-        self.call_methodcaller_in_context(
-            py,
-            context,
-            ContextMethodCall::new(method_caller, "handle_record"),
-        )
+        let delivery = RecordDelivery::new(RecordInterface::Structured, record, context);
+        self.call_record(py, &delivery)
     }
 
     /// Call the legacy 3-argument `handle` method.
@@ -106,62 +147,107 @@ impl PyHandler {
         record: &FemtoLogRecord,
         context: Option<&Py<PyAny>>,
     ) -> Result<(), HandlerError> {
-        match context {
-            Some(context) => self.call_legacy_handle_in_context(py, context, record),
-            None => self.call_direct_method(
+        let delivery = RecordDelivery::new(RecordInterface::Legacy, record, context);
+        self.call_record(py, &delivery)
+    }
+
+    /// Deliver one record, inside the captured context when there is one.
+    ///
+    /// Without a captured context the record goes straight to the method; with
+    /// one it runs inside the context the caller logged from.
+    fn call_record(
+        &self,
+        py: Python<'_>,
+        delivery: &RecordDelivery<'_>,
+    ) -> Result<(), HandlerError> {
+        match delivery.context {
+            None => self.call_direct_interface(py, delivery),
+            Some(context) => self.call_interface_in_context(py, context, delivery),
+        }
+    }
+
+    /// Invoke the delivery's interface directly on the wrapped handler.
+    fn call_direct_interface(
+        &self,
+        py: Python<'_>,
+        delivery: &RecordDelivery<'_>,
+    ) -> Result<(), HandlerError> {
+        let interface = delivery.interface;
+        match interface {
+            RecordInterface::Structured => {
+                let record_dict = record_to_dict(py, delivery.record)
+                    .map_err(|err| map_py_err(py, &err, "record_to_dict"))?;
+                self.call_direct_method(py, &interface.direct_spec(), (record_dict,))
+            }
+            RecordInterface::Legacy => self.call_direct_method(
                 py,
-                DirectMethodSpec {
-                    name: "handle",
-                    lookup_operation: "get handle",
-                    call_operation: "handle",
-                },
-                (record.logger(), record.level_str(), record.message()),
+                &interface.direct_spec(),
+                (
+                    delivery.record.logger(),
+                    delivery.record.level_str(),
+                    delivery.record.message(),
+                ),
             ),
         }
     }
 
-    /// Runs the legacy three-argument `handle` inside a copied Python context.
-    fn call_legacy_handle_in_context(
+    /// Invoke the delivery's interface in a copied context, mapping failures.
+    fn call_interface_in_context(
         &self,
         py: Python<'_>,
         context: &Py<PyAny>,
-        record: &FemtoLogRecord,
+        delivery: &RecordDelivery<'_>,
     ) -> Result<(), HandlerError> {
-        let method_caller = py
-            .import("operator")
-            .and_then(|operator| operator.getattr("methodcaller"))
-            .and_then(|factory| {
-                factory.call1((
-                    "handle",
-                    record.logger(),
-                    record.level_str(),
-                    record.message(),
-                ))
-            })
-            .map_err(|err| map_py_err(py, err, "create handle caller"))?;
+        let method_caller = Self::method_caller(py, delivery)?;
         self.call_methodcaller_in_context(
             py,
             context,
-            ContextMethodCall::new(method_caller, "handle"),
+            ContextMethodCall::new(method_caller, delivery.interface.name()),
         )
+    }
+
+    /// Build the `operator.methodcaller` carrying this delivery's arguments.
+    fn method_caller<'py>(
+        py: Python<'py>,
+        delivery: &RecordDelivery<'_>,
+    ) -> Result<Bound<'py, PyAny>, HandlerError> {
+        let interface = delivery.interface;
+        let factory = py
+            .import("operator")
+            .and_then(|operator| operator.getattr("methodcaller"))
+            .map_err(|err| map_py_err(py, &err, interface.caller_operation()))?;
+        match interface {
+            RecordInterface::Structured => {
+                let record_dict = record_to_dict(py, delivery.record)
+                    .map_err(|err| map_py_err(py, &err, "record_to_dict"))?;
+                factory.call1((interface.name(), record_dict))
+            }
+            RecordInterface::Legacy => factory.call1((
+                interface.name(),
+                delivery.record.logger(),
+                delivery.record.level_str(),
+                delivery.record.message(),
+            )),
+        }
+        .map_err(|err| map_py_err(py, &err, interface.caller_operation()))
     }
 
     /// Looks up and invokes a named Python method, preserving lookup and call errors.
     fn call_direct_method<'py>(
         &self,
         py: Python<'py>,
-        method: DirectMethodSpec,
+        method: &DirectMethodSpec,
         args: impl pyo3::call::PyCallArgs<'py>,
     ) -> Result<(), HandlerError> {
         let handler_method = self
             .obj
             .bind(py)
             .getattr(method.name)
-            .map_err(|err| map_py_err(py, err, method.lookup_operation))?;
+            .map_err(|err| map_py_err(py, &err, method.lookup_operation))?;
         handler_method
             .call1(args)
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, method.call_operation))
+            .map_err(|err| map_py_err(py, &err, method.call_operation))
     }
 
     /// Forward a flush to a user-defined Python handler.
@@ -234,11 +320,11 @@ impl PyHandler {
         let invocation_context = context
             .bind(py)
             .call_method0("copy")
-            .map_err(|err| map_py_err(py, err, "copy context"))?;
+            .map_err(|err| map_py_err(py, &err, "copy context"))?;
         invocation_context
             .call_method1("run", (call.method_caller, self.obj.bind(py)))
             .map(|_| ())
-            .map_err(|err| map_py_err(py, err, call.operation))
+            .map_err(|err| map_py_err(py, &err, call.operation))
     }
 }
 

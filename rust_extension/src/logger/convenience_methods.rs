@@ -50,6 +50,19 @@ impl FemtoLogger {
     ///
     /// The formatted message when the level is enabled, or `None` when it is
     /// disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValueError` when the task context or the `extra` mapping holds
+    /// a key or value the shared context limits reject, and `TypeError` when
+    /// `exc_info` or `stack_info` has an unsupported shape.
+    ///
+    /// A capture that fails after that point is reported in the payload rather
+    /// than raised: a failed stack capture records an empty payload carrying a
+    /// truncation marker, and a failed exception capture leaves `exc_info`
+    /// absent. The logging call therefore still succeeds, which matters because
+    /// capture runs on a path whose whole purpose is to record a record that is
+    /// already being emitted.
     #[pyo3(
         name = "log",
         signature = (level, message, /, *, exc_info=None, stack_info=false, extra=None),
@@ -83,8 +96,8 @@ impl FemtoLogger {
         #[cfg(not(feature = "python"))]
         let mut explicit_key_values = BTreeMap::new();
         #[cfg(feature = "python")]
-        if let Some(extra) = extra {
-            explicit_key_values.extend(extract_python_context_map(extra)?);
+        if let Some(extra_mapping) = extra {
+            explicit_key_values.extend(extract_python_context_map(extra_mapping)?);
         }
         log_context::validate_context_map(&explicit_key_values)
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -122,7 +135,7 @@ impl FemtoLogger {
 /// Generate a convenience logging method that delegates to `py_log` with a
 /// fixed level.
 ///
-/// PyO3 does not allow macro invocations inside `#[pymethods]` blocks, so
+/// `PyO3` does not allow macro invocations inside `#[pymethods]` blocks, so
 /// each call emits its own block (the `multiple-pymethods` Cargo feature is
 /// already enabled for exactly this reason).
 macro_rules! log_method {
@@ -130,6 +143,10 @@ macro_rules! log_method {
         #[pymethods]
         impl FemtoLogger {
             #[doc = $doc]
+            /// # Errors
+            ///
+            /// Propagates whatever error the shared logging path raises while
+            /// validating context or capturing exception and stack data.
             #[pyo3(
                         name = $py_name,
                         signature = (message, /, *, exc_info=None, stack_info=false, extra=None),
@@ -276,6 +293,11 @@ impl FemtoLogger {
     /// # Called via the Python wrapper, not directly:
     /// logger.exception("risky_call failed")
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Propagates whatever error the shared logging path raises while
+    /// validating context or capturing exception and stack data.
     #[pyo3(
         name = "_exception_impl",
         signature = (message, /, *, exc_info=None, stack_info=false),
@@ -291,8 +313,8 @@ impl FemtoLogger {
         // Omitted exc_info (Rust None) → default to Python True (auto-capture).
         // Note: PyO3 maps both omitted and explicit exc_info=None from Python to
         // Rust None, so callers should use exc_info=False to suppress capture.
-        match exc_info {
-            None => {
+        exc_info.map_or_else(
+            || {
                 let py_true = PyBool::new(py, true).to_owned().into_any();
                 self.py_log(
                     py,
@@ -302,8 +324,8 @@ impl FemtoLogger {
                     stack_info,
                     None,
                 )
-            }
-            Some(val) => self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info, None),
-        }
+            },
+            |val| self.py_log(py, FemtoLevel::Error, message, Some(val), stack_info, None),
+        )
     }
 }

@@ -639,6 +639,13 @@ therefore degrades to a missing warning; it never panics the logging call that
 triggered the diagnostic. `log_compat::diagnostics_tests` proves this with a
 writer that refuses the write.
 
+The producer's invalid-context drop uses the same shape. `log_prebuilt` calls
+`log_prebuilt_to`, which takes the diagnostic writer as a parameter; production
+passes `std::io::stderr()` and a test passes a `Vec`, so the test observes the
+bytes the production path writes rather than a copy of the formatting logic.
+`report_context_drop` performs the write and `context_drop_diagnostic` supplies
+the text, which a refused writer there also cannot turn into a panic.
+
 The root-level `FemtoLogAdapter`, install function, and logger lookup
 re-exports are hidden and require both `log-compat` and `test-util`. Keep
 benchmark-only access behind those feature gates. The Criterion benchmark can
@@ -1764,6 +1771,29 @@ rate-limited warning without waiting. One logger's records remain FIFO on its
 shard, while records from different loggers on that shard share a worker and
 can delay one another.
 
+A refused enqueue returns an `AdmissionRefusal`. Its `Record` variant carries
+the untouched record back so the producer can count and report the drop, and
+`UnexpectedJob` covers the queue handing back a job that carries no record.
+
+`producer::admission::is_admitted` classifies that refusal for the dispatch
+path. The `Record` arm keeps the existing drop accounting: the record is
+dropped, counted, and reported with the rate-limited "dispatch capacity
+exhausted" warning. The `UnexpectedJob` arm is different in kind — it describes
+a queue that returned something `Shard::admit` never sent, which is a defect
+rather than backpressure — so it calls `report_unexpected_job` and emits a
+diagnostic of its own, naming `operation=producer_queue_dispatch` and
+`refusal=unexpected_job`. That wording is deliberately distinct so an operator
+can alert on it without it being lost among ordinary capacity drops.
+`is_admitted_reporting` takes the reporter as a parameter; production passes
+`report_unexpected_job`, and a test passes a closure that counts the call,
+because the variant cannot be produced by a real send. The pool's shard list
+lives in `rust_extension/src/logger/dispatcher/shards.rs` and keeps its first
+shard apart from the rest, so an empty pool is not representable:
+`Dispatcher::start_with` refuses a request for zero shards as an invalid-input
+`DispatcherError` instead of deferring the failure to the first logger, and a
+slot lookup past the end falls back to that first shard, so round-robin
+assignment always answers with one.
+
 `flush_handlers()` queues a flush marker when the logger has handlers. With no
 handlers it skips that marker, but when the logger still has records in flight
 it queues a shard-wide drain marker on the same dispatch queue. That marker is
@@ -2719,6 +2749,16 @@ assertions reusable without expanding the runtime API:
   only the ones its own feature set provides.
 - `isolated_child.rs` launches that child, preserving the dynamic-library
   search path Cargo supplied to the parent.
+- `stderr_capture.rs` provides `with_captured_stderr`, which redirects
+  Python's `sys.stderr` around a test body and returns the text written there.
+  It only sees writes made through the interpreter, such as `PyErr::print`; a
+  `writeln!` to `std::io::stderr()` reaches descriptor 2 directly, so assert
+  those through a formatting helper instead. Its items are compiled only when
+  `feature = "python"` is enabled and `loom` is not set. The only caller is the
+  py-handler call suite, which is itself excluded under `--cfg loom`; including
+  the module there would leave three helpers with no caller, and the Loom
+  Clippy lane runs with warnings denied, so it would fail on dead code it
+  structurally cannot reach.
 
 One further data file is test-only without being a module:
 `rust_extension/src/logger/producer_tracing_expected_tables.rs` holds the

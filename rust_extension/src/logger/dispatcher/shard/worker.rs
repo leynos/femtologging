@@ -31,7 +31,7 @@ use crate::sync::{Receiver, RecvTimeoutError};
 /// first time the process logs nothing for the bound, leaving the next flush
 /// to wait on a barrier nobody is left to answer. Blocking leaves only one way
 /// out, so that mistake cannot be written here.
-pub(super) fn run_worker(jobs: Receiver<Job>) {
+pub(super) fn run_worker(jobs: &Receiver<Job>) {
     // `recv` fails only once the queue is empty *and* every sender is gone:
     // crossbeam wakes a blocked receiver when the last sender drops, so the
     // end of the shard is still noticed without a tick to poll for it.
@@ -50,7 +50,13 @@ fn handle_job(job: Job) {
     match job {
         Job::Record { queued, permit } => handle_record_job(queued, permit),
         Job::Barrier { ack } => {
-            let _ = ack.try_send(());
+            // A failed acknowledgement means the waiter has already given up:
+            // a full channel cannot happen for a one-shot ack, and a closed
+            // one is the flush that queued it having timed out. There is
+            // nobody left to tell, so the outcome is recorded and dropped.
+            if ack.try_send(()).is_err() {
+                log::trace!("FemtoLogger: barrier waiter left before the acknowledgement");
+            }
         }
         Job::Flush {
             handlers,

@@ -22,7 +22,7 @@ pub(super) enum FilterChainOutcome {
 impl FilterChainOutcome {
     /// Return the bounded label used in internal trace events.
     #[cfg(feature = "tracing-compat")]
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
@@ -107,13 +107,13 @@ fn filter_handler_attachment(
     };
     let outcome = apply_filter_chain(record, &attachment.filters);
     #[cfg(feature = "tracing-compat")]
-    if let Some(filter_started) = filter_started {
+    if let Some(started_at) = filter_started {
         tracing::trace!(
             target: "femtologging::internal",
             operation = "producer_handler_filter_chain",
             handler_kind,
             filter_outcome = outcome.as_str(),
-            elapsed_us = filter_started.elapsed().as_micros(),
+            elapsed_us = started_at.elapsed().as_micros(),
         );
     }
 
@@ -125,3 +125,17 @@ fn filter_handler_attachment(
         }
     })
 }
+
+// `FilterChainOutcome::as_str` is `const`, and it labels a bounded trace field.
+// It is only compiled with the tracing bridge, and it is private to this
+// module, so an external `trybuild` fixture cannot name it.
+//
+// The call is evaluated in a const item, which is what enforces the qualifier:
+// a binding of the function pointer would accept a non-`const` `fn` just as
+// readily, so it would pin the signature and not the const-ness.
+#[cfg(all(test, feature = "tracing-compat"))]
+const _: &str = FilterChainOutcome::Accepted.as_str();
+#[cfg(all(test, feature = "tracing-compat"))]
+const _: &str = FilterChainOutcome::Rejected.as_str();
+#[cfg(all(test, feature = "tracing-compat"))]
+const _: &str = FilterChainOutcome::CallbackFailed.as_str();

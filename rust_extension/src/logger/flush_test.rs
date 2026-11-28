@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use pyo3::{PyRef, prelude::*};
+use pyo3::prelude::*;
 
 use crate::sync::{Receiver, Sender, bounded};
 
@@ -47,7 +47,12 @@ impl FlushTestHooks {
 
     /// Notify the test waiter that the token-free flush method has started.
     pub(crate) fn signal_entered(&self) {
-        let _ = self.signal_tx.try_send(FlushTestSignal::Entered);
+        // A full slot already holds a signal a waiter will read, and a
+        // disconnected one means no test is waiting; neither needs a retry,
+        // so the refusal is recorded rather than repaired.
+        if self.signal_tx.try_send(FlushTestSignal::Entered).is_err() {
+            log::trace!("FlushTestHooks: entry signal had no room or no waiter");
+        }
     }
 
     /// Discard signals from earlier flushes before a test arms its gate.
@@ -55,7 +60,7 @@ impl FlushTestHooks {
         while self.signal_rx.try_recv().is_ok() {}
     }
 
-    /// Wait for flush entry or cancellation for at most *timeout_ms*.
+    /// Wait for flush entry or cancellation for at most `timeout_ms`.
     pub(crate) fn wait_for_entry(&self, timeout_ms: u64) -> bool {
         matches!(
             self.signal_rx
@@ -66,7 +71,12 @@ impl FlushTestHooks {
 
     /// Wake a pending test wait during cleanup.
     pub(crate) fn cancel_wait(&self) {
-        let _ = self.signal_tx.try_send(FlushTestSignal::Cancel);
+        // A full slot already holds a signal that will wake the waiter, and a
+        // disconnected one means nobody is waiting; either way the cancel has
+        // nothing to add, so the refusal is recorded.
+        if self.signal_tx.try_send(FlushTestSignal::Cancel).is_err() {
+            log::trace!("FlushTestHooks: cancel signal had no room or no waiter");
+        }
     }
 }
 
@@ -74,23 +84,24 @@ impl FlushTestHooks {
 #[pyfunction]
 pub(crate) fn wait_for_flush_entry_for_test(
     py: Python<'_>,
-    logger: PyRef<'_, FemtoLogger>,
+    logger: &Bound<'_, FemtoLogger>,
     timeout_ms: u64,
 ) -> bool {
-    let logger_ref: &FemtoLogger = &logger;
+    let borrowed = logger.borrow();
+    let logger_ref: &FemtoLogger = &borrowed;
     py.detach(|| logger_ref.flush_test_hooks.wait_for_entry(timeout_ms))
 }
 
 /// Clear prior flush signals before a test arms a new handler gate.
 #[pyfunction]
-pub(crate) fn drain_flush_signals_for_test(logger: PyRef<'_, FemtoLogger>) {
-    logger.flush_test_hooks.drain_pending_signals();
+pub(crate) fn drain_flush_signals_for_test(logger: &Bound<'_, FemtoLogger>) {
+    logger.borrow().flush_test_hooks.drain_pending_signals();
 }
 
 /// Cancel a logger's pending flush-entry test wait during cleanup.
 #[pyfunction]
-pub(crate) fn cancel_flush_wait_for_test(logger: PyRef<'_, FemtoLogger>) {
-    logger.flush_test_hooks.cancel_wait();
+pub(crate) fn cancel_flush_wait_for_test(logger: &Bound<'_, FemtoLogger>) {
+    logger.borrow().flush_test_hooks.cancel_wait();
 }
 
 #[cfg(test)]

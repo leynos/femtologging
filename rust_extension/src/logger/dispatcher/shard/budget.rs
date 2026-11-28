@@ -85,7 +85,12 @@ impl Permits {
     pub(super) fn new(capacity: usize) -> Self {
         let (returned, available) = bounded::<()>(capacity);
         for _ in 0..capacity {
-            let _ = returned.send(());
+            // A refused token leaves the pool smaller than asked for, which
+            // refuses more work rather than accepting more, so the fill stops
+            // there rather than retrying or panicking.
+            if returned.send(()).is_err() {
+                break;
+            }
         }
         Self {
             available,
@@ -103,7 +108,7 @@ impl LoggerBudget {
     /// below the depth, so a logger cannot take every permit. The parameter
     /// also lets a test size a budget small enough to reach in a shard it can
     /// afford to build.
-    pub(crate) fn new(limit: usize) -> Self {
+    pub(crate) const fn new(limit: usize) -> Self {
         Self {
             limit,
             in_flight: AtomicUsize::new(0),
@@ -123,7 +128,7 @@ impl LoggerBudget {
     }
 
     /// Return the number of unhandled records this logger may hold.
-    fn limit(&self) -> usize {
+    const fn limit(&self) -> usize {
         self.limit
     }
 
@@ -133,7 +138,7 @@ impl LoggerBudget {
     /// depth — is arithmetic, so it is asserted directly rather than by
     /// building a shard deep enough to reach a production-sized limit.
     #[cfg(all(test, not(loom)))]
-    pub(crate) fn limit_for_test(&self) -> usize {
+    pub(crate) const fn limit_for_test(&self) -> usize {
         self.limit()
     }
 
@@ -146,6 +151,17 @@ impl LoggerBudget {
     /// barrier, but the barrier itself still consults this count.
     pub(crate) fn in_flight(&self) -> usize {
         self.in_flight.load(Ordering::Acquire)
+    }
+
+    /// Return the generation a release must carry to affect this budget.
+    ///
+    /// A test drives `release` directly to prove that a release with no charge
+    /// held saturates at zero rather than underflowing, and that path is only
+    /// reached with a generation the budget still accepts. Reading it here
+    /// keeps the private counter private while letting the guard be exercised.
+    #[cfg(all(test, not(loom)))]
+    pub(super) fn generation_for_test(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
     /// Charge one record against the logger's budget, or refuse it.
@@ -179,11 +195,23 @@ impl LoggerBudget {
 
         // Saturating, because a release without a matching charge would
         // otherwise underflow to a figure no bound can compare against.
-        let _ = self
-            .in_flight
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
-                held.checked_sub(1)
-            });
+        let mut held = self.in_flight.load(Ordering::Acquire);
+        loop {
+            let Some(remaining) = held.checked_sub(1) else {
+                // Nothing is in flight, so a release has no charge to return;
+                // leaving the count at zero is the saturating direction.
+                return;
+            };
+            match self.in_flight.compare_exchange_weak(
+                held,
+                remaining,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(actual) => held = actual,
+            }
+        }
     }
 }
 
@@ -198,20 +226,19 @@ impl Permit {
     /// than blocking the logging call.
     pub(super) fn take(permits: &Arc<Permits>, logger: &Arc<LoggerBudget>) -> Option<Self> {
         let budget_generation = logger.try_charge()?;
-        match permits.available.try_recv() {
-            Ok(()) => Some(Self {
+        if let Ok(()) = permits.available.try_recv() {
+            Some(Self {
                 permits: Arc::clone(permits),
                 logger: Arc::clone(logger),
                 budget_generation,
-            }),
+            })
+        } else {
             // The shard is full, so nothing was queued. Undo the budget charge
             // here rather than letting it leak: a charge with no permit would
             // shrink the logger's budget a little more with every refused
             // record, and the logger would eventually refuse every record.
-            Err(_) => {
-                logger.release(budget_generation);
-                None
-            }
+            logger.release(budget_generation);
+            None
         }
     }
 }
@@ -223,9 +250,13 @@ impl Drop for Permit {
     /// accounting hold on every path out of a job, including one where a
     /// handler panics and unwinds through it.
     fn drop(&mut self) {
-        // A failed send can only mean the pool is already full, which would be
-        // a double release; ignoring it keeps the count from inflating.
-        let _ = self.permits.returned.try_send(());
+        // A full pool means this permit was already returned — a double
+        // release — and a closed one means no producer can take the token.
+        // Neither can be repaired here, so the count is left as it is; the
+        // budget charge is returned regardless.
+        if self.permits.returned.try_send(()).is_err() {
+            log::debug!("dispatch permit returned to a pool that cannot take it");
+        }
         self.logger.release(self.budget_generation);
     }
 }
@@ -233,3 +264,7 @@ impl Drop for Permit {
 #[cfg(all(test, not(loom)))]
 #[path = "budget_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(loom)))]
+#[path = "budget_property_tests.rs"]
+mod budget_property_tests;

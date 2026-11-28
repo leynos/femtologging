@@ -41,7 +41,7 @@ impl FemtoHandlerTrait for PyHandler {
                     (record.logger(), record.level_str(), record.message()),
                 )
                 .map(|_| ())
-                .map_err(|err| map_py_err(py, err, "handle"))
+                .map_err(|err| map_py_err(py, &err, "handle"))
         })
     }
 

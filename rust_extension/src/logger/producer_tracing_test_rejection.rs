@@ -45,7 +45,12 @@ pub(super) fn emit_rejected_native_dispatch() -> Result<(), String> {
     let record_accepted = logger
         .log(FemtoLevel::Info, "message-secret-not-traced")
         .is_some();
-    let _ = release_tx.send(());
+    // The handler unblocks itself when its receiver is dropped, so a
+    // refused send has nobody left to wake; the checks below still decide the
+    // outcome.
+    if release_tx.send(()).is_err() {
+        log::trace!("tracing rejection test: handler left before its release arrived");
+    }
     if !handler_started {
         return Err("test handler should hold the dispatch shard".to_owned());
     }

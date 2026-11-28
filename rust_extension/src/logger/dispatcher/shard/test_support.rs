@@ -32,14 +32,24 @@ impl Shard {
             let record = jobs
                 .recv_timeout(TEST_WORKER_BOUND)
                 .expect("the test should queue a record for the stand-in worker");
-            let _ = started_tx.send(());
+            // A refused start signal means the test stopped waiting before the
+            // stand-in got here; with nobody left to tell, it is reported and
+            // the worker still waits for the barrier below.
+            if started_tx.send(()).is_err() {
+                log::trace!("stand-in worker: test left before the record was held");
+            }
             let barrier = jobs
                 .recv_timeout(TEST_WORKER_BOUND)
                 .expect("the flush should queue a barrier for the stand-in worker");
             // Dropping the barrier drops its acknowledgement sender without
             // answering, which is what a dead worker looks like to the waiter.
             drop(barrier);
-            let _ = release_rx.recv_timeout(TEST_WORKER_BOUND);
+            // The test releases the stand-in by dropping its sender, and a
+            // timed-out wait means the test has finished, so the record is
+            // dropped either way.
+            if release_rx.recv_timeout(TEST_WORKER_BOUND).is_err() {
+                log::trace!("stand-in worker: test stopped waiting before releasing the worker");
+            }
             drop(record);
         });
         (
@@ -82,10 +92,14 @@ impl TestWorker {
 impl Drop for TestWorker {
     fn drop(&mut self) {
         if let Some(release) = self.release.take() {
-            let _ = release.send(());
+            // The stand-in may already have left after its own bounded wait; a
+            // refused release then has nobody to wake, so it is recorded.
+            if release.send(()).is_err() {
+                log::trace!("stand-in worker: worker left before its release arrived");
+            }
         }
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            drop(handle.join());
         }
     }
 }
