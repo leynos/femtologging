@@ -118,8 +118,8 @@ pub use filters::{
 /// Re-export exception schema types.
 pub use exception_schema::{
     EXCEPTION_SCHEMA_VERSION, ExceptionPayload, MAX_EXCEPTION_PAYLOAD_DEPTH,
-    MAX_EXCEPTION_PAYLOAD_NODES, MIN_EXCEPTION_SCHEMA_VERSION, PayloadTruncation, SchemaVersionError,
-    SchemaVersioned, StackFrame, StackTracePayload, validate_schema_version,
+    MAX_EXCEPTION_PAYLOAD_NODES, MIN_EXCEPTION_SCHEMA_VERSION, PayloadTruncation,
+    SchemaVersionError, SchemaVersioned, StackFrame, StackTracePayload, validate_schema_version,
 };
 /// Re-export formatter types.
 pub use formatter::{DefaultFormatter, ExceptionFormat, FemtoFormatter};

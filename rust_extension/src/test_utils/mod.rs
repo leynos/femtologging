@@ -9,9 +9,6 @@
 pub mod capture_limit_helpers;
 pub mod collecting_handler;
 pub(crate) mod flush_budget;
-/// Assertions for extracted traceback frame fields and local variables.
-#[cfg(feature = "python")]
-pub mod frame_assertion_helpers;
 pub mod frame_test_helpers;
 pub(crate) mod test_worker;
 // Every caller is a subprocess-based test that is itself excluded under

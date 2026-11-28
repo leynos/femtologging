@@ -69,19 +69,33 @@ pub(super) fn render(value: &Bound<'_, PyAny>, limit: usize, depth: usize) -> Op
 /// ceiling is kept so that a container holding exactly the ceiling's worth is
 /// not reported as truncated.
 fn snapshot<'py>(value: &Bound<'py, PyAny>, kind: ContainerKind) -> Option<Vec<Piece<'py>>> {
-    let mut entries = Vec::with_capacity(MAX_CONTAINER_ITEMS.min(4));
     if matches!(kind, ContainerKind::Dict) {
-        // A subclass can override `items`, so the view is requested from the
-        // native `dict` type. Pairing happens before any element is rendered.
-        let dict_type = value.py().get_type::<PyDict>();
-        let items = dict_type.getattr("items").ok()?.call1((value,)).ok()?;
-        let iterator = PyIterator::from_object(&items).ok()?;
-        for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
-            let pair = item.ok()?.cast_into::<PyTuple>().ok()?;
-            entries.push(Piece::Entry(pair.get_item(0).ok()?, pair.get_item(1).ok()?));
-        }
-        return Some(entries);
+        return snapshot_dict(value);
     }
+    snapshot_sequence(value, kind)
+}
+
+/// Snapshot a mapping's entries before any element is rendered.
+fn snapshot_dict<'py>(value: &Bound<'py, PyAny>) -> Option<Vec<Piece<'py>>> {
+    let mut entries = Vec::with_capacity(MAX_CONTAINER_ITEMS.min(4));
+    // A subclass can override `items`, so the view is requested from the
+    // native `dict` type. Pairing happens before any element is rendered.
+    let dict_type = value.py().get_type::<PyDict>();
+    let items = dict_type.getattr("items").ok()?.call1((value,)).ok()?;
+    let iterator = PyIterator::from_object(&items).ok()?;
+    for item in iterator.take(MAX_CONTAINER_ITEMS.saturating_add(1)) {
+        let pair = item.ok()?.cast_into::<PyTuple>().ok()?;
+        entries.push(Piece::Entry(pair.get_item(0).ok()?, pair.get_item(1).ok()?));
+    }
+    Some(entries)
+}
+
+/// Snapshot a sequence or set through the native built-in iterator.
+fn snapshot_sequence<'py>(
+    value: &Bound<'py, PyAny>,
+    kind: ContainerKind,
+) -> Option<Vec<Piece<'py>>> {
+    let mut entries = Vec::with_capacity(MAX_CONTAINER_ITEMS.min(4));
     // A subclass can override `__iter__`, so the native iterator is requested
     // from the built-in type itself; that reads the real storage.
     let native = match kind {
@@ -89,7 +103,7 @@ fn snapshot<'py>(value: &Bound<'py, PyAny>, kind: ContainerKind) -> Option<Vec<P
         ContainerKind::Tuple => value.py().get_type::<PyTuple>(),
         ContainerKind::Set => value.py().get_type::<PySet>(),
         ContainerKind::FrozenSet => value.py().get_type::<PyFrozenSet>(),
-        ContainerKind::Dict => unreachable!("dict handled above"),
+        ContainerKind::Dict => return None,
     };
     let iterator_object = native.getattr("__iter__").ok()?.call1((value,)).ok()?;
     let iterator = PyIterator::from_object(&iterator_object).ok()?;

@@ -14,7 +14,6 @@ use thiserror::Error;
 
 use super::{EXCEPTION_SCHEMA_VERSION, MIN_EXCEPTION_SCHEMA_VERSION};
 
-
 /// Errors related to exception schema version validation.
 ///
 /// The enum is `#[non_exhaustive]`: nested-payload and bounded-tree failures
@@ -146,4 +145,3 @@ pub trait SchemaVersioned {
         validate_schema_version(self.schema_version())
     }
 }
-// weave: run 'weave explain rust_extension/src/exception_schema/versioning.rs' for per-hunk detail, 'weave check' to verify your resolution
