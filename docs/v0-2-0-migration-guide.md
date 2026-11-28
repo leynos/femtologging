@@ -21,6 +21,7 @@ ______________________________________________________________________
 | ------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Required           | Rust logger construction        | Handle the now-fallible `FemtoLogger::new` (`PyResult<Self>`) and `FemtoLogger::with_parent` (`Result<Self, DispatcherError>`).                                                                  |
 | Required if called | `BasicConfig`                   | Remove assignments to attributes outside the five declared fields.                                                                                                                               |
+| Required if called | `fileConfig` handler parameters | Shorten raw handler `args` or `kwargs` values that exceed 65,536 characters; the limit applies before placeholder expansion.                                                                     |
 | Required if called | Logger names                    | Give loggers stable dotted names; invalid shapes and names over the registry cap now raise.                                                                                                      |
 | Required if called | Reserved structured-field names | Rename any `extra=`, `log_context(...)`, `push_log_context`, or `RecordMetadata::key_values` name that uses a built-in record name; those names now raise, or the record is dropped and counted. |
 | Recommended        | `log_context` and named loggers | Rely on scoped context reaching named loggers and delete workarounds that copied fields into every call.                                                                                         |
@@ -685,6 +686,29 @@ that timed out, without inspecting the process. See "Handler wait diagnostics"
 in the [developers' guide](developers-guide.md#handler-wait-diagnostics) and
 "Concurrency and the GIL for file handlers" in the
 [users' guide](users-guide.md#concurrency-and-the-gil-for-file-handlers).
+
+## 11. Handler parameter values are size-limited
+
+`fileConfig` now expands `%(name)s` placeholders with a forward-only scanner
+and rejects a raw handler `args` or `kwargs` value longer than 65,536 Unicode
+code points. The scan is linear in the raw option text; the limit bounds that
+scan, not the expanded result.
+
+### What breaks for handler parameters
+
+A handler `args` or `kwargs` value longer than 65,536 characters, as written in
+the INI file, raises `ValueError` before any configuration is applied. The
+error names the handler, the field, the actual length and the limit, and does
+not echo the value. Previously such a value passed through the placeholder
+search and on to `dictConfig`.
+
+### How to migrate handler parameters
+
+Shorten the raw `args` or `kwargs` text so it fits within 65,536 characters.
+The limit applies before substitution, so a short raw parameter may still
+expand through a large `[DEFAULT]` value; that expanded size is not capped
+here. Substitution remains a single pass: a default value that contains
+`%(name)s` is inserted verbatim and is not expanded again.
 
 ## Production wheels omit the timed-rotation test hooks
 

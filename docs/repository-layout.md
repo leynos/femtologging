@@ -42,6 +42,10 @@ one concern does not reopen the others.
 - `femtologging/config_socket.py` and `config_socket_opts.py` — socket handler
   construction, including transport, TLS, and backoff parsing.
 - `femtologging/file_config.py` — the `fileConfig` compatibility entry point.
+- `femtologging/_placeholders.py` — the forward-only `%(name)s` scanner and
+  one-pass expander used by `file_config.py`. `_iter_placeholders` yields spans
+  and names in linear work, and `_expand_placeholders` resolves them against
+  the merged defaults without rescanning replacements.
 - `femtologging/_basic_config.py` — `basicConfig` and its `BasicConfig` record.
 
 ## Where to add things
