@@ -227,7 +227,10 @@ fn should_capture_exc_info_cases(
         };
 
         let expected_bool = expected == ExpectedCapture::Capture;
-        assert_eq!(result, expected_bool, "{description}");
+        // `should_capture_exc_info` reports a `PyResult` so a malformed value
+        // can raise rather than be silently treated as falsy.
+        let captured = result.expect("a well-formed exc_info value must not raise");
+        assert_eq!(captured, expected_bool, "{description}");
     });
 }
 
