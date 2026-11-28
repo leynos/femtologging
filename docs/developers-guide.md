@@ -80,9 +80,9 @@ is a pin, a bound, or a deliberate fresh resolution:
   (`RUFF_VERSION`, `TY_VERSION`, `TYPOS_VERSION`, `PYLINT_VERSION`).
 - PEP 723 scripts declare their own inline dependency block.
 - Most `uv run --no-project` helper tests pass every `--with` pin explicitly.
-  The `lint-lanes-test` and `loom-runner-test` targets leave `cyclopts` and
-  `plumbum` unpinned, so those two resolve fresh on each run; add pins there
-  when their releases start affecting those tests.
+  The `lint-lanes-test`, `loom-runner-test` and `feature-tests-runner-test`
+  targets leave `cyclopts` and `plumbum` unpinned, so those three resolve fresh
+  on each run; add pins there when their releases start affecting those tests.
 - The isolated build backend resolves `maturin>=1.13.3,<2.0.0` from
   `[build-system]`, separately from the project environment.
 
@@ -221,7 +221,10 @@ script block and cannot be resolved from the project environment, so
 `scripts/conftest.py` leaves it out of collection unless `LINT_LANES_TEST` is
 set. `make lint-lanes-test` sets that variable and passes `--doctest-modules`
 itself, so the script's examples run in the environment that can supply what
-they import.
+they import. `scripts/run_loom_models.py` and
+`scripts/run_cargo_feature_tests.py` are left out on the same terms, under
+`LOOM_RUNNER_TEST` and `FEATURE_TESTS_RUNNER_TEST`; `make loom-runner-test` and
+`make feature-tests-runner-test` set those and run each script's examples.
 
 ### Documented examples
 
@@ -1561,7 +1564,40 @@ cargo test --manifest-path rust_extension/Cargo.toml --no-default-features \
 ```
 
 The scheduled `heavy-tests` workflow runs ignored tests across its feature
-lanes. Loom model test functions are compiled and registered only when Cargo is
+lanes. The matrix is driven by `scripts/run_cargo_feature_tests.py`, which
+follows the estate scripting standards: a `uv` script block, Cyclopts reading
+`INPUT_`-prefixed environment variables, plumbum invoking Cargo and `pathlib`
+carrying the manifest path. It runs `cargo test` once per selection, stops at
+the first failing selection and names it, so a rejection in an earlier
+selection cannot be discarded the way a shell loop's earlier iteration could.
+`none` is the reserved selection for `--no-default-features` with no
+`--features` flag, because an empty name cannot survive a whitespace-separated
+environment list. The step also pins `PYO3_PYTHON` to the `setup-python`
+interpreter: `uv run --script` puts the script's own interpreter first on
+`PATH`, and PyO3 links whichever Python it finds there.
+`make feature-tests-runner-test` runs the driver's own tests, which use
+`cmd-mox` to shim `cargo`. `tests/test_feature_test_lane_contract.py` holds the
+workflow wiring in place, including that the inline loop does not return.
+
+Whether a failing driver fails the step is asked of bash rather than of the
+step's text. `tests/workflow_step_execution.py` runs the step's own script
+under the shell the workflow declares, with `cargo`, `make` and `uv` replaced
+by stubs, and reports whether a failing driver's status reaches the step. This
+replaced a handwritten shell reader: each round of review found another
+construct it did not model (`set +e`, redirections that hid a later command,
+quoting that `shlex` discards, here-document bodies, `if` blocks, `-n`
+templates), and each was a script that passed the contract while discarding the
+verdict.
+
+The helper reproduces GitHub's shell resolution exactly, because the
+differences matter. An undeclared shell runs `bash -e {0}`; `shell: bash` runs
+`bash --noprofile --norc -eo pipefail {0}`, which is stricter; `shell: sh` runs
+`sh -e {0}`. A harness that used the explicit-bash command for the implicit
+default would reject a status-laundering script the real runner accepts, and
+the contract would pass a step that cannot propagate the driver's failure.
+`test_the_implicit_shell_matches_the_runner` pins that distinction.
+
+Loom model test functions are compiled and registered only when Cargo is
 invoked with `--cfg loom`; the ordinary heavy run does not compile or run them.
 
 Because `rust_extension/Cargo.toml` lists the crate itself as a dev-dependency

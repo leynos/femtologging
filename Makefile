@@ -1,5 +1,6 @@
 .PHONY: help all clean build release lint lint-python interrogate lint-rust lint-rust-clippy \
-        lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test fmt \
+        lint-rust-private-docs-policy-test lint-env-policy lint-lanes-test loom-runner-test \
+        feature-tests-runner-test fmt \
         check-fmt markdownlint tools nixie spelling spelling-config spelling-check \
         spelling-integration-test \
         check-lock check-api-boundary test typecheck makeutil skylos skylos-allow \
@@ -283,6 +284,26 @@ loom-runner-test: ## Unit-test the Loom model runner
 		$(LOOM_RUNNER_SCRIPT) --doctest-modules \
 		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
 
+FEATURE_TESTS_RUNNER_SCRIPT ?= scripts/run_cargo_feature_tests.py
+
+FEATURE_TESTS_RUNNER_TESTS ?= scripts/tests/test_run_cargo_feature_tests.py \
+  scripts/tests/test_run_cargo_feature_tests_entrypoint.py \
+  scripts/tests/test_run_cargo_feature_tests_properties.py
+
+feature-tests-runner-test: ## Unit-test the Cargo feature-matrix test runner
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) format --isolated \
+		--target-version py313 --check $(FEATURE_TESTS_RUNNER_SCRIPT) \
+		$(FEATURE_TESTS_RUNNER_TESTS)
+	@$(UV_ENV) uv tool run ruff@$(RUFF_VERSION) check --isolated \
+		--target-version py313 $(FEATURE_TESTS_RUNNER_SCRIPT) \
+		$(FEATURE_TESTS_RUNNER_TESTS)
+	@FEATURE_TESTS_RUNNER_TEST=1 PYTHONPATH=scripts $(UV_ENV) uv run --no-project \
+		--python 3.13 --with pytest==9.0.2 --with cmd-mox==0.2.0 \
+		--with cyclopts --with plumbum --with hypothesis==6.167.1 \
+		python -m pytest $(FEATURE_TESTS_RUNNER_TESTS) \
+		$(FEATURE_TESTS_RUNNER_SCRIPT) --doctest-modules \
+		-c /dev/null --rootdir=. -p no:cacheprovider -p cmd_mox.pytest_plugin
+
 lint-rust-clippy: check-build-tools ## Run standard Rust Clippy feature lanes across every target
 	@$(CARGO_BUILD_ENV) $(UV_ENV) \
 		INPUT_MANIFEST=$(RUST_MANIFEST) \
@@ -380,7 +401,7 @@ nixie: ## Validate Mermaid diagrams
 	git ls-files -z --cached --others --exclude-standard '*.md' | \
 		xargs -0 -r $(NIXIE)
 
-test: check-build-tools build makeutil lint-rust-clippy loom-runner-test ## Run tests
+test: check-build-tools build makeutil lint-rust-clippy loom-runner-test feature-tests-runner-test ## Run tests
 	$(CARGO) fetch --locked --manifest-path $(RUST_MANIFEST)
 	$(CARGO) fmt --manifest-path $(RUST_MANIFEST) -- --check
 	# Test baseline without optional features, then with python, then with Rust compatibility bridges.

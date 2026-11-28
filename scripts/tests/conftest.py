@@ -9,7 +9,9 @@ cannot import it, and collecting its tests there fails outright.
 sets ``LINT_LANES_TEST``. Every other runner skips them, so the project suite
 neither fails on the import nor pretends to have covered the driver.
 ``test_run_loom_models.py`` follows the same rule under ``LOOM_RUNNER_TEST``,
-which ``make loom-runner-test`` sets.
+which ``make loom-runner-test`` sets. The feature-matrix driver's two test
+modules follow it under ``FEATURE_TESTS_RUNNER_TEST``, which
+``make feature-tests-runner-test`` sets.
 """
 
 from __future__ import annotations
@@ -22,3 +24,9 @@ if not os.environ.get("LINT_LANES_TEST"):
     collect_ignore.append("test_lint_rust_lanes.py")
 if not os.environ.get("LOOM_RUNNER_TEST"):
     collect_ignore.append("test_run_loom_models.py")
+if not os.environ.get("FEATURE_TESTS_RUNNER_TEST"):
+    collect_ignore += [
+        "test_run_cargo_feature_tests.py",
+        "test_run_cargo_feature_tests_entrypoint.py",
+        "test_run_cargo_feature_tests_properties.py",
+    ]

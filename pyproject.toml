@@ -36,18 +36,23 @@ dev = [
 ]
 
 [tool.ty.src]
-# `scripts/lint_rust_lanes.py`, `scripts/run_loom_models.py` and their tests
-# declare their dependencies in the script's own `uv` block rather than in the
-# project's dev group, per the estate scripting standards, so the project
-# environment cannot resolve Cyclopts, plumbum or cmd-mox. `make
-# lint-lanes-test` and `make loom-runner-test` run them in that environment;
-# excluding them here keeps `make typecheck` honest about what it can actually
-# see.
+# `scripts/lint_rust_lanes.py`, `scripts/run_loom_models.py`,
+# `scripts/run_cargo_feature_tests.py` and their tests declare their
+# dependencies in the script's own `uv` block rather than in the project's dev
+# group, per the estate scripting standards, so the project environment cannot
+# resolve Cyclopts, plumbum or cmd-mox. `make lint-lanes-test`,
+# `make loom-runner-test` and `make feature-tests-runner-test` run them in that
+# environment; excluding them here keeps `make typecheck` honest about what it
+# can actually see.
 exclude = [
     "scripts/lint_rust_lanes.py",
     "scripts/tests/test_lint_rust_lanes.py",
     "scripts/run_loom_models.py",
     "scripts/tests/test_run_loom_models.py",
+    "scripts/run_cargo_feature_tests.py",
+    "scripts/tests/test_run_cargo_feature_tests.py",
+    "scripts/tests/test_run_cargo_feature_tests_entrypoint.py",
+    "scripts/tests/test_run_cargo_feature_tests_properties.py",
 ]
 
 [tool.ty.environment]
