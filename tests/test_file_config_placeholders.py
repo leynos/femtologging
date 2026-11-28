@@ -228,6 +228,10 @@ def test_placeholder_search_work_is_bounded(
         f"{recorder.searched} searched characters exceed the "
         f"{len(value)}-character input"
     )
+    assert recorder.calls > 0, (
+        "the seam must observe searches; zero calls would let a scanner that "
+        "ignores the seam pass both bounds"
+    )
     assert recorder.calls <= len(value) + 2, (
         f"{recorder.calls} searches exceed the {len(value) + 2} allowed"
     )
