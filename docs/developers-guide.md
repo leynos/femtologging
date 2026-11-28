@@ -117,7 +117,8 @@ regenerating the lock as described in
   follow the resolver's latest compatible releases, which the lock records.
 - `hypothesis` is bounded to `>=6.135,<7`, so property-based and
   generated-input coverage only shifts with a deliberate compatible-version
-  change.
+  change. Property-test modules import Hypothesis directly at collection time,
+  so run `make build` before `uv run --locked pytest` outside `make test`.
 - `pyyaml` is bounded to `>=6.0.3,<7` because the lint contract tests parse
   the CI workflow files.
 

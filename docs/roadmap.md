@@ -299,6 +299,10 @@ where applicable.
   heavy-test workflow. See
   [developer workflow](./dev-workflow.md#commands), [developers guide](./developers-guide.md#type-checking-and-heavy-tests),
   and [rstest guide](./rust-testing-with-rstest-fixtures.md).
+- [x] 4.1.6. Re-enable the Hypothesis-backed traceback property tests on the
+  Python 3.15 lane once the locked Hypothesis release published CPython 3.15
+  wheels, removing the temporary optional-dependency skip. See
+  [developers guide](./developers-guide.md#python-test-toolchain).
 
 ### 4.2. Delivery and adoption
 
