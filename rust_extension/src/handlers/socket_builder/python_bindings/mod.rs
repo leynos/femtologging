@@ -220,3 +220,44 @@ impl AsPyDict for SocketHandlerBuilder {
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod backoff_config_tests {
+    //! Tests for `BackoffOverrides` Python configuration parsing.
+
+    use pyo3::Python;
+    use pyo3::types::{PyDict, PyDictMethods};
+
+    use super::{backoff_overrides_from_dict, reject_unknown_backoff_keys};
+
+    #[test]
+    fn reject_unknown_backoff_keys_rejects_unknown_keys() {
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("cap_ms", 5).expect("set cap");
+            reject_unknown_backoff_keys(&config).expect("known key must pass");
+            config.set_item("bogus", 5).expect("set bogus");
+            let err = reject_unknown_backoff_keys(&config).expect_err("unknown keys must fail");
+            assert_eq!(
+                err.to_string(),
+                "ValueError: unknown BackoffConfig key \"bogus\""
+            );
+        });
+    }
+
+    #[test]
+    fn backoff_overrides_from_dict_reads_each_field() {
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("base_ms", 1).expect("set base");
+            config.set_item("cap_ms", 2).expect("set cap");
+            config.set_item("reset_after_ms", 3).expect("set reset");
+            config.set_item("deadline_ms", 4).expect("set deadline");
+            let overrides = backoff_overrides_from_dict(&config).expect("extract overrides");
+            assert_eq!(overrides.base_ms(), Some(1));
+            assert_eq!(overrides.cap_ms(), Some(2));
+            assert_eq!(overrides.reset_after_ms(), Some(3));
+            assert_eq!(overrides.deadline_ms(), Some(4));
+        });
+    }
+}

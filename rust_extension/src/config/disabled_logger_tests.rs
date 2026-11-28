@@ -14,13 +14,13 @@ use serial_test::serial;
 #[rstest]
 #[serial]
 fn disable_existing_loggers_clears_unmentioned(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         let filt = LevelFilterBuilder::new().with_max_level(FemtoLevel::Debug);
-        let builder = builder
+        let configured = builder
             .with_filter("f", FilterBuilder::Level(filt))
             .with_logger(
                 "stale",
@@ -28,7 +28,7 @@ fn disable_existing_loggers_clears_unmentioned(
                     .with_handlers(["h"])
                     .with_filters(["f"]),
             );
-        builder
+        configured
             .build_and_init()
             .expect("initial build should succeed");
 
@@ -51,9 +51,9 @@ fn disable_existing_loggers_clears_unmentioned(
 #[rstest]
 #[serial]
 fn disabled_logger_rejects_records_and_reports_disabled(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         // The omitted logger keeps the default `propagate = true`, so only the
@@ -106,10 +106,8 @@ fn disabled_logger_rejects_records_and_reports_disabled(
 
 #[rstest]
 #[serial]
-fn explicitly_named_logger_is_reenabled(
-    _gil_and_clean_manager: (),
-    base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
-) {
+fn explicitly_named_logger_is_reenabled(base_logger_builder: (ConfigBuilder, LoggerConfigBuilder)) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         builder
@@ -155,9 +153,9 @@ fn explicitly_named_logger_is_reenabled(
 #[rstest]
 #[serial]
 fn disabling_leaves_unmentioned_logger_state_when_flag_is_false(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         builder
@@ -197,9 +195,9 @@ fn disabling_leaves_unmentioned_logger_state_when_flag_is_false(
 #[rstest]
 #[serial]
 fn ancestor_of_configured_descendant_keeps_its_disabled_state(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (builder, root) = base_logger_builder;
         builder
@@ -251,10 +249,10 @@ fn ancestor_of_configured_descendant_keeps_its_disabled_state(
 )]
 #[serial]
 fn disable_existing_loggers_keeps_ancestors(
-    _gil_and_clean_manager: (),
     base_logger_builder: (ConfigBuilder, LoggerConfigBuilder),
     ancestor_names: &[&str],
 ) {
+    gil_and_clean_manager();
     Python::attach(|py| {
         let (mut builder, root) = base_logger_builder;
         for name in ancestor_names {

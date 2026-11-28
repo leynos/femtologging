@@ -92,6 +92,10 @@ fn require_frame_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Bou
         .ok_or_else(|| PyTypeError::new_err(format!("frame dict missing '{key}' key")))
 }
 
+#[cfg(test)]
+#[path = "frame_filter_py_required_field_tests.rs"]
+mod required_field_tests;
+
 /// Convert a StackFrame back to a Python dict.
 fn stack_frame_to_dict<'py>(py: Python<'py>, frame: &StackFrame) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);

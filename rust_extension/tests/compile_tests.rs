@@ -36,6 +36,7 @@ fn compile_time_ui() {
     test_cases.pass("tests/ui/pass/tracing_layer_const.rs");
     test_cases.pass("tests/ui/pass/pyo3_from_py_with.rs");
     test_cases.pass("tests/ui/pass/pyo3_builder_shapes.rs");
+    test_cases.pass("tests/ui/pass/config_builder_const_setters.rs");
     test_cases.pass("tests/ui/pass/promoted_const_fns.rs");
     test_cases.pass("tests/ui/pass/schema_version_error_wildcard.rs");
     test_cases.compile_fail("tests/ui/fail/*.rs");

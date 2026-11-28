@@ -1,0 +1,15 @@
+error: unused return value of `_femtologging_rs::config::runtime_mutation::apply::<impl RuntimeConfigBuilder>::with_handler` that must be used
+  --> tests/ui/fail/unused_must_use_runtime_mutation.rs:13:5
+   |
+13 |     RuntimeConfigBuilder::new().with_handler("stderr", StreamHandlerBuilder::stderr());
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/fail/unused_must_use_runtime_mutation.rs:8:9
+   |
+ 8 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+13 |     let _ = RuntimeConfigBuilder::new().with_handler("stderr", StreamHandlerBuilder::stderr());
+   |     +++++++

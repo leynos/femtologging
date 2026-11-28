@@ -4,8 +4,6 @@
 use std::time::Duration;
 
 #[cfg(feature = "python")]
-use once_cell::sync::Lazy;
-#[cfg(feature = "python")]
 use parking_lot::{Mutex, MutexGuard};
 #[cfg(feature = "python")]
 use pyo3::Python;
@@ -29,7 +27,8 @@ mod types;
 
 /// Serializes runtime planning and publication across configuration paths.
 #[cfg(feature = "python")]
-static RUNTIME_TRANSACTION: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static RUNTIME_TRANSACTION: std::sync::LazyLock<Mutex<()>> =
+    std::sync::LazyLock::new(|| Mutex::new(()));
 
 /// Try to take the runtime transaction guard without blocking.
 ///
@@ -110,7 +109,7 @@ impl DeferredDrop {
     /// down: a socket handler whose queue is backlogged against a slow collector
     /// blocks in `send` and then joins that worker, which would freeze every
     /// Python thread for as long as the queue takes to drain. Releasing the last
-    /// `Py` off the interpreter is safe — PyO3 queues the decref and runs it as
+    /// `Py` off the interpreter is safe — `PyO3` queues the decref and runs it as
     /// this `detach` re-attaches, so the decref has the GIL back but not the
     /// transaction guard, and a finalizer that re-enters configuration still
     /// finds the guard free.

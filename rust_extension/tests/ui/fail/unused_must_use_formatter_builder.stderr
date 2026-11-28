@@ -1,0 +1,37 @@
+error: unused return value of `FormatterBuilder::new` that must be used
+  --> tests/ui/fail/unused_must_use_formatter_builder.rs:13:5
+   |
+13 |     FormatterBuilder::new();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/fail/unused_must_use_formatter_builder.rs:8:9
+   |
+ 8 | #![deny(unused_must_use)]
+   |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+   |
+13 |     let _ = FormatterBuilder::new();
+   |     +++++++
+
+error: unused return value of `FormatterBuilder::with_format` that must be used
+  --> tests/ui/fail/unused_must_use_formatter_builder.rs:14:5
+   |
+14 |     FormatterBuilder::new().with_format("{message}");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+14 |     let _ = FormatterBuilder::new().with_format("{message}");
+   |     +++++++
+
+error: unused return value of `FormatterBuilder::with_datefmt` that must be used
+  --> tests/ui/fail/unused_must_use_formatter_builder.rs:15:5
+   |
+15 |     FormatterBuilder::new().with_datefmt("%Y-%m-%d");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: use `let _ = ...` to ignore the resulting value
+   |
+15 |     let _ = FormatterBuilder::new().with_datefmt("%Y-%m-%d");
+   |     +++++++
