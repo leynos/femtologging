@@ -1,31 +1,31 @@
 # Femtologging users' guide
 
 Femtologging is a logging library for Python whose loggers hand every record to
-Rust worker threads. Your code enqueues a record and carries on; formatting,
+Rust worker threads. Calling code enqueues a record and carries on; formatting,
 file writes, and network calls happen elsewhere.
 
 This guide describes femtologging 0.2.0-beta1, an early-adopter release whose
-interfaces may still change, so pin the version you depend on. It starts with a
-single log message and builds, one idea at a time, towards production
-configuration and Rust integration. Read it top to bottom the first time, or
-jump straight to the part you need:
+interfaces may still change, so pin the version an application depends on. It
+starts with a single log message and builds, one idea at a time, towards
+production configuration and Rust integration. Read it top to bottom the first
+time, or jump straight to the section needed:
 
 - **New to femtologging?** Start with [Get started](#get-started), then
-  [Log from your code](#log-from-your-code).
+  [Log from application code](#log-from-application-code).
 - **Choosing where records go?** See
   [Send records somewhere](#send-records-somewhere).
 - **Configuring an application?** See [Configure logging](#configure-logging).
 - **Running in production?** See [Run in production](#run-in-production).
 - **Coming from the standard library?** Keep
   [Differences from the standard library](#differences-from-the-standard-library)
-  open beside you; femtologging looks familiar, but some behaviour differs on
-  purpose.
+  open for reference; femtologging looks familiar, but some behaviour differs
+  on purpose.
 - **Upgrading from 0.1?** Read the
   [0.2.0 migration guide](v0-2-0-migration-guide.md) first.
 
 Every Python example in this guide is run by the test suite exactly as it
-appears here, and each one checks its own result with `assert`, so you can see
-what should happen as well as how to make it happen.
+appears here, and each one checks its own result with `assert`, so readers can
+see what should happen as well as how to make it happen.
 
 ______________________________________________________________________
 
@@ -50,10 +50,10 @@ uv add "femtologging>=0.2.0b1"
 
 The same requirement keeps working once 0.2.0 itself is released.
 
-If no pre-built wheel matches your platform, the installer compiles the Rust
+If no pre-built wheel matches the platform, the installer compiles the Rust
 extension from source with [maturin](https://maturin.rs/), which needs `rustc`
 and `cargo` from the [Rust toolchain](https://www.rust-lang.org/tools/install)
-on your `PATH`. You can also build a checkout of the repository directly:
+on `PATH`. A checkout of the repository can also be built directly:
 
 <!-- tested-example: guide-install-source -->
 ```bash
@@ -62,7 +62,7 @@ cd femtologging
 python -m pip install .
 ```
 
-### Write your first log message
+### Write a first log message
 
 <!-- tested-example: guide-first-message -->
 ```python
@@ -105,15 +105,15 @@ queue. `flush_handlers()` waits for the worker serving the logger, and
 ### How a record travels
 
 Loggers share a small, fixed pool of dispatch workers: one to four threads,
-depending on the machine, however many loggers you create. Each logger is
+depending on the machine, however many loggers are created. Each logger is
 assigned to one of these workers and its queue, called a shard. Each built-in
 handler has its own queue and worker thread as well. A log call does a little
-work on your thread, then hands the record over:
+work on the calling thread, then hands the record over:
 
 <!-- tested-example: guide-record-flow-diagram -->
 ```mermaid
 flowchart LR
-    caller["Your thread: logger.info()"] -->|"level and filter checks"| lq["Shard queue"]
+    caller["Calling thread: logger.info()"] -->|"level and filter checks"| lq["Shard queue"]
     lq --> lw["Shared dispatch worker"]
     lw --> hq["Handler queue"]
     hq --> hw["Handler worker thread"]
@@ -122,19 +122,19 @@ flowchart LR
 
 _Figure 1: A record crosses two queues before it reaches its destination._
 
-Level checks, filters, and context capture run on your thread, so their results
-are decided before the call returns. Propagation to parent loggers happens on
-your thread too. Formatting and I/O run on the handler's worker. When a logger
-or its shard is at capacity, femtologging drops the record and counts it rather
-than blocking your code;
+Level checks, filters, and context capture run on the calling thread, so their
+results are decided before the call returns. Propagation to parent loggers
+happens on the calling thread too. Formatting and I/O run on the handler's
+worker. When a logger or its shard is at capacity, femtologging drops the
+record and counts it rather than blocking the caller;
 [Handle back-pressure and dropped records](#handle-back-pressure-and-dropped-records)
 explains how to tune that.
 
 ______________________________________________________________________
 
-## Log from your code
+## Log from application code
 
-### Name your loggers
+### Name loggers
 
 `get_logger(name)` returns the same `FemtoLogger` every time it is called with
 the same name. `getLogger(name)` is an alias for code written against the
@@ -294,8 +294,8 @@ with open("everything.log", encoding="utf-8") as log_file:
 ### Record exceptions and call stacks
 
 Pass `exc_info=True` inside an `except` block to attach the active exception
-and its traceback, or call `exception()`, which does that for you at `ERROR`
-level. Pass `stack_info=True` to attach the current call stack:
+and its traceback, or call `exception()`, which does the same at `ERROR` level.
+Pass `stack_info=True` to attach the current call stack:
 
 <!-- tested-example: guide-exceptions -->
 ```python
@@ -348,9 +348,9 @@ else:
 ```
 
 Keys must be strings and values must be `str`, `int`, `float`, `bool`, or
-`None`. An invalid mapping raises an exception on your thread instead of
+`None`. An invalid mapping raises an exception on the calling thread instead of
 silently losing data. `exception()` does not accept `extra`; use
-`error(..., exc_info=True, extra=...)` when you need both.
+`error(..., exc_info=True, extra=...)` when both are needed.
 
 ### Attach fields to a block of code
 
@@ -455,18 +455,19 @@ streams, files, rotating files, sockets, and HTTP endpoints. Each built-in
 handler owns a queue and a worker thread. Python objects can act as handlers
 too, and existing standard library handlers can be wrapped.
 
-Every built-in handler supports two calls you should know:
+Every built-in handler supports two calls that are worth knowing:
 
 - `flush()` waits (one second by default) for the handler's worker to write
   out what it has queued. It returns `True` on success, and `False` when the
   handler is closed or the worker does not answer in time.
 - `close()` stops the worker thread after it has written its queue. It is safe
   to call more than once; only the first call does the shutdown work. Stream
-  and file handlers can also be closed from several threads at once, and every
-  caller waits until the worker has stopped.
+  and file handlers can also be closed from several threads at once. Each
+  caller waits for the worker to stop, but only up to the handler's timeout, so
+  `close()` can return while the worker is still finishing.
 
 Both calls release Python's global interpreter lock (GIL) while they wait, so
-your other Python threads keep running.
+other Python threads keep running.
 
 ### Write to standard output or standard error
 
@@ -505,7 +506,8 @@ default is one second. It limits both calls that wait for the worker:
 - `close()` stops accepting records and waits, up to the same timeout, for the
   worker to write what is already queued. If the time runs out, `close()`
   returns anyway and the worker goes on writing to the stream in the background.
-  `close()` returns `None` in both cases, so it cannot tell you which happened.
+  `close()` returns `None` in both cases, so the result does not show which
+  happened.
 
 Both calls release the GIL while they wait, so a Python formatter can finish
 its work on the worker thread.
@@ -546,8 +548,8 @@ not seconds: the worker flushes the file after that many writes.
 
 Who waits depends on how the record arrives. Through a logger, it is the shared
 dispatch worker that waits, which delays every logger on its shard. A direct
-`handler.handle()` call waits in your thread, and when it discards a record it
-raises `RuntimeError`.
+`handler.handle()` call waits on the calling thread, and when it discards a
+record it raises `RuntimeError`.
 
 `FileHandlerBuilder` offers the same settings fluently, through
 `with_capacity()`, `with_flush_after_records()`, `with_filters()`,
@@ -569,8 +571,8 @@ most one second. If the worker has not finished by then, `close()` logs a
 warning and returns while the worker may still be running.
 
 Explicit `handle()`, `flush()`, and `close()` calls release the GIL while they
-wait, so your other Python threads keep running during slow file I/O. This has
-three consequences:
+wait, so other Python threads keep running during slow file I/O. This has three
+consequences:
 
 - Code that relied on one of these calls keeping other Python threads out must
   now use its own lock.
@@ -580,7 +582,7 @@ three consequences:
 - `close()` does not cancel a `handle()` that is already waiting under
   `"block"`. Let the worker catch up before closing.
 
-Call `close()` yourself rather than leaving it to garbage collection. The
+Call `close()` explicitly rather than leaving it to garbage collection. The
 destructor does the same shutdown, but it holds the GIL while it waits.
 
 On CPython 3.12 and earlier, a worker that is still running a Python formatter
@@ -588,8 +590,8 @@ when the interpreter shuts down can crash the process. If a `close()` timed
 out, get the worker moving again and confirm that it finished before the
 process exits.
 
-`handler.wait_diagnostics()` tells you how those waits went. It returns a
-dictionary with the same keys every time: a count for each outcome of
+`handler.wait_diagnostics()` tells the caller how those waits went. It returns
+a dictionary with the same keys every time: a count for each outcome of
 `handle()`, `flush()`, and `close()` (such as `handle_queue_full` or
 `close_timed_out`), the total and longest wait in microseconds, and
 `waits_in_flight`, the number of calls waiting right now. Reading it is cheap
@@ -740,9 +742,10 @@ handler.close()
 - `flush()` returns `True` once the worker confirms that the socket is flushed.
   One write timeout covers the whole flush, waiting for queue space included,
   so a stalled collector makes it return `False` after that one timeout.
-- `close()` returns within the write timeout. Until then, each queued record
-  gets one attempt, without retries. Records still queued at the deadline are
-  discarded, and a warning says how many, such as
+- `close()` first reports any drops still held back, then returns within the
+  write timeout. Until then, each queued record gets one attempt, without
+  retries. Records still queued at the deadline are discarded, and a warning
+  says how many, such as
   `FemtoSocketHandler discarded 12 queued records at its shutdown deadline`. A
   frame cut off by the deadline arrives truncated, and the connection is not
   reused. Dropping the handler without calling `close()` behaves the same way.
@@ -753,7 +756,7 @@ handler.close()
   `FemtoSocketHandler dropped 12 records since the last report`, with the same
   `; triggering cause: ...` suffix, held-back counts, and close-time report as
   the [HTTP handler](#send-records-over-http).
-- Both `flush()` and `close()` release the GIL while they wait, so your other
+- Both `flush()` and `close()` release the GIL while they wait, so other
   Python threads keep running.
 
 ### Send records over HTTP
@@ -771,7 +774,7 @@ handler = (
     .with_auth({"token": "s3cr3t"})
     .with_headers({"X-Service": "checkout"})
     .with_json_format()
-    .with_record_fields(["logger", "level", "message"])
+    .with_record_fields(["name", "levelname", "msg"])
     .build()
 )
 assert isinstance(handler, FemtoHTTPHandler)
@@ -788,11 +791,11 @@ handler.close()
   arguments, such as a mixed `with_auth()` mapping, raise `ValueError`.
 - The endpoint must be an absolute `http` or `https` URL. Any other endpoint,
   and a header name, header value, or token that cannot be sent as an HTTP
-  header, raises `HandlerConfigError` when you build the handler. The error
+  header, raises `HandlerConfigError` when the handler is built. The error
   never repeats a header's value. A path that needs percent-encoding is
   accepted and encoded, so `http://host/log ingest` is sent to `/log%20ingest`.
 - Certificates are checked against the WebPKI roots built into femtologging,
-  not your operating system's trust store. A private certificate authority is
+  not the operating system's trust store. A private certificate authority is
   not supported, and verification cannot be turned off.
 - `with_connect_timeout_ms()` limits making the connection, TLS handshake
   included. `with_write_timeout_ms()` limits the whole attempt, so a connection
@@ -800,9 +803,11 @@ handler.close()
 - Up to four redirects are followed, all within one write timeout. A 301, 302,
   or 303 is followed with a GET, and a 307 or 308 only when the request was
   already a GET. `Authorization` and `Cookie` are never sent to the redirect
-  target. A 300, a 307 or 308 answering a POST, and a redirect without a usable
-  `Location` fail without a retry; a fifth redirect is retried like any other
-  transport failure.
+  target, but every other configured header is, including a custom credential
+  header such as `X-Api-Key`, even when the target is on another host. Point
+  the handler at the final endpoint rather than rely on a redirect. A 300, a
+  307 or 308 answering a POST, and a redirect without a usable `Location` fail
+  without a retry; a fifth redirect is retried like any other transport failure.
 - A failed request is reported as a fixed category, such as
   `transport error (DNS lookup failed)`, rather than the HTTP client's own
   message, so the URL's credentials or query, a header value, or a redirect
@@ -818,9 +823,10 @@ handler.close()
   ignored.
 - `flush()` returns `True` once the worker confirms that everything queued has
   been handled, and `False` if that takes longer than the write timeout.
-- `close()` returns within the write timeout. Until then, each queued record
-  gets one attempt, without retries. Records still queued at the deadline are
-  discarded, and a warning says how many, such as
+- `close()` first reports any drops still held back, then returns within the
+  write timeout. Until then, each queued record gets one attempt, without
+  retries. Records still queued at the deadline are discarded, and a warning
+  says how many, such as
   `FemtoHTTPHandler discarded 12 queued records at its shutdown deadline`. A
   request already in flight when the deadline passes may finish after `close()`
   has returned. Dropping the handler without calling `close()` behaves the same
@@ -832,7 +838,7 @@ handler.close()
   `close()`, and dropping the handler report any count still held back.
   `close()` makes that report before its deadline starts, so a slow destination
   for femtologging's own warnings can hold it up.
-- Both `flush()` and `close()` release the GIL while they wait, so your other
+- Both `flush()` and `close()` release the GIL while they wait, so other
   Python threads keep running.
 - The handler ignores the HTTP client's own diagnostics, so a delivery cannot
   trigger the next one. While a worker sends, `ureq` logs its progress at
@@ -840,7 +846,7 @@ handler.close()
   `ureq.unversioned.resolver`. With a Rust bridge installed, those records
   carry a transport-origin marker, and every `FemtoHTTPHandler` silently skips
   a marked record without counting it as dropped. Other handlers still receive
-  it, and records logged by your own threads are never marked.
+  it, and records logged from the application's own threads are never marked.
 - To see what the handler skips, attach a file or stream handler and raise the
   `ureq` targets to `DEBUG`. A record that reaches that handler but not the
   endpoint suggests a skip, though a filter or a failed delivery can also
@@ -848,10 +854,10 @@ handler.close()
 - The marker is deliberately narrow. A record that Python code rebuilds from a
   marked one, and a record passed straight to
   `handler.handle(logger, level, message)`, carry no marker, and socket
-  handlers do not skip marked records. Guard those paths yourself if they could
-  loop back to the same endpoint.
+  handlers do not skip marked records. Those paths need their own guard if they
+  could loop back to the same endpoint.
 
-### Write your own handler in Python
+### Write a custom handler in Python
 
 Any object with a callable `handle(logger, level, message)` method can be a
 handler. Define `handle_record(record)` as well to receive the whole record as
@@ -935,7 +941,7 @@ Records already queued keep the handler list they were queued with.
 
 `add_handler()` checks once whether the object has a callable `handle_record`
 method and remembers the answer. Adding or removing `handle_record` afterwards
-has no effect, so finish configuring a handler before you attach it. Checking
+has no effect, so finish configuring a handler before attaching it. Checking
 once keeps attribute lookups off the per-record path.
 
 <!-- tested-example: guide-handler-capability-diagram -->
@@ -1038,8 +1044,8 @@ assert stream.getvalue() == "payment failed\n"
 ```
 
 The adapter reads the handler's level as it processes each record, so
-`setLevel()` also affects records that are queued but not yet handled, and you
-never need to rebuild the adapter. `logging.NOTSET`, the default, accepts every
+`setLevel()` also affects records that are queued but not yet handled, and the
+adapter never needs rebuilding. `logging.NOTSET`, the default, accepts every
 level.
 
 ______________________________________________________________________
@@ -1051,8 +1057,8 @@ ______________________________________________________________________
 The default rendering is `"{logger} [{level}] {message}"`, followed by any
 stack trace and exception. To change it, give a stream or file handler builder
 a formatter. `with_formatter()` accepts a `FormatterBuilder`, the name of a
-formatter you registered, a callable that takes the record dictionary and
-returns a string, or an object with a `format(record)` method.
+registered formatter, a callable that takes the record dictionary and returns a
+string, or an object with a `format(record)` method.
 
 `FormatterBuilder` takes a standard library-style `%` format string:
 
@@ -1176,21 +1182,21 @@ Some details to bear in mind:
 
 ### Filter and enrich records
 
-Filters decide, on your thread, whether a record goes any further. Three
+Filters decide, on the calling thread, whether a record goes any further. Three
 builders are available:
 
 - `LevelFilterBuilder().with_max_level(level)` accepts records at or below a
   level, which is handy for sending warnings and errors elsewhere.
 - `NameFilterBuilder().with_prefix(prefix)` accepts records whose logger name
   starts with a prefix.
-- `PythonCallbackFilterBuilder(callback)` runs your own code. The callback is
-  either a callable or an object with a standard-library-style `filter(record)`
-  method, such as a `logging.Filter` subclass.
+- `PythonCallbackFilterBuilder(callback)` runs code supplied by the application.
+  The callback is either a callable or an object with a standard-library-style
+  `filter(record)` method, such as a `logging.Filter` subclass.
 
 Filters are attached by name through
 [`ConfigBuilder`](#build-a-configuration-in-code),
 [`RuntimeConfigBuilder`](#change-configuration-at-runtime), or
-[`dictConfig`](#use-dictconfig), and run in the order you list them.
+[`dictConfig`](#use-dictconfig), and run in the order listed.
 
 A callback filter receives a temporary `logging.LogRecord`. Returning a truthy
 value accepts the record, and any new attributes it sets become structured
@@ -1252,8 +1258,8 @@ itself is still delivered.
 A filter attached to a logger runs only for records logged through that logger.
 As in the standard library, it does not run for records propagated up from its
 children. For application-wide enrichment, attach the filter to the shared
-handler with `with_filters()` instead. It then runs, still on your thread, for
-every record routed to that handler, including propagated ones:
+handler with `with_filters()` instead. It then runs, still on the calling
+thread, for every record routed to that handler, including propagated ones:
 
 <!-- tested-example: guide-handler-filter -->
 ```python
@@ -1309,7 +1315,7 @@ reach another.
 
 `filter_frames()` returns a filtered copy of a structured `exc_info` or
 `stack_info` payload, which is useful in a custom handler that forwards them.
-Your original payload is left unchanged:
+The original payload is left unchanged:
 
 <!-- tested-example: guide-filter-frames -->
 ```python
@@ -1499,7 +1505,7 @@ already disabled stays disabled until a configuration names it.
 
 The default differs by entry point: `ConfigBuilder` and `dictConfig()` leave
 existing loggers alone unless asked, while `fileConfig()` disables them unless
-you pass `disable_existing_loggers=False`.
+the caller passes `disable_existing_loggers=False`.
 
 ### Change configuration at runtime
 
@@ -1546,7 +1552,7 @@ IDs recorded by an earlier `ConfigBuilder.build_and_init()`, so a logger that
 was never configured that way raises `ValueError` for them. Records already
 queued keep the handlers they were queued with.
 
-Every handler and filter you declare must end up attached to a logger, or to a
+Every handler and filter declared must end up attached to a logger, or to a
 handler in the case of a filter. Otherwise `apply()` raises `ValueError`
 (`unreferenced definitions: …`) before building anything, so no file is opened
 and no worker is started. Definitions that a change leaves unreferenced are
@@ -1556,7 +1562,7 @@ released, which closes their handlers once in-flight records have drained.
 
 `dictConfig()` accepts the standard library's dictionary schema, restricted to
 what femtologging supports, and applies it through `ConfigBuilder`, so a failed
-call leaves your loggers as they were:
+call leaves existing loggers as they were:
 
 <!-- tested-example: guide-dict-config -->
 ```python
@@ -1609,7 +1615,7 @@ else:
   dotted path or a callable, and receives the other keys as keyword arguments.
   Mixing `"()"` with `level` or `name` is rejected. A factory runs code, so read
   [Filter factories run code](#filter-factories-run-code) before accepting
-  configuration you do not fully trust.
+  configuration that is not fully trusted.
 - **Loggers**: a `root` section is required. Loggers accept `level`,
   `handlers`, `filters`, and `propagate`.
 - **Handler `filters` and `formatter`**: handlers accept a `filters` list of
@@ -1648,17 +1654,17 @@ Not supported, and raising `ValueError`: incremental configuration and handler
 
 #### Filter factories run code
 
-A `"()"` filter entry is as powerful as code you wrote yourself. A dotted path
-is imported and called, and a callable is called, so whoever writes the
-configuration chooses what runs inside your process. Importing a module can
-have side effects of its own, so checking the resolved object or its result
+A `"()"` filter entry is as powerful as the application's own code. A dotted
+path is imported and called, and a callable is called, so whoever writes the
+configuration chooses what runs inside the process. Importing a module can have
+side effects of its own, so checking the resolved object or its result
 afterwards is too late.
 
-When configuration comes from anywhere less trusted than your own code, such as
-tenants, an HTTP API, a remote configuration service, or a writable file, pass
-`allow_factories=False`. Every top-level filter entry with a `"()"` key is then
-rejected before anything is imported or called, while `level` and `name`
-filters keep working:
+When configuration comes from anywhere less trusted than the application's own
+code, such as tenants, an HTTP API, a remote configuration service, or a
+writable file, pass `allow_factories=False`. Every top-level filter entry with a
+`"()"` key is then rejected before anything is imported or called, while
+`level` and `name` filters keep working:
 
 <!-- tested-example: guide-dict-config-no-factories -->
 ```python
@@ -1745,8 +1751,8 @@ ______________________________________________________________________
 
 ### Shut down cleanly
 
-Records are written by background threads, and nothing flushes them for you
-when the interpreter exits. Before your process ends:
+Records are written by background threads, and nothing flushes them
+automatically when the interpreter exits. Before the process ends:
 
 1. Stop the threads that log, and wait for them to finish. A flush covers the
    records queued when it starts, so a record logged afterwards can still be
@@ -1754,11 +1760,12 @@ when the interpreter exits. Before your process ends:
 2. Call `flush_handlers()` on each logger that owns handlers, and check that it
    returns `True`. Records propagate, so include the ancestors that receive
    them, such as `root`.
-3. Call `close()` on each handler you created.
+3. Call `close()` on each handler that was created.
 
 <!-- tested-example: guide-shutdown -->
 ```python
 import atexit
+import sys
 
 from femtologging import FemtoFileHandler, get_logger
 
@@ -1768,7 +1775,8 @@ root.add_handler(handler)
 
 
 def shut_down_logging() -> None:
-    root.flush_handlers()
+    if not root.flush_handlers():
+        print("logging flush timed out; some records may be lost", file=sys.stderr)
     handler.close()
 
 
@@ -1820,7 +1828,7 @@ send by then. See [Send records over a socket](#send-records-over-a-socket) and
 
 ### Handle back-pressure and dropped records
 
-Queues are bounded so that a slow destination cannot exhaust your memory. Three
+Queues are bounded so that a slow destination cannot exhaust memory. Three
 limits apply:
 
 - Each shard's queue holds 1,024 records multiplied by the number of shards, so
@@ -1831,7 +1839,7 @@ limits apply:
 - Each handler's capacity defaults to 1,024 and can be changed with `capacity`
   or `with_capacity()`.
 
-A record is dropped rather than blocking your thread when its logger has spent
+A record is dropped rather than blocking the caller when its logger has spent
 its allowance, even if the shard has room, or when its shard is full. Either
 way, it is counted in `logger.get_dropped()`. When a handler's own queue is
 full, a file handler applies its overflow policy: `"drop"`, `"block"`, or
@@ -1877,7 +1885,7 @@ If drops are unacceptable, raise handler capacities or give file handlers the
 and neither policy changes what happens at the logger's own queue. Bear in mind
 where the waiting happens: a handler attached to a logger is fed by the shared
 dispatch worker, so a blocking policy makes that worker wait, which delays
-every logger on the shard. Your thread keeps going until the logger's allowance
+every logger on the shard. The caller keeps going until the logger's allowance
 or the shard is used up, and from then on records are dropped and counted in
 `get_dropped()`. A handler that never returns holds its shard's worker, so the
 other loggers on that shard can start dropping too.
@@ -1890,8 +1898,8 @@ logger creation tries again.
 
 Femtologging reports its internal problems, such as dropped records, handler
 errors, and rejected enrichment, through the Rust `log` crate. Those warnings
-are discarded unless you ask for them. Call `setup_rust_logging()` once at
-start-up, and warnings from femtologging itself are printed to standard error:
+are discarded unless requested. Call `setup_rust_logging()` once at start-up,
+and warnings from femtologging itself are printed to standard error:
 
 <!-- tested-example: guide-internal-warnings -->
 ```python
@@ -1941,10 +1949,10 @@ counted by `get_context_capture_failures()`. `flush_handlers()` does not report
 these counts itself, so that a slow destination for warnings cannot push it
 past its deadline.
 
-These warnings deliberately bypass your loggers and handlers: a warning that
-the queues are full must not need room in those same queues. Monitor standard
-error as well as your log files, and use the counters above to watch for lost
-records.
+These warnings deliberately bypass the application's loggers and handlers: a
+warning that the queues are full must not need room in those same queues.
+Monitor standard error as well as the log files, and use the counters above to
+watch for lost records.
 
 ### Operational caveats
 
@@ -1953,8 +1961,13 @@ records.
 - Socket frames over the size limit are dropped. Truncate or split very large
   messages before logging them.
 - Socket and HTTP handlers keep only what they can send within the write
-  timeout at shutdown. If every record matters, call `flush()` and check that
-  it returns `True` before calling `close()`.
+  timeout at shutdown, so call `flush()` before `close()`. A `True` from
+  `flush()` means the worker has handled every record queued before the call,
+  not that each one was delivered: a record the destination rejects, or one
+  that runs out of retries, is dropped and still counts as handled, and a
+  record dropped because the queue was full never reached the worker. Watch
+  standard error for drop warnings, and confirm delivery at the destination
+  when every record matters.
 - Known issue in 0.2.0-beta1: while one thread is inside a socket or HTTP
   handler's `close()`, calling `flush()` or `close()` on the same handler from
   another thread raises `RuntimeError: Already mutably borrowed` (or
@@ -2195,7 +2208,7 @@ formats and performance work. Two planned integrations deserve an early note:
 - **OpenTelemetry** export is planned on top of the `tracing` bridge.
 
 Both will be explicit opt-ins: enabling a build feature alone will send nothing
-until you configure the matching handler. Treat any external sink as
+until the matching handler is configured. Treat any external sink as
 sensitive-data egress and scrub messages and fields before forwarding them.
 Until structured export lands, the planned outputs carry message text and basic
 metadata (logger name and level), not rich fields or trace correlation.

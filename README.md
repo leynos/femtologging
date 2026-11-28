@@ -177,7 +177,7 @@ not resolve, so every link to a repository file is absolute. -->
 [guide-socket]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#send-records-over-a-socket
 [guide-context]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#add-context-to-records
 [guide-exceptions]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#record-exceptions-and-call-stacks
-[guide-python-handler]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#write-your-own-handler-in-python
+[guide-python-handler]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#write-a-custom-handler-in-python
 [guide-config]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#configure-logging
 [guide-rust]: https://github.com/leynos/femtologging/blob/main/docs/users-guide.md#integrate-with-rust
 [changelog]: https://github.com/leynos/femtologging/blob/main/CHANGELOG.md

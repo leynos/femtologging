@@ -37,8 +37,9 @@ thread's `flush()` or `close()` on a socket or HTTP handler raises
   a message cannot forge another record
   ([#641](https://github.com/leynos/femtologging/pull/641)).
 - **Breaking:** reject invalid HTTP endpoints and headers when the handler is
-  built, follow at most four redirects without credentials, and bound
-  connecting by the write timeout
+  built, follow at most four redirects without the `Authorization` or `Cookie`
+  header (other configured headers, such as `X-Api-Key`, are still sent), and
+  bound connecting by the write timeout
   ([#599](https://github.com/leynos/femtologging/pull/599)).
 - **Breaking:** validate the version of every nested exception payload, and
   make `SchemaVersionError` `#[non_exhaustive]` with new `Nested`,

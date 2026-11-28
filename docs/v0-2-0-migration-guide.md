@@ -2,17 +2,18 @@
 
 ## Who should read this
 
-Read this guide if you have an application using femtologging 0.1 and are
-moving to 0.2.0. If you are new to femtologging, you need none of it: start
-with the [users' guide](users-guide.md) instead.
+Read this guide if an application uses femtologging 0.1 and is moving to 0.2.0.
+Readers new to femtologging need none of it: start with the
+[users' guide](users-guide.md) instead.
 
 Most of 0.2.0 is new, opt-in capability, but some changes can need an edit
 before an existing application behaves as it did. The ones most likely to
-affect you are the limits on logger names, the workers that loggers now share,
-and what `disable_existing_loggers` does to the loggers a configuration omits.
-Table 1 sorts every change by what it asks of you. A row that does not match
-your application can be skipped, and every Python example here is run by the
-project's test suite, so it works as printed.
+affect an application are the limits on logger names, the workers that loggers
+now share, and what `disable_existing_loggers` does to the loggers a
+configuration omits. Table 1 sorts every change by what it asks of the
+application. A row that does not match the application can be skipped, and
+every Python example here is run by the project's test suite, so it works as
+printed.
 
 Femtologging 0.2.0 is currently published as a beta, and installers skip
 pre-releases unless asked. Request it explicitly, and pin the exact beta so
@@ -35,9 +36,9 @@ raises `RuntimeError` while the first `close()` is waiting. The
 | ------------------ | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Required if called | [Logger names](#1-keep-logger-names-stable-and-bounded)                           | Stop deriving logger names from requests, users, or other data                     |
 | Required if called | [Structured field names](#2-rename-structured-fields-that-use-a-reserved-name)    | Rename `extra` and `log_context()` fields that use a record field's name           |
-| Required if called | [`BasicConfig`](#3-use-only-the-fields-of-basicconfig)                            | Keep your own state out of `BasicConfig` instances                                 |
+| Required if called | [`BasicConfig`](#3-use-only-the-fields-of-basicconfig)                            | Keep application state out of `BasicConfig` instances                              |
 | Required if called | [`RuntimeConfigBuilder`](#4-attach-everything-a-runtime-change-declares)          | Attach every handler and filter a runtime change declares                          |
-| Required if called | [Test hooks](#5-stop-using-the-test-only-hooks)                                   | Build with `test-util` if you use any test-only hook                               |
+| Required if called | [Test hooks](#5-stop-using-the-test-only-hooks)                                   | Build with `test-util` if any test-only hook is used                               |
 | Required if called | [Rust API](#6-handle-the-fallible-rust-apis)                                      | Handle the new `Result` values, `flush_until()`, and `SchemaVersionError` variants |
 | Review if enabled  | [`disable_existing_loggers`](#7-name-the-loggers-that-must-keep-emitting)         | Name every logger that must keep emitting                                          |
 | Review if enabled  | [Thread-local state](#8-move-handler-state-off-threadinglocal)                    | Move handler state from `threading.local` to `contextvars`                         |
@@ -48,13 +49,13 @@ raises `RuntimeError` while the first `close()` is waiting. The
 | Review if enabled  | [Exception payloads](#13-check-payloads-passed-to-filter_frames)                  | Check very large or hand-built payloads passed to `filter_frames()`                |
 | Review if enabled  | [Rust `log` macros](#14-guard-expensive-rust-log-arguments)                       | Guard expensive `log` macro arguments                                              |
 | Review if enabled  | [Custom handler flushes](#15-return-a-truthful-result-from-handler-flush)         | Return `None` or `True` from a custom handler's `flush()` when it succeeds         |
-| Review if enabled  | [File handler threads](#16-lock-around-file-handler-calls-yourself)               | Add your own lock where a file handler call kept other threads out                 |
+| Review if enabled  | [File handler threads](#16-add-a-lock-around-file-handler-calls)                  | Add a lock where a file handler call kept other threads out                        |
 | Review if enabled  | [Stream handler shutdown](#17-expect-stream-handlers-to-stop-waiting-sooner)      | Stop treating a slow stream `flush()` or `close()` as having finished              |
 | Review if enabled  | [Multiline messages](#18-expect-line-breaks-in-messages-to-be-escaped)            | Update checks and parsers that expect raw line breaks in default output            |
 | Review if enabled  | [Warning text](#19-match-the-new-warning-text)                                    | Update alerts that match femtologging's own warnings                               |
-| Review if enabled  | [Untrusted configuration](#20-refuse-filter-factories-in-untrusted-configuration) | Pass `allow_factories=False` to `dictConfig()` for configuration you do not trust  |
+| Review if enabled  | [Untrusted configuration](#20-refuse-filter-factories-in-untrusted-configuration) | Pass `allow_factories=False` to `dictConfig()` for untrusted configuration         |
 | Recommended        | [Handler filters](#21-move-application-wide-enrichment-to-the-handler)            | Attach application-wide enrichment to the shared handler                           |
-| Optional           | [New features](#22-adopt-the-new-features)                                        | Adopt structured fields, formatters, rotation, and runtime changes when you like   |
+| Optional           | [New features](#22-adopt-the-new-features)                                        | Adopt structured fields, formatters, rotation, and runtime changes as needed       |
 
 *Table 1: Obligations when moving from v0.1.0 to v0.2.0.*
 
@@ -94,8 +95,7 @@ assert logger.info("handled", extra={"request_id": request_id}) is not None
 ```
 
 Names used by the Rust `log` and `tracing` bridges fall back to the `root`
-logger when they are refused. See
-[Name your loggers](users-guide.md#name-your-loggers).
+logger when they are refused. See [Name loggers](users-guide.md#name-loggers).
 
 ## 2. Rename structured fields that use a reserved name
 
@@ -136,8 +136,8 @@ key-values use a reserved name and counts it in `get_context_dropped()`.
 
 `BasicConfig` is now a slotted dataclass. An instance holds only `level`,
 `filename`, `stream`, `force`, and `handlers`, so a mistyped or invented
-attribute fails where you assign it, instead of silently creating an attribute
-that `basicConfig()` never reads. Keep any other state in your own structure.
+attribute fails where it is assigned, instead of silently creating an attribute
+that `basicConfig()` never reads. Keep any other state in a separate structure.
 
 <!-- tested-example: migration-basic-config-slots -->
 ```python
@@ -200,13 +200,13 @@ project's own tests use are gone from them:
   other `*_for_test` wrappers in `femtologging._rust_compat`.
 - `FemtoLogger.handler_ptrs_for_test()` and `filter_ptrs_for_test()`, which
   exposed memory addresses. Test builds offer `handler_identities_for_test()`
-  and `filter_identities_for_test()`, which return opaque tokens you can
-  compare.
+  and `filter_identities_for_test()`, which return opaque tokens that can be
+  compared.
 - The Rust emit and install hooks, such as `_emit_rust_log` and
   `_install_test_global_rust_logger`, which are also gone from the type stub.
 - In Rust, `TestConfig` and `FemtoFileHandler::with_writer_for_test()`.
 
-None of these were ever supported API. If you rely on them, set
+None of these were ever supported API. If code relies on them, set
 `UV_CONFIG_FILE=.github/uv-test-util.toml` for a source install, or pass
 `--features python,test-util` to a development build, adding `log-compat` or
 `tracing-compat` for the Rust hooks. A test module that must also run against a
@@ -227,7 +227,7 @@ from Python are unaffected.
   invoke Python inside the supplied context. Otherwise `add_handler()` fails
   with `HandlerError::MissingContextDispatch`.
 - `FemtoLogger::flush_handlers()` no longer calls a handler's synchronous
-  `flush()`. A handler of your own takes part only if it overrides
+  `flush()`. A custom handler takes part only if it overrides
   `FemtoHandlerTrait::flush_until(context)`, waiting no later than the deadline
   it is given and returning `false` when it cannot confirm the flush. Without
   that override, `flush_handlers()` returns `false`.
@@ -350,9 +350,9 @@ everything. The adapter reads the level as it processes each record, so
 
 `ConfigBuilder.build_and_init()`, `dictConfig()`, and `fileConfig()` now
 prepare everything before changing any live logger. A call that raises leaves
-every logger exactly as it was. If your start-up code caught a configuration
-error and carried on, expecting the valid parts to have applied, apply a
-corrected configuration instead.
+every logger exactly as it was. If start-up code caught a configuration error
+and carried on, expecting the valid parts to have applied, apply a corrected
+configuration instead.
 
 <!-- tested-example: migration-config-transaction -->
 ```python
@@ -407,8 +407,8 @@ much longer. The deadline changes what reaches the other end:
   queue space and waiting for the worker's answer now share one budget, so a
   stalled collector makes `flush()` return `False` sooner.
 
-If your shutdown relied on `close()` waiting until every record was delivered,
-call `flush()` first and check its result:
+If shutdown relied on `close()` waiting until every record was delivered, call
+`flush()` first and check its result:
 
 <!-- tested-example: migration-network-shutdown -->
 ```python
@@ -455,8 +455,13 @@ The transport changed too:
 
 - At most four redirects are followed, all within one write timeout, and
   `Authorization` and `Cookie` are no longer sent to the redirect target. A
-  300, and a 307 or 308 answering a POST, now fail without a retry. If your
-  collector answers that way, make it answer with a 2xx, or a 301, 302, or 303.
+  300, and a 307 or 308 answering a POST, now fail without a retry. If the
+  collector answers that way, point the handler at the final collector
+  endpoint, or make the collector answer the POST itself with a 2xx. Do not
+  switch to a 301, 302, or 303: the handler follows those with a GET that
+  carries no record, so a 2xx at the target would count as delivered.
+  `Authorization` and `Cookie` are dropped on a redirect, but other configured
+  headers, such as `X-Api-Key`, are still sent to the target.
 - The write timeout now limits connecting as well, so a connection waits for
   at most the smaller of the connect and write timeouts. Raise the write
   timeout if connecting legitimately takes longer.
@@ -485,7 +490,7 @@ explicit `log::log_enabled!` guard around expensive ones. See
 
 ## 15. Return a truthful result from handler `flush()`
 
-`flush_handlers()` now calls the `flush()` method of a handler you wrote in
+`flush_handlers()` now calls the `flush()` method of a handler written in
 Python. In 0.1 it never did, so a handler that buffered records was not asked
 to write them. The call runs on the dispatch worker, like `handle()`, so it
 cannot rely on state belonging to the thread that called `flush_handlers()`.
@@ -536,13 +541,13 @@ A flush also covers only the records queued when it starts. Stop the threads
 that log before flushing and closing handlers at shutdown; see
 [Shut down cleanly](users-guide.md#shut-down-cleanly).
 
-## 16. Lock around file handler calls yourself
+## 16. Add a lock around file handler calls
 
 Explicit `handle()`, `flush()`, and `close()` calls on `FemtoFileHandler`,
 `FemtoRotatingFileHandler`, and `FemtoTimedRotatingFileHandler` now release the
 GIL while they wait. Other Python threads keep running during slow file I/O,
-which also means one of these calls no longer keeps them out. If your code
-relied on that, add your own lock.
+which also means one of these calls no longer keeps them out. If code relied on
+that, add a lock.
 
 Two related changes:
 
@@ -550,8 +555,8 @@ Two related changes:
   raises `RuntimeError` (`ValueError` from the timed-rotating handler),
   `flush()` returns `False`, and a second `close()` waits for the first.
 - `close()` now waits at most one second for the worker, then logs a warning
-  and returns. Call it yourself at shutdown: the destructor holds the GIL while
-  it waits.
+  and returns. Call it explicitly at shutdown: the destructor holds the GIL
+  while it waits.
 
 See
 [Concurrency and the GIL for file handlers](users-guide.md#concurrency-and-the-gil-for-file-handlers).
@@ -570,8 +575,9 @@ waiting for the answer:
   so a slow thread-local destructor cannot hold it up. The worker can still be
   running, and writing to the stream, after `close()` returns.
 
-`close()` returns `None` either way. If your shutdown must know that the worker
-finished, or that a thread-local destructor ran, signal that from your own code.
+`close()` returns `None` either way. If shutdown must know that the worker
+finished, or that a thread-local destructor ran, signal that from application
+code.
 
 ## 18. Expect line breaks in messages to be escaped
 
@@ -579,8 +585,8 @@ The default rendering, `"{logger} [{level}] {message}"`, now writes line breaks
 in the message as escapes such as `\n` and `\u{2028}`, so each record's message
 stays on one line and cannot forge another record. Update anything that
 expected the raw line break: test assertions, parsers that count lines as
-records, and `max_bytes` settings sized for the shorter output. Where you need
-the raw text, use a `FormatterBuilder` format or a callable formatter, which
+records, and `max_bytes` settings sized for the shorter output. Where the raw
+text is needed, use a `FormatterBuilder` format or a callable formatter, which
 receive the message unchanged:
 
 <!-- tested-example: migration-multiline-message -->
@@ -610,7 +616,7 @@ not escaped. See [Multiline messages](users-guide.md#multiline-messages).
 
 ## 19. Match the new warning text
 
-If you alert on femtologging's own warnings, update the patterns:
+If alerts match femtologging's own warnings, update the patterns:
 
 | Warning                     | 0.1 wording                                                                                                                                 | 0.2.0 wording                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -631,11 +637,11 @@ the endpoint, so identify the handler instead; each handler has exactly one.
 
 `dictConfig()` gains a keyword-only `allow_factories` option. A `"()"` filter
 entry imports and calls whatever its configuration names, so it is as powerful
-as your own code. The default, `True`, keeps the standard library's behaviour.
-If any configuration comes from tenants, an API, a remote service, or a
-writable file, pass `allow_factories=False` to reject `"()"` entries before
-anything is imported. It is not a sandbox: handlers still open the destinations
-the configuration names. See
+as the application's own code. The default, `True`, keeps the standard
+library's behaviour. If any configuration comes from tenants, an API, a remote
+service, or a writable file, pass `allow_factories=False` to reject `"()"`
+entries before anything is imported. It is not a sandbox: handlers still open
+the destinations the configuration names. See
 [Filter factories run code](users-guide.md#filter-factories-run-code).
 
 ## 21. Move application-wide enrichment to the handler
@@ -785,7 +791,7 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
 - [ ] Attach every handler and filter declared on a `RuntimeConfigBuilder`.
 - [ ] Remove any reliance on test-only hooks in production builds.
 - [ ] Update Rust code for the fallible `FemtoLogger` constructors and
-  `add_handler()`, implement `flush_until()` on your own handlers, and add a
+  `add_handler()`, implement `flush_until()` on custom handlers, and add a
   wildcard arm to matches on `SchemaVersionError`.
 - [ ] Check each use of `disable_existing_loggers`, including the `fileConfig()`
   default.
@@ -795,7 +801,7 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
 - [ ] Flush socket and HTTP handlers before closing them, and check what
   `flush()` returns.
 - [ ] Build each HTTP handler once against 0.2.0 to catch rejected endpoints
-  and headers, and check how your collector redirects.
+  and headers, and check how the collector redirects.
 - [ ] Add `log::log_enabled!` guards around expensive Rust `log` arguments.
 - [ ] Check that custom handlers' `flush()` methods return `None` or `True`
   when they succeed, and do not rely on the calling thread.
@@ -807,7 +813,7 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
   breaks in default output.
 - [ ] Update alerts that match femtologging's warning text.
 - [ ] Pass `allow_factories=False` wherever `dictConfig()` reads configuration
-  you do not fully trust.
+  that is not fully trusted.
 - [ ] Consider moving application-wide enrichment to handler filters.
 
 ## Common errors and fixes
@@ -825,7 +831,7 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
     raise the limit; the next logger creation tries again.
 - **Error:**
   `'BasicConfig' object has no attribute 'filename_backup' …`
-  - **Fix:** Keep the value in your own structure. See
+  - **Fix:** Keep the value in a separate structure. See
     [task 3](#3-use-only-the-fields-of-basicconfig).
 - **Error:**
   `invalid runtime mutation: unreferenced definitions: handlers ["console"] …`
@@ -839,7 +845,7 @@ should first follow the [0.1.0 migration guide](v0-1-0-migration-guide.md).
   - **Fix:** Build with `test-util`. See
     [task 5](#5-stop-using-the-test-only-hooks).
 - **Error:** `Python-backed handlers must provide contextual dispatch`
-  - **Fix:** Implement contextual dispatch on your Rust handler. See
+  - **Fix:** Implement contextual dispatch on the Rust handler. See
     [task 6](#6-handle-the-fallible-rust-apis).
 - **Error:** `non-exhaustive patterns` in a Rust `match` on
   `SchemaVersionError`
